@@ -14,11 +14,11 @@ A parent task can contain one or more child tasks, each of which represents an i
 
 While most tasks have a single parent, technically a VCS branch can be spawned from a merge commit of multiple parents. This is fully supported: branch merges cause the overall project task dependencies to form a DAG, effectively allowing tasks that are linked from multiple places in the overall work tree.
 
-Subtasks are similar to tasks, however they must be attached to a single task, and their development takes place directly in this task's VCS branch. Subtasks are atomic, and cannot contain further tasks or subtasks. Subtasks typically represent a workflow of individual steps needed to produce a single deliverable unit of work. A task is eligible for merging when all its subtasks (and child tasks) are complete.
+Subtasks are similar to tasks, however they must be attached to a single task, and their development takes place directly in this task's VCS branch. Subtasks are atomic, and cannot contain further tasks or subtasks. Subtasks typically represent a workflow of individual steps needed to produce a single deliverable unit of work. They are created, reordered, and completed via the CLI (see *Subtask lifecycle* under Implementation details). A task is eligible for merging when all its subtasks (and child tasks) are complete.
 
-Each self-contained project has a single main branch which contains the published code, and all development happens by splitting off feature branches that represent units of work to be done, merging them into the parent branch when the unit of work is complete. Thus the parent branch gradually becomes more complete as more of its child branches are merged. When a given parent branch has no remaining child branches, the parent branch is eligible for merging into its own parent, or new child branches can be created to add more work on the parent branch.
+A **root branch** is a merge target that cannot itself be merged any further (e.g. the branch the user was on when they created the top-level task). A project can have multiple root branches—for example, when a top-level task is created from a merge commit of multiple branches. All development happens by splitting off task branches from a parent (root or task branch), merging them back when the unit of work is complete. Thus the parent branch gradually becomes more complete as more of its child branches are merged. When a given parent branch has no remaining child branches, the parent branch is eligible for merging into its own parent(s), or new child branches can be created to add more work on the parent branch.
 
-Key to the branching model is the notion of task context. Each branch has its own local task context, and has a reference to its parent branch that allows the child branch to read the parent branch's context. This can be traced arbitrarily far back to the top-level main branch. This means that all child branches will have access to the whole chain of parent context, so they are aware of where they stand in the overall project plan. 
+Key to the branching model is the notion of task context. Each branch has its own local task context, and has a reference to its parent branch that allows the child branch to read the parent branch's context. This can be traced arbitrarily far back to the root branch(es). This means that all child branches will have access to the whole chain of parent context, so they are aware of where they stand in the overall project plan. 
 
 There are two components to the context. One is the high-level overall to-do list, which stores the entire to-do state of the project, and the other is individual granular task files.
 
@@ -36,7 +36,7 @@ Example of an in-progress project to-do list:
 ```markdown
 - [-] [task/ea434dde-authentication](.tt/task/ea434dde-authentication.md) Implement user authentication
   - [x] [task/a4048c0f-email-signup](.tt/task/a4048c0f-email-signup.md) Allow user creation with email address
-  - [-] [task/8cf8d966-add-oauth-flow](.tt/task/8cf8d966-add-oauth-flow.md) Integrate OAauth2 signin flow
+  - [-] [task/8cf8d966-add-oauth-flow](.tt/task/8cf8d966-add-oauth-flow.md) Integrate OAuth2 signin flow
     1. [x] [subtask/c10103b7-research-oauth-flow](.tt/subtask/c10103b7-research-oauth-flow.md) Research SSO auth flow
     2. [-] [subtask/3ddc3c2f-determine-sso-providers](.tt/subtask/3ddc3c2f-determine-sso-providers.md) Determine supported SSO providers
     3. [ ] [subtask/9fdbbd60-plan-feature](.tt/subtask/9fdbbd60-plan-feature.md) Plan feature
@@ -45,12 +45,12 @@ Example of an in-progress project to-do list:
     6. [ ] [subtask/34a0507c-review-implementation](.tt/subtask/34a0507c-review-implementation.md) Review feature implementation
     7. [ ] [subtask/6369ad14-update-docs](.tt/subtask/6369ad14-update-docs.md) Update documentation
     8. [ ] [subtask/48c3fa01-update-context](.tt/subtask/48c3fa01-update-context.md) Update parent task context
-  - [ ] [task/ef19c63e-forgotten-password](.tt/task/ef19c63e-forgotten-password) Implement 'forgotten password' signin
+  - [ ] [task/ef19c63e-forgotten-password](.tt/task/ef19c63e-forgotten-password.md) Implement 'forgotten password' signin
 - [ ] [task/4613e4c8-landing-page](.tt/task/4613e4c8-landing-page.md) Build landing page
 - [ ] [task/cdf2d632-pricing-page](.tt/task/cdf2d632-pricing-page.md) Build pricing page
 ```
 
-The second component to project context is individual task files. Each file pertains to one specific task and it gives the context for that task. Metadata is stored in Markdown frontmatter, including the one-line task summary, the task status, a full task description encoded as a JSON string, a list of labels used to categorize the task, and a list of any subtasks contained within the task.
+The second component to project context is individual task files. Each file pertains to one specific task and it gives the context for that task. Metadata is stored in Markdown frontmatter, including the one-line task summary, the task status, a full task description encoded as a JSON string, a list of labels used to categorize the task, and a list of any subtasks contained within the task. The order of `subtask:` entries in frontmatter defines the display order of subtasks in the todo list.
 
 Example of a task file for a task which has not yet been started (`.tt/task/cdf2d632-pricing-page.md`):
 
@@ -89,7 +89,7 @@ subtask: [ ] subtask/48c3fa01-update-context
   - `src/views/login`
 ```
 
-While working on the task, context can be added to this task file in markdown format. This context can be used as a 'scratch pad' to record anything that could be useful during implementation of the task. Importantly however, only the current task's task file, and the task file of any immediate parent tasks are writable. All other task files are considered read-only. This maintains focus on the current task context, and prevents task context that relates to one task leaking into other tasks. Note that parent task files are only writable from within a child task in order to persist a context summary from the child task to the parent task at the point the child task is merged.
+While working on the task, context can be added to this task file in markdown format. This context can be used as a 'scratch pad' to record anything that could be useful during implementation of the task. Importantly however, only the current task's task file, and the task file of any immediate parent tasks are writable. All other task files are considered read-only. This rule is enforced by `tt checkin`: validation fails if the merge range contains modifications to any other task or subtask files (see *Checkin validation* below). This maintains focus on the current task context, and prevents task context that relates to one task leaking into other tasks. Note that parent task files are only writable from within a child task in order to persist a context summary from the child task to the parent task at the point the child task is merged.
 
 At the point of merging, the task file is updated to a 'done' state, and the task file can no longer be modified: future changes must be created as a new ticket. Task files for completed tasks remain in the repository for future records, however subtask files are considered to be ephemeral context and are only present within the branch for the task they relate to. At the point a task is merged, any subtask files are deleted from its branch.
 
@@ -103,7 +103,13 @@ As far as possible, the VCS will be used as the source of truth for all relation
 
 Importantly, the todo list itself is not persisted anywhere, rather it is derived entirely from the VCS branch structure and the contents of the task files.
 
-This has the consequence that tasks cannot be reordered within their parent: initially there will be no support for defining the order of child tasks within a parent (tasks will displayed in order of task file creation commit time).
+This has the consequence that tasks cannot be reordered within their parent: initially there will be no support for defining the order of child tasks within a parent (tasks are displayed in order of task file creation commit time).
+
+#### Identifiers and naming
+
+- **Task ID:** Each task has a unique identifier of the form `<id>-<slug>`, where `<id>` is an auto-generated 8-character hexadecimal string and `<slug>` is a human-readable segment (e.g. `ea434dde-authentication`). The user cannot set the 8-hex prefix; it is generated by the tool to avoid collisions. The slug defaults to a value derived from the task summary (e.g. lowercased, hyphenated); the user may override it with `tt new --slug <slug>`. If two tasks share the same slug, the 8-hex prefix keeps branch and file names unique; duplicate slugs are allowed silently.
+- **Subtask ID:** Subtasks use the same format (8-hex + hyphen + slug). Uniqueness is per repository. The slug defaults from the subtask summary (or prompt); the user may override with `tt subtask add --slug <slug>`.
+- **Branch and file naming:** Task branches and task files use the machine-readable name `task/<id>-<slug>` (e.g. `task/8cf8d966-add-oauth-flow`). Subtask files live at `.tt/subtask/<id>-<slug>.md`.
 
 #### Metadata storage
 
@@ -121,11 +127,34 @@ Completing a task entails creating a commit with the following changes:
 - Remove all subtasks from the task file and delete their respective task files
 - Update the parent task file with any context relevant to the parent task
 
-The child branch is then merged into the parent branch, ignoring the conflicting change to the `TASK.md` symbolic link from the child branch to prevent clobbering the parent task file.
+The child branch is then merged into **each** parent branch. For a task with multiple parents, the child is merged into all of them; the task is considered completed only once it has been merged into every parent. On each merge, the parent's `TASK.md` is kept—the child's symlink change is discarded. With jj, conflicts in `TASK.md` are resolved by choosing the parent's version (e.g. using jj's conflict resolution workflow to take the parent's side).
 
-After merging the child branch, the parent's tree will include the completed child task file, as well as any other completed descendant task files which had already been merged into the child branch.
+After merging the child branch into a parent, that parent's tree will include the completed child task file, as well as any other completed descendant task files which had already been merged into the child branch. For list generation, a completed task's file can be read from any of its parent branches (the content is the same).
 
 Tasks cannot be marked as completed if they have one or more outstanding child tasks.
+
+#### Checkin validation
+
+Before attempting any merge, `tt checkin` performs validation and refuses to proceed if any check fails. The **merge range** is defined as the set of commits on the child branch that are not in the parent (the commits that would be merged in). High-level checks include:
+
+- Working copy is clean
+- Current branch is a task branch
+- No incomplete child tasks (all child tasks must be merged before the parent can be checked in)
+- No modifications to non-editable task files anywhere in the merge range: only the current task file and (optionally) the immediate parent task file may be modified in that range. Any other `.tt/task` or `.tt/subtask` file changes in the merge range cause checkin to abort
+- The only change to `TASK.md` in the merge range from the child is the symlink pointing to the child's task file (which will be discarded on merge)
+
+On failure, `tt checkin` aborts with an error message and leaves the repository unchanged. Implementations may add further checks (e.g. hook failures, conflict detection before merge).
+
+#### Subtask lifecycle
+
+Subtasks are created and ordered via the CLI; the order of `subtask:` entries in the task file frontmatter is maintained by the tool and defines display order.
+
+- **`tt subtask add [--summary <summary>] [--slug <slug>]`** — Add a subtask to the current task. If `--summary` is omitted, the user is prompted (as with `tt new`). The slug defaults from the summary; `--slug` overrides it. The new subtask is appended to the task's subtask list.
+- **`tt subtask remove <subtask-id>`** — Remove a subtask from the current task.
+- **`tt subtask move <subtask-id> <modifier>`** — Reorder a subtask. The modifier is one of: `--up`, `--down`, `--after <subtask-id>`, or `--before <subtask-id>` (mutually exclusive).
+- **`tt subtask complete <subtask-id>`** — Mark the subtask as done (updates frontmatter and checkbox).
+
+There is no separate branch for subtasks; focus is on the current task's branch, and the task file (and subtask files) live only on that branch until the task is merged.
 
 ### Generating the overall todo list
 
@@ -133,43 +162,41 @@ To generate the overall todo list, the tool must enumerate all active task branc
 
 #### Detailed algorithm
 
-For a given project root branch, e.g. `main`:
-
 1. Enumerate task branches and the branch tree
 
   - **List branches** that represent tasks (e.g. names like `task/<id>-<slug>`).
-  - **Resolve parents**: For each such branch, use the VCS (e.g. jj's revision parent / merge parents) to get the parent revision(s). Map those revisions to branches (e.g. which branch has that revision in its history or as its tip).
-  - **Build the task DAG**: Root = `main`. Each task branch is a node; its parent node(s) are the branch(es) it was created from (or merged into). That gives you the tree/DAG of tasks under `main`.
+  - **Resolve parents**: For each such branch, use the VCS (e.g. jj's revision parent / merge parents) to get the parent revision(s). Map those revisions to branches (e.g. which branch has that revision in its history or as its tip). A **root branch** is a branch that is not a task branch (no `task/` naming) and is used as a merge target; a project may have multiple root branches.
+  - **Build the task DAG**: Each task branch is a node; its parent node(s) are the branch(es) it was created from (or merged into). Tasks whose parent is a root branch are top-level tasks.
 
-  So at this stage you have: "all task branches" and "each task's parent(s) in the tree."
+  So at this stage you have: "all task branches," "each task's parent(s) in the tree," and which branches are roots.
 
 2. For each task, choose where to read its task file
 
   For every task branch **T**:
 
   - **Merged (done)**  
-    The task's file was merged into its parent, so it exists on the **parent branch** at that parent's current revision.  
-    → **Read** `.tt/task/<T>.md` **from the parent branch**.
+    The task's file was merged into (at least) one of its parent branches, so it exists on a **parent branch** at that parent's current revision. For a task with multiple parents, it is done only when merged into all of them; the file content is identical on each, so read from **any** parent that has `.tt/task/<T>.md`.  
+    → **Read** `.tt/task/<T>.md` **from one of the parent branches** (e.g. the first by name).
 
   - **Not merged (ongoing)**  
     The file exists only on **T**.  
     → **Read** `TASK.md` **from the task branch T**.
 
-  "Merged" can be implemented as: at the parent branch's tip (or the merge-base with **T**), does the path `.tt/task/<T>.md` exist? If yes → merged → read from parent. If no → read from **T**.
+  "Merged" can be implemented as: for each parent branch of **T**, at that parent's tip (or the merge-base with **T**), does the path `.tt/task/<T>.md` exist? If yes for **all** parents of **T** → merged → read from any parent. If no → read from **T**.
 
-  So you get one "canonical" task file per task, from either the parent or the task branch.
+  So you get one "canonical" task file per task, from either a parent or the task branch.
 
 3. Load metadata and subtasks
 
   - For that chosen revision (parent or **T**), parse the task file metadata from **frontmatter** (title, status, labels, subtask list).
-  - Resolve **subtasks** the same way: subtask files live under `.tt/subtask/<id>.md`. They exist only on the **same branch as the task** (and are ephemeral, only existing on active task branches). So for each subtask, read from the **task branch T**.
+  - Resolve **subtasks** the same way: subtask files live under `.tt/subtask/<id>-<slug>.md`. They exist only on the **same branch as the task** (and are ephemeral, only existing on active task branches). So for each subtask, read from the **task branch T**.
 
   That gives you, for each task: summary, status, link, and ordered list of subtasks with their statuses.
 
 4. Order siblings and flatten to a list
 
-  - **Order** child tasks under the same parent (e.g. by task-file creation time on the parent, or by commit time, per your "no reorder" rule).
-  - **Walk the tree** from `main` downward (e.g. depth-first): at each level, emit the parent task line, then recurse into its children with one more indent level, then continue with the next sibling. Subtasks are emitted under their task (e.g. numbered list under that task's bullet). Tasks with multiple parents will appear multiple times in the tree.
+  - **Order** child tasks under the same parent (e.g. by task-file creation time on the parent, or by commit time, per the "no reorder" rule).
+  - **Walk the tree** for the full list: with multiple roots, show all root-level task branches as top-level bullets (flat), with their children under each. That is, emit each top-level task (a task whose parent is a root branch), then recurse into its children with one more indent level, then continue with the next top-level task. Order top-level tasks e.g. by branch name or creation time. Subtasks are emitted under their task (e.g. numbered list under that task's bullet). Tasks with multiple parents appear multiple times in the tree (under each parent).
 
 5. Emit the markdown
 
@@ -184,59 +211,75 @@ For a given project root branch, e.g. `main`:
 #### End-to-end flow (summary)
 
 ```text
-main (root)
-  → enumerate task branches + parent pointers
-  → build task DAG (who is child of main, who is child of whom)
+  → enumerate task branches + parent pointers; identify root branches
+  → build task DAG (top-level tasks = tasks whose parent is a root)
   → for each task node:
-       if .tt/task/<id>.md exists on parent → merged → read task file from parent
+       if .tt/task/<id>.md exists on all parents → merged → read task file from any parent
        else → ongoing → read task file from task branch
        load subtask list from task branch (if still present)
   → sort siblings (e.g. by creation)
-  → walk tree depth-first, emit checkbox + link + title per task/subtask
+  → walk: top-level tasks as flat bullets, then depth-first under each; emit checkbox + link + title per task/subtask
   → output markdown
 ```
 
-So: **completed** tasks contribute to the list by reading their (merged) task file from the **parent branch**; **ongoing** tasks by reading from the **child branch** only.
+So: **completed** tasks contribute to the list by reading their (merged) task file from **any parent branch**; **ongoing** tasks by reading from the **task branch** only.
 
 ### Generating the 'focused' todo list for the current task
 
-A more efficient algorithm can be used to generate the todo list for just the current task and its direct ancestor tasks (walking the branch tree backwards from the current branch).
+**Input:** The current branch (or current task ID). Resolve the current branch to a task branch **T**; if the current branch is not a task branch, the focused list may be empty or show only a message.
 
-This can be useful for establishing context within the overall project without pulling in unnecessary detail.
+**Algorithm:**
+
+1. **Resolve current task:** From the current branch, determine the task branch **T** (e.g. current branch is a task branch, or the branch name identifies the task).
+2. **Walk to root:** From **T**, walk backwards via parent(s) to the root branch(es). Collect the path: **T**, its parent task(s), and so on up to the root. (For a task with multiple parents, the "path" may include multiple ancestors; collect all ancestors reachable from **T** to root.)
+3. **Load task files:** For each task on this path, choose where to read its task file using the same rule as the full algorithm (merged → read from any parent; ongoing → read from task branch). Load subtask lists from the task branch for each task that has subtasks.
+4. **Order and emit:** Order and emit markdown in the same format as the full list, but only for this subset of tasks (and their subtasks). Indentation and hierarchy are preserved for the focused slice.
+
+**Output:** Same markdown format as the full todo list. Useful for establishing context without pulling in the entire project tree.
+
+### Commands
+
+- **`tt list`** — Generate and print the full todo list to stdout. Output can be piped to a file if needed; the tool does not write to a file directly.
+- **`tt list --focused`** — Generate and print the focused todo list (current task and its direct ancestors only) to stdout.
+- **`tt status`** — Show the current task and branch.
+- **`tt show [<task-id>]`** — Show the full context of the current task, or of the task specified by `<task-id>`. Full context means the contents of that task's task file (frontmatter and body). Output is to stdout only.
+
+Other commands used in the workflow: `tt init`, `tt new`, `tt checkout`, `tt checkin`, and the subtask commands (see *Subtask lifecycle* below).
 
 ### User workflow
 
 The standard workflow proceeds as follows:
 
 1. User initializes a todo-tree project via `tt init <path-to-repo> <path-to-virtual-project-folder>`
-  - script checks that the repository's working directory is clean, and that there exists no `.tt` directory in the repository root directory
-  - script creates an directory at `<path-to-virtual-project-folder>`; this will contain the various workspace checkouts
-  - script creates a symbolic link at `<path-to-virtual-project-folder>/HEAD` which (initially) references the repository directory. This symbolic link will be automatically be updated to the most recently checked-out task whenever the user checks out a task, serving as a 'quick link' to the current development branch.
+  - The tool checks that the repository's working directory is clean, and that there exists no `.tt` directory in the repository root directory
+  - The tool creates a directory at `<path-to-virtual-project-folder>`; this will contain the various workspace checkouts
+  - The tool creates a symbolic link at `<path-to-virtual-project-folder>/HEAD` which (initially) references the repository directory. This symbolic link is automatically updated to the most recently checked-out task whenever the user checks out a task, serving as a 'quick link' to the current development branch.
 
-2. User creates a new task entry via `tt new [--parent <parent-task-id> [--parent <parent-task-id>...]] [--label <label> [--label <label>...]] [--id <task-id>] [--summary <summary>] [--description <description>]`
-  - script checks that the current working directory is clean
-  - script prompts user for task summary, autosuggested branch name, and description if none were provided
-  - script locates the parent branch(es) via the provided parent task ID, defaulting to the current branch (if the parent branch is not itself a task branch, it will be used as the project root)
-  - a new branch is created for the task, at the parent commit (if multiple parent branches were specified, this will be a merge commit).
-  - a new commit is created on the newly-created task branch with the following contents:
+2. User creates a new task entry via `tt new [--parent <parent-task-id> [--parent <parent-task-id>...]] [--label <label> [--label <label>...]] [--slug <slug>] [--summary <summary>] [--description <description>]`
+  - The tool checks that the current working directory is clean
+  - The tool prompts the user for task summary, autosuggested branch name, and description if none were provided
+  - The tool locates the parent branch(es) via the provided parent task ID, defaulting to the current branch (if the parent branch is not itself a task branch, it will be used as a project root)
+  - A new branch is created for the task, at the parent commit (if multiple parent branches were specified, this will be a merge commit)
+  - A new commit is created on the newly-created task branch with the following contents:
    - a new task file in `.tt/task/<id>.md` containing the frontmatter header for the task's metadata (with `status: TODO`)
-   - a `./TASK.md -> .tt/task/<id>.md` symbolic link. 
+   - a `./TASK.md -> .tt/task/<id>.md` symbolic link
 
 3. User starts working on a task via `tt checkout <task-id>`
-  - script checks that the current working directory is clean
-  - script verifies that the task branch has been created within the repository, returning an error if not
-  - if the task branch's task file has `status: TODO`:
-    - script creates a new jj workspace within the virtual project folder that references the task branch
-    - script runs `.tt/hooks/setup` (project-specific setup script) within the task's worktree directory
-    - script updates task file `status: IN-PROGRESS`
-  - script updates the `HEAD` symbolic link within the virtual project folder to reference the task's jj workspace directory
+  - The tool checks that the current working directory is clean
+  - The tool verifies that the task branch has been created within the repository, returning an error if not
+  - If the task branch's task file has `status: TODO`:
+    - The tool creates a new jj workspace within the virtual project folder that references the task branch
+    - The tool runs `.tt/hooks/setup` (project-specific setup script) within the task's worktree directory
+    - The tool updates the task file `status` to `IN-PROGRESS`
+  - The tool updates the `HEAD` symbolic link within the virtual project folder to reference the task's jj workspace directory
 
 4. User works on the task in the current branch, committing changes on the branch and accumulating relevant task context in `./TASK.md`
 
 5. User finishes working on a task via `tt checkin`
-  - script checks that the current working directory is clean and that the current branch is a task branch
-  - script diffs with the parent task branch and verifies that the only modified `.tt/task` files are the current task file and (optionally) the parent task file
-  - script runs `.tt/hooks/pre-checkin` within the current task's worktree directory
-  - script updates task file to `status: DONE` and removes any subtask metadata
-  - script removes any subtask task files
-  - script locates the parent task worktree (creating and initializing if necessary) runs `.tt/hooks/pre-receive`, merges the child branch into the parent worktree, runs `.tt/hooks/post-receive`. If there is no parent task (i.e. the task is a direct child of the root branch), it merges directly into the parent branch.
+  - The tool runs pre-merge validation (see *Checkin validation* below). If any check fails, `tt checkin` aborts with an error message and leaves the repository unchanged
+  - The tool runs `.tt/hooks/pre-checkin` within the current task's worktree directory
+  - The tool updates the task file to `status: DONE` and removes any subtask metadata
+  - The tool removes any subtask task files
+  - The tool merges the child branch into **each** parent branch (for a task with multiple parents, the child is merged into all of them). For each parent: the tool locates the parent task worktree (creating and initializing if necessary), runs `.tt/hooks/pre-receive`, performs the merge (resolving any `TASK.md` conflict by keeping the parent's version—e.g. using jj's conflict resolution to choose the parent's side), then runs `.tt/hooks/post-receive`. If there is no parent task (i.e. the task is a direct child of a root branch), the tool merges directly into that root branch
+  - After a successful checkin, the user remains in the same worktree. The tool prompts or suggests running `tt checkout <parent-task-id>` (or equivalent) to continue on a parent task
+  - If a merge conflict occurs in the working copy or in other `.tt/` files, the user must resolve it manually; for `TASK.md`, the intended resolution is to keep the parent's version. After resolving, the user can retry the merge or complete the checkin as appropriate
