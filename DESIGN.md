@@ -159,6 +159,23 @@ Subtasks are created and ordered via the CLI; the order of `subtask:` entries in
 
 There is no separate branch for subtasks; focus is on the current task's branch, and the task file (and subtask files) live only on that branch until the task is merged.
 
+### Propagate
+
+When the current task branch gains new commits (e.g. after merging another child with `tt checkin`, or after direct work on the parent), its descendant task branches still have the old parent revision as their base. **`tt propagate`** updates each descendant task branch (by default, recursively) so that it is based on its parent task branch's current tip. Strategy defaults to **`--rebase`**; use **`--merge`** to merge the parent into each child instead. Use **`--shallow`** to update only direct children of the current branch. Use **`--force`** with `--rebase` to allow proceeding when the rebase cannot be applied cleanly (no effect with `--merge`).
+
+**Scope:** The current branch must be a task branch or a root branch with task-branch children. By default, all descendant task branches in the subtree are updated; with `--shallow`, only direct children are updated. Branches are processed in a deterministic order (parent before children) so each branch is rebased or merged onto its parent's already-updated tip.
+
+**Preconditions (all checked before any updates; any failure causes the command to error and refuse to proceed):**
+
+- Working copy of the current task is clean.
+- Every branch that would be updated has exactly one parent (no merge commits at tip). If any has multiple parents, the command errors.
+- No worktree that would be affected may contain untracked changes in its working copy. If any does, the command errors.
+- When `--rebase` is used (default), the rebase must be applicable cleanly for every branch that would be updated. If any rebase would not apply cleanly, the command errors unless `--force` is specified. With `--force`, the implementation may leave conflict state for the user to resolve. Under JJ, conflicts are allowed in the model; no special conflict-failure handling is required beyond this.
+
+**Worktrees:** After updating branch tips, the tool syncs all changed child worktrees to the new commit so their working copy reflects the updated branch tip. The user's current working copy (HEAD) is not switched unless it was one of the updated branches.
+
+Propagate does not perform checkin-style merge-range validation (task-file and subtask-file rules for checkin do not apply when updating a child's base).
+
 ### Generating the overall todo list
 
 To generate the overall todo list, the tool must enumerate all active task branches, then merge the active branch's primary task file with the task files of all completed tasks.
@@ -246,8 +263,9 @@ So: **completed** tasks contribute to the list by reading their (merged) task fi
 - **`tt list --focused`** — Generate and print the focused todo list (current task and its direct ancestors only) to stdout.
 - **`tt status`** — Show the current task and branch.
 - **`tt show [<task-id>]`** — Show the full context of the current task, or of the task specified by `<task-id>`. Full context means the contents of that task's task file (frontmatter and body). Output is to stdout only.
+- **`tt propagate [--rebase | --merge] [--shallow] [--force]`** — Propagate the current task branch state to descendant task branches so their base is the parent's current tip (see *Propagate* below).
 
-Other commands used in the workflow: `tt init`, `tt new`, `tt checkout`, `tt checkin`, and the subtask commands (see *Subtask lifecycle* below).
+Other commands used in the workflow: `tt init`, `tt new`, `tt checkout`, `tt checkin`, `tt propagate`, and the subtask commands (see *Subtask lifecycle* below).
 
 ### User workflow
 
