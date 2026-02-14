@@ -154,16 +154,16 @@ Subtasks are created and ordered via the CLI; the order of `subtask:` entries in
 
 - **`tt subtask add [--summary <summary>] [--slug <slug>]`** — Add a subtask to the current task. If `--summary` is omitted, the user is prompted (as with `tt task new`). The slug defaults from the summary; `--slug` overrides it. The new subtask is appended to the task's subtask list.
 - **`tt subtask remove <subtask-id>`** — Remove a subtask from the current task.
-- **`tt subtask move <subtask-id> <modifier>`** — Reorder a subtask. The modifier is one of: `--up`, `--down`, `--after <subtask-id>`, or `--before <subtask-id>` (mutually exclusive).
+- **`tt subtask reorder <subtask-id> <modifier>`** — Reorder a subtask. The modifier is one of: `--up`, `--down`, `--after <subtask-id>`, or `--before <subtask-id>` (mutually exclusive).
 - **`tt subtask complete <subtask-id>`** — Mark the subtask as done (updates frontmatter and checkbox).
 
 There is no separate branch for subtasks; focus is on the current task's branch, and the task file (and subtask files) live only on that branch until the task is merged.
 
 ### Propagate
 
-When the current task branch gains new commits (e.g. after merging another child with `tt task checkin`, or after direct work on the parent), its descendant task branches still have the old parent revision as their base. **`tt task propagate`** updates each descendant task branch (by default, recursively) so that it is based on its parent task branch's current tip. Strategy defaults to **`--rebase`**; use **`--merge`** to merge the parent into each child instead. Use **`--shallow`** to update only direct children of the current branch. Use **`--force`** with `--rebase` to allow proceeding when the rebase cannot be applied cleanly (no effect with `--merge`).
+When the current task branch gains new commits (e.g. after merging another child with `tt task checkin`, or after direct work on the parent), its descendant task branches still have the old parent revision as their base. **`tt task propagate [--from=<parent-id>] [--to=<descendant-id> [--to=<descendant-id> ...]]`** updates the provided descendant branch(es) (by default, recursively) so that it is based on the parent task branch's current tip. `--from` defaults to the current task ID; `--to` defaults to the task IDs of all immediate children of the parent task. Strategy defaults to **`--rebase`**; use **`--merge`** to merge the parent into each child instead. Use **`--shallow`** to update only direct children of the current branch. Use **`--force`** to proceed regardless of whether the propagation produces conflicts.
 
-**Scope:** The current branch must be a task branch or a root branch with task-branch children. By default, all descendant task branches in the subtree are updated; with `--shallow`, only direct children are updated. Branches are processed in a deterministic order (parent before children) so each branch is rebased or merged onto its parent's already-updated tip.
+**Scope:** The parent branch must be a task branch or a root branch with task-branch children. By default, all descendant task branches in the subtree are updated; with `--shallow`, only direct children are updated. Branches are processed in a deterministic order (parent before children) so each branch is rebased or merged onto its parent's already-updated tip.
 
 **Preconditions (all checked before any updates; any failure causes the command to error and refuse to proceed):**
 
