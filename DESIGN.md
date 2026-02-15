@@ -20,18 +20,22 @@ Key to the branching model is the notion of task context. Each branch stores its
 
 There are two components to the context. One is the high-level overall to-do list, which stores the entire to-do state of the project, and the other is individual granular task files.
 
-The project to-do list is merely a markdown bullet point listing of all the different tasks that have been added to the project, where each bullet point contains the following, separated by spaces:
+The project to-do list is a markdown listing of all tasks, grouped by root branch. Each root branch has a section header (e.g. `Tasks on branch \`main\`:`). Top-level tasks whose branch's VCS parent is not a root branch are listed under a **detached** section: `Tasks with no branch parent:`. Within each section, the task tree is shown as nested bullets. Each bullet contains the following, separated by spaces:
 
-- A GFM checkbox indicating the status of the tasks:
+- A GFM checkbox indicating the status of the task:
   - To-do: `[ ]`
   - In progress: `[-]`
   - Done: `[x]`
 - A Markdown relative link to the task file for that task, labeled by the machine-readable name of the branch for that task
 - A single-line human-readable task summary
 
+The user can filter output with **`--root <branch-name>`** (repeatable) and **`--orphan`**. With no flags, all root sections and the detached section (if any) are shown. With `--root main` (or `--root main --root next`, etc.) and/or `--orphan`, only the listed root section(s) are shown.
+
 Example of an in-progress project to-do list:
 
 ```markdown
+Tasks on branch `main`:
+
 - [-] [task/authentication-ea434dde](.tt/task/authentication-ea434dde.md) Implement user authentication
   - [x] [task/email-signup-a4048c0f](.tt/task/email-signup-a4048c0f.md) Allow user creation with email address
   - [-] [task/add-oauth-flow-8cf8d966](.tt/task/add-oauth-flow-8cf8d966.md) Integrate OAuth2 signin flow
@@ -46,6 +50,14 @@ Example of an in-progress project to-do list:
   - [ ] [task/forgotten-password-ef19c63e](.tt/task/forgotten-password-ef19c63e.md) Implement 'forgotten password' signin
 - [ ] [task/landing-page-4613e4c8](.tt/task/landing-page-4613e4c8.md) Build landing page
 - [ ] [task/pricing-page-cdf2d632](.tt/task/pricing-page-cdf2d632.md) Build pricing page
+
+Tasks on branch `next`:
+
+...
+
+Tasks with no branch parent:
+
+- [ ] [task/product-research-5fb4e979](.tt/task/product-research-5fb4e979) Initial product research
 ```
 
 The second component to project context is individual task files. Each file pertains to one specific task and it gives the context for that task. Metadata is stored in Markdown frontmatter, including the one-line task summary, the task status, a full task description encoded as a JSON string, a list of labels used to categorize the task, and a list of child tasks via `subtask:` entries. The order of `subtask:` entries in frontmatter defines the display order of child tasks in the todo list.
@@ -232,12 +244,15 @@ To generate the overall todo list, the tool must enumerate all active task branc
     - **Parent of task C**: the unique task P whose `subtask:` list contains C (if C is not top-level).
   - **Validation**: Every non–top-level task must appear in exactly one other task's `subtask:` list. If a task appears in more than one list (multiple parents) or is not top-level but appears in none (orphan), the tool treats it as invalid and reports an error or shows an error marker.
 
-4. Attach top-level tasks to roots and order the list
+4. Attach top-level tasks to roots and build output sections
 
-  - **Root attachment**: For each top-level task T, use the **VCS parent of T's branch** to determine which root branch T belongs to (for grouping when there are multiple roots). Order top-level tasks under each root e.g. by branch name or creation time.
-  - **Walk the tree**: For each root, emit its top-level tasks as top-level bullets, then recurse into each task's children (from the `subtask:` order) with one more indent level. Sibling order is always the order of `subtask:` entries in the parent task file.
+  - **Root attachment**: For each top-level task T, use the **VCS parent of T's branch** to assign T to a section. If the VCS parent is a root branch R, T belongs under "Tasks on branch `R`:". If the VCS parent is not a root branch (e.g. it is a task branch), T is **detached** and belongs under "Tasks with no branch parent:". Order top-level tasks within each section e.g. by branch name or creation time.
+  - **Filtering**: If the user specified `--root <branch-name>` (one or more), only emit sections for those roots. If the user specified `--orphan`, only emit the detached section. If neither is specified, emit all root sections and the detached section (if it has any tasks).
 
 5. Emit the markdown
+
+  - For each section to be output (in order: requested roots, then detached if included), emit a **section header** line: `Tasks on branch \`<name>\`:` or `Tasks with no branch parent:` (no trailing blank line in the spec; one blank line after the header is conventional before the first bullet).
+  - Under each section, for each top-level task in that section, output a task line, then recurse into its children (from the `subtask:` order) with one more indent level per nesting. Sibling order is always the order of `subtask:` entries in the parent task file.
 
   For each task line, output:
 
@@ -256,8 +271,9 @@ To generate the overall todo list, the tool must enumerate all active task branc
        if found on branch B → merged → read T from B (file or frontmatter line)
        else → ongoing → read T from T's branch
   → build task tree from frontmatter (top-level = not in any subtask list; children = subtask list order)
-  → attach top-level tasks to roots via VCS parent of each top-level task's branch
-  → walk tree: per root, top-level tasks then depth-first children; emit checkbox + link + title per task
+  → attach top-level tasks to roots or detached via VCS parent of each top-level task's branch
+  → filter sections by --root / --orphan if present
+  → for each section: emit "Tasks on branch \`<name>\`:" or "Tasks with no branch parent:"; then walk tree (depth-first); emit checkbox + link + title per task
   → output markdown
 ```
 
@@ -289,7 +305,7 @@ The canonical form for CLI commands is `tt <entity-type> <command>`, e.g. `tt pr
 - `tt propagate` → `tt task propagate`
 - `tt list` → `tt task list`
 
-- **`tt task list`** — Generate and print the full todo list to stdout. Output can be piped to a file if needed; the tool does not write to a file directly.
+- **`tt task list`** — Generate and print the full todo list to stdout. Top-level tasks are grouped under section headers by root branch. Optional: **`[--root <branch-name>]`** (repeatable) and **`[--orphan]`** to show only the listed root section(s). Example: `tt task list --root main` or `tt task list --root main --root next --orphan`.
 - **`tt task list --focused`** — Generate and print the focused todo list (current task and its direct ancestors only) to stdout.
 - **`tt task status`** — Show the current task and branch, and the status of all direct child tasks (the `subtask:` entries in the current task file).
 - **`tt task show [<task-id>]`** — Show the full context of the current task, or of the task specified by `<task-id>`. Full context means the contents of that task's task file (frontmatter and body). Output is to stdout only.
