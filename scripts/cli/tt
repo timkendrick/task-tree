@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# tt — task-tree bootstrap CLI dispatcher
+#
+# Dispatches to subcommands based on the first two arguments:
+#   tt <command> <subcommand> [args...]
+#
+# Subcommands are located via the filesystem:
+#   scripts/cli/<command>/<subcommand>
+#
+# Usage:
+#   tt task create --slug foo --title "Foo"
+#   tt project init /path/to/repo /path/to/virtual
+#
+
+readonly SCRIPT_NAME="${0##*/}"
+
+log() {
+  printf '%s\n' "$*" >&2
+}
+
+usage() {
+  local exit_code="${1:-1}"
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} <command> <subcommand> [args...]
+
+Dispatch to a tt subcommand. Commands and subcommands are discovered from
+the filesystem under the CLI scripts directory.
+
+Examples:
+  ${SCRIPT_NAME} task create --slug phase-0 --title "Phase 0"
+  ${SCRIPT_NAME} project init /path/to/repo /path/to/virtual
+
+EOF
+  exit "$exit_code"
+}
+
+main() {
+  local script_dir
+  script_dir="$(cd "$(dirname "$0")" && pwd)"
+
+  if [[ $# -ge 1 && ( "$1" == "--help" || "$1" == "-h" ) ]]; then
+    usage 0
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    log "Error: ${SCRIPT_NAME} requires <command> and <subcommand>"
+    usage
+  fi
+
+  if [[ $# -eq 1 ]] || { [[ $# -eq 2 ]] && [[ "$2" == "--help" || "$2" == "-h" ]]; }; then
+    local command="$1"
+    local command_dir="$script_dir/$command"
+
+    if [[ ! -d "$command_dir" ]]; then
+      log "tt: command not found: $command"
+      exit 1
+    fi
+
+    log "${SCRIPT_NAME} $command <subcommand> [args...]"
+    log ""
+    log "Available subcommands:"
+    local found=false
+    for f in "$command_dir"/*; do
+      if [[ -f "$f" && -x "$f" ]]; then
+        log "  $(basename "$f")"
+        found=true
+      fi
+    done
+    [[ "$found" == false ]] && log "  (none)"
+    exit 0
+  fi
+
+  local command="$1"
+  local subcommand="$2"
+  shift 2
+
+  local command_dir="$script_dir/$command"
+  local subcommand_script="$command_dir/$subcommand"
+
+  if [[ ! -d "$command_dir" ]]; then
+    log "tt: command not found: $command"
+    exit 1
+  fi
+
+  if [[ ! -f "$subcommand_script" ]] || [[ ! -x "$subcommand_script" ]]; then
+    log "tt: subcommand not found: $subcommand"
+    exit 1
+  fi
+
+  exec "$subcommand_script" "$@"
+}
+
+main "$@"

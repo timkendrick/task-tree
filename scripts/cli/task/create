@@ -1,0 +1,391 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# Create a task file and jj bookmark (branch) for bootstrapping task-tree.
+#
+# For top-level tasks: branches from current branch (or @ if no bookmarks).
+# For child tasks: use --parent <task-id> to add subtask entry to parent first.
+#
+# Usage:
+#   create [options...]
+#   create --title <title> [options...]
+#   create --slug <slug> --title <title> [options...]
+#
+# Optional:
+#   --title TITLE     Task title (prompted if missing and stdin is a TTY)
+#   --slug SLUG       Human-readable slug (default: auto from title)
+#   --parent TASK-ID  Parent task ID (default: current branch)
+#   --description "TEXT"   Task description (use \n for newlines)
+#   --label LABEL     Add a label (repeatable)
+#   --status STATUS   TODO or IN-PROGRESS (default: TODO)
+#   --prefix PREFIX   Task ID prefix (default: task/)
+#   --repo PATH       Repository root (default: walk up to find .jj)
+#   --dry-run         Show what would be done without making changes
+#
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} [options...]
+
+Create a task file and jj bookmark for task-tree bootstrap.
+
+Optional:
+  --title TITLE       Task title/summary (prompted if missing and interactive)
+  --slug SLUG         Human-readable slug (default: auto from title, e.g. phase-0-test-harness)
+  --parent TASK-ID      Parent task ID (default: current branch)
+  --description TEXT    Task description (use \\n for newlines in YAML)
+  --label LABEL         Add a label (repeatable)
+  --status STATUS       TODO or IN-PROGRESS (default: TODO)
+  --prefix PREFIX       Task ID prefix (default: from .tt/config.toml)
+  --repo PATH         Repository root (default: walk up to find .jj)
+  --dry-run           Show what would be done, do not execute
+
+Examples:
+  ${SCRIPT_NAME}                                    # prompts for title
+  ${SCRIPT_NAME} --title "Phase 0: Test harness"   # slug auto: phase-0-test-harness
+  ${SCRIPT_NAME} --slug tt-task-list --title "tt task list" --parent task/phase-0-abc123de --label tdd
+
+EOF
+  exit 1
+}
+
+# Generate slug from title: replace non-alphanumeric with -, collapse consecutive, lowercase, trim.
+title_to_slug() {
+  local t="$1"
+  printf '%s' "$t" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | tr -s '-' | sed 's/^-//;s/-$//'
+}
+
+# Validate slug: only lowercase alphanumeric and single hyphens; no leading/trailing hyphens.
+# Returns 0 if valid, 1 and logs error if invalid.
+validate_slug() {
+  local s="$1"
+  if [[ -z "$s" ]]; then
+    log "Error: Slug cannot be empty"
+    return 1
+  fi
+  if [[ "$s" =~ [A-Z] ]]; then
+    log "Error: Slug must be lowercase: $s"
+    return 1
+  fi
+  if [[ "$s" =~ ^- ]]; then
+    log "Error: Slug cannot start with hyphen: $s"
+    return 1
+  fi
+  if [[ "$s" =~ -$ ]]; then
+    log "Error: Slug cannot end with hyphen: $s"
+    return 1
+  fi
+  if [[ "$s" =~ -- ]]; then
+    log "Error: Slug cannot contain consecutive hyphens: $s"
+    return 1
+  fi
+  if [[ "$s" =~ [^a-z0-9-] ]]; then
+    log "Error: Slug must contain only lowercase letters, digits, and hyphens: $s"
+    return 1
+  fi
+  return 0
+}
+
+generate_task_hex() {
+  # Generate 8-character hex for task ID uniqueness (per DESIGN §3)
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 4
+  elif [[ -r /dev/urandom ]]; then
+    od -An -N4 -tx1 /dev/urandom | tr -d ' \n' | head -c 8
+  else
+    log "Error: Need openssl or /dev/urandom to generate task ID"
+    exit 1
+  fi
+}
+
+# Usage: resolve_parent PARENT_ARG REPO TASK_PREFIX PROJECT_PREFIX
+#
+# Resolve the parent for task creation: either from explicit --parent or from current branch.
+# Outputs three lines to stdout:
+#   line 1: parent_rev      — commit ID to branch from
+#   line 2: parent_task_file — path to parent task file, or empty (top-level task)
+#   line 3: parent_bookmark — bookmark name to update after adding subtask, or empty
+#
+# When PARENT_ARG is non-empty: resolves that task-id/bookmark. If it's a task or project
+#   branch, derives task file path from the ID and outputs the bookmark to update.
+#
+# When PARENT_ARG is empty: calls resolve_current to use the current branch.
+#
+# Exits 1 if parent not found.
+resolve_parent() {
+  local parent_arg="$1"
+  local repo="$2"
+  local task_prefix="$3"
+  local project_prefix="$4"
+  local jj_opts=(-R "$repo")
+
+  if [[ -n "$parent_arg" ]]; then
+    # Explicit --parent <task-id>
+    local parent_task_id="$parent_arg"
+    local parent_rev
+    if ! parent_rev="$(jj "${jj_opts[@]}" log -r "$parent_task_id" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"; then
+      log "Error: Parent task not found: $parent_task_id"
+      exit 1
+    fi
+    if is_task_branch "$parent_task_id" "$task_prefix"; then
+      printf '%s\n%s\n%s\n' "$parent_rev" ".tt/task/${parent_task_id#$task_prefix}.md" "$parent_task_id"
+    elif is_project_branch "$parent_task_id" "$project_prefix"; then
+      printf '%s\n%s\n%s\n' "$parent_rev" ".tt/task/${parent_task_id#$project_prefix}.md" "$parent_task_id"
+    else
+      printf '%s\n\n\n' "$parent_rev"
+    fi
+  else
+    resolve_current "$repo" "$task_prefix" "$project_prefix"
+  fi
+}
+
+# Usage: write_task_file REPO TASK_FILE_PATH TITLE STATUS DESCRIPTION [LABEL ...]
+#
+# Write a task file with YAML frontmatter (title, status, description, labels).
+# DESCRIPTION may be empty. Labels are written as repeated "label: VALUE" entries.
+write_task_file() {
+  local repo="$1"
+  local task_file_path="$2"
+  local title="$3"
+  local status="$4"
+  local description="$5"
+  shift 5
+  local desc_yaml=''
+
+  if [[ -n "$description" ]]; then
+    desc_yaml="description: $(printf '%s' "$description" | jq -Rs '.')"
+  fi
+  {
+    echo '---'
+    echo "title: \"${title//\"/\\\"}\""
+    echo "status: $status"
+    [[ -n "$desc_yaml" ]] && echo "$desc_yaml"
+    for label in "$@"; do
+      echo "label: $label"
+    done
+    echo '---'
+  } > "$repo/$task_file_path"
+  log "Created task file: $task_file_path"
+}
+
+# Usage: add_subtask_to_frontmatter PARENT_PATH TASK_ID
+#
+# Add a subtask line before the closing --- of YAML frontmatter in the parent task file.
+add_subtask_to_frontmatter() {
+  local parent_path="$1"
+  local task_id="$2"
+  local tmpfile
+  tmpfile="$(mktemp)"
+  awk -v task_id="$task_id" '
+    /^---$/ { sep++; if (sep == 2) { print "subtask: [ ] " task_id } }
+    { print }
+  ' "$parent_path" > "$tmpfile"
+  mv "$tmpfile" "$parent_path"
+}
+
+main() {
+  local slug=''
+  local title=''
+  local description=''
+  local has_description=false
+  local -a labels=()
+  local status='TODO'
+  local task_prefix=''
+  local parent=''
+  local repo=''
+  local dry_run=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --slug)
+        [[ $# -lt 2 ]] && { log "Error: --slug requires an argument"; usage; }
+        slug="$2"
+        shift 2
+        ;;
+      --title)
+        [[ $# -lt 2 ]] && { log "Error: --title requires an argument"; usage; }
+        title="$2"
+        shift 2
+        ;;
+      --description)
+        [[ $# -lt 2 ]] && { log "Error: --description requires an argument"; usage; }
+        description="$2"
+        has_description=true
+        shift 2
+        ;;
+      --label)
+        [[ $# -lt 2 ]] && { log "Error: --label requires an argument"; usage; }
+        labels+=("$2")
+        shift 2
+        ;;
+      --status)
+        [[ $# -lt 2 ]] && { log "Error: --status requires an argument"; usage; }
+        status="$2"
+        shift 2
+        ;;
+      --prefix)
+        [[ $# -lt 2 ]] && { log "Error: --prefix requires an argument"; usage; }
+        task_prefix="$2"
+        shift 2
+        ;;
+      --parent)
+        [[ $# -lt 2 ]] && { log "Error: --parent requires an argument"; usage; }
+        parent="$2"
+        shift 2
+        ;;
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"
+        shift 2
+        ;;
+      --dry-run)
+        dry_run=true
+        shift
+        ;;
+      -h|--help)
+        usage
+        ;;
+      *)
+        log "Error: Unknown option: $1"
+        usage
+        ;;
+    esac
+  done
+
+  if [[ -z "$title" ]]; then
+    if [[ -t 0 ]]; then
+      read -e -p "Enter a title: " title
+    fi
+    if [[ -z "$title" ]]; then
+      log "Error: Title is required (use --title or enter when prompted)"
+      usage
+    fi
+  fi
+
+  if [[ -z "$slug" ]]; then
+    slug="$(title_to_slug "$title")"
+    if [[ -z "$slug" ]]; then
+      log "Error: Could not generate slug from title: $title"
+      exit 1
+    fi
+  else
+    if ! validate_slug "$slug"; then
+      exit 1
+    fi
+  fi
+
+  if [[ "$status" != 'TODO' && "$status" != 'IN-PROGRESS' ]]; then
+    log "Error: --status must be TODO or IN-PROGRESS"
+    exit 1
+  fi
+
+  # Resolve repo root: walk up from current directory to find .jj
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository (no .jj directory found). Use --repo to specify."
+      exit 1
+    fi
+  fi
+
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  # Resolve task prefix and project prefix: from config if not explicitly set
+  if [[ -z "$task_prefix" ]]; then
+    task_prefix="$(get_task_prefix "$repo")"
+  fi
+  local project_prefix
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # Resolve parent: from --parent or default (current branch)
+  local resolve_output
+  local parent_rev=''
+  local parent_task_file=''
+  local parent_bookmark=''
+  resolve_output="$(resolve_parent "$parent" "$repo" "$task_prefix" "$project_prefix")"
+  parent_rev="$(printf '%s' "$resolve_output" | head -n 1)"
+  parent_task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
+  parent_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+
+  # Generate task ID
+  local task_hex="$(generate_task_hex)"
+  local task_id="${task_prefix}${slug}-${task_hex}"
+  local task_filename="${slug}-${task_hex}.md"
+  local task_file_path=".tt/task/${task_filename}"
+
+  if [[ "$dry_run" == true ]]; then
+    log "Dry run: would create task $task_id"
+    log "  Task file: $task_file_path"
+    log "  Title: $title"
+    log "  Status: $status"
+    log "  Parent rev: $parent_rev"
+    [[ -n "$parent_task_file" ]] && log "  Parent task file: $parent_task_file"
+    log "  JJ bookmark: $task_id"
+    exit 0
+  fi
+
+  local -a jj_opts=(-R "$repo")
+
+  # Capture revision user had checked out; restore it on exit so we leave them where they were.
+  # Use inline trap to capture values at definition time (locals are gone when EXIT runs).
+  local original_rev
+  original_rev="$(jj "${jj_opts[@]}" log -r '@' -n 1 --no-graph -T 'commit_id')"
+  # If the working copy is currently on the parent branch (it's our closest ancestor bookmark),
+  # leave it at the updated parent tip after task creation rather than restoring to the now-stale
+  # original revision. Otherwise, restore as normal.
+  local current_bookmark
+  current_bookmark="$(resolve_current "$repo" "$task_prefix" "$project_prefix" | sed -n '3p')"
+  if [[ -n "$parent_bookmark" ]] && [[ "$current_bookmark" == "$parent_bookmark" ]]; then
+    trap 'jj -R "'"$repo"'" new "'"$parent_bookmark"'" 2>/dev/null || true' EXIT
+  else
+    trap '[[ -n "'"$original_rev"'" ]] && jj -R "'"$repo"'" edit "'"$original_rev"'" 2>/dev/null || true' EXIT
+  fi
+
+  jj "${jj_opts[@]}" new "$parent_rev"
+
+  # Ensure .tt/task exists
+  mkdir -p "$repo/.tt/task"
+
+  if [[ -n "$parent_task_file" ]]; then
+    # Child task: create task file and register subtask on the parent branch in one commit,
+    # then fork an empty child commit and assign it the task bookmark.
+    local parent_path="$repo/$parent_task_file"
+    if [[ ! -f "$parent_path" ]]; then
+      log "Error: Parent task file not found: $parent_path"
+      exit 1
+    fi
+    if ((${#labels[@]} > 0)); then
+      write_task_file "$repo" "$task_file_path" "$title" "$status" "$description" "${labels[@]}"
+    else
+      write_task_file "$repo" "$task_file_path" "$title" "$status" "$description"
+    fi
+    add_subtask_to_frontmatter "$parent_path" "$task_id"
+    log "Added subtask to parent: $parent_task_file"
+    jj "${jj_opts[@]}" describe -m "Create task: $title"
+    jj "${jj_opts[@]}" bookmark set "$parent_bookmark"
+    jj "${jj_opts[@]}" new "@"
+    jj "${jj_opts[@]}" bookmark set "$task_id"
+  else
+    # Top-level task: create task file on the child branch itself.
+    if ((${#labels[@]} > 0)); then
+      write_task_file "$repo" "$task_file_path" "$title" "$status" "$description" "${labels[@]}"
+    else
+      write_task_file "$repo" "$task_file_path" "$title" "$status" "$description"
+    fi
+    jj "${jj_opts[@]}" describe -m "Create project: $title"
+    jj "${jj_opts[@]}" bookmark set "$task_id"
+  fi
+
+  log "Created task $task_id (bookmark: $task_id)"
+  printf '%s\n' "$task_id"
+}
+
+main "$@"

@@ -2,6 +2,19 @@
 
 This file provides guidance to AI agents when working with code in this repository.
 
+## Task / VCS Management
+
+Use the **bootstrap** `./scripts/cli/tt` CLI for task and VCS management. This bash-based tool is the current implementation while the full Rust CLI is being developed.
+
+**Important:** The bootstrap CLI operates directly on this repository. Commands like `tt task checkout` will change the currently checked-out repository contents (switching branches/worktrees), which can be disorienting mid-session. Always run both `jj log` and `tt task list` before and after running any bootstrap CLI commands so you know exactly where you are and what changed.
+
+```bash
+./scripts/cli/tt task create --slug <slug> --title "<title>" [options...]
+./scripts/cli/tt task create --help    # Show task creation options
+./scripts/cli/tt task --help           # List available task subcommands
+./scripts/cli/tt --help                # General usage
+```
+
 ## Version Control
 
 This project uses **JJ (Jujutsu)** instead of Git. Use `jj` commands rather than `git` commands for all version control operations.
