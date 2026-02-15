@@ -167,6 +167,36 @@ Before attempting any merge, `tt task checkin` performs validation and refuses t
 
 On failure, `tt task checkin` aborts with an error message and leaves the repository unchanged. Implementations may add further checks via hook scripts.
 
+#### Lifecycle hooks
+
+Hooks are shell scripts or executables under `.tt/hooks/<name>`, one script per hook (no `.d` directory). They follow the same exit-code convention as Git: exit 0 means the workflow may proceed; non-zero means abort, with stderr shown to the user. If a hook is missing, it is skipped.
+
+Every hook receives at least:
+
+- **TT_WORKSPACE_DIR** — Path to the virtual project root (the directory containing all jj worktrees).
+- **TT_WORKTREE_DIR** — Path to the jj workspace directory for the current or affected task (where the hook runs), except where noted below.
+
+| Hook | When | Where | Blocking? | Extra env |
+|------|------|-------|-----------|-----------|
+| **setup** | When initializing a new worktree for a task (during `tt task checkout`) | New task worktree | Optional (non-blocking so init doesn't fail) | TT_TASK_ID, TT_BRANCH, TT_PARENT_TASK_ID, TT_ROOT_BRANCH |
+| **pre-checkout** | Before switching branch in `tt task checkout` | Current (outgoing) worktree | Yes | TT_TASK_ID, TT_TASK_BRANCH (newly-checked-out target), TT_PREVIOUS_TASK_ID, TT_PREVIOUS_TASK_BRANCH (outgoing) |
+| **post-checkout** | After successful `tt task checkout` | Checked-out task worktree | Optional | TT_TASK_ID, TT_TASK_BRANCH (newly-checked-out), TT_PREVIOUS_TASK_ID, TT_PREVIOUS_TASK_BRANCH (outgoing) |
+| **pre-new** | Before creating task in `tt task new` | Parent task worktree | Yes | TT_PARENT_TASK_ID, TT_PARENT_BRANCH, TT_TITLE, TT_SLUG, TT_DESCRIPTION, TT_LABELS (space-separated; labels with spaces/special chars quoted) |
+| **post-new** | After task created in `tt task new` | New task worktree if created, else worktree we end up in | Optional | TT_TASK_ID (new), TT_TASK_BRANCH (new), TT_PARENT_TASK_ID, TT_PARENT_BRANCH; TT_WORKTREE_DIR = that same worktree |
+| **pre-checkin** | Before checkin in `tt task checkin` | Child (current) task worktree | Yes | TT_TASK_ID, TT_TASK_BRANCH, TT_PARENT_TASK_ID, TT_PARENT_BRANCH |
+| **pre-receive** | Before merge applied on parent (during checkin) | Parent task worktree | Yes | TT_TASK_ID, TT_TASK_BRANCH (parent), TT_INCOMING_TASK_ID, TT_INCOMING_BRANCH (child being merged) |
+| **post-receive** | After merge applied on parent (during checkin) | Parent task worktree | Optional | Same as pre-receive |
+| **pre-propagate** | Before `tt task propagate` updates descendants | Current (source) task worktree | Yes | TT_TASK_ID, TT_TASK_BRANCH |
+| **post-propagate** | After `tt task propagate` completes | Same | Optional | TT_TASK_ID, TT_TASK_BRANCH |
+| **pre-remove** | Before `tt task remove` | Parent task worktree (task whose frontmatter is updated) | Yes | TT_TASK_ID, TT_TASK_BRANCH (removed task), TT_PARENT_TASK_ID, TT_PARENT_TASK_BRANCH (task we're removing from) |
+| **post-remove** | After `tt task remove` | Same | Optional | Same as pre-remove |
+
+**Blocking vs optional:** Pre- hooks are blocking: a non-zero exit aborts the command. Post- hooks and **setup** are best-effort: a non-zero exit may be logged but does not abort the workflow, so optional bookkeeping does not fail the operation.
+
+**post-new:** If no new worktree is created, TT_WORKTREE_DIR is the worktree we end up in (e.g. the parent's); TT_TASK_ID and TT_TASK_BRANCH still refer to the new task and its branch.
+
+**TT_LABELS:** Format is space-separated; labels containing spaces or special characters are quoted (implementation detail).
+
 #### Checkout behavior (`tt task checkout`)
 
 When checking out a task via `tt task checkout <task-id>`, the user may optionally provide a `--worktree` flag.
@@ -325,7 +355,7 @@ The standard workflow proceeds as follows:
   - The tool creates a `.tt/config.toml` file containing a configurable `prefix` for task IDs, defaulting to `task/`
   - The tool creates a symbolic link at `<path-to-virtual-project-folder>/HEAD` which (initially) references the repository directory. This symbolic link is automatically updated to the most recently checked-out task whenever the user checks out a task, serving as a 'quick link' to the current development branch.
 
-2. User creates a new task via `tt task new [--parent <parent-task-id>] [--slug <slug>] [--summary <summary>] [--description <description>] [--label <label> [--label <label>...]] [--propagate [<propagate-flags>]]`
+2. User creates a new task via `tt task new [--parent <parent-task-id>] [--slug <slug>] [--title <title>] [--description <description>] [--label <label> [--label <label>...]] [--propagate [<propagate-flags>]]`
   - The tool checks that the current working directory is clean (for the parent's workspace if creating on parent's branch)
   - The tool prompts the user for task summary, autosuggested branch name, and description if none were provided
   - The tool locates the parent branch via the provided parent task ID, defaulting to the current branch (if the parent branch is not itself a task branch, it will be used as a project root). If the parent would result in multiple parents (e.g. a merge commit), the tool notifies the user and refuses to create the task.
@@ -339,7 +369,7 @@ The standard workflow proceeds as follows:
   - The tool verifies that the task branch exists, returning an error if not
   - If `--worktree` (or `--worktree=<path>`) is provided, or a workspace already exists for this task, the tool uses or creates the appropriate jj workspace; otherwise it checks out the task branch in the closest ancestor task workspace or the current workspace (see *Checkout behavior* above)
   - If the task file has `status: TODO`, the tool updates it to `IN-PROGRESS`
-  - The tool runs `.tt/hooks/setup` (project-specific setup script) within the task's worktree directory when initializing a new workspace
+  - The tool runs `.tt/hooks/setup` (project-specific setup script; see *Lifecycle hooks*) within the task's worktree directory when initializing a new workspace
   - The tool updates the `HEAD` symbolic link within the virtual project folder to reference the task's workspace directory
 
 4. User works on the task in the current branch, committing changes on the branch and accumulating relevant task context in `./TASK.md`
