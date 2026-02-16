@@ -1,0 +1,520 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task list — Generate and print the project todo list (bootstrap)
+#
+# Full list: tasks grouped by project; optional filtering.
+# Focused list: current task and its ancestors only.
+#
+# Usage:
+#   list [--project <project-id>]... [--detached]     # selected projects, +detached if --detached
+#   list [--all]                                     # all projects + detached
+#   list --focus                                     # current task chain only
+#
+# Options:
+#   --project ID    Filter to specific project(s) (repeatable)
+#   --detached      Add detached (orphaned) section to current selection
+#   --all           Show all projects and detached section
+#   --focus         Show current task and ancestors only (exclusive with other options)
+#   --repo PATH     Repository root (default: find .jj)
+#
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} [options...]
+
+Generate and print the project todo list.
+
+Options:
+  --project ID    Include specific project(s) (repeatable)
+  --detached      Add detached (orphaned) tasks to selection
+  --all           Show all projects and detached section
+  --focus         Show current task and ancestors only
+  --repo PATH     Repository root (default: find .jj)
+  -h, --help      Show this help
+
+Examples:
+  ${SCRIPT_NAME}                                    # all projects
+  ${SCRIPT_NAME} --project project/main-abc12345    # one project
+  ${SCRIPT_NAME} --detached                         # all projects + detached
+  ${SCRIPT_NAME} --all                              # all projects + detached
+  ${SCRIPT_NAME} --focus                            # current task chain
+
+EOF
+  exit 1
+}
+
+# Usage: get_suffix_from_id FULL_ID PREFIX
+# Outputs the slug-hex part (e.g. tt-task-list-6638a980) from task/tt-task-list-6638a980
+get_suffix_from_id() {
+  local id="$1"
+  local prefix="$2"
+  printf '%s' "${id#$prefix}"
+}
+
+# Usage: read_task_file_at_rev REPO REV TASK_FILE_PATH
+# Outputs file contents to stdout. Returns 1 if file missing.
+read_task_file_at_rev() {
+  local repo="$1"
+  local rev="$2"
+  local path="$3"
+  jj -R "$repo" file show -r "$rev" -- "$path" 2>/dev/null
+}
+
+# Parse YAML-like frontmatter: extract title, status, and subtask lines.
+# Usage: parse_frontmatter CONTENT
+# Outputs to stdout, one line per extracted value:
+#   title:TITLE
+#   status:STATUS
+#   subtask:CHECKBOX TASK_ID [TITLE]
+#   subtask:...
+parse_frontmatter() {
+  local content="${1:-}"
+  printf '%s' "$content" | awk '
+    /^---$/ { in_fm = !in_fm; next }
+    in_fm && /^title:[ \t]*/ {
+      sub(/^title:[ \t]*/, "")
+      gsub(/^["'\'']|["'\'']$/, "")
+      print "title:" $0
+      next
+    }
+    in_fm && /^status:[ \t]*/ {
+      sub(/^status:[ \t]*/, "")
+      print "status:" $0
+      next
+    }
+    in_fm && /^subtask:[ \t]*\[[ x\-]\]/ {
+      sub(/^subtask:[ \t]*/, "")
+      cb = substr($0, 1, 3)
+      rest = substr($0, 5)
+      sub(/^[ \t]+/, "", rest)
+      id = rest
+      sub(/[ \t].*$/, "", id)
+      sub(/^[^ \t]+[ \t]*/, "", rest)
+      print "subtask:" cb " " id " " rest
+      next
+    }
+  '
+}
+
+# Map status: field to GFM checkbox.
+# TODO -> [ ], IN-PROGRESS -> [-], DONE/done -> [x], else [ ]
+status_to_checkbox() {
+  local s="$1"
+  case "$s" in
+    TODO) printf '[ ]' ;;
+    IN-PROGRESS) printf '[-]' ;;
+    DONE|Done) printf '[x]' ;;
+    *) printf '[ ]' ;;
+  esac
+}
+
+# Get checkbox and title from content string.
+get_metadata_from_content() {
+  local content="$1"
+  local task_id="$2"
+  local merged_branch="$3"
+  local all_branches="$4"
+  local repo="$5"
+
+  # Check merged + deleted: subtask: [x] ID Title
+  if [[ -n "$merged_branch" ]]; then
+    if ! printf '%s' "$content" | grep -q "\.tt/task/"; then
+      local line
+      line="$(printf '%s' "$content" | grep -E "subtask:\s*\[x\]\s+${task_id}\s+" | head -1)"
+      if [[ -n "$line" ]]; then
+        local title
+        title="${line#*${task_id}}"
+        title="${title#"${title%%[![:space:]]*}"}"
+        printf '[x]|%s' "$title"
+        return 0
+      fi
+    fi
+  fi
+
+  local title=''
+  local status='TODO'
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    case "$line" in
+      title:*) title="${line#title:}" ;;
+      status:*) status="${line#status:}" ;;
+    esac
+  done < <(parse_frontmatter "$content") || true
+  title="${title#"${title%%[![:space:]]*}"}"
+  title="${title%"${title##*[![:space:]]}"}"
+  [[ -z "$title" ]] && title='(no title)'
+  printf '%s|%s' "$(status_to_checkbox "$status")" "$title"
+}
+
+# Usage: get_subtask_entries CONTENT
+# Outputs one line per subtask: CHECKBOX|TASK_ID|TITLE
+get_subtask_entries() {
+  local content="$1"
+  parse_frontmatter "$content" | awk -F: '
+    $1 == "subtask" {
+      rest = $2
+      sub(/^[ \t]+/, "", rest)
+      cb = substr(rest, 1, 3)
+      rest = substr(rest, 5)
+      sub(/^[ \t]+/, "", rest)
+      id = rest
+      sub(/[ \t].*$/, "", id)
+      title = rest
+      sub(/^[^ \t]+[ \t]*/, "", title)
+      if (title == "") title = "(no title)"
+      print cb "|" id "|" title
+    }
+  '
+}
+
+# Emit a single task line. INDENT is spaces (e.g. "" or "   ").
+emit_task_line() {
+  local indent="$1"
+  local checkbox="$2"
+  local task_id="$3"
+  local title="$4"
+  local suffix
+  if [[ "$task_id" == project/* ]]; then
+    suffix="${task_id#project/}"
+  else
+    suffix="${task_id#task/}"
+  fi
+  printf '%s- %s [%s](.tt/task/%s.md) %s\n' "$indent" "$checkbox" "$task_id" "$suffix" "$title"
+}
+
+# Recursively emit task tree.
+emit_tree() {
+  local repo="$1"
+  local branch="$2"
+  local task_id="$3"
+  local indent="$4"
+  local task_prefix="$5"
+  local project_prefix="$6"
+  local merged_map="$7"  # newline-sep "TASK_ID:BRANCH"
+  local all_branches="$8"
+
+  local suffix
+  if [[ "$task_id" == project/* ]]; then
+    suffix="${task_id#project/}"
+  else
+    suffix="${task_id#task/}"
+  fi
+  local path=".tt/task/${suffix}.md"
+
+  local source_branch="$branch"
+  local merged_line
+  merged_line="$(printf '%s' "$merged_map" | grep -E "^${task_id}:" | head -1)" || true
+  if [[ -n "$merged_line" ]]; then
+    source_branch="${merged_line#*:}"
+  fi
+
+  local content
+  content="$(read_task_file_at_rev "$repo" "$source_branch" "$path" 2>/dev/null)" || true
+
+  local checkbox title
+  if [[ -n "$merged_line" ]]; then
+    if printf '%s' "$content" | grep -qE "subtask:\s*\[x\]\s+${task_id}\s+"; then
+      title="$(printf '%s' "$content" | grep -E "subtask:\s*\[x\]\s+${task_id}\s+" | head -1 | sed "s/.*${task_id}[ \t]*//")"
+      checkbox='[x]'
+    else
+      local meta
+      meta="$(get_metadata_from_content "$content" "$task_id" "$source_branch" "$all_branches" "$repo")"
+      checkbox="${meta%%|*}"
+      title="${meta#*|}"
+    fi
+  else
+    local meta
+    meta="$(get_metadata_from_content "$content" "$task_id" "" "$all_branches" "$repo")"
+    checkbox="${meta%%|*}"
+    title="${meta#*|}"
+  fi
+
+  emit_task_line "$indent" "$checkbox" "$task_id" "$title"
+
+  local child_indent="${indent}   "
+  local subs_output
+  subs_output="$(get_subtask_entries "$content")" || true
+  while IFS='|' read -r sub_cb sub_id sub_title; do
+    [[ -z "$sub_id" ]] && continue
+    local child_branch="$sub_id"
+    local child_merged
+    child_merged="$(printf '%s' "$merged_map" | grep -E "^${sub_id}:" | head -1)" || true
+    [[ -n "$child_merged" ]] && child_branch="${child_merged#*:}"
+    emit_tree "$repo" "$child_branch" "$sub_id" "$child_indent" "$task_prefix" "$project_prefix" "$merged_map" "$all_branches"
+  done <<< "$subs_output" || true
+}
+
+# Build merged map: for each task T that is merged, record T:BRANCH
+build_merged_map() {
+  local repo="$1"
+  local task_ids="$2"
+  local all_branches="$3"
+  local result=''
+  for task_id in $task_ids; do
+    [[ -z "$task_id" ]] && continue
+    for branch in $all_branches; do
+      [[ -z "$branch" ]] && continue
+      local suffix
+      if [[ "$branch" == task/* ]]; then
+        suffix="${branch#task/}"
+      elif [[ "$branch" == project/* ]]; then
+        suffix="${branch#project/}"
+      else
+        continue
+      fi
+      local path=".tt/task/${suffix}.md"
+      local content
+      content="$(read_task_file_at_rev "$repo" "$branch" "$path" 2>/dev/null)" || true
+      if printf '%s' "$content" | grep -qE "subtask:\s*\[x\]\s+${task_id}(\s|$)"; then
+        result="${result}${task_id}:${branch}"$'\n'
+        break
+      fi
+    done
+  done
+  printf '%s' "$result"
+}
+
+# Collect all task IDs reachable from the given roots (project branches).
+collect_task_ids() {
+  local repo="$1"
+  local roots="$2"
+  local seen=""
+  local to_visit="$roots"
+  local all_branches="$3"
+  local merged_map="$4"
+
+  while [[ -n "$to_visit" ]]; do
+    local current
+    current="$(printf '%s' "$to_visit" | head -1)"
+    to_visit="$(printf '%s' "$to_visit" | tail -n +2)"
+    [[ -z "$current" ]] && continue
+    if printf '%s' "$seen" | grep -qFx "$current"; then
+      continue
+    fi
+    seen="${seen}${current}"$'\n'
+
+    local source_branch="$current"
+    local merged_line
+    merged_line="$(printf '%s' "$merged_map" | grep -E "^${current}:" | head -1)" || true
+    [[ -n "$merged_line" ]] && source_branch="${merged_line#*:}"
+
+    local suffix
+    if [[ "$current" == task/* ]]; then
+      suffix="${current#task/}"
+    elif [[ "$current" == project/* ]]; then
+      suffix="${current#project/}"
+    else
+      continue
+    fi
+    local path=".tt/task/${suffix}.md"
+    local content
+    content="$(read_task_file_at_rev "$repo" "$source_branch" "$path" 2>/dev/null)" || true
+    local subs
+    subs="$(get_subtask_entries "$content" | cut -d'|' -f2)"
+    for sub in $subs; do
+      [[ -z "$sub" ]] && continue
+      to_visit="${to_visit}${sub}"$'\n'
+    done
+  done
+  printf '%s' "$seen"
+}
+
+main() {
+  local -a filter_projects=()
+  local show_detached=false
+  local show_all=false
+  local focus=false
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project)
+        [[ $# -lt 2 ]] && { log "Error: --project requires an argument"; usage; }
+        filter_projects+=("$2")
+        shift 2
+        ;;
+      --detached)
+        show_detached=true
+        shift
+        ;;
+      --all)
+        show_all=true
+        shift
+        ;;
+      --focus)
+        focus=true
+        shift
+        ;;
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        ;;
+      *)
+        log "Error: Unknown option: $1"
+        usage
+        ;;
+    esac
+  done
+
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  local jj_opts=(-R "$repo")
+  local all_bookmarks
+  all_bookmarks="$(jj "${jj_opts[@]}" log -r 'bookmarks()' -T 'local_bookmarks.map(|b| b.name()).join(",") ++ "\n"' --no-graph 2>/dev/null)" || true
+  local project_branches=''
+  local task_branches=''
+  while IFS= read -r b; do
+    [[ -z "$b" ]] && continue
+    if is_project_branch "$b" "$project_prefix"; then
+      project_branches="${project_branches}${b}"$'\n'
+    elif is_task_branch "$b" "$task_prefix"; then
+      task_branches="${task_branches}${b}"$'\n'
+    fi
+  done <<< "$all_bookmarks" || true
+  project_branches="$(printf '%s' "$project_branches" | sort -u)"
+  task_branches="$(printf '%s' "$task_branches" | sort -u)"
+  local all_task_project_branches="${project_branches}"$'\n'"${task_branches}"
+
+  if [[ "$focus" == true ]]; then
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix")"
+    local current_bookmark
+    current_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+
+    if [[ -z "$current_bookmark" ]]; then
+      log "Error: Not on a task or project branch. Cannot show focused list."
+      exit 1
+    fi
+    if ! is_task_branch "$current_bookmark" "$task_prefix" && ! is_project_branch "$current_bookmark" "$project_prefix"; then
+      log "Error: Current branch '$current_bookmark' is not a task or project branch. Cannot show focused list."
+      exit 1
+    fi
+
+    # Walk up parent chain
+    local chain="$current_bookmark"
+    local current="$current_bookmark"
+    while true; do
+      local parent=''
+      for branch in $all_task_project_branches; do
+        [[ -z "$branch" ]] && continue
+        local suffix
+        if [[ "$branch" == task/* ]]; then
+          suffix="${branch#task/}"
+        elif [[ "$branch" == project/* ]]; then
+          suffix="${branch#project/}"
+        else
+          continue
+        fi
+        local path=".tt/task/${suffix}.md"
+        local content
+        content="$(read_task_file_at_rev "$repo" "$branch" "$path" 2>/dev/null)" || true
+        if printf '%s' "$content" | grep -qE "subtask:\s*\[[ x\-]\]\s+${current}(\s|$)"; then
+          parent="$branch"
+          break
+        fi
+      done
+      if [[ -z "$parent" ]]; then
+        break
+      fi
+      chain="${parent}"$'\n'"${chain}"
+      current="$parent"
+    done
+
+    # Build merged map for chain
+    local chain_task_ids
+    chain_task_ids="$(printf '%s' "$chain" | tr '\n' ' ')"
+    local merged_map
+    merged_map="$(build_merged_map "$repo" "$chain_task_ids" "$all_task_project_branches")"
+
+    local root
+    root="$(printf '%s' "$chain" | head -1)"
+    emit_tree "$repo" "$root" "$root" "" "$task_prefix" "$project_prefix" "$merged_map" "$all_task_project_branches"
+    exit 0
+  fi
+
+  # Full list
+  local projects_to_show=''
+  if [[ ${#filter_projects[@]} -gt 0 ]]; then
+    for p in "${filter_projects[@]}"; do
+      if printf '%s' "$project_branches" | grep -qx "$p"; then
+        projects_to_show="${projects_to_show}${p}"$'\n'
+      fi
+    done
+  elif [[ "$show_all" == true ]]; then
+    projects_to_show="$project_branches"
+    show_detached=true
+  else
+    projects_to_show="$project_branches"
+  fi
+
+  if [[ -z "$projects_to_show" ]] && [[ ${#filter_projects[@]} -eq 0 ]]; then
+    log "No projects found."
+    exit 0
+  fi
+
+  if [[ -z "$projects_to_show" ]] && [[ ${#filter_projects[@]} -gt 0 ]]; then
+    log "No matching projects found."
+    exit 0
+  fi
+
+  local reachable_ids=''
+  for p in $projects_to_show; do
+    [[ -z "$p" ]] && continue
+    reachable_ids="${reachable_ids}${p}"$'\n'
+  done
+  reachable_ids="$(collect_task_ids "$repo" "$projects_to_show" "$all_task_project_branches" "")"
+  local merged_map
+  merged_map="$(build_merged_map "$repo" "$reachable_ids" "$all_task_project_branches")"
+
+  for p in $projects_to_show; do
+    [[ -z "$p" ]] && continue
+    emit_tree "$repo" "$p" "$p" "" "$task_prefix" "$project_prefix" "$merged_map" "$all_task_project_branches"
+  done
+
+  if [[ "$show_detached" == true ]]; then
+    local orphaned=''
+    for tb in $task_branches; do
+      [[ -z "$tb" ]] && continue
+      if ! printf '%s' "$reachable_ids" | grep -qx "$tb"; then
+        orphaned="${orphaned}${tb}"$'\n'
+      fi
+    done
+    if [[ -n "$orphaned" ]]; then
+      printf '\nOrphaned tasks:\n\n'
+      for o in $orphaned; do
+        [[ -z "$o" ]] && continue
+        local o_merged
+        o_merged="$(printf '%s' "$merged_map" | grep -E "^${o}:" | head -1)" || true
+        o_merged="${o_merged#*:}"
+        [[ -z "$o_merged" ]] && o_merged="$o"
+        emit_tree "$repo" "$o_merged" "$o" "" "$task_prefix" "$project_prefix" "$merged_map" "$all_task_project_branches"
+      done
+    fi
+  fi
+}
+
+main "$@"
