@@ -58,7 +58,7 @@ The project to-do list is a markdown listing of all tasks, grouped by root branc
 - A Markdown relative link to the task file, labeled by the machine-readable branch name
 - A single-line human-readable task summary
 
-Filtering: **`--root <branch-name>`** (repeatable) and **`--orphan`**. With no flags, all root sections and the detached section (if any) are shown. With `--root main` (and/or `--root next`, etc.) and/or `--orphan`, only the listed section(s) are shown.
+Filtering: **`--root <branch-name>`** (repeatable) and **`--detached`**. With no flags, all root sections and the detached section (if any) are shown. With `--root main` (and/or `--root next`, etc.) and/or `--detached`, only the listed section(s) are shown.
 
 Example:
 
@@ -167,7 +167,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt project init` or `t
 
 - **`tt task checkin [--rebase | --merge] [--force] [--delete]`** — Merge the current task branch into its parent. Runs validation (clean WC, task branch, one parent, no incomplete children, no conflicting or disallowed task-file changes); with `--rebase`/`--merge`, first propagates from parent and bails on conflict unless `--force`. Creates a checkin commit (TASK.md rewrite, optional child file deletion, parent frontmatter update), then merges into the parent. Runs pre-checkin, pre-receive, post-receive hooks; switches user to parent worktree and cleans up child worktree. See §6.3 and §6.4.
 
-- **`tt task list [--root <branch-name>]... [--orphan]`** — Generate and print the full project todo list to stdout. Tasks are grouped by root branch (and detached section). Optional `--root` and `--orphan` filter which sections are shown. Output format is the markdown described in §4.1. See §7.1 and Appendix A.
+- **`tt task list [--root <branch-name>]... [--detached]`** — Generate and print the full project todo list to stdout. Tasks are grouped by root branch (and detached section). Optional `--root` and `--detached` filter which sections are shown. Output format is the markdown described in §4.1. See §7.1 and Appendix A.
 
 - **`tt task list --focused`** — Generate and print the focused todo list (current task and its direct ancestors only) in the same markdown format. See §7.2 and Appendix A.
 
@@ -242,7 +242,7 @@ When the current task branch gains new commits (e.g. after merging a child with 
 
 ### 7.1 Full list (summary)
 
-To generate the overall todo list, the tool: (1) enumerates task branches and identifies root branches (VCS parent is used only for root attachment, not for building the task tree); (2) for each task T, determines where to read T's file — **merged** tasks are read from the branch whose owner task file contains `subtask: [x] <T> ...` (that parent's branch), either from the merged task file or from the `subtask: [x] <task-id> [<task-title>]` line if the file was deleted; **ongoing** tasks are read from T's own branch; (3) builds the task tree from frontmatter (top-level = not in any `subtask:` list; children = order in parent's `subtask:` list); (4) attaches top-level tasks to roots or detached via each top-level task's branch VCS parent; (5) filters sections by `--root`/`--orphan` if present; (6) emits section headers and walks the tree depth-first, outputting checkbox, link, and title per task in the format of §4.1.
+To generate the overall todo list, the tool: (1) enumerates task branches and identifies root branches (VCS parent is used only for root attachment, not for building the task tree); (2) for each task T, determines where to read T's file — **merged** tasks are read from the branch whose owner task file contains `subtask: [x] <T> ...` (that parent's branch), either from the merged task file or from the `subtask: [x] <task-id> [<task-title>]` line if the file was deleted; **ongoing** tasks are read from T's own branch; (3) builds the task tree from frontmatter (top-level = not in any `subtask:` list; children = order in parent's `subtask:` list); (4) attaches top-level tasks to roots or detached via each top-level task's branch VCS parent; (5) filters sections by `--root`/`--detached` if present; (6) emits section headers and walks the tree depth-first, outputting checkbox, link, and title per task in the format of §4.1.
 
 The full step-by-step algorithm is in **Appendix A**.
 
@@ -329,7 +329,7 @@ The standard workflow:
 4. **Attach top-level tasks to roots and build output sections**
 
    - Root attachment: For each top-level task T, use the **VCS parent of T's branch** to assign T to a section. If the VCS parent is a root branch R, T belongs under "Tasks on branch `R`:". If the VCS parent is not a root branch (e.g. it is a task branch), T is **detached** and belongs under "Tasks with no branch parent:". Order top-level tasks within each section e.g. by branch name or creation time.
-   - Filtering: If the user specified `--root <branch-name>` (one or more), only emit sections for those roots. If the user specified `--orphan`, only emit the detached section. If neither is specified, emit all root sections and the detached section (if it has any tasks).
+   - Filtering: If the user specified `--root <branch-name>` (one or more), only emit sections for those roots. If the user specified `--detached`, only emit the detached section. If neither is specified, emit all root sections and the detached section (if it has any tasks).
 
 5. **Emit the markdown**
 
@@ -337,7 +337,7 @@ The standard workflow:
    - Under each section, for each top-level task in that section, output a task line, then recurse into its children (from the `subtask:` order) with one more indent level per nesting. Sibling order is always the order of `subtask:` entries in the parent task file.
    - For each task line, output: checkbox from status (`[ ]` / `[-]` / `[x]`); link `[<prefix><slug>-<hex>](.tt/task/<slug>-<hex>.md)`; title (from task file frontmatter or from `subtask: [x] <task-id> <task-title>` on parent). Indentation reflects hierarchy.
 
-**End-to-end summary:** Enumerate task branches and root branches → for each task T find where to read T's file (scan branches for owner task file containing `subtask: [x] <T>`; if found on B → read T from B; else read T from T's branch) → build task tree from frontmatter → attach top-level tasks to roots/detached via VCS parent → filter sections by `--root`/`--orphan` → for each section emit header and walk tree depth-first (checkbox + link + title per task) → output markdown.
+**End-to-end summary:** Enumerate task branches and root branches → for each task T find where to read T's file (scan branches for owner task file containing `subtask: [x] <T>`; if found on B → read T from B; else read T from T's branch) → build task tree from frontmatter → attach top-level tasks to roots/detached via VCS parent → filter sections by `--root`/`--detached` → for each section emit header and walk tree depth-first (checkbox + link + title per task) → output markdown.
 
 ### A.2 Generating the focused todo list for the current task
 

@@ -70,7 +70,7 @@ Work **command by command**, including each command’s hooks (DESIGN §8). Phas
 1. **Phase 0 — Test harness**  
    Set up the scenario runner, manifest format, scenario directory layout, shared assertion helpers, mock VCS backend (§6), and (optionally) real jj temp-repo wiring for e2e. No requirement to TDD this phase.
 
-2. **`tt task list`** — Read-only. Full list and `--focused`; filtering `--root` / `--orphan`. Todo list generation per DESIGN Appendix A. No hooks.
+2. **`tt task list`** — Read-only. Full list and `--focused`; filtering `--root` / `--detached`. Todo list generation per DESIGN Appendix A. No hooks.
 
 3. **`tt project init`** — Virtual project dir, `.tt/config.toml`, HEAD symlink. DESIGN §5.1, §6.2, §9 step 1. No hooks in DESIGN §8.
 
@@ -158,7 +158,7 @@ Phase 0 is not required to be developed under TDD.
 
 - **Design reference:** DESIGN §5.2, §4.1, §7.1, §7.2, Appendix A.
 - **Behavior:**
-  - **Full list:** `tt task list` (with optional `--root <branch-name>` repeatable, `--orphan`). Generate the project todo list per DESIGN Appendix A.1: enumerate task branches and root branches, for each task determine where to read its file (merged vs ongoing), build task tree from frontmatter, attach top-level tasks to roots/detached via VCS parent, filter by `--root`/`--orphan`, emit markdown per DESIGN §4.1.
+  - **Full list:** `tt task list` (with optional `--root <branch-name>` repeatable, `--detached`). Generate the project todo list per DESIGN Appendix A.1: enumerate task branches and root branches, for each task determine where to read its file (merged vs ongoing), build task tree from frontmatter, attach top-level tasks to roots/detached via VCS parent, filter by `--root`/`--detached`, emit markdown per DESIGN §4.1.
   - **Focused list:** `tt task list --focused`. Generate the focused todo list per DESIGN Appendix A.2: resolve current task, walk to root via frontmatter parent chain, load task files with same “where to read” rule, emit same markdown format for the subset.
 - **Output:** Markdown to stdout only. No hooks.
 - **TDD:** Start with unit tests in tt-core for “where to read” and tree building; then scenario tests (mock VCS) for full and focused list; optionally e2e with real jj.
