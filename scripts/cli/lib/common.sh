@@ -61,6 +61,8 @@ is_project_branch() {
 # Usage: resolve_current REPO TASK_PREFIX PROJECT_PREFIX
 #
 # Resolve the "current branch" (closest ancestor of the working copy @ that has a bookmark).
+# Uses heads() so that when @ is a working-copy commit (direct descendant of a task), we get
+# the task bookmark, not a more distant ancestor like main.
 # Outputs three lines to stdout:
 #   line 1: rev       — commit ID at the current branch, or '@' if no bookmarks in ancestry
 #   line 2: task_file — path to .tt/task/<slug>-<hex>.md, or empty if current branch is a root
@@ -74,7 +76,7 @@ resolve_current() {
   local jj_opts=(-R "$repo")
   local current_branch
 
-  current_branch="$(jj "${jj_opts[@]}" log -r 'ancestors(@) & bookmarks()' -n 1 --no-graph -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || true
+  current_branch="$(jj "${jj_opts[@]}" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || true
   current_branch="${current_branch%%,*}"  # Take first if comma-separated
 
   if [[ -z "$current_branch" ]]; then
