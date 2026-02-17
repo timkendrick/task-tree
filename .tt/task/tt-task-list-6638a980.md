@@ -1,5 +1,5 @@
 ---
 title: "tt task list"
-status: IN-PROGRESS
+status: DONE
 description: "Implement `tt task list` CLI command"
 ---
