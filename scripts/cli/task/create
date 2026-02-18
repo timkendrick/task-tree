@@ -25,6 +25,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --prefix PREFIX   Task ID prefix (default: task/)
 #   --repo PATH       Repository root (default: walk up to find .jj)
 #   --dry-run         Show what would be done without making changes
+#   --propagate       After creation, propagate parent's new commit to sibling branches
+#   --rebase          (with --propagate) Rebase descendants onto parent tip (default)
+#   --merge           (with --propagate) Merge parent tip into descendants
+#   --shallow         (with --propagate) Propagate to direct children only
+#   --force           (with --propagate) Proceed even if propagation has conflicts
 #
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -45,11 +50,17 @@ Optional:
   --prefix PREFIX       Task ID prefix (default: from .tt/config.toml)
   --repo PATH         Repository root (default: walk up to find .jj)
   --dry-run           Show what would be done, do not execute
+  --propagate         After creation, propagate parent's new commit to sibling branches
+  --rebase            (with --propagate) Rebase descendants onto parent tip (default)
+  --merge             (with --propagate) Merge parent tip into descendants
+  --shallow           (with --propagate) Propagate to direct children only
+  --force             (with --propagate) Proceed even if propagation has conflicts
 
 Examples:
   ${SCRIPT_NAME}                                    # prompts for title
   ${SCRIPT_NAME} --title "Phase 0: Test harness"   # slug auto: phase-0-test-harness
   ${SCRIPT_NAME} --slug tt-task-list --title "tt task list" --parent task/phase-0-abc123de --label tdd
+  ${SCRIPT_NAME} --title "New feature" --propagate --shallow   # propagate after creation
 
 EOF
   exit 1
@@ -200,6 +211,10 @@ main() {
   local parent=''
   local repo=''
   local dry_run=false
+  local propagate=false
+  local propagate_strategy='rebase'
+  local propagate_shallow=false
+  local propagate_force=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -246,6 +261,26 @@ main() {
         ;;
       --dry-run)
         dry_run=true
+        shift
+        ;;
+      --propagate)
+        propagate=true
+        shift
+        ;;
+      --rebase)
+        propagate_strategy='rebase'
+        shift
+        ;;
+      --merge)
+        propagate_strategy='merge'
+        shift
+        ;;
+      --shallow)
+        propagate_shallow=true
+        shift
+        ;;
+      --force)
+        propagate_force=true
         shift
         ;;
       -h|--help)
@@ -385,6 +420,17 @@ main() {
   fi
 
   log "Created task $task_id (bookmark: $task_id)"
+
+  if [[ "$propagate" == true ]] && [[ -n "$parent_bookmark" ]]; then
+    local -a propagate_args=(--from "$parent_bookmark" --repo "$repo")
+    [[ "$propagate_strategy" == merge ]] && propagate_args+=(--merge)
+    [[ "$propagate_shallow" == true ]] && propagate_args+=(--shallow)
+    [[ "$propagate_force" == true ]] && propagate_args+=(--force)
+    [[ "$dry_run" == true ]] && propagate_args+=(--dry-run)
+    log "Propagating from $parent_bookmark..."
+    "$SCRIPT_DIR/propagate" "${propagate_args[@]}"
+  fi
+
   printf '%s\n' "$task_id"
 }
 
