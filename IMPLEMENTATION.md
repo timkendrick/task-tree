@@ -78,17 +78,19 @@ Work **command by command**, including each command’s hooks (DESIGN §8). Phas
 
 5. **`tt task checkout`** — Switch to task branch; worktree behavior, HEAD symlink. DESIGN §5.2, §6.2. Hooks: **setup** (new worktree), **pre-checkout**, **post-checkout**.
 
-6. **`tt task checkin`** — Validation (DESIGN §6.4), checkin commit, merge. DESIGN §5.2, §6.3, §6.4. Hooks: **pre-checkin**, **pre-receive**, **post-receive**.
+6. **`tt task checkpoint`** — Commit WC changes or advance bookmark to parent; ancestry check; optional commit message. DESIGN §5.2, §6.3. Hooks: **pre-checkpoint**, **post-checkpoint**.
 
-7. **`tt task status`** — Current task and branch; status of direct children from current task file frontmatter. DESIGN §5.2. No hooks.
+7. **`tt task checkin`** — Validation (DESIGN §6.5), checkin commit, merge. DESIGN §5.2, §6.4, §6.5. Hooks: **pre-checkin**, **pre-receive**, **post-receive**.
 
-8. **`tt task show`** — Full context of current or given task (frontmatter + body). DESIGN §5.2. No hooks.
+8. **`tt task status`** — Current task and branch; status of direct children from current task file frontmatter. DESIGN §5.2. No hooks.
 
-9. **`tt task propagate`** — Rebase/merge descendants onto parent tip; worktree sync. DESIGN §5.2, §6.6. Hooks: **pre-propagate**, **post-propagate**.
+9. **`tt task show`** — Full context of current or given task (frontmatter + body). DESIGN §5.2. No hooks.
 
-10. **`tt task reorder`** — Reorder direct child via parent frontmatter. DESIGN §5.2, §6.5. No hooks.
+10. **`tt task propagate`** — Rebase/merge descendants onto parent tip; worktree sync. DESIGN §5.2, §6.7. Hooks: **pre-propagate**, **post-propagate**.
 
-11. **`tt task remove`** — Remove direct child from current task frontmatter (branch/file unchanged). DESIGN §5.2, §6.5. Hooks: **pre-remove**, **post-remove**.
+11. **`tt task reorder`** — Reorder direct child via parent frontmatter. DESIGN §5.2, §6.6. No hooks.
+
+12. **`tt task remove`** — Remove direct child from current task frontmatter (branch/file unchanged). DESIGN §5.2, §6.6. Hooks: **pre-remove**, **post-remove**.
 
 ---
 
@@ -111,7 +113,7 @@ For each command (or each significant slice within a command):
 ### 5.1 Unit tests
 
 - **Location:** tt-core (and tt-jj where useful for parsing or error handling).
-- **Scope:** Pure logic only: task tree building, “where to read” rule (DESIGN Appendix A step 2), frontmatter parsing, task ID/branch naming (DESIGN §3), validation rules (e.g. checkin validation DESIGN §6.4). No VCS involvement; use in-memory or stub data.
+- **Scope:** Pure logic only: task tree building, “where to read” rule (DESIGN Appendix A step 2), frontmatter parsing, task ID/branch naming (DESIGN §3), validation rules (e.g. checkin validation DESIGN §6.5). No VCS involvement; use in-memory or stub data.
 
 ### 5.2 Scenario-based tests: one harness, two backends
 
@@ -196,17 +198,33 @@ Phase 0 is not required to be developed under TDD.
 
 ---
 
-### 6.5 `tt task checkin`
+### 6.5 `tt task checkpoint`
 
-- **Design reference:** DESIGN §5.2, §6.3, §6.4.
+- **Design reference:** DESIGN §5.2, §6.3.
+- **Signature:** `tt task checkpoint [--message <msg>] [--force]`. Alias: `tt checkpoint`.
+- **Preconditions (abort if any fail):**
+  - Current branch is a task or project branch.
+  - The commit the bookmark will be moved to is a strict descendant of the current bookmark tip. `--force` bypasses this check.
+- **Behavior (two cases):**
+  - **Empty WC:** If `--message` is provided, update the parent commit's description (`jj describe @-`). Move the bookmark to `@-`.
+  - **Non-empty WC:** Run `jj commit [-m <message>]` to create a new commit from WC changes. Move the bookmark to the newly created commit (`@-` after `jj commit`).
+  - In both cases, print: `Checkpoint: <task-id> → <commit-id>`.
+- **Hooks:** **pre-checkpoint** (current task worktree, blocking), **post-checkpoint** (same, optional). Env: see DESIGN §8.
+- **TDD:** Unit tests for ancestry check (both WC-empty and WC-non-empty paths); scenario tests (mock VCS) for each case including `--message` and `--force`.
+
+---
+
+### 6.6 `tt task checkin`
+
+- **Design reference:** DESIGN §5.2, §6.4, §6.5.
 - **Signature:** `tt task checkin [--rebase | --merge] [--force] [--delete] [--target <branch>]`. Alias: `tt checkin`.
-- **Validation (DESIGN §6.4):** Before merging, run all checks: clean working copy, current task has exactly one parent or is a project task with no parents (project tasks must specify `--target` branch; all other tasks cannot specify `--target`), no incomplete child tasks, no disallowed task file changes in merge range, TASK.md change rule; with `--rebase`/`--merge` optionally propagate first and bail on conflict unless `--force`. Abort on first failure.
+- **Validation (DESIGN §6.5):** Before merging, run all checks: clean working copy, current task has exactly one parent or is a project task with no parents (project tasks must specify `--target` branch; all other tasks cannot specify `--target`), no incomplete child tasks, no disallowed task file changes in merge range, TASK.md change rule; with `--rebase`/`--merge` optionally propagate first and bail on conflict unless `--force`. Abort on first failure.
 - **Behavior (summary):** If `--rebase`/`--merge`, propagate from parent first (bail on conflict unless `--force`). Run **pre-checkin** (child worktree, blocking). Create **checkin commit** on child branch: (a) rewrite `TASK.md` to point to parent’s task file, (b) optionally delete child task file if `--delete`, (c) update parent task file frontmatter so the corresponding `subtask:` is `[x]` and optionally include task title if `--delete`. Merge child into parent. Run **pre-receive** then **post-receive** on parent worktree. Switch worktree to parent, update HEAD symlink, remove child worktree if dedicated.
 - **Hooks:** **pre-checkin** (child worktree, blocking), **pre-receive** (parent worktree, blocking), **post-receive** (parent, optional). Env: see DESIGN §8.
 
 ---
 
-### 6.6 `tt task status`
+### 6.7 `tt task status`
 
 - **Design reference:** DESIGN §5.2.
 - **Signature:** `tt task status`. Alias: `tt status`.
@@ -215,7 +233,7 @@ Phase 0 is not required to be developed under TDD.
 
 ---
 
-### 6.7 `tt task show`
+### 6.8 `tt task show`
 
 - **Design reference:** DESIGN §5.2.
 - **Signature:** `tt task show [<task-id>]`. Alias: `tt show`.
@@ -224,27 +242,27 @@ Phase 0 is not required to be developed under TDD.
 
 ---
 
-### 6.8 `tt task propagate`
+### 6.9 `tt task propagate`
 
-- **Design reference:** DESIGN §5.2, §6.6.
+- **Design reference:** DESIGN §5.2, §6.7.
 - **Signature:** `tt task propagate [--from=<parent-id>] [--to=<descendant-id>]... [--rebase | --merge] [--shallow] [--force]`. Alias: `tt propagate`.
 - **Behavior (summary):** Default: `--from` = current task, `--to` = all descendants (or direct children with `--shallow`). Strategy: rebase by default; `--merge` merges parent into each child. Preconditions: clean WC, no merge at tip, no untracked changes in affected worktrees. Update each target branch so its base is the parent’s current tip (deterministic order: parent before children). Sync worktrees to new commits. With `--force`, proceed despite conflicts (may leave conflict state for user).
 - **Hooks:** **pre-propagate** (current/source worktree, blocking), **post-propagate** (same, optional). Env: see DESIGN §8.
 
 ---
 
-### 6.9 `tt task reorder`
+### 6.10 `tt task reorder`
 
-- **Design reference:** DESIGN §5.2, §6.5.
+- **Design reference:** DESIGN §5.2, §6.6.
 - **Signature:** `tt task reorder <task-id> <modifier>`. Modifier: one of `--up`, `--down`, `--after <other-task-id>`, `--before <other-task-id>` (mutually exclusive).
 - **Behavior:** Update the current task file’s frontmatter to reorder the direct child `<task-id>` relative to siblings. Fail if reorder is impossible (e.g. already first with `--up`, or `<other-task-id>` is not a sibling). Do not modify branches or task files on disk beyond the current task file’s `subtask:` order.
 - **No hooks.**
 
 ---
 
-### 6.10 `tt task remove`
+### 6.11 `tt task remove`
 
-- **Design reference:** DESIGN §5.2, §6.5.
+- **Design reference:** DESIGN §5.2, §6.6.
 - **Signature:** `tt task remove <task-id>`. Alias: none in DESIGN; implement per §5.
 - **Behavior:** Remove `<task-id>` from the current task file’s `subtask:` frontmatter. The child’s branch and task file are **not** deleted. Run **pre-remove** then **post-remove**.
 - **Hooks:** **pre-remove** (parent task worktree, blocking), **post-remove** (same, optional). Env: see DESIGN §8.
@@ -255,7 +273,7 @@ Phase 0 is not required to be developed under TDD.
 
 Hooks are shell scripts or executables under `.tt/hooks/<name>`. Exit 0 = proceed; non-zero = abort (with stderr shown). Missing hook = skipped. Blocking vs optional: pre- hooks are blocking; post- hooks and **setup** are optional (non-zero is reported but does not abort).
 
-Every hook receives at least **TT_WORKSPACE_DIR** and **TT_WORKTREE_DIR**. Full table (when, where, blocking, extra env) is in DESIGN §8. Implement all hooks listed there for the commands that trigger them (§6.3–§6.10).
+Every hook receives at least **TT_WORKSPACE_DIR** and **TT_WORKTREE_DIR**. Full table (when, where, blocking, extra env) is in DESIGN §8. Implement all hooks listed there for the commands that trigger them (§6.3–§6.11).
 
 ---
 
