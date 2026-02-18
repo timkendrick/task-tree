@@ -15,11 +15,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   create --title <title> [options...]
 #   create --slug <slug> --title <title> [options...]
 #
-# Optional:
+# Options:
 #   --title TITLE     Task title (prompted if missing and stdin is a TTY)
-#   --slug SLUG       Human-readable slug (default: auto from title)
+#   --slug SLUG       Human-readable slug (prompted with suggested default if missing)
+#   --description "TEXT"   Task description (prompted if missing and stdin is a TTY)
 #   --parent TASK-ID  Parent task ID (default: current branch)
-#   --description "TEXT"   Task description (use \n for newlines)
 #   --label LABEL     Add a label (repeatable)
 #   --status STATUS   TODO or IN-PROGRESS (default: TODO)
 #   --prefix PREFIX   Task ID prefix (default: task/)
@@ -40,27 +40,27 @@ Usage: ${SCRIPT_NAME} [options...]
 
 Create a task file and jj bookmark for task-tree bootstrap.
 
-Optional:
-  --title TITLE       Task title/summary (prompted if missing and interactive)
-  --slug SLUG         Human-readable slug (default: auto from title, e.g. phase-0-test-harness)
+Options:
+  --title TITLE         Task title/summary (prompted if missing and interactive)
+  --slug SLUG           Human-readable slug (prompted with suggested default if missing)
+  --description TEXT    Task description (prompted if missing and interactive)
   --parent TASK-ID      Parent task ID (default: current branch)
-  --description TEXT    Task description (use \\n for newlines in YAML)
   --label LABEL         Add a label (repeatable)
   --status STATUS       TODO or IN-PROGRESS (default: TODO)
   --prefix PREFIX       Task ID prefix (default: from .tt/config.toml)
-  --repo PATH         Repository root (default: walk up to find .jj)
-  --dry-run           Show what would be done, do not execute
-  --propagate         After creation, propagate parent's new commit to sibling branches
-  --rebase            (with --propagate) Rebase descendants onto parent tip (default)
-  --merge             (with --propagate) Merge parent tip into descendants
-  --shallow           (with --propagate) Propagate to direct children only
-  --force             (with --propagate) Proceed even if propagation has conflicts
+  --repo PATH           Repository root (default: walk up to find .jj)
+  --dry-run             Show what would be done, do not execute
+  --propagate           After creation, propagate parent's new commit to sibling branches
+  --rebase              (with --propagate) Rebase descendants onto parent tip (default)
+  --merge               (with --propagate) Merge parent tip into descendants
+  --shallow             (with --propagate) Propagate to direct children only
+  --force               (with --propagate) Proceed even if propagation has conflicts
 
 Examples:
-  ${SCRIPT_NAME}                                    # prompts for title
-  ${SCRIPT_NAME} --title "Phase 0: Test harness"   # slug auto: phase-0-test-harness
-  ${SCRIPT_NAME} --slug tt-task-list --title "tt task list" --parent task/phase-0-abc123de --label tdd
-  ${SCRIPT_NAME} --title "New feature" --propagate --shallow   # propagate after creation
+  ${SCRIPT_NAME}                                    # prompts for title, slug, description
+  ${SCRIPT_NAME} --title "Phase 0: Test harness" --description "Set up the test harness"
+  ${SCRIPT_NAME} --slug tt-task-list --title "tt task list" --parent task/phase-0-abc123de --label tdd --description "Implement tt task list"
+  ${SCRIPT_NAME} --title "New feature" --description "Add new feature" --propagate --shallow
 
 EOF
   exit 1
@@ -200,8 +200,27 @@ add_subtask_to_frontmatter() {
   mv "$tmpfile" "$parent_path"
 }
 
+# Usage: add_description_to_frontmatter FILE_PATH DESCRIPTION
+#
+# Insert a description: line into the YAML frontmatter of an existing task file,
+# immediately before the closing ---.
+add_description_to_frontmatter() {
+  local file_path="$1"
+  local description="$2"
+  local desc_yaml
+  desc_yaml="description: $(printf '%s' "$description" | jq -Rs '.')"
+  local tmpfile
+  tmpfile="$(mktemp)"
+  awk -v desc="$desc_yaml" '
+    /^---$/ { sep++; if (sep == 2) { print desc } }
+    { print }
+  ' "$file_path" > "$tmpfile"
+  mv "$tmpfile" "$file_path"
+}
+
 main() {
   local slug=''
+  local slug_explicit=false
   local title=''
   local description=''
   local has_description=false
@@ -221,6 +240,7 @@ main() {
       --slug)
         [[ $# -lt 2 ]] && { log "Error: --slug requires an argument"; usage; }
         slug="$2"
+        slug_explicit=true
         shift 2
         ;;
       --title)
@@ -303,14 +323,31 @@ main() {
     fi
   fi
 
-  if [[ -z "$slug" ]]; then
-    slug="$(title_to_slug "$title")"
-    if [[ -z "$slug" ]]; then
+  local default_slug
+  default_slug="$(title_to_slug "$title")"
+  if [[ "$slug_explicit" == false ]]; then
+    if [[ -z "$default_slug" ]]; then
       log "Error: Could not generate slug from title: $title"
       exit 1
     fi
-  else
-    if ! validate_slug "$slug"; then
+    if [[ -t 0 ]]; then
+      local prompted_slug
+      read -e -p "Enter a task identifier (defaults to $default_slug): " prompted_slug
+      slug="${prompted_slug:-$default_slug}"
+    else
+      slug="$default_slug"
+    fi
+  fi
+  if ! validate_slug "$slug"; then
+    exit 1
+  fi
+
+  if [[ "$has_description" == false ]]; then
+    if [[ -t 0 ]]; then
+      read -r -p "Enter a description: " description
+    fi
+    if [[ -z "$description" ]]; then
+      log "Error: Description is required (use --description or enter when prompted)"
       exit 1
     fi
   fi
@@ -390,32 +427,39 @@ main() {
   mkdir -p "$repo/.tt/task"
 
   if [[ -n "$parent_task_file" ]]; then
-    # Child task: create task file and register subtask on the parent branch in one commit,
-    # then fork an empty child commit and assign it the task bookmark.
+    # Child task: commit on parent branch creates the task file (partial: no description) and
+    # registers the subtask; the child branch's initial commit adds the description frontmatter.
     local parent_path="$repo/$parent_task_file"
     if [[ ! -f "$parent_path" ]]; then
       log "Error: Parent task file not found: $parent_path"
       exit 1
     fi
     if ((${#labels[@]} > 0)); then
-      write_task_file "$repo" "$task_file_path" "$title" "$status" "$description" "${labels[@]}"
+      write_task_file "$repo" "$task_file_path" "$title" "$status" "" "${labels[@]}"
     else
-      write_task_file "$repo" "$task_file_path" "$title" "$status" "$description"
+      write_task_file "$repo" "$task_file_path" "$title" "$status" ""
     fi
     add_subtask_to_frontmatter "$parent_path" "$task_id"
     log "Added subtask to parent: $parent_task_file"
     jj "${jj_opts[@]}" describe -m "Create task: $title"
     jj "${jj_opts[@]}" bookmark set "$parent_bookmark"
     jj "${jj_opts[@]}" new "@"
+    add_description_to_frontmatter "$repo/$task_file_path" "$description"
+    jj "${jj_opts[@]}" describe -m "Describe task: $title ($task_id)"
     jj "${jj_opts[@]}" bookmark set "$task_id"
   else
-    # Top-level task: create task file on the child branch itself.
+    # Top-level (project) task: first commit creates the task file (partial: no description);
+    # second commit adds the description frontmatter.
     if ((${#labels[@]} > 0)); then
-      write_task_file "$repo" "$task_file_path" "$title" "$status" "$description" "${labels[@]}"
+      write_task_file "$repo" "$task_file_path" "$title" "$status" "" "${labels[@]}"
     else
-      write_task_file "$repo" "$task_file_path" "$title" "$status" "$description"
+      write_task_file "$repo" "$task_file_path" "$title" "$status" ""
     fi
     jj "${jj_opts[@]}" describe -m "Create project: $title"
+    jj "${jj_opts[@]}" bookmark set "$task_id"
+    jj "${jj_opts[@]}" new "@"
+    add_description_to_frontmatter "$repo/$task_file_path" "$description"
+    jj "${jj_opts[@]}" describe -m "Describe task: $title ($task_id)"
     jj "${jj_opts[@]}" bookmark set "$task_id"
   fi
 
