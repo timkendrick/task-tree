@@ -51,6 +51,21 @@ is_task_branch() {
   [[ "$bookmark" == "$prefix"* ]] && [[ "$bookmark" =~ -[0-9a-fA-F]{8}$ ]]
 }
 
+# Read workspace_dir from .tt/config.toml; returns 1 if not configured.
+get_workspace_dir() {
+  local repo="$1"
+  local config="$repo/.tt/config.toml"
+  if [[ -r "$config" ]]; then
+    local ws_dir
+    ws_dir="$(convfmt --from toml --to json < "$config" | jq -r '.workspace_dir // ""')" || true
+    if [[ -n "$ws_dir" ]]; then
+      printf '%s' "$ws_dir"
+      return 0
+    fi
+  fi
+  return 1
+}
+
 # Return true if bookmark name matches project ID pattern (<prefix><slug>-<hex>).
 is_project_branch() {
   local bookmark="$1"

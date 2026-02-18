@@ -441,7 +441,7 @@ main() {
     fi
     add_subtask_to_frontmatter "$parent_path" "$task_id"
     log "Added subtask to parent: $parent_task_file"
-    jj "${jj_opts[@]}" describe -m "Create task: $title"
+    jj "${jj_opts[@]}" describe -m "Create task: $title ($task_id)"
     jj "${jj_opts[@]}" bookmark set "$parent_bookmark"
     jj "${jj_opts[@]}" new "@"
     add_description_to_frontmatter "$repo/$task_file_path" "$description"
