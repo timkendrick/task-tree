@@ -56,13 +56,18 @@ EOF
 }
 
 # Usage: is_up_to_date REPO CHILD_BOOKMARK PARENT_BOOKMARK
-# Returns 0 (true) if PARENT_BOOKMARK is already a direct parent of CHILD_BOOKMARK's tip.
+# Returns 0 (true) if there are no commits in CHILD_BOOKMARK's ancestry that are not
+# already in PARENT_BOOKMARK's ancestry. This handles the case where the child has been
+# partially checked in (some commits already merged via a handoff commit), or where the
+# parent is already a direct or indirect ancestor of the child.
 is_up_to_date() {
   local repo="$1" child="$2" parent="$3"
   local result
-  result="$(jj -R "$repo" log -r "parents($child) & $parent" \
+  # Compute the unmerged range: ancestors of child NOT yet in parent's ancestry.
+  # If empty, the child has nothing new to propagate.
+  result="$(jj -R "$repo" log -r "roots(::${child} ~ ::${parent})" \
     --no-graph -T 'commit_id' 2>/dev/null)" || true
-  [[ -n "$result" ]]
+  [[ -z "$result" ]]
 }
 
 # Usage: get_subtask_ids REPO BOOKMARK TASK_FILE
@@ -92,16 +97,30 @@ has_conflicts() {
 }
 
 # Usage: propagate_one_rebase REPO CHILD_BOOKMARK FROM_BOOKMARK FORCE DRY_RUN
+# Rebases the unmerged range of CHILD_BOOKMARK onto FROM_BOOKMARK.
+# If the child has been partially checked in (some commits already in FROM's ancestry
+# via a prior handoff merge), only the commits not yet in FROM's ancestry are rebased.
 propagate_one_rebase() {
   local repo="$1" child="$2" from="$3" force="$4" dry_run="$5"
   local jj_opts=(-R "$repo")
+
+  # Compute the roots of the unmerged range: commits in child's ancestry not yet in
+  # from's ancestry. These are the commits to rebase directly onto from.
+  local rebase_roots
+  rebase_roots="$(jj "${jj_opts[@]}" log -r "roots(::${child} ~ ::${from})" \
+    --no-graph -T 'commit_id' 2>/dev/null)" || true
+
+  if [[ -z "$rebase_roots" ]]; then
+    # No unmerged commits — already up to date (guard; caller should have checked this)
+    return 0
+  fi
 
   if [[ "$dry_run" == true ]]; then
     log "  [dry-run] rebase $child onto $from"
     return 0
   fi
 
-  jj "${jj_opts[@]}" rebase -s "$child" -d "$from"
+  jj "${jj_opts[@]}" rebase -s "roots(::${child} ~ ::${from})" -d "$from"
 
   if [[ "$force" != true ]] && has_conflicts "$repo" "${child}::"; then
     log "Error: Conflicts detected in $child after rebase onto $from."
