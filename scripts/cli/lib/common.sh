@@ -143,6 +143,43 @@ perform_workspace_switch() {
     "TT_PREVIOUS_TASK_BRANCH=${previous_task_id}"
 }
 
+# Usage: parse_frontmatter_field CONTENT FIELD
+# Extracts the value of a YAML frontmatter field from multi-line content.
+parse_frontmatter_field() {
+  local content="$1" field="$2"
+  printf '%s' "$content" | awk -v field="$field" '
+    /^---$/ { n++; next }
+    n == 1 && $0 ~ ("^" field ":") {
+      sub("^" field ":[[:space:]]*", "")
+      gsub(/^"|"$/, "")
+      print; exit
+    }
+  '
+}
+
+# Usage: message=$(prompt <<< "$template")
+# Reads template from stdin, opens editor, strips #-comment lines and trims whitespace,
+# prints cleaned text to stdout (empty string if blank after stripping).
+# Exits non-zero if editor exits non-zero.
+prompt() {
+  local editor
+  # Note: we use `vim` rather than `vi` because to ensure POSIX compliance, when it is invoked as `vi`,
+  # vim exits with a non-zero status when an error is encountered at any point during the editing session
+  # see https://stackoverflow.com/q/46665403
+  DEFAULT_EDITOR="vim"
+  editor="${TT_EDITOR:-${GIT_EDITOR:-${VISUAL:-${EDITOR:-$DEFAULT_EDITOR}}}}"
+  local tmpfile
+  tmpfile="$(mktemp -t COMMIT_EDITMSG)"
+  trap 'rm -f "$tmpfile"' RETURN
+  cat > "$tmpfile"
+  "$editor" "$tmpfile" </dev/tty >/dev/tty || { log "Error: Editor exited with non-zero status."; return 1; }
+  local msg
+  msg="$(sed '/^#/d' "$tmpfile" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  # trim leading/trailing blank lines
+  msg="$(printf '%s' "$msg" | awk 'NF{found=1} found{print}' | sed -e 's/[[:space:]]*$//')"
+  printf '%s' "$msg"
+}
+
 # Usage: resolve_current REPO TASK_PREFIX PROJECT_PREFIX
 #
 # Resolve the "current branch" (closest ancestor of the working copy @ that has a bookmark).
