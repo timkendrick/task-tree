@@ -1,5 +1,5 @@
 ---
 title: "Implement `add-context` CLI command"
-status: TODO
+status: IN-PROGRESS
 description: ""
 ---
