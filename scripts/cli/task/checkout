@@ -55,21 +55,6 @@ EOF
   exit 1
 }
 
-# Usage: parse_frontmatter_field CONTENT FIELD
-# Extracts the value of a YAML frontmatter field from multi-line content.
-parse_frontmatter_field() {
-  local content="$1" field="$2"
-  printf '%s' "$content" | awk -v field="$field" '
-    /^---$/ { n++; next }
-    n == 1 && $0 ~ ("^" field ":") {
-      sub("^" field ":[[:space:]]*", "")
-      gsub(/^"|"$/, "")
-      print; exit
-    }
-  '
-}
-
-
 main() {
   local task_id=''
   local worktree_flag=false

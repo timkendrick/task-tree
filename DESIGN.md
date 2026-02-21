@@ -170,7 +170,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 - **`tt task checkout <task-id> [--worktree [=<path>] [--switch]] [--force]`** — Switch to the given task branch. With `--worktree`, uses or creates a dedicated jj workspace for that task; otherwise uses the closest ancestor task workspace or the current workspace. Refuses if the target workspace has local changes unless `--force`. Updates task status to IN-PROGRESS if TODO, runs `setup` hook when creating a new worktree. Without `--worktree`, always updates the virtual project's `HEAD` symlink; with `--worktree`, only updates `HEAD` if `--switch` is also provided (`--switch` is only valid with `--worktree`). See §6.2.
 
-- **`tt task checkpoint [--message <msg>] [--force]`** — Record the current state and advance the task bookmark. If the working copy is empty, moves the bookmark to the working copy's parent commit (and updates that commit's description if `--message` is given). If the working copy has pending changes, creates a new commit from those changes (`jj commit`, using `--message` as the description) and moves the bookmark to it. The target commit must be a strict descendant of the current bookmark tip, unless `--force` is specified. Prints a short confirmation on success. See §6.3. Hooks: **pre-checkpoint**, **post-checkpoint**.
+- **`tt task checkpoint [--message <msg>]`** — Record the current state and advance the task bookmark. If the working copy is empty, moves the bookmark to the working copy's parent commit (and updates that commit's description if `--message` is given). If the working copy has pending changes, creates a new commit from those changes (`jj commit`, using `--message` as the description) and moves the bookmark to it. The target commit must be a strict descendant of the current bookmark tip, unless `--force` is specified. Prints a short confirmation on success. See §6.3. Hooks: **pre-checkpoint**, **post-checkpoint**.
 
 - **`tt task complete [--force]`** — Mark the current task as done. Creates a `Complete task: <title> (<task-id>)` commit on the task branch that sets `status` to `DONE` in the task file, and advances the task bookmark to this commit. Requires a clean working copy and all child tasks to be done (every `subtask:` entry marked `[x]`) unless `--force` is specified. See §6.4. Hooks: **pre-complete** (blocking), **post-complete** (optional).
 
@@ -287,16 +287,15 @@ If the target workspace's working copy is an ancestor task's workspace (not the 
 
 **Commit message:** `Checkpoint: <message> (<task-id>)`. The `<message>` part comes from `--message` if provided; otherwise the user is prompted to enter it in an editor (see §6.3.1 below).
 
-- **Working copy is non-empty:** Create a new commit from the working copy changes (`jj commit -m "<full-message>"`). The working copy is left clean.
-- **Working copy is empty (no pending changes):** Create a new empty commit (`jj new -m "<full-message>"`), then immediately commit it (`jj commit`).
+**Commit flow:** Always `jj commit -m "<full-message>"` regardless of whether the working copy has pending changes. This works for both empty and non-empty WC and always leaves a clean open working copy on top.
 
 #### 6.3.1 Interactive message editing
 
-When `--message` is not provided, `tt task checkpoint` opens an editor for the user to enter the `<message>` portion of the commit message. This mirrors `git commit` behaviour.
+When `--message` is not provided, `tt task checkpoint` opens an editor for the user to enter the `<message>` portion of the commit message. This mirrors `git commit` behaviour, using an ephemeral temporary file to store the in-progress prompt.
 
-**Editor selection:** `$TT_EDITOR` → `$GIT_EDITOR` → `$VISUAL` → `$EDITOR` → `vi` (first non-empty value wins). This resolution is implemented in a shared `open_editor` helper in `scripts/cli/lib/common.sh`.
+**Editor selection:** `$TT_EDITOR` → `$GIT_EDITOR` → `$VISUAL` → `$EDITOR` → `"vi"` (first non-empty value wins). The editor executable receives the temporary file path as its only argument.
 
-**Template written to `.tt/COMMIT_EDITMSG`:**
+**Messge editor template (written to temporary file):**
 
 ```
 <task-title>
@@ -310,23 +309,9 @@ The file is opened in the resolved editor. Once the editor exits:
 - **Editor exits non-zero:** Print an error to stderr and exit 1. No VCS operation is performed.
 - **Editor exits zero:** Strip all lines beginning with `#`, then trim leading/trailing whitespace. If nothing remains, print `Checkpoint cancelled.` to stderr and exit 1. Otherwise use the stripped text as `<message>`.
 
-**`open_editor` helper interface:**
-
-```bash
-# Usage: message=$(open_editor <<< "$template")
-# - Reads the template from stdin.
-# - Writes it to .tt/COMMIT_EDITMSG and opens $TT_EDITOR/$GIT_EDITOR/$VISUAL/$EDITOR/vi.
-# - Strips comment lines (lines starting with #) and trims whitespace.
-# - Prints the cleaned message to stdout.
-# - Exits non-zero (with error message to stderr) if the editor exits non-zero.
-# - Prints an empty string to stdout if the message is blank after stripping (caller handles cancellation).
-open_editor() { ... }
-```
-
 **Preconditions** (all checked before any VCS operation; any failure aborts the command):
 
-- Current branch is a task or project branch.
-- The commit the bookmark will be moved to must be a **strict descendant** of the current bookmark tip (the bookmark may not move backwards or stay in place). `--force` bypasses this check.
+- Current branch is a task or project branch (verified via `resolve_current`).
 
 **Behavior:** After the operation, print a short confirmation, e.g.:
 
@@ -491,7 +476,7 @@ The standard workflow:
 
 4. **Begin a task** — `tt task checkout <task-id> [--worktree [=<path>] [--switch]] [--force]`. The tool checks the target workspace is clean (or clobbers changes if `--force` is specified), verifies the task or project branch exists, uses or creates the appropriate workspace per §6.2, sets task status to IN-PROGRESS in a new commit if the task status is currently TODO, runs `setup` when initializing a new worktree, and updates the `HEAD` symlink (unless `--worktree` is used without `--switch`). See §6.2.
 
-5. **Work on the task** — User commits changes on the branch and accumulates context in `./TASK.md`. Periodically run `tt task checkpoint [-m <message>]` to create a named `Checkpoint: <message>` commit and advance the task bookmark. See §6.3.
+5. **Work on the task** — User commits changes on the branch and accumulates context in `./TASK.md`. Periodically run `tt task checkpoint [--message <message>]` to create a named `Checkpoint: <message>` commit and advance the task bookmark. See §6.3.
 
 6. **Complete the task** — `tt task complete [--force]`. When work is done, marks the task `DONE` with a `Complete task: <title> (<task-id>)` commit and advances the task bookmark. Requires all child tasks to be done unless `--force`. See §6.4.
 
