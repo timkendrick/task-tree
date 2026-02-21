@@ -73,6 +73,76 @@ is_project_branch() {
   [[ "$bookmark" == "$prefix"* ]] && [[ "$bookmark" =~ -[0-9a-fA-F]{8}$ ]]
 }
 
+# Usage: is_wc_clean REPO_OR_WORKTREE
+# Returns 0 if the working copy at REPO_OR_WORKTREE has no pending changes.
+is_wc_clean() {
+  local r="$1"
+  local result
+  result="$(jj -R "$r" log -r '@' --no-graph -T 'empty' 2>/dev/null)" || return 1
+  [[ "$result" == "true" ]]
+}
+
+# Usage: run_hook REPO HOOK_NAME BLOCKING WORKTREE_DIR WORKSPACE_DIR [VAR=val ...]
+# Runs .tt/hooks/<hook-name> with TT_WORKSPACE_DIR and TT_WORKTREE_DIR set,
+# plus any additional VAR=val pairs. Blocking hooks abort on non-zero exit.
+run_hook() {
+  local repo="$1" hook_name="$2" blocking="$3" worktree_dir="$4" workspace_dir="$5"
+  shift 5
+  local hook_path="$repo/.tt/hooks/$hook_name"
+  [[ ! -x "$hook_path" ]] && return 0
+  local exit_code=0
+  env TT_WORKSPACE_DIR="${workspace_dir:-}" TT_WORKTREE_DIR="$worktree_dir" "$@" "$hook_path" \
+    || exit_code=$?
+  if [[ $exit_code -ne 0 ]]; then
+    if [[ "$blocking" == true ]]; then
+      log "Error: Hook '$hook_name' failed (exit $exit_code); aborting."
+      exit 1
+    else
+      log "Warning: Hook '$hook_name' failed (exit $exit_code; non-blocking)."
+    fi
+  fi
+}
+
+# Usage: update_head_symlink WORKSPACE_DIR TARGET_PATH
+# Updates <workspace-dir>/HEAD to point at TARGET_PATH (relative if possible).
+update_head_symlink() {
+  local workspace_dir="$1" target_path="$2"
+  [[ -z "$workspace_dir" ]] && return 0
+  [[ ! -d "$workspace_dir" ]] && return 0
+  local head_path="$workspace_dir/HEAD"
+  local rel_target
+  if [[ "$target_path" == "$workspace_dir"/* ]]; then
+    rel_target="./${target_path#"$workspace_dir"/}"
+  else
+    rel_target="$target_path"
+  fi
+  ln -snf "$rel_target" "$head_path"
+  log "Updated HEAD -> $rel_target"
+}
+
+# Usage: perform_workspace_switch REPO WORKSPACE_DIR TASK_ID TARGET_WORKTREE OUTGOING_WORKTREE PREVIOUS_TASK_ID
+# Fires pre-checkout hook, updates HEAD symlink, fires post-checkout hook.
+perform_workspace_switch() {
+  local repo="$1" workspace_dir="$2" task_id="$3"
+  local target_worktree="$4" outgoing_worktree="$5" previous_task_id="$6"
+
+  log "Switching to $task_id"
+
+  run_hook "$repo" "pre-checkout" true "$outgoing_worktree" "${workspace_dir:-}" \
+    "TT_TASK_ID=$task_id" \
+    "TT_TASK_BRANCH=$task_id" \
+    "TT_PREVIOUS_TASK_ID=${previous_task_id}" \
+    "TT_PREVIOUS_TASK_BRANCH=${previous_task_id}"
+
+  update_head_symlink "$workspace_dir" "$target_worktree"
+
+  run_hook "$repo" "post-checkout" false "$target_worktree" "${workspace_dir:-}" \
+    "TT_TASK_ID=$task_id" \
+    "TT_TASK_BRANCH=$task_id" \
+    "TT_PREVIOUS_TASK_ID=${previous_task_id}" \
+    "TT_PREVIOUS_TASK_BRANCH=${previous_task_id}"
+}
+
 # Usage: resolve_current REPO TASK_PREFIX PROJECT_PREFIX
 #
 # Resolve the "current branch" (closest ancestor of the working copy @ that has a bookmark).

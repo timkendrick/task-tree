@@ -69,52 +69,6 @@ parse_frontmatter_field() {
   '
 }
 
-# Usage: is_wc_clean REPO_OR_WORKTREE
-# Returns 0 if the working copy at REPO_OR_WORKTREE has no pending changes.
-is_wc_clean() {
-  local r="$1"
-  local result
-  result="$(jj -R "$r" log -r '@' --no-graph -T 'empty' 2>/dev/null)" || return 1
-  [[ "$result" == "true" ]]
-}
-
-# Usage: run_hook HOOK_NAME BLOCKING WORKTREE_DIR WORKSPACE_DIR [VAR=val ...]
-# Runs .tt/hooks/<hook-name> with TT_WORKSPACE_DIR and TT_WORKTREE_DIR set,
-# plus any additional VAR=val pairs. Blocking hooks abort on non-zero exit.
-run_hook() {
-  local hook_name="$1" blocking="$2" worktree_dir="$3" workspace_dir="$4"
-  shift 4
-  local hook_path="$repo/.tt/hooks/$hook_name"
-  [[ ! -x "$hook_path" ]] && return 0
-  local exit_code=0
-  env TT_WORKSPACE_DIR="${workspace_dir:-}" TT_WORKTREE_DIR="$worktree_dir" "$@" "$hook_path" \
-    || exit_code=$?
-  if [[ $exit_code -ne 0 ]]; then
-    if [[ "$blocking" == true ]]; then
-      log "Error: Hook '$hook_name' failed (exit $exit_code); aborting."
-      exit 1
-    else
-      log "Warning: Hook '$hook_name' failed (exit $exit_code; non-blocking)."
-    fi
-  fi
-}
-
-# Usage: update_head_symlink WORKSPACE_DIR TARGET_PATH
-# Updates <workspace-dir>/HEAD to point at TARGET_PATH (relative if possible).
-update_head_symlink() {
-  local workspace_dir="$1" target_path="$2"
-  [[ -z "$workspace_dir" ]] && return 0
-  [[ ! -d "$workspace_dir" ]] && return 0
-  local head_path="$workspace_dir/HEAD"
-  local rel_target
-  if [[ "$target_path" == "$workspace_dir"/* ]]; then
-    rel_target="./${target_path#"$workspace_dir"/}"
-  else
-    rel_target="$target_path"
-  fi
-  ln -snf "$rel_target" "$head_path"
-  log "Updated HEAD -> $rel_target"
-}
 
 main() {
   local task_id=''
@@ -293,13 +247,6 @@ main() {
     fi
   fi
 
-  # Run pre-checkout hook (blocking, runs in outgoing worktree)
-  run_hook "pre-checkout" true "$current_worktree" "${workspace_dir:-}" \
-    "TT_TASK_ID=$task_id" \
-    "TT_TASK_BRANCH=$task_id" \
-    "TT_PREVIOUS_TASK_ID=${previous_task_id}" \
-    "TT_PREVIOUS_TASK_BRANCH=${previous_task_branch}"
-
   # Perform the checkout
   if [[ "$new_worktree" == true ]]; then
     log "Creating workspace: $target_worktree"
@@ -336,25 +283,27 @@ main() {
     jj -R "$target_worktree" new "@"
   fi
 
-  # Update HEAD symlink in virtual project dir.
-  # With --worktree, only update HEAD if --switch was also provided.
+  # Update HEAD symlink and fire post-checkout hook.
+  # With --worktree without --switch: run hooks but skip HEAD update.
   if [[ "$worktree_flag" != true || "$switch_flag" == true ]]; then
-    update_head_symlink "${workspace_dir:-}" "$target_worktree"
+    perform_workspace_switch "$repo" "${workspace_dir:-}" "$task_id" \
+      "$target_worktree" "$current_worktree" "$previous_task_id"
+  else
+    run_hook "$repo" "pre-checkout" true "$current_worktree" "${workspace_dir:-}" \
+      "TT_TASK_ID=$task_id" "TT_TASK_BRANCH=$task_id" \
+      "TT_PREVIOUS_TASK_ID=${previous_task_id}" "TT_PREVIOUS_TASK_BRANCH=${previous_task_branch}"
+    # (no HEAD update)
+    run_hook "$repo" "post-checkout" false "$target_worktree" "${workspace_dir:-}" \
+      "TT_TASK_ID=$task_id" "TT_TASK_BRANCH=$task_id" \
+      "TT_PREVIOUS_TASK_ID=${previous_task_id}" "TT_PREVIOUS_TASK_BRANCH=${previous_task_branch}"
   fi
 
   # Run setup hook for new worktrees (optional / non-blocking)
   if [[ "$new_worktree" == true ]]; then
-    run_hook "setup" false "$target_worktree" "${workspace_dir:-}" \
+    run_hook "$repo" "setup" false "$target_worktree" "${workspace_dir:-}" \
       "TT_TASK_ID=$task_id" \
       "TT_BRANCH=$task_id"
   fi
-
-  # Run post-checkout hook (optional / non-blocking, in checked-out worktree)
-  run_hook "post-checkout" false "$target_worktree" "${workspace_dir:-}" \
-    "TT_TASK_ID=$task_id" \
-    "TT_TASK_BRANCH=$task_id" \
-    "TT_PREVIOUS_TASK_ID=${previous_task_id}" \
-    "TT_PREVIOUS_TASK_BRANCH=${previous_task_branch}"
 
   log "Checked out: $task_id"
   if [[ "$worktree_flag" == true ]]; then
