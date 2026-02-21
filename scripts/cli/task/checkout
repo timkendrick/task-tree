@@ -195,12 +195,26 @@ main() {
   if [[ "$worktree_flag" == true ]]; then
     # --worktree: determine workspace path
     if [[ -z "$worktree_path" ]]; then
-      if [[ -z "$workspace_dir" ]]; then
-        log "Error: --worktree requires either --workspace-dir or an explicit path (--worktree=<path>)"
-        log "  Set workspace_dir in .tt/config.toml or pass --workspace-dir."
+      # Use find_worktrees_for_branch to locate any existing workspace for this task
+      local existing_worktrees worktree_count
+      existing_worktrees="$(find_worktrees_for_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")"
+      worktree_count="$(printf '%s' "$existing_worktrees" | grep -c . 2>/dev/null || true)"
+      if [[ "$worktree_count" -gt 1 ]]; then
+        log "Error: Multiple workspaces found for '$task_id'; specify --worktree=<path>:"
+        printf '%s' "$existing_worktrees" | while IFS= read -r p; do log "  $p"; done
         exit 1
+      elif [[ "$worktree_count" -eq 1 ]]; then
+        worktree_path="$existing_worktrees"
+        log "Found existing workspace: $worktree_path"
+      else
+        # No existing workspace found; derive conventional path
+        if [[ -z "$workspace_dir" ]]; then
+          log "Error: --worktree requires either --workspace-dir or an explicit path (--worktree=<path>)"
+          log "  Set workspace_dir in .tt/config.toml or pass --workspace-dir."
+          exit 1
+        fi
+        worktree_path="${workspace_dir}/${task_id}"
       fi
-      worktree_path="${workspace_dir}/${task_id}"
     fi
     target_worktree="$worktree_path"
 

@@ -86,16 +86,6 @@ get_subtask_ids() {
   '
 }
 
-# Usage: has_conflicts REPO REVSET
-# Returns 0 (true) if any commit in REVSET has conflicts.
-has_conflicts() {
-  local repo="$1" revset="$2"
-  local result
-  result="$(jj -R "$repo" log -r "$revset" \
-    --no-graph -T 'if(conflict, "yes\n")' 2>/dev/null)" || true
-  [[ -n "$result" ]]
-}
-
 # Usage: propagate_one_rebase REPO CHILD_BOOKMARK FROM_BOOKMARK FORCE DRY_RUN
 # Rebases the unmerged range of CHILD_BOOKMARK onto FROM_BOOKMARK.
 # If the child has been partially checked in (some commits already in FROM's ancestry
