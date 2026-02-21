@@ -335,38 +335,22 @@ main() {
     exit 1
   }
 
+  # Change [ ] or [-] to [x] for this subtask in the handoff commit
   local updated_parent_content
-  if [[ "$delete" == true ]]; then
-    # Remove subtask entry entirely
-    updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" '
-      /^---$/ { in_fm = !in_fm; print; next }
-      in_fm && /^subtask:/ {
-        line = $0
-        # check if this line contains our task_id
-        rest = line
-        sub(/^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]*/, "", rest)
-        split(rest, parts, /[[:space:]]/)
-        if (parts[1] == id) next  # skip this line
+  updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" '
+    /^---$/ { in_fm = !in_fm; print; next }
+    in_fm && /^subtask:[[:space:]]*\[[ \-]\]/ {
+      line = $0
+      rest = line
+      sub(/^subtask:[[:space:]]*\[[[:space:]\-]\][[:space:]]*/, "", rest)
+      split(rest, parts, /[[:space:]]/)
+      if (parts[1] == id) {
+        sub(/\[[ \-]\]/, "[x]")
       }
-      { print }
-    ')"
-  else
-    # Change [ ] or [-] to [x] for this subtask
-    updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" '
-      /^---$/ { in_fm = !in_fm; print; next }
-      in_fm && /^subtask:[[:space:]]*\[[ \-]\]/ {
-        line = $0
-        rest = line
-        sub(/^subtask:[[:space:]]*\[[[:space:]\-]\][[:space:]]*/, "", rest)
-        split(rest, parts, /[[:space:]]/)
-        if (parts[1] == id) {
-          sub(/\[[ \-]\]/, "[x]")
-        }
-        print; next
-      }
-      { print }
-    ')"
-  fi
+      print; next
+    }
+    { print }
+  ')"
 
   # Append context block to body if --context provided
   if [[ -n "$context_text" ]]; then
@@ -379,11 +363,6 @@ ${context_text}
   fi
 
   printf '%s\n' "$updated_parent_content" > "$target_ws/$parent_task_file"
-
-  # If --delete: remove child task file
-  if [[ "$delete" == true ]]; then
-    rm -f "$target_ws/$task_file"
-  fi
 
   # Commit the handoff (child bookmark does NOT advance)
   jj -R "$target_ws" commit -m "Handoff: $task_title ($task_id)"
@@ -454,6 +433,15 @@ ${context_text}
     fi
 
     log "Checkin complete: $task_id -> $parent_bookmark"
+  fi
+
+  # --- Delegate --delete to tt task delete (second commit on parent branch) ---
+  if [[ "$delete" == true ]]; then
+    log "Running delete for $task_id..."
+    "$SCRIPT_DIR/delete" "$task_id" --force \
+      --repo "$repo" \
+      ${workspace_dir:+--workspace-dir "$workspace_dir"} \
+      ${worktree_arg:+--worktree="$worktree_arg"}
   fi
 }
 
