@@ -347,10 +347,6 @@ main() {
     if [[ -t 0 ]]; then
       read -r -p "Enter a description: " description
     fi
-    if [[ -z "$description" ]]; then
-      log "Error: Description is required (use --description or enter when prompted)"
-      exit 1
-    fi
   fi
 
   if [[ "$is_project" == true && -n "$parent" ]]; then
