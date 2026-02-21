@@ -157,11 +157,10 @@ parse_frontmatter_field() {
   '
 }
 
-# Usage: message=$(prompt <<< "$template")
-# Reads template from stdin, opens editor, strips #-comment lines and trims whitespace,
-# prints cleaned text to stdout (empty string if blank after stripping).
+# Usage: raw=$(prompt_raw <<< "$template")
+# Reads template from stdin, opens editor, returns raw file content (no stripping).
 # Exits non-zero if editor exits non-zero.
-prompt() {
+prompt_raw() {
   local editor
   # Note: we use `vim` rather than `vi` because to ensure POSIX compliance, when it is invoked as `vi`,
   # vim exits with a non-zero status when an error is encountered at any point during the editing session
@@ -173,8 +172,18 @@ prompt() {
   trap 'rm -f "$tmpfile"' RETURN
   cat > "$tmpfile"
   "$editor" "$tmpfile" </dev/tty >/dev/tty || { log "Error: Editor exited with non-zero status."; return 1; }
+  cat "$tmpfile"
+}
+
+# Usage: message=$(prompt <<< "$template")
+# Reads template from stdin, opens editor, strips #-comment lines and trims whitespace,
+# prints cleaned text to stdout (empty string if blank after stripping).
+# Exits non-zero if editor exits non-zero.
+prompt() {
+  local raw
+  raw="$(prompt_raw)" || return 1
   local msg
-  msg="$(sed '/^#/d' "$tmpfile" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  msg="$(printf '%s' "$raw" | sed '/^#/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
   # trim leading/trailing blank lines
   msg="$(printf '%s' "$msg" | awk 'NF{found=1} found{print}' | sed -e 's/[[:space:]]*$//')"
   printf '%s' "$msg"

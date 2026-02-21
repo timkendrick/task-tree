@@ -17,3 +17,9 @@ Initial implementation of `tt task list` complete, functional but not fully test
 Additional functions added to `scripts/cli/lib/common.sh`
 
 ---
+
+## 2026-02-21 22:12
+
+Added a new `add-context` CLI command
+
+---

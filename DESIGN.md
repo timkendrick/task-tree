@@ -157,6 +157,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt checkpoint` | `tt task checkpoint` |
 | `tt complete` | `tt task complete` |
 | `tt list` | `tt task list` |
+| `tt add-context` | `tt task add-context` |
 
 ### 5.1 Workspace
 
@@ -175,6 +176,8 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 - **`tt task complete [--force]`** — Mark the current task as done. Creates a `Complete task: <title> (<task-id>)` commit on the task branch that sets `status` to `DONE` in the task file, and advances the task bookmark to this commit. Requires a clean working copy and all child tasks to be done (every `subtask:` entry marked `[x]`) unless `--force` is specified. See §6.4. Hooks: **pre-complete** (blocking), **post-complete** (optional).
 
 - **`tt task checkin [--context <markdown>] [--complete] [--rebase | --merge] [--force] [--delete] [--target <branch>]`** — Merge the current task branch into its parent (or, for a project task, into the branch specified by `--target`). Supports **partial checkins** (task status `IN-PROGRESS`; shares work-in-progress with the parent) and **complete checkins** (task status `DONE`; marks the task finished). Always creates a **handoff commit** (child bookmark does not advance) and merges it into the parent as `Merge subtask: <title> (<task-id>)`. If the task's `status` is `DONE`, the handoff also marks the corresponding `subtask:` entry as `[x]` in the parent's frontmatter, and after the merge the user is switched to the parent worktree. With `--complete`: first runs `tt task complete` if the task is not already `DONE`, then proceeds with checkin. With `--context <markdown>`, appends a summary section to the parent task file body. With `--delete` (requires task `status: DONE`): removes the child task file from the handoff commit. Runs validation (see §6.6); with `--rebase`/`--merge`, first propagates from parent and bails on conflict unless `--force`. Project tasks must specify `--target`; regular tasks cannot use `--target`. See §6.5 and §6.6.
+
+- **`tt task add-context [-m <msg>] [--no-timestamp]`** — Append a free-form context block to the current task file body, without creating a commit. The block is formatted as `## YYYY-MM-DD HH:MM\n\n<text>\n\n---`. If `--message` is not provided, opens an editor pre-filled with the timestamp heading. With `--no-timestamp`, omits the timestamp heading from both the inline message and the editor template. Aborts if the resulting message is empty. Modifies the task file directly in the working copy.
 
 - **`tt task list [--project <project-id>]... [--detached] | [--all]`** — Generate and print the full project todo list to stdout. Tasks are grouped by project; orphaned tasks are excluded by default. Optional `--project`, `--detached` and `--all` filter which sections are shown. Output format is the markdown described in §4.1. See §7.1 and Appendix A.
 
