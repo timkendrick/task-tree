@@ -7,8 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # Create a task file and jj bookmark (branch) for bootstrapping task-tree.
 #
-# For top-level tasks: branches from current branch (or @ if no bookmarks).
-# For child tasks: use --parent <task-id> to add subtask entry to parent first.
+# For project tasks: use --project to create a top-level project branch.
+# For all other tasks (default): branches from current branch or --parent.
 #
 # Usage:
 #   create [options...]
@@ -16,20 +16,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   create --slug <slug> --title <title> [options...]
 #
 # Options:
-#   --title TITLE     Task title (prompted if missing and stdin is a TTY)
-#   --slug SLUG       Human-readable slug (prompted with suggested default if missing)
+#   --title TITLE          Task title (prompted if missing and stdin is a TTY)
+#   --slug SLUG            Human-readable slug (prompted with suggested default if missing)
 #   --description "TEXT"   Task description (prompted if missing and stdin is a TTY)
-#   --parent TASK-ID  Parent task ID (default: current branch)
-#   --label LABEL     Add a label (repeatable)
-#   --status STATUS   TODO or IN-PROGRESS (default: TODO)
-#   --prefix PREFIX   Task ID prefix (default: task/)
-#   --repo PATH       Repository root (default: walk up to find .jj)
-#   --dry-run         Show what would be done without making changes
-#   --propagate       After creation, propagate parent's new commit to sibling branches
-#   --rebase          (with --propagate) Rebase descendants onto parent tip (default)
-#   --merge           (with --propagate) Merge parent tip into descendants
-#   --shallow         (with --propagate) Propagate to direct children only
-#   --force           (with --propagate) Proceed even if propagation has conflicts
+#   --parent TASK-ID       Parent task ID (default: current branch); mutually exclusive with --project
+#   --project              Create a parentless project task; mutually exclusive with --parent
+#   --target COMMIT-REV    (with --project) Fork project branch from this revision (default: current @)
+#   --label LABEL          Add a label (repeatable)
+#   --repo PATH            Repository root (default: walk up to find .jj)
+#   --dry-run              Show what would be done without making changes
+#   --force                Overwrite child branch if it already exists
+#   --propagate            After creation, propagate parent's new commit to sibling branches
+#   --rebase               (with --propagate) Rebase descendants onto parent tip (default)
+#   --merge                (with --propagate) Merge parent tip into descendants
+#   --shallow              (with --propagate) Propagate to direct children only
 #
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -44,22 +44,24 @@ Options:
   --title TITLE         Task title/summary (prompted if missing and interactive)
   --slug SLUG           Human-readable slug (prompted with suggested default if missing)
   --description TEXT    Task description (prompted if missing and interactive)
-  --parent TASK-ID      Parent task ID (default: current branch)
+  --parent TASK-ID      Parent task ID (default: current branch); mutually exclusive with --project
+  --project             Create a parentless project task; mutually exclusive with --parent
+  --target COMMIT-REV   (with --project) Fork project branch from this revision (default: current @)
   --label LABEL         Add a label (repeatable)
-  --status STATUS       TODO or IN-PROGRESS (default: TODO)
-  --prefix PREFIX       Task ID prefix (default: from .tt/config.toml)
   --repo PATH           Repository root (default: walk up to find .jj)
   --dry-run             Show what would be done, do not execute
+  --force               Overwrite child/project branch if it already exists
   --propagate           After creation, propagate parent's new commit to sibling branches
   --rebase              (with --propagate) Rebase descendants onto parent tip (default)
   --merge               (with --propagate) Merge parent tip into descendants
   --shallow             (with --propagate) Propagate to direct children only
-  --force               (with --propagate) Proceed even if propagation has conflicts
 
 Examples:
   ${SCRIPT_NAME}                                    # prompts for title, slug, description
   ${SCRIPT_NAME} --title "Phase 0: Test harness" --description "Set up the test harness"
   ${SCRIPT_NAME} --slug tt-task-list --title "tt task list" --parent task/phase-0-abc123de --label tdd --description "Implement tt task list"
+  ${SCRIPT_NAME} --project --title "Main app" --description "Primary application"
+  ${SCRIPT_NAME} --project --title "Main app" --target abc123 --description "Fork from specific revision"
   ${SCRIPT_NAME} --title "New feature" --description "Add new feature" --propagate --shallow
 
 EOF
@@ -225,15 +227,15 @@ main() {
   local description=''
   local has_description=false
   local -a labels=()
-  local status='TODO'
-  local task_prefix=''
+  local is_project=false
+  local target=''
   local parent=''
   local repo=''
   local dry_run=false
+  local force=false
   local propagate=false
   local propagate_strategy='rebase'
   local propagate_shallow=false
-  local propagate_force=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -259,14 +261,13 @@ main() {
         labels+=("$2")
         shift 2
         ;;
-      --status)
-        [[ $# -lt 2 ]] && { log "Error: --status requires an argument"; usage; }
-        status="$2"
-        shift 2
+      --project)
+        is_project=true
+        shift
         ;;
-      --prefix)
-        [[ $# -lt 2 ]] && { log "Error: --prefix requires an argument"; usage; }
-        task_prefix="$2"
+      --target)
+        [[ $# -lt 2 ]] && { log "Error: --target requires an argument"; usage; }
+        target="$2"
         shift 2
         ;;
       --parent)
@@ -283,6 +284,10 @@ main() {
         dry_run=true
         shift
         ;;
+      --force)
+        force=true
+        shift
+        ;;
       --propagate)
         propagate=true
         shift
@@ -297,10 +302,6 @@ main() {
         ;;
       --shallow)
         propagate_shallow=true
-        shift
-        ;;
-      --force)
-        propagate_force=true
         shift
         ;;
       -h|--help)
@@ -352,8 +353,13 @@ main() {
     fi
   fi
 
-  if [[ "$status" != 'TODO' && "$status" != 'IN-PROGRESS' ]]; then
-    log "Error: --status must be TODO or IN-PROGRESS"
+  if [[ "$is_project" == true && -n "$parent" ]]; then
+    log "Error: --project and --parent are mutually exclusive"
+    exit 1
+  fi
+
+  if [[ -n "$target" && "$is_project" == false ]]; then
+    log "Error: --target is only valid with --project"
     exit 1
   fi
 
@@ -370,26 +376,47 @@ main() {
     exit 1
   fi
 
-  # Resolve task prefix and project prefix: from config if not explicitly set
-  if [[ -z "$task_prefix" ]]; then
-    task_prefix="$(get_task_prefix "$repo")"
-  fi
-  local project_prefix
+  local -a jj_opts=(-R "$repo")
+
+  # Resolve task prefix and project prefix from config
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  # Resolve parent: from --parent or default (current branch)
+  # Choose the active prefix based on mode
+  local active_prefix
+  if [[ "$is_project" == true ]]; then
+    active_prefix="$project_prefix"
+  else
+    active_prefix="$task_prefix"
+  fi
+
+  # Resolve parent: from --parent or default (current branch); not used for --project
   local resolve_output
   local parent_rev=''
   local parent_task_file=''
   local parent_bookmark=''
-  resolve_output="$(resolve_parent "$parent" "$repo" "$task_prefix" "$project_prefix")"
-  parent_rev="$(printf '%s' "$resolve_output" | head -n 1)"
-  parent_task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
-  parent_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+  if [[ "$is_project" == false ]]; then
+    resolve_output="$(resolve_parent "$parent" "$repo" "$task_prefix" "$project_prefix")"
+    parent_rev="$(printf '%s' "$resolve_output" | head -n 1)"
+    parent_task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
+    parent_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+  else
+    # --project mode: fork from --target if given, else current @
+    if [[ -n "$target" ]]; then
+      if ! parent_rev="$(jj "${jj_opts[@]}" log -r "$target" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"; then
+        log "Error: --target revision not found: $target"
+        exit 1
+      fi
+    else
+      parent_rev="$(jj "${jj_opts[@]}" log -r '@' -n 1 --no-graph -T 'commit_id')"
+    fi
+  fi
 
   # Generate task ID
-  local task_hex="$(generate_task_hex)"
-  local task_id="${task_prefix}${slug}-${task_hex}"
+  local task_hex
+  task_hex="$(generate_task_hex)"
+  local task_id="${active_prefix}${slug}-${task_hex}"
   local task_filename="${slug}-${task_hex}.md"
   local task_file_path=".tt/task/${task_filename}"
 
@@ -397,14 +424,12 @@ main() {
     log "Dry run: would create task $task_id"
     log "  Task file: $task_file_path"
     log "  Title: $title"
-    log "  Status: $status"
+    log "  Mode: $( [[ "$is_project" == true ]] && echo project || echo task )"
     log "  Parent rev: $parent_rev"
     [[ -n "$parent_task_file" ]] && log "  Parent task file: $parent_task_file"
     log "  JJ bookmark: $task_id"
     exit 0
   fi
-
-  local -a jj_opts=(-R "$repo")
 
   # Capture revision user had checked out; restore it on exit so we leave them where they were.
   # Use inline trap to capture values at definition time (locals are gone when EXIT runs).
@@ -421,13 +446,38 @@ main() {
     trap '[[ -n "'"$original_rev"'" ]] && jj -R "'"$repo"'" edit "'"$original_rev"'" 2>/dev/null || true' EXIT
   fi
 
+  # Check whether the target bookmark already exists; refuse unless --force
+  local bookmark_existed=false
+  if jj "${jj_opts[@]}" log -r "$task_id" -n 1 --no-graph -T '' 2>/dev/null; then
+    if [[ "$force" == false ]]; then
+      log "Error: Branch '$task_id' already exists. Use --force to overwrite."
+      exit 1
+    fi
+    bookmark_existed=true
+    log "Warning: Branch '$task_id' already exists; overwriting (--force)."
+  fi
+
   jj "${jj_opts[@]}" new "$parent_rev"
 
   # Ensure .tt/task exists
   mkdir -p "$repo/.tt/task"
 
-  if [[ -n "$parent_task_file" ]]; then
-    # Child task: commit on parent branch creates the task file (partial: no description) and
+  if [[ "$is_project" == true ]]; then
+    # Project task: first commit creates the task file (without description),
+    # second commit adds the description frontmatter.
+    if ((${#labels[@]} > 0)); then
+      write_task_file "$repo" "$task_file_path" "$title" 'TODO' "" "${labels[@]}"
+    else
+      write_task_file "$repo" "$task_file_path" "$title" 'TODO' ""
+    fi
+    jj "${jj_opts[@]}" describe -m "Create project: $title"
+    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
+    jj "${jj_opts[@]}" new "@"
+    add_description_to_frontmatter "$repo/$task_file_path" "$description"
+    jj "${jj_opts[@]}" describe -m "Describe task: $title ($task_id)"
+    jj "${jj_opts[@]}" bookmark set "$task_id"
+  elif [[ -n "$parent_task_file" ]]; then
+    # Child task: commit on parent branch creates the task file (without description) and
     # registers the subtask; the child branch's initial commit adds the description frontmatter.
     local parent_path="$repo/$parent_task_file"
     if [[ ! -f "$parent_path" ]]; then
@@ -435,9 +485,9 @@ main() {
       exit 1
     fi
     if ((${#labels[@]} > 0)); then
-      write_task_file "$repo" "$task_file_path" "$title" "$status" "" "${labels[@]}"
+      write_task_file "$repo" "$task_file_path" "$title" 'TODO' "" "${labels[@]}"
     else
-      write_task_file "$repo" "$task_file_path" "$title" "$status" ""
+      write_task_file "$repo" "$task_file_path" "$title" 'TODO' ""
     fi
     add_subtask_to_frontmatter "$parent_path" "$task_id"
     log "Added subtask to parent: $parent_task_file"
@@ -446,21 +496,20 @@ main() {
     jj "${jj_opts[@]}" new "@"
     add_description_to_frontmatter "$repo/$task_file_path" "$description"
     jj "${jj_opts[@]}" describe -m "Describe task: $title ($task_id)"
-    jj "${jj_opts[@]}" bookmark set "$task_id"
+    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
   else
-    # Top-level (project) task: first commit creates the task file (partial: no description);
-    # second commit adds the description frontmatter.
+    # Child task with no identifiable parent task file (e.g. branching from a non-task bookmark).
+    # Create the task file and bookmark without modifying any parent.
     if ((${#labels[@]} > 0)); then
-      write_task_file "$repo" "$task_file_path" "$title" "$status" "" "${labels[@]}"
+      write_task_file "$repo" "$task_file_path" "$title" 'TODO' "" "${labels[@]}"
     else
-      write_task_file "$repo" "$task_file_path" "$title" "$status" ""
+      write_task_file "$repo" "$task_file_path" "$title" 'TODO' ""
     fi
-    jj "${jj_opts[@]}" describe -m "Create project: $title"
-    jj "${jj_opts[@]}" bookmark set "$task_id"
+    jj "${jj_opts[@]}" describe -m "Create task: $title ($task_id)"
     jj "${jj_opts[@]}" new "@"
     add_description_to_frontmatter "$repo/$task_file_path" "$description"
     jj "${jj_opts[@]}" describe -m "Describe task: $title ($task_id)"
-    jj "${jj_opts[@]}" bookmark set "$task_id"
+    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
   fi
 
   log "Created task $task_id (bookmark: $task_id)"
@@ -469,7 +518,7 @@ main() {
     local -a propagate_args=(--from "$parent_bookmark" --repo "$repo")
     [[ "$propagate_strategy" == merge ]] && propagate_args+=(--merge)
     [[ "$propagate_shallow" == true ]] && propagate_args+=(--shallow)
-    [[ "$propagate_force" == true ]] && propagate_args+=(--force)
+    [[ "$force" == true ]] && propagate_args+=(--force)
     [[ "$dry_run" == true ]] && propagate_args+=(--dry-run)
     log "Propagating from $parent_bookmark..."
     "$SCRIPT_DIR/propagate" "${propagate_args[@]}"
