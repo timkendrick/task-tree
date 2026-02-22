@@ -168,10 +168,14 @@ prompt_raw() {
   DEFAULT_EDITOR="vim"
   editor="${TT_EDITOR:-${GIT_EDITOR:-${VISUAL:-${EDITOR:-$DEFAULT_EDITOR}}}}"
   local tmpfile
-  tmpfile="$(mktemp -t COMMIT_EDITMSG)"
+  tmpfile="$(mktemp -t TT_EDITMSG)"
   trap 'rm -f "$tmpfile"' RETURN
   cat > "$tmpfile"
-  "$editor" "$tmpfile" </dev/tty >/dev/tty || { log "Error: Editor exited with non-zero status."; return 1; }
+  "$editor" "$tmpfile" </dev/tty >/dev/tty || {
+    log "Error: Editor exited with non-zero status.";
+    cat "$tmpfile" >&2
+    return 1;
+  }
   cat "$tmpfile"
 }
 
