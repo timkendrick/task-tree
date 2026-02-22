@@ -82,7 +82,7 @@ Work **command by command**, including each command’s hooks (DESIGN §8). Phas
 
 7. **`tt task checkin`** — Validation (DESIGN §6.5), checkin commit, merge. DESIGN §5.2, §6.4, §6.5. Hooks: **pre-checkin**, **pre-receive**, **post-receive**.
 
-8. **`tt task status`** — Current task and branch; status of direct children from current task file frontmatter; optional `<task-id>` arg for explicit lookup. DESIGN §5.2. No hooks.
+8. **`tt task show`** — Current task and branch; status of direct children from current task file frontmatter; optional `<task-id>` arg for explicit lookup. DESIGN §5.2. No hooks.
 
 9. **`tt task propagate`** — Rebase/merge descendants onto parent tip; worktree sync. DESIGN §5.2, §6.7. Hooks: **pre-propagate**, **post-propagate**.
 
@@ -222,10 +222,10 @@ Phase 0 is not required to be developed under TDD.
 
 ---
 
-### 6.7 `tt task status`
+### 6.7 `tt task show`
 
 - **Design reference:** DESIGN §5.2.
-- **Signature:** `tt task status [<task-id>]`. Alias: `tt status`.
+- **Signature:** `tt task show [<task-id>]`. Alias: `tt show`.
 - **Behavior:**
   - If `<task-id>` omitted: resolve current branch via `resolve_current`; error if not on a task/project branch.
   - If `<task-id>` given: locate the correct branch using the “where to read” rule (DESIGN Appendix A step 3) — scan all task/project branches for one whose owner task file contains `subtask: [x] <task-id>`; if found, read from that branch; otherwise read from `<task-id>`’s own branch. Error if neither exists.

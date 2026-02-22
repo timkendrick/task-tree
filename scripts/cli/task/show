@@ -5,11 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt task status — Show the metadata and direct child tasks of the current task
-#                  (default) or the given task.
+# tt task show — Show the metadata and direct child tasks of the current task
+#                (default) or the given task.
 #
 # Usage:
-#   status [<task-id>] [--repo PATH] [-h|--help]
+#   show [<task-id>] [--repo PATH] [-h|--help]
 #
 # Options:
 #   <task-id>    Task ID (branch name) to show. Default: current task.

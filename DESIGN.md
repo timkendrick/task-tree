@@ -151,7 +151,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt create` | `tt task create` |
 | `tt checkout` | `tt task checkout` |
 | `tt checkin` | `tt task checkin` |
-| `tt status` | `tt task status` |
+| `tt show` | `tt task show` |
 | `tt parent` | `tt task parent` |
 | `tt propagate` | `tt task propagate` |
 | `tt checkpoint` | `tt task checkpoint` |
@@ -186,7 +186,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 - **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step. No hooks.
 
-- **`tt task status [<task-id>]`** — Show the metadata and direct child tasks of the current task (default) or the given task. Reads from the correct branch per the "where to read" rule (§7.1 / Appendix A step 3): merged tasks are read from the parent branch that received the checkin; ongoing tasks are read from their own branch. Output format: lowercase header block (`task`, `branch`, `worktree`, `status`, `title`), followed by a subtasks section and a description section, both always present and separated by `---` dividers (see §6.7 for exact format). The `worktree` field shows the closest ancestor worktree for the given task. Output to stdout only. No hooks.
+- **`tt task show [<task-id>]`** — Show the metadata and direct child tasks of the current task (default) or the given task. Reads from the correct branch per the "where to read" rule (§7.1 / Appendix A step 3): merged tasks are read from the parent branch that received the checkin; ongoing tasks are read from their own branch. Output format: lowercase header block (`task`, `branch`, `worktree`, `status`, `title`), followed by a subtasks section and a description section, both always present and separated by `---` dividers (see §6.7 for exact format). The `worktree` field shows the closest ancestor worktree for the given task. Output to stdout only. No hooks.
 
 - **`tt task propagate [--from=<parent-id>] [--to=<descendant-id>]... [--rebase | --merge] [--shallow] [--force]`** — Update descendant task branches so their base is the parent's current tip. Default is to rebase all descendants of the current task; `--merge` merges instead; `--shallow` updates only direct children; `--force` proceeds despite rebase/merge conflicts. Preconditions: clean WC, no merge commits at tip, no untracked changes in affected worktrees. See §6.8.
 
