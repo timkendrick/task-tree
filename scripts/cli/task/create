@@ -213,7 +213,8 @@ add_description_to_frontmatter() {
   desc_yaml="description: $(printf '%s' "$description" | jq -Rs '.')"
   local tmpfile
   tmpfile="$(mktemp)"
-  awk -v desc="$desc_yaml" '
+  DESC_YAML="$desc_yaml" awk '
+    BEGIN { desc = ENVIRON["DESC_YAML"] }
     /^---$/ { sep++; if (sep == 2) { print desc } }
     { print }
   ' "$file_path" > "$tmpfile"
@@ -345,7 +346,7 @@ main() {
 
   if [[ "$has_description" == false ]]; then
     if [[ -t 0 ]]; then
-      read -r -p "Enter a description: " description
+      description="$(prompt_raw </dev/null)"
     fi
   fi
 
