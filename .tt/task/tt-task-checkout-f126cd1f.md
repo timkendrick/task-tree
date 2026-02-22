@@ -1,4 +1,4 @@
 ---
 title: "Implement `tt task checkout` CLI command"
-status: IN-PROGRESS
+status: DONE
 ---
