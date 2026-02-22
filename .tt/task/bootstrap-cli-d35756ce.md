@@ -8,7 +8,7 @@ subtask: [ ] task/tt-task-checkout-f126cd1f
 subtask: [x] task/tt-task-propagate-286501f8
 subtask: [ ] task/tt-task-checkpoint-2827d127
 subtask: [ ] task/tt-task-add-context-af1b6a26
-subtask: [ ] task/tt-task-checkin-59f599a6
+subtask: [x] task/tt-task-checkin-59f599a6
 ---
 
 [`task/tt-task-list-6638a980`](.tt/task/tt-task-list-6638a980.md) Implement `tt task list` CLI command
