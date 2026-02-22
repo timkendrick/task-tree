@@ -82,15 +82,13 @@ Work **command by command**, including each command’s hooks (DESIGN §8). Phas
 
 7. **`tt task checkin`** — Validation (DESIGN §6.5), checkin commit, merge. DESIGN §5.2, §6.4, §6.5. Hooks: **pre-checkin**, **pre-receive**, **post-receive**.
 
-8. **`tt task status`** — Current task and branch; status of direct children from current task file frontmatter. DESIGN §5.2. No hooks.
+8. **`tt task status`** — Current task and branch; status of direct children from current task file frontmatter; optional `<task-id>` arg for explicit lookup. DESIGN §5.2. No hooks.
 
-9. **`tt task show`** — Full context of current or given task (frontmatter + body). DESIGN §5.2. No hooks.
+9. **`tt task propagate`** — Rebase/merge descendants onto parent tip; worktree sync. DESIGN §5.2, §6.7. Hooks: **pre-propagate**, **post-propagate**.
 
-10. **`tt task propagate`** — Rebase/merge descendants onto parent tip; worktree sync. DESIGN §5.2, §6.7. Hooks: **pre-propagate**, **post-propagate**.
+10. **`tt task reorder`** — Reorder direct child via parent frontmatter. DESIGN §5.2, §6.6. No hooks.
 
-11. **`tt task reorder`** — Reorder direct child via parent frontmatter. DESIGN §5.2, §6.6. No hooks.
-
-12. **`tt task remove`** — Remove direct child from current task frontmatter (branch/file unchanged). DESIGN §5.2, §6.6. Hooks: **pre-remove**, **post-remove**.
+11. **`tt task remove`** — Remove direct child from current task frontmatter (branch/file unchanged). DESIGN §5.2, §6.6. Hooks: **pre-remove**, **post-remove**.
 
 ---
 
@@ -227,22 +225,36 @@ Phase 0 is not required to be developed under TDD.
 ### 6.7 `tt task status`
 
 - **Design reference:** DESIGN §5.2.
-- **Signature:** `tt task status`. Alias: `tt status`.
-- **Behavior:** Resolve current branch to current task. Print current task ID and branch name, and the status of all direct child tasks (from the current task file’s `subtask:` entries in frontmatter). Output format is implementation-defined (human-readable).
+- **Signature:** `tt task status [<task-id>]`. Alias: `tt status`.
+- **Behavior:**
+  - If `<task-id>` omitted: resolve current branch via `resolve_current`; error if not on a task/project branch.
+  - If `<task-id>` given: locate the correct branch using the “where to read” rule (DESIGN Appendix A step 3) — scan all task/project branches for one whose owner task file contains `subtask: [x] <task-id>`; if found, read from that branch; otherwise read from `<task-id>`’s own branch. Error if neither exists.
+  - `worktree` field: use `find_worktrees_for_branch` on the resolved branch; take first result; fall back to repo root if none found.
+  - Decode `description` field: the frontmatter value is a JSON string literal; pass through `jq -r .` to unescape `\n` and other escape sequences.
+- **Output format** (exact):
+  ```
+  task:     <task-id>
+  branch:   <branch-name>
+  worktree: <worktree-path>
+  status:   <STATUS>
+  title:    <title>
+  ---
+
+  Subtasks:
+  - [cb] <id> <title>
+  - ...
+
+  ---
+
+  <description text>
+
+  ```
+  Rules: blank line after `---`; blank line before `---` (except after header); trailing blank line after last section. `Subtasks:` section replaced by `[No subtasks]` if empty. Description replaced by `[No description]` if empty.
 - **No hooks.**
 
 ---
 
-### 6.8 `tt task show`
-
-- **Design reference:** DESIGN §5.2.
-- **Signature:** `tt task show [<task-id>]`. Alias: `tt show`.
-- **Behavior:** If `<task-id>` omitted, use current task. Otherwise use the given task. Load that task’s task file from the correct branch (same “where to read” rule as todo list). Print frontmatter and body to stdout.
-- **No hooks.**
-
----
-
-### 6.9 `tt task propagate`
+### 6.8 `tt task propagate`
 
 - **Design reference:** DESIGN §5.2, §6.7.
 - **Signature:** `tt task propagate [--from=<parent-id>] [--to=<descendant-id>]... [--rebase | --merge] [--shallow] [--force]`. Alias: `tt propagate`.
@@ -251,7 +263,7 @@ Phase 0 is not required to be developed under TDD.
 
 ---
 
-### 6.10 `tt task reorder`
+### 6.9 `tt task reorder`
 
 - **Design reference:** DESIGN §5.2, §6.6.
 - **Signature:** `tt task reorder <task-id> <modifier>`. Modifier: one of `--up`, `--down`, `--after <other-task-id>`, `--before <other-task-id>` (mutually exclusive).
@@ -260,7 +272,7 @@ Phase 0 is not required to be developed under TDD.
 
 ---
 
-### 6.11 `tt task remove`
+### 6.10 `tt task remove`
 
 - **Design reference:** DESIGN §5.2, §6.6.
 - **Signature:** `tt task remove <task-id>`. Alias: none in DESIGN; implement per §5.

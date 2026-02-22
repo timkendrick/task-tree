@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task status — Show the metadata and direct child tasks of the current task
+#                  (default) or the given task.
+#
+# Usage:
+#   status [<task-id>] [--repo PATH] [-h|--help]
+#
+# Options:
+#   <task-id>    Task ID (branch name) to show. Default: current task.
+#   --repo PATH  Repository root (default: walk up from CWD to find .jj).
+#   -h, --help   Show this help.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} [<task-id>] [--repo PATH]
+
+Show the metadata and direct child tasks of the current task (default)
+or the given task. Reads from the correct branch per the "where to read"
+rule: merged tasks are read from the parent branch; ongoing tasks are
+read from their own branch.
+
+Options:
+  <task-id>    Task branch name to show (default: current task).
+  --repo PATH  Repository root (default: find .jj).
+  -h, --help   Show this help.
+
+EOF
+  exit 1
+}
+
+main() {
+  local task_id_arg=''
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage ;;
+      -*)
+        log "Error: Unknown option: $1"; usage ;;
+      *)
+        if [[ -z "$task_id_arg" ]]; then
+          task_id_arg="$1"; shift
+        else
+          log "Error: Unexpected argument: $1"; usage
+        fi ;;
+    esac
+  done
+
+  # --- Resolve repo root ---
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # --- Resolve branch and task file ---
+  local branch task_file
+
+  if [[ -z "$task_id_arg" ]]; then
+    # No task-id: use current branch
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
+    branch="$(printf '%s' "$resolve_output" | sed -n '3p')"
+
+    if [[ -z "$branch" ]]; then
+      log "Error: Not on a task or project branch."
+      exit 1
+    fi
+  else
+    # Explicit task-id: find its canonical branch via "where to read" rule
+    if ! branch="$(find_branch_for_task "$repo" "$task_id_arg" "$task_prefix" "$project_prefix")"; then
+      log "Error: Could not locate branch for task '$task_id_arg'."
+      exit 1
+    fi
+    # Derive task file from branch
+    local suffix
+    if is_task_branch "$branch" "$task_prefix"; then
+      suffix="${branch#$task_prefix}"
+    elif is_project_branch "$branch" "$project_prefix"; then
+      suffix="${branch#$project_prefix}"
+    else
+      # branch is the task's own branch but might not match prefixes if unusual
+      # Try using task_id_arg directly for suffix extraction
+      if is_task_branch "$task_id_arg" "$task_prefix"; then
+        suffix="${task_id_arg#$task_prefix}"
+      elif is_project_branch "$task_id_arg" "$project_prefix"; then
+        suffix="${task_id_arg#$project_prefix}"
+      else
+        log "Error: Cannot derive task file path for '$task_id_arg'."
+        exit 1
+      fi
+    fi
+    task_file=".tt/task/${suffix}.md"
+  fi
+
+  # --- Find worktree ---
+  local worktree
+  worktree="$(find_worktrees_for_branch "$repo" "$branch" "$task_prefix" "$project_prefix" | head -1)"
+  if [[ -z "$worktree" ]]; then
+    worktree="$repo"
+  fi
+
+  # --- Read task file ---
+  local content
+  if ! content="$(jj -R "$repo" file show -r "$branch" -- "$task_file" 2>/dev/null)"; then
+    log "Error: Could not read task file '$task_file' from '$branch'."
+    exit 1
+  fi
+
+  # --- Parse fields ---
+  local title status
+  title="$(parse_frontmatter_field "$content" "title")"
+  status="$(parse_frontmatter_field "$content" "status")"
+  [[ -z "$status" ]] && status="TODO"
+
+  # Decode description: extract raw value (with quotes) then jq-decode
+  local description_raw description
+  description_raw="$(printf '%s' "$content" | awk '
+    /^---$/ { n++; next }
+    n==1 && /^description:/ {
+      sub(/^description:[[:space:]]*/, "")
+      print; exit
+    }
+  ')"
+  if [[ -n "$description_raw" ]]; then
+    description="$(printf '%s' "$description_raw" | jq -r '.' 2>/dev/null)" || description=""
+  else
+    description=""
+  fi
+
+  # Parse subtask lines from frontmatter
+  local subtasks
+  subtasks="$(printf '%s' "$content" | awk '
+    /^---$/ { n++; next }
+    n==1 && /^subtask:/ {
+      sub(/^subtask:[[:space:]]*/, "")
+      print
+    }
+  ')"
+
+  # --- Find parent (optional; omitted for parentless/project tasks) ---
+  local parent_branch
+  parent_branch="$(find_parent_branch "$repo" "$branch" "$task_prefix" "$project_prefix" 2>/dev/null)" || parent_branch=""
+
+  # --- Print header block ---
+  # Labels padded to 9 chars so values align at col 11
+  printf -- '---\n'
+  printf 'task:     %s\n' "$branch"
+  printf 'branch:   %s\n' "$branch"
+  printf 'worktree: %s\n' "$worktree"
+  [[ -n "$parent_branch" ]] && printf 'parent:   %s\n' "$parent_branch"
+  printf 'status:   %s\n' "$status"
+  printf 'title:    %s\n' "$title"
+  printf -- '---\n'
+
+  # --- Print subtasks section ---
+  printf '\n'
+  if [[ -n "$subtasks" ]]; then
+    printf 'Subtasks:\n'
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      printf -- '- %s\n' "$line"
+    done <<< "$subtasks"
+  else
+    printf '[No subtasks]\n'
+  fi
+  printf '\n'
+  printf -- '---\n'
+
+  # --- Print description section ---
+  printf '\n'
+  if [[ -n "$description" ]]; then
+    printf '%s\n' "$description"
+  else
+    printf '[No description]\n'
+  fi
+  printf '\n'
+}
+
+main "$@"
