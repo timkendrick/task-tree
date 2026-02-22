@@ -306,6 +306,57 @@ find_branch_for_task() {
   return 1
 }
 
+# Usage: get_worktree_current_rev WORKTREE
+# Prints the commit_id of @ in the given worktree. Exits 1 on failure.
+get_worktree_current_rev() {
+  local worktree="$1"
+  jj -R "$worktree" log -r '@' --no-graph -T 'commit_id' 2>/dev/null
+}
+
+# Usage: resolve_current_worktree REPO
+# Prints the current workspace root; falls back to REPO if not in a workspace.
+resolve_current_worktree() {
+  local repo="$1"
+  jj -R "$repo" workspace root 2>/dev/null || printf '%s' "$repo"
+}
+
+# Usage: resolve_task_worktree REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX CURRENT_WORKTREE [WORKTREE_ARG]
+#
+# Resolves which worktree to operate on for BOOKMARK:
+#   0 matches → use CURRENT_WORKTREE (fallback)
+#   1 match   → use that worktree
+#   multiple  → if CURRENT_WORKTREE is one of them, use it;
+#               else if WORKTREE_ARG is given, use it;
+#               else error and list candidates
+#
+# Prints the resolved worktree path to stdout. Exits 1 on unresolvable ambiguity.
+resolve_task_worktree() {
+  local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
+  local current_worktree="$5" worktree_arg="${6:-}"
+
+  local found wt_count
+  found="$(find_worktrees_for_branch "$repo" "$bookmark" "$task_prefix" "$project_prefix")"
+  wt_count="$(printf '%s' "$found" | grep -c . 2>/dev/null || true)"
+
+  case "$wt_count" in
+    0) printf '%s' "$current_worktree" ;;
+    1) printf '%s' "$found" ;;
+    *)
+      if printf '%s\n' "$found" | grep -qxF "$current_worktree"; then
+        printf '%s' "$current_worktree"
+        return 0
+      fi
+      if [[ -n "$worktree_arg" ]]; then
+        printf '%s' "$worktree_arg"
+        return 0
+      fi
+      log "Error: Multiple workspaces found for '$bookmark'; use --worktree=<path>:"
+      printf '%s\n' "$found" | while IFS= read -r p; do log "  $p"; done
+      return 1
+      ;;
+  esac
+}
+
 # Usage: find_worktrees_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
 # Outputs one workspace root path per line for each jj workspace where
 # BOOKMARK is the current branch (resolved via resolve_current).

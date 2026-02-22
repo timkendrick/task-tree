@@ -294,7 +294,7 @@ main() {
 
   # Capture @ to restore after merge operations move it
   local original_rev
-  original_rev="$(jj "${jj_opts[@]}" log -r '@' --no-graph -T 'commit_id')"
+  original_rev="$(get_worktree_current_rev "$repo")"
   trap '[[ -n "'"$original_rev"'" ]] && jj -R "'"$repo"'" edit "'"$original_rev"'" 2>/dev/null || true' EXIT
 
   propagate_from "$repo" "$from_bookmark" "$task_prefix" "$project_prefix" \

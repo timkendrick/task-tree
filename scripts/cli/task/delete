@@ -281,7 +281,7 @@ main() {
   esac
 
   local current_worktree
-  current_worktree="$(jj -R "$repo" workspace root 2>/dev/null || printf '%s' "$repo")"
+  current_worktree="$(resolve_current_worktree "$repo")"
 
   # Run pre-delete hook (blocking)
   run_hook "$repo" "pre-delete" true "$current_worktree" "${workspace_dir:-}" \

@@ -111,7 +111,7 @@ main() {
   fi
 
   local current_worktree
-  current_worktree="$(jj -R "$repo" workspace root 2>/dev/null || printf '%s' "$repo")"
+  current_worktree="$(resolve_current_worktree "$repo")"
 
   # --- Precondition: WC must be clean ---
   if ! is_wc_clean "$repo"; then
@@ -165,6 +165,7 @@ main() {
       log "Running complete for $child_bookmark..."
       "$SCRIPT_DIR/complete" --repo "$repo" \
         ${workspace_dir:+--workspace-dir "$workspace_dir"} \
+        ${worktree_arg:+--worktree="$worktree_arg"} \
         ${force:+--force}
     fi
   fi
@@ -273,7 +274,7 @@ main() {
 
   # --- Save original WC revision in target workspace ---
   local original_rev
-  original_rev="$(jj -R "$target_ws" log -r '@' --no-graph -T 'commit_id')"
+  original_rev="$(get_worktree_current_rev "$target_ws")"
 
   # --- Create handoff commit in target workspace ---
 

@@ -183,7 +183,7 @@ main() {
 
   # Resolve current worktree and bookmark for hook env vars
   local current_worktree previous_task_id previous_task_branch
-  current_worktree="$(jj "${jj_opts[@]}" workspace root 2>/dev/null || printf '%s' "$repo")"
+  current_worktree="$(resolve_current_worktree "$repo")"
   local resolve_output
   resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
   previous_task_id="$(printf '%s' "$resolve_output" | sed -n '3p')"
