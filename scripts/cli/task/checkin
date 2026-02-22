@@ -8,11 +8,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task checkin — Merge a task branch's work into its parent branch.
 #
 # Usage:
-#   checkin [--context <markdown>] [--complete] [--rebase | --merge]
+#   checkin [<task-id>] [--context <markdown>] [--complete] [--rebase | --merge]
 #           [--force] [--delete] [--target <branch>]
 #           [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
 #
 # Options:
+#   <task-id>             Task branch to check in (default: current branch).
 #   --context <markdown>  Append a context block to the parent task file body.
 #   --complete            Run `tt task complete` first if status is not DONE.
 #   --rebase              Rebase child onto parent before checkin.
@@ -20,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --force               Proceed even if conflicts occur.
 #   --delete              Remove child task file and subtask entry (requires DONE).
 #   --target <branch>     Parent branch (required for project tasks).
-#   --worktree=<path>     Explicit parent workspace path (for disambiguation).
+#   --worktree=<path>     Worktree to use when task has multiple worktrees.
 #   --repo PATH           Repository root (default: walk up from CWD to find .jj).
 #   --workspace-dir PATH  Virtual project dir (for HEAD symlink and workspace paths).
 
@@ -28,11 +29,12 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [options...]
+Usage: ${SCRIPT_NAME} [<task-id>] [options...]
 
-Merge the current task branch into its parent branch.
+Merge the current task branch (or <task-id>) into its parent branch.
 
 Options:
+  <task-id>             Task branch to check in (default: current branch).
   --context <markdown>  Append a context block to parent task file.
   --complete            Run complete first if status is not DONE.
   --rebase              Rebase child onto parent before checkin.
@@ -40,7 +42,7 @@ Options:
   --force               Proceed despite conflicts.
   --delete              Remove child task file (requires DONE status).
   --target <branch>     Parent branch (required for project tasks).
-  --worktree=<path>     Explicit parent workspace path.
+  --worktree=<path>     Worktree to use when task has multiple worktrees.
   --repo PATH           Repository root (default: find .jj).
   --workspace-dir PATH  Virtual project dir.
   -h, --help            Show this help.
@@ -57,6 +59,7 @@ main() {
   local delete=false
   local target=''
   local worktree_arg=''
+  local task_id_arg=''
   local repo=''
   local workspace_dir=''
 
@@ -86,7 +89,11 @@ main() {
         workspace_dir="$2"; shift 2 ;;
       -h|--help) usage ;;
       *)
-        log "Error: Unknown option: $1"; usage ;;
+        if [[ -z "$task_id_arg" ]]; then
+          task_id_arg="$1"; shift
+        else
+          log "Error: Unexpected argument: $1"; usage
+        fi ;;
     esac
   done
 
@@ -113,22 +120,38 @@ main() {
   local current_worktree
   current_worktree="$(resolve_current_worktree "$repo")"
 
-  # --- Precondition: WC must be clean ---
-  if ! is_wc_clean "$repo"; then
-    log "Error: Working copy has uncommitted changes. Commit or discard first."
-    exit 1
-  fi
+  # --- Resolve branch and task file ---
+  local task_file child_bookmark child_slug
 
-  # --- Precondition: must be on a task or project branch ---
-  local resolve_output
-  resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-  local task_file child_bookmark
-  task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
-  child_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
-
-  if [[ -z "$child_bookmark" ]]; then
-    log "Error: Not on a task or project branch."
-    exit 1
+  if [[ -n "$task_id_arg" ]]; then
+    child_bookmark="$task_id_arg"
+    if is_task_branch "$child_bookmark" "$task_prefix"; then
+      child_slug="${child_bookmark#$task_prefix}"
+    elif is_project_branch "$child_bookmark" "$project_prefix"; then
+      child_slug="${child_bookmark#$project_prefix}"
+    else
+      log "Error: '$task_id_arg' is not a task or project branch."
+      exit 1
+    fi
+    if ! jj -R "$repo" log -r "$child_bookmark" --no-graph -T '' 2>/dev/null; then
+      log "Error: Branch '$child_bookmark' not found in repository."
+      exit 1
+    fi
+    task_file=".tt/task/${child_slug}.md"
+  else
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
+    child_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    if [[ -z "$child_bookmark" ]]; then
+      log "Error: Not on a task or project branch."
+      exit 1
+    fi
+    if is_task_branch "$child_bookmark" "$task_prefix"; then
+      child_slug="${child_bookmark#$task_prefix}"
+    else
+      child_slug="${child_bookmark#$project_prefix}"
+    fi
   fi
 
   local is_project=false
@@ -146,14 +169,19 @@ main() {
     exit 1
   fi
 
-  # Derive slug and task_id from child_bookmark
-  local child_slug
-  if is_task_branch "$child_bookmark" "$task_prefix"; then
-    child_slug="${child_bookmark#$task_prefix}"
-  else
-    child_slug="${child_bookmark#$project_prefix}"
-  fi
   local task_id="$child_bookmark"
+
+  # --- Resolve child worktree and check WC clean ---
+  local child_worktree
+  if ! child_worktree="$(resolve_task_worktree "$repo" "$child_bookmark" "$task_prefix" "$project_prefix" \
+      "$current_worktree" "$worktree_arg")"; then
+    exit 1
+  fi
+
+  if ! is_wc_clean "$child_worktree"; then
+    log "Error: Working copy has uncommitted changes. Commit or discard first."
+    exit 1
+  fi
 
   # --- Optional: run complete first ---
   if [[ "$do_complete" == true ]]; then
@@ -165,6 +193,7 @@ main() {
       log "Running complete for $child_bookmark..."
       "$SCRIPT_DIR/complete" --repo "$repo" \
         ${workspace_dir:+--workspace-dir "$workspace_dir"} \
+        ${task_id_arg:+"$task_id_arg"} \
         ${worktree_arg:+--worktree="$worktree_arg"} \
         ${force:+--force}
     fi
@@ -223,7 +252,7 @@ main() {
       ${force:+--force} \
       --repo "$repo"
     # Re-check WC is clean after propagation
-    if ! is_wc_clean "$repo"; then
+    if ! is_wc_clean "$child_worktree"; then
       log "Error: Working copy not clean after propagation."
       exit 1
     fi
@@ -256,12 +285,9 @@ main() {
     0) target_ws="$repo" ;;
     1) target_ws="$worktrees" ;;
     *)
-      if [[ -z "$worktree_arg" ]]; then
-        log "Error: Multiple parent workspaces found; use --worktree=<path>:"
-        printf '%s\n' "$worktrees" | while IFS= read -r p; do log "  $p"; done
-        exit 1
-      fi
-      target_ws="$worktree_arg"
+      log "Error: Multiple parent workspaces found for '$parent_bookmark'. Run checkin from within the task's own worktree."
+      printf '%s\n' "$worktrees" | while IFS= read -r p; do log "  $p"; done
+      exit 1
       ;;
   esac
 
