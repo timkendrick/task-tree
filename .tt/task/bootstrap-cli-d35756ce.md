@@ -25,6 +25,7 @@ subtask: [ ] task/propagate-to-checked-in-5c30016b
 subtask: [x] task/task-id-argument-266c3146
 subtask: [ ] task/standardize-stdio-9a3e669c
 subtask: [ ] task/tt-task-checkin-project-0ce9b81f
+subtask: [ ] task/tt-task-checkin-switch-b8ba57c3
 ---
 
 [`task/tt-task-list-6638a980`](.tt/task/tt-task-list-6638a980.md) Implement `tt task list` CLI command
