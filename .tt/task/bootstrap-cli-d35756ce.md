@@ -28,6 +28,7 @@ subtask: [ ] task/tt-task-checkin-project-0ce9b81f
 subtask: [ ] task/tt-task-checkin-switch-b8ba57c3
 subtask: [ ] task/tt-task-checkout-log-previous-224e7312
 subtask: [ ] task/tt-task-rename-8db18f41
+subtask: [ ] task/tt-task-move-091c3d4f
 ---
 
 [`task/tt-task-list-6638a980`](.tt/task/tt-task-list-6638a980.md) Implement `tt task list` CLI command
