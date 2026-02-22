@@ -174,7 +174,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 - **`tt task checkpoint [--message <msg>]`** — Record the current state and advance the task bookmark. If the working copy is empty, moves the bookmark to the working copy's parent commit (and updates that commit's description if `--message` is given). If the working copy has pending changes, creates a new commit from those changes (`jj commit`, using `--message` as the description) and moves the bookmark to it. The target commit must be a strict descendant of the current bookmark tip, unless `--force` is specified. Prints a short confirmation on success. See §6.3. Hooks: **pre-checkpoint**, **post-checkpoint**.
 
-- **`tt task complete [--force]`** — Mark the current task as done. Creates a `Complete task: <title> (<task-id>)` commit on the task branch that sets `status` to `DONE` in the task file, and advances the task bookmark to this commit. Requires a clean working copy and all child tasks to be done (every `subtask:` entry marked `[x]`) unless `--force` is specified. See §6.4. Hooks: **pre-complete** (blocking), **post-complete** (optional).
+- **`tt task complete [<task-id>...] [--force]`** — Mark the current task (or given task(s)) as done. Creates a `Complete task: <title> (<task-id>)` commit on the task branch that sets `status` to `DONE` in the task file, and advances the task bookmark to this commit. Requires a clean working copy and all child tasks to be done (every `subtask:` entry marked `[x]`) unless `--force` is specified. See §6.4. Hooks: **pre-complete** (blocking), **post-complete** (optional).
 
 - **`tt task checkin [--context <markdown>] [--complete] [--rebase | --merge] [--force] [--delete] [--target <branch>]`** — Merge the current task branch into its parent (or, for a project task, into the branch specified by `--target`). Supports **partial checkins** (task status `IN-PROGRESS`; shares work-in-progress with the parent) and **complete checkins** (task status `DONE`; marks the task finished). Always creates a **handoff commit** (child bookmark does not advance) and merges it into the parent as `Merge subtask: <title> (<task-id>)`. If the task's `status` is `DONE`, the handoff also marks the corresponding `subtask:` entry as `[x]` in the parent's frontmatter, and after the merge the user is switched to the parent worktree. With `--complete`: first runs `tt task complete` if the task is not already `DONE`, then proceeds with checkin. With `--context <markdown>`, appends a summary section to the parent task file body. With `--delete` (requires task `status: DONE`): after the normal checkin completes, delegates to `tt task delete` to remove the child task file and `subtask:` entry from the parent branch (two separate commits on the parent branch). Runs validation (see §6.6); with `--rebase`/`--merge`, first propagates from parent and bails on conflict unless `--force`. Project tasks must specify `--target`; regular tasks cannot use `--target`. See §6.5 and §6.6.
 
@@ -332,17 +332,19 @@ Checkpoint: task/foo-abc12345 → <commit-id>
 
 ### 6.4 Complete (`tt task complete`)
 
-`tt task complete` marks the current task as done. It creates a `Complete task: <title> (<task-id>)` commit on the task branch that updates `status` from `IN-PROGRESS` to `DONE` in the task file, and advances the task bookmark to this commit.
+`tt task complete` marks a task as done. It creates a `Complete task: <title> (<task-id>)` commit on the task branch that updates `status` from `IN-PROGRESS` to `DONE` in the task file, and advances the task bookmark to this commit.
+
+One or more `<task-id>` positional arguments may be provided. If given, the command completes each task in turn, stopping immediately on the first failure. If omitted, the command completes the current task (the task whose branch is currently checked out). Each task must have a checked-out worktree.
 
 **Preconditions** (all checked before any VCS operation; any failure aborts the command):
 
-- Current branch is a task or project branch.
-- Working copy is clean.
-- All child tasks are done: every `subtask:` entry in the current task file is marked `[x]`. `--force` bypasses this check.
+- Target is a task or project branch.
+- Working copy of the target worktree is clean.
+- All child tasks are done: every `subtask:` entry in the target task file is marked `[x]`. `--force` bypasses this check.
 
 **Behavior:** Updates `status: DONE` in the task file frontmatter, describes the commit as `Complete task: <title> (<task-id>)`, advances the task bookmark, and leaves a clean working copy on top. Once a task is marked `DONE`, `tt task checkin` will automatically mark the corresponding `subtask:` entry in the parent's frontmatter as `[x]` when the handoff is created (see §6.5).
 
-**Hooks:** Runs **pre-complete** (blocking) before any VCS operation, and **post-complete** (optional) after success. Both run in the current task worktree.
+**Hooks:** Runs **pre-complete** (blocking) before any VCS operation, and **post-complete** (optional) after success. Both run in the target task worktree.
 
 ### 6.5 Checkin (merging task work into the parent)
 
@@ -520,7 +522,7 @@ The standard workflow:
 
 5. **Work on the task** — User commits changes on the branch and accumulates context in `./TASK.md`. Periodically run `tt task checkpoint [--message <message>]` to create a named `Checkpoint: <message>` commit and advance the task bookmark. See §6.3.
 
-6. **Complete the task** — `tt task complete [--force]`. When work is done, marks the task `DONE` with a `Complete task: <title> (<task-id>)` commit and advances the task bookmark. Requires all child tasks to be done unless `--force`. See §6.4.
+6. **Complete the task** — `tt task complete [<task-id>...] [--force]`. When work is done, marks the task `DONE` with a `Complete task: <title> (<task-id>)` commit and advances the task bookmark. Requires all child tasks to be done unless `--force`. See §6.4.
 
 7. **Finish the task** — `tt task checkin [--rebase | --merge] [--force] [--delete] [--target <branch>]`. The tool runs checkin validation (§6.6); if using `--rebase`/`--merge`, first propagates from parent and bails on conflict unless `--force`. It runs pre-checkin, creates the checkin commit, merges into the parent (or, for project tasks, into `--target`), runs pre-receive and post-receive, then switches to the parent worktree and cleans up the child worktree. Project tasks require `--target`. See §6.5 and §6.6. If merge conflicts occur (e.g. in other `.tt/` files), the user resolves manually; for `TASK.md`, keep the parent's version.
 
