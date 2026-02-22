@@ -3,7 +3,7 @@ title: "Bootstrap CLI"
 status: IN-PROGRESS
 description: "Implement shell script implementations of all `tt` CLI commands\n\nThis will be used as a reference implementation to bootstrap the final implementation"
 subtask: [x] task/tt-task-list-6638a980
-subtask: [ ] task/tt-task-create-5841c217
+subtask: [x] task/tt-task-create-5841c217
 subtask: [ ] task/tt-task-checkout-f126cd1f
 subtask: [x] task/tt-task-propagate-286501f8
 subtask: [ ] task/tt-task-checkpoint-2827d127
@@ -22,7 +22,7 @@ subtask: [ ] task/tt-task-propagate-from-96aca8f7
 subtask: [x] task/tt-task-complete-a24cbd24
 subtask: [ ] task/tt-task-current-62284716
 subtask: [ ] task/propagate-to-checked-in-5c30016b
-subtask: [ ] task/task-id-argument-266c3146
+subtask: [x] task/task-id-argument-266c3146
 ---
 
 [`task/tt-task-list-6638a980`](.tt/task/tt-task-list-6638a980.md) Implement `tt task list` CLI command
