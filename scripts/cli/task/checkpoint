@@ -119,7 +119,7 @@ main() {
 
   # Get current worktree
   local current_worktree
-  current_worktree="$(jj -R "$repo" workspace root 2>/dev/null || printf '%s' "$repo")"
+  current_worktree="$(resolve_current_worktree "$repo")"
 
   # Read task title from task file frontmatter
   local task_file_content task_title
