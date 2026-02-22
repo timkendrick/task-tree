@@ -158,32 +158,13 @@ resolve_parent() {
   fi
 }
 
-# Usage: write_task_file REPO TASK_FILE_PATH TITLE STATUS DESCRIPTION [LABEL ...]
+# Usage: write_task_stub REPO TASK_FILE_PATH
 #
-# Write a task file with YAML frontmatter (title, status, description, labels).
-# DESCRIPTION may be empty. Labels are written as repeated "label: VALUE" entries.
-write_task_file() {
+# Write a minimal task file stub containing only status: TODO.
+write_task_stub() {
   local repo="$1"
   local task_file_path="$2"
-  local title="$3"
-  local status="$4"
-  local description="$5"
-  shift 5
-  local desc_yaml=''
-
-  if [[ -n "$description" ]]; then
-    desc_yaml="description: $(printf '%s' "$description" | jq -Rs '.')"
-  fi
-  {
-    echo '---'
-    echo "title: \"${title//\"/\\\"}\""
-    echo "status: $status"
-    [[ -n "$desc_yaml" ]] && echo "$desc_yaml"
-    for label in "$@"; do
-      echo "label: $label"
-    done
-    echo '---'
-  } > "$repo/$task_file_path"
+  printf -- '---\nstatus: TODO\n---\n' > "$repo/$task_file_path"
   log "Created task file: $task_file_path"
 }
 
@@ -471,53 +452,46 @@ main() {
   mkdir -p "$repo/.tt/task"
 
   if [[ "$is_project" == true ]]; then
-    # Project task: first commit creates the task file (without description),
-    # second commit adds the description frontmatter.
-    if ((${#labels[@]} > 0)); then
-      write_task_file "$repo" "$task_file_path" "$title" 'TODO' "" "${labels[@]}"
-    else
-      write_task_file "$repo" "$task_file_path" "$title" 'TODO' ""
-    fi
+    # Project task: first commit creates the stub task file; second commit (via edit) sets metadata.
+    write_task_stub "$repo" "$task_file_path"
     jj "${jj_opts[@]}" describe -m "Create project: $title"
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
     jj "${jj_opts[@]}" new "@"
-    add_description_to_frontmatter "$repo/$task_file_path" "$description"
-    jj "${jj_opts[@]}" describe -m "Describe task: $title ($task_id)"
     jj "${jj_opts[@]}" bookmark set "$task_id"
+    local edit_args=(--repo "$repo" --title "$title")
+    [[ -n "$description" ]] && edit_args+=(--description "$description")
+    for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
+    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id"
   elif [[ -n "$parent_task_file" ]]; then
-    # Child task: commit on parent branch creates the task file (without description) and
-    # registers the subtask; the child branch's initial commit adds the description frontmatter.
+    # Child task: commit on parent branch creates the stub and registers the subtask;
+    # the child branch's initial commit (via edit) sets title, description, and labels.
     local parent_path="$repo/$parent_task_file"
     if [[ ! -f "$parent_path" ]]; then
       log "Error: Parent task file not found: $parent_path"
       exit 1
     fi
-    if ((${#labels[@]} > 0)); then
-      write_task_file "$repo" "$task_file_path" "$title" 'TODO' "" "${labels[@]}"
-    else
-      write_task_file "$repo" "$task_file_path" "$title" 'TODO' ""
-    fi
+    write_task_stub "$repo" "$task_file_path"
     add_subtask_to_frontmatter "$parent_path" "$task_id"
     log "Added subtask to parent: $parent_task_file"
     jj "${jj_opts[@]}" describe -m "Create task: $title ($task_id)"
     jj "${jj_opts[@]}" bookmark set "$parent_bookmark"
     jj "${jj_opts[@]}" new "@"
-    add_description_to_frontmatter "$repo/$task_file_path" "$description"
-    jj "${jj_opts[@]}" describe -m "Describe task: $title ($task_id)"
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
+    local edit_args=(--repo "$repo" --title "$title")
+    [[ -n "$description" ]] && edit_args+=(--description "$description")
+    for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
+    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id"
   else
     # Child task with no identifiable parent task file (e.g. branching from a non-task bookmark).
-    # Create the task file and bookmark without modifying any parent.
-    if ((${#labels[@]} > 0)); then
-      write_task_file "$repo" "$task_file_path" "$title" 'TODO' "" "${labels[@]}"
-    else
-      write_task_file "$repo" "$task_file_path" "$title" 'TODO' ""
-    fi
+    # Create the stub and bookmark without modifying any parent; edit sets metadata.
+    write_task_stub "$repo" "$task_file_path"
     jj "${jj_opts[@]}" describe -m "Create task: $title ($task_id)"
     jj "${jj_opts[@]}" new "@"
-    add_description_to_frontmatter "$repo/$task_file_path" "$description"
-    jj "${jj_opts[@]}" describe -m "Describe task: $title ($task_id)"
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
+    local edit_args=(--repo "$repo" --title "$title")
+    [[ -n "$description" ]] && edit_args+=(--description "$description")
+    for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
+    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id"
   fi
 
   log "Created task $task_id (bookmark: $task_id)"
