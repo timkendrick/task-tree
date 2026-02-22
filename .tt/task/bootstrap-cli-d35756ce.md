@@ -17,7 +17,7 @@ subtask: [x] task/tt-task-parent-f4a6a56f
 subtask: [ ] task/tt-task-checkin-flags-2a32d8b4
 subtask: [ ] task/tt-task-describe-9463850e
 subtask: [x] task/rename-tt-task-status-94b2b9a0
-subtask: [ ] task/tt-task-show-subtask-titles-8ea41199
+subtask: [x] task/tt-task-show-subtask-titles-8ea41199
 subtask: [ ] task/tt-task-propagate-from-96aca8f7
 subtask: [x] task/tt-task-complete-a24cbd24
 subtask: [ ] task/tt-task-current-62284716
