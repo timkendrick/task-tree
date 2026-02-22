@@ -15,6 +15,7 @@ subtask: [ ] task/standardize-commit-messages-b542cab5
 subtask: [x] task/tt-task-create-description-editor-747ffc60
 subtask: [x] task/tt-task-parent-f4a6a56f
 subtask: [ ] task/tt-task-checkin-flags-2a32d8b4
+subtask: [ ] task/tt-task-describe-9463850e
 ---
 
 [`task/tt-task-list-6638a980`](.tt/task/tt-task-list-6638a980.md) Implement `tt task list` CLI command
