@@ -199,6 +199,45 @@ has_conflicts() {
   [[ -n "$result" ]]
 }
 
+# Usage: find_branch_for_task REPO TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Locates the canonical branch for TASK_ID using the "where to read" rule:
+# scans all task/project bookmarks for one whose owner task file contains
+# "subtask: [x] <task-id>" (merged); if found, outputs that parent branch.
+# Otherwise checks if TASK_ID itself is a valid branch (ongoing) and outputs it.
+# Exits 1 if neither is found.
+find_branch_for_task() {
+  local repo="$1" task_id="$2" task_prefix="$3" project_prefix="$4"
+  local all_bookmarks
+  all_bookmarks="$(jj -R "$repo" log -r 'bookmarks()' \
+    -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' --no-graph 2>/dev/null)" || true
+
+  while IFS= read -r branch; do
+    [[ -z "$branch" ]] && continue
+    is_task_branch "$branch" "$task_prefix" || is_project_branch "$branch" "$project_prefix" || continue
+    local suffix
+    if is_task_branch "$branch" "$task_prefix"; then
+      suffix="${branch#$task_prefix}"
+    else
+      suffix="${branch#$project_prefix}"
+    fi
+    local path=".tt/task/${suffix}.md"
+    local c
+    c="$(jj -R "$repo" file show -r "$branch" -- "$path" 2>/dev/null)" || continue
+    if printf '%s' "$c" | grep -qE "^subtask:[[:space:]]*\[x\][[:space:]]+${task_id}([[:space:]]|$)"; then
+      printf '%s' "$branch"
+      return 0
+    fi
+  done <<< "$all_bookmarks"
+
+  # Not merged — use task's own branch
+  if jj -R "$repo" log -r "$task_id" --no-graph -T '' 2>/dev/null; then
+    printf '%s' "$task_id"
+    return 0
+  fi
+
+  return 1
+}
+
 # Usage: find_worktrees_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
 # Outputs one workspace root path per line for each jj workspace where
 # BOOKMARK is the current branch (resolved via resolve_current).
