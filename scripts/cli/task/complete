@@ -5,12 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt task complete — Mark the current task as DONE.
+# tt task complete — Mark the current task (or given task(s)) as DONE.
 #
 # Usage:
-#   complete [--force] [--repo PATH] [--workspace-dir PATH]
+#   complete [<task-id>...] [--force] [--repo PATH] [--workspace-dir PATH]
 #
 # Options:
+#   <task-id>...         Task ID(s) to complete. Default: current task.
 #   --force              Proceed even if not all subtasks are checked off.
 #   --repo PATH          Repository root (default: walk up from CWD to find .jj).
 #   --workspace-dir PATH Virtual project dir (for hooks).
@@ -19,11 +20,12 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [--force] [--repo PATH] [--workspace-dir PATH]
+Usage: ${SCRIPT_NAME} [<task-id>...] [--force] [--repo PATH] [--workspace-dir PATH]
 
-Mark the current task as DONE.
+Mark the current task (or given task(s)) as DONE.
 
 Options:
+  <task-id>...          Task ID(s) to complete (default: current task).
   --force               Proceed even if subtasks are not all complete.
   --repo PATH           Repository root (default: walk up from CWD to find .jj).
   --workspace-dir PATH  Virtual project dir (for hooks).
@@ -32,10 +34,133 @@ EOF
   exit 1
 }
 
+complete_one() {
+  local repo="$1"
+  local task_prefix="$2"
+  local project_prefix="$3"
+  local workspace_dir="$4"
+  local force="$5"
+  local task_id_arg="$6"  # empty = current task
+
+  local bookmark task_file
+
+  if [[ -z "$task_id_arg" ]]; then
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
+    bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+
+    if [[ -z "$bookmark" ]]; then
+      log "Error: Not on a task or project branch."
+      return 1
+    fi
+  else
+    if ! bookmark="$(find_branch_for_task "$repo" "$task_id_arg" "$task_prefix" "$project_prefix")"; then
+      log "Error: Could not locate branch for task '$task_id_arg'."
+      return 1
+    fi
+    local suffix
+    if is_task_branch "$bookmark" "$task_prefix"; then
+      suffix="${bookmark#$task_prefix}"
+    elif is_project_branch "$bookmark" "$project_prefix"; then
+      suffix="${bookmark#$project_prefix}"
+    else
+      if is_task_branch "$task_id_arg" "$task_prefix"; then
+        suffix="${task_id_arg#$task_prefix}"
+      elif is_project_branch "$task_id_arg" "$project_prefix"; then
+        suffix="${task_id_arg#$project_prefix}"
+      else
+        log "Error: Cannot derive task file path for '$task_id_arg'."
+        return 1
+      fi
+    fi
+    task_file=".tt/task/${suffix}.md"
+  fi
+
+  # Resolve worktree for this task
+  local current_worktree
+  current_worktree="$(find_worktrees_for_branch "$repo" "$bookmark" "$task_prefix" "$project_prefix" | head -1)"
+  if [[ -z "$current_worktree" ]]; then
+    current_worktree="$(jj -R "$repo" workspace root 2>/dev/null || printf '%s' "$repo")"
+  fi
+
+  # Precondition: WC must be clean
+  if ! is_wc_clean "$current_worktree"; then
+    log "Error: Working copy has uncommitted changes. Commit or discard first."
+    return 1
+  fi
+
+  # Read task file content from bookmark
+  local task_content
+  task_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || {
+    log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
+    return 1
+  }
+
+  local task_title task_status
+  task_title="$(parse_frontmatter_field "$task_content" "title")"
+  task_status="$(parse_frontmatter_field "$task_content" "status")"
+
+  # If already DONE, nothing to do
+  if [[ "$task_status" == "DONE" ]]; then
+    log "Task is already DONE: $bookmark"
+    return 0
+  fi
+
+  # Precondition: all subtasks must be [x] unless --force
+  if [[ "$force" != true ]]; then
+    local incomplete_subs
+    incomplete_subs="$(printf '%s' "$task_content" | awk '
+      /^---$/ { in_fm = !in_fm; next }
+      in_fm && /^subtask:[ \t]*\[[ -]\]/ { print; found=1 }
+    ')" || true
+    if [[ -n "$incomplete_subs" ]]; then
+      log "Error: Not all subtasks are complete. Use --force to proceed anyway."
+      log "  Incomplete subtasks:"
+      printf '%s\n' "$incomplete_subs" | while IFS= read -r line; do
+        log "    $line"
+      done
+      return 1
+    fi
+  fi
+
+  # Run pre-complete hook (blocking)
+  run_hook "$repo" "pre-complete" true "$current_worktree" "${workspace_dir:-}" \
+    "TT_TASK_ID=$bookmark" \
+    "TT_TASK_BRANCH=$bookmark"
+
+  # Update status: IN-PROGRESS -> DONE in task file
+  local tmpfile
+  tmpfile="$(mktemp)"
+  awk '
+    /^---$/ { n++; print; next }
+    n == 1 && /^status:/ { print "status: DONE"; next }
+    { print }
+  ' "$current_worktree/$task_file" > "$tmpfile"
+  mv "$tmpfile" "$current_worktree/$task_file"
+
+  # Commit, advance bookmark, leave clean WC
+  jj -R "$current_worktree" commit -m "Complete task: $task_title ($bookmark)"
+  jj -R "$current_worktree" bookmark set "$bookmark" -r '@-'
+  jj -R "$current_worktree" new '@'
+
+  local commit_id
+  commit_id="$(jj -R "$current_worktree" log -r "${bookmark}" --no-graph -T 'commit_id' 2>/dev/null)" || true
+
+  # Run post-complete hook (non-blocking)
+  run_hook "$repo" "post-complete" false "$current_worktree" "${workspace_dir:-}" \
+    "TT_TASK_ID=$bookmark" \
+    "TT_TASK_BRANCH=$bookmark" \
+    "TT_COMMIT=${commit_id}"
+
+  log "Completed: $bookmark"
+}
+
 main() {
   local force=false
   local repo=''
   local workspace_dir=''
+  local task_ids=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -47,8 +172,10 @@ main() {
         [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
         workspace_dir="$2"; shift 2 ;;
       -h|--help) usage ;;
-      *)
+      -*)
         log "Error: Unknown option: $1"; usage ;;
+      *)
+        task_ids+=("$1"); shift ;;
     esac
   done
 
@@ -72,91 +199,13 @@ main() {
     workspace_dir="$(get_workspace_dir "$repo")" || true
   fi
 
-  # Precondition: WC must be clean
-  if ! is_wc_clean "$repo"; then
-    log "Error: Working copy has uncommitted changes. Commit or discard first."
-    exit 1
+  if [[ ${#task_ids[@]} -eq 0 ]]; then
+    complete_one "$repo" "$task_prefix" "$project_prefix" "$workspace_dir" "$force" ""
+  else
+    for task_id in "${task_ids[@]}"; do
+      complete_one "$repo" "$task_prefix" "$project_prefix" "$workspace_dir" "$force" "$task_id"
+    done
   fi
-
-  # Precondition: must be on a task or project branch
-  local resolve_output
-  resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-  local task_file bookmark
-  task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
-  bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
-
-  if [[ -z "$bookmark" ]]; then
-    log "Error: Not on a task or project branch."
-    exit 1
-  fi
-
-  # Read task file content from bookmark
-  local task_content
-  task_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || {
-    log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
-    exit 1
-  }
-
-  local task_title task_status
-  task_title="$(parse_frontmatter_field "$task_content" "title")"
-  task_status="$(parse_frontmatter_field "$task_content" "status")"
-
-  # If already DONE, nothing to do
-  if [[ "$task_status" == "DONE" ]]; then
-    log "Task is already DONE: $bookmark"
-    exit 0
-  fi
-
-  # Precondition: all subtasks must be [x] unless --force
-  if [[ "$force" != true ]]; then
-    local incomplete_subs
-    incomplete_subs="$(printf '%s' "$task_content" | awk '
-      /^---$/ { in_fm = !in_fm; next }
-      in_fm && /^subtask:[ \t]*\[[ -]\]/ { print; found=1 }
-    ')" || true
-    if [[ -n "$incomplete_subs" ]]; then
-      log "Error: Not all subtasks are complete. Use --force to proceed anyway."
-      log "  Incomplete subtasks:"
-      printf '%s\n' "$incomplete_subs" | while IFS= read -r line; do
-        log "    $line"
-      done
-      exit 1
-    fi
-  fi
-
-  local current_worktree
-  current_worktree="$(jj -R "$repo" workspace root 2>/dev/null || printf '%s' "$repo")"
-
-  # Run pre-complete hook (blocking)
-  run_hook "$repo" "pre-complete" true "$current_worktree" "${workspace_dir:-}" \
-    "TT_TASK_ID=$bookmark" \
-    "TT_TASK_BRANCH=$bookmark"
-
-  # Update status: IN-PROGRESS -> DONE in task file
-  local tmpfile
-  tmpfile="$(mktemp)"
-  awk '
-    /^---$/ { n++; print; next }
-    n == 1 && /^status:/ { print "status: DONE"; next }
-    { print }
-  ' "$current_worktree/$task_file" > "$tmpfile"
-  mv "$tmpfile" "$current_worktree/$task_file"
-
-  # Commit, advance bookmark, leave clean WC
-  jj -R "$repo" commit -m "Complete task: $task_title ($bookmark)"
-  jj -R "$repo" bookmark set "$bookmark" -r '@-'
-  jj -R "$repo" new '@'
-
-  local commit_id
-  commit_id="$(jj -R "$repo" log -r "${bookmark}" --no-graph -T 'commit_id' 2>/dev/null)" || true
-
-  # Run post-complete hook (non-blocking)
-  run_hook "$repo" "post-complete" false "$current_worktree" "${workspace_dir:-}" \
-    "TT_TASK_ID=$bookmark" \
-    "TT_TASK_BRANCH=$bookmark" \
-    "TT_COMMIT=${commit_id}"
-
-  log "Completed: $bookmark"
 }
 
 main "$@"
