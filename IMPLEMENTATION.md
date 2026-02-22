@@ -6,12 +6,6 @@ This document fully specifies how to implement the task-tree (`tt`) CLI. It pres
 
 ---
 
-## Bootstrapping
-
-The project should be **bootstrapped** using tt itself for task management. Progress on the implementation is represented as tasks in a tt task tree: create top-level tasks that correspond to the work (e.g. Phase 0, each command, or other coarse-grained units). Initially, when the tool does not yet exist or only partially exists, set up that structure by **manually** creating the VCS branches and **manually** creating or editing the task files (`.tt/task/...`) and any parent `subtask:` frontmatter so that the task tree and branches match DESIGN.md’s model. As the tool gains functionality, **gradually use tt for day-to-day work**: create new tasks with `tt task create`, switch context with `tt task checkout`, merge completed work with `tt task checkin`, and use `tt task list` and related commands to view and manage the tree. The repository thus becomes both the implementation of tt and a working example of its own workflow; new commands are developed and then used to manage the next slice of work.
-
----
-
 ## 1. Tech stack
 
 - **Language:** Rust. Target a single binary with no runtime dependency; no interpreter.
@@ -78,17 +72,17 @@ Work **command by command**, including each command’s hooks (DESIGN §8). Phas
 
 5. **`tt task checkout`** — Switch to task branch; worktree behavior, HEAD symlink. DESIGN §5.2, §6.2. Hooks: **setup** (new worktree), **pre-checkout**, **post-checkout**.
 
-6. **`tt task checkin`** — Validation (DESIGN §6.4), checkin commit, merge. DESIGN §5.2, §6.3, §6.4. Hooks: **pre-checkin**, **pre-receive**, **post-receive**.
+6. **`tt task checkpoint`** — Commit WC changes or advance bookmark to parent; ancestry check; optional commit message. DESIGN §5.2, §6.3. Hooks: **pre-checkpoint**, **post-checkpoint**.
 
-7. **`tt task status`** — Current task and branch; status of direct children from current task file frontmatter. DESIGN §5.2. No hooks.
+7. **`tt task checkin`** — Validation (DESIGN §6.5), checkin commit, merge. DESIGN §5.2, §6.4, §6.5. Hooks: **pre-checkin**, **pre-receive**, **post-receive**.
 
-8. **`tt task show`** — Full context of current or given task (frontmatter + body). DESIGN §5.2. No hooks.
+8. **`tt task show`** — Current task and branch; status of direct children from current task file frontmatter; optional `<task-id>` arg for explicit lookup. DESIGN §5.2. No hooks.
 
-9. **`tt task propagate`** — Rebase/merge descendants onto parent tip; worktree sync. DESIGN §5.2, §6.6. Hooks: **pre-propagate**, **post-propagate**.
+9. **`tt task propagate`** — Rebase/merge descendants onto parent tip; worktree sync. DESIGN §5.2, §6.7. Hooks: **pre-propagate**, **post-propagate**.
 
-10. **`tt task reorder`** — Reorder direct child via parent frontmatter. DESIGN §5.2, §6.5. No hooks.
+10. **`tt task reorder`** — Reorder direct child via parent frontmatter. DESIGN §5.2, §6.6. No hooks.
 
-11. **`tt task remove`** — Remove direct child from current task frontmatter (branch/file unchanged). DESIGN §5.2, §6.5. Hooks: **pre-remove**, **post-remove**.
+11. **`tt task remove`** — Remove direct child from current task frontmatter (branch/file unchanged). DESIGN §5.2, §6.6. Hooks: **pre-remove**, **post-remove**.
 
 ---
 
@@ -111,7 +105,7 @@ For each command (or each significant slice within a command):
 ### 5.1 Unit tests
 
 - **Location:** tt-core (and tt-jj where useful for parsing or error handling).
-- **Scope:** Pure logic only: task tree building, “where to read” rule (DESIGN Appendix A step 2), frontmatter parsing, task ID/branch naming (DESIGN §3), validation rules (e.g. checkin validation DESIGN §6.4). No VCS involvement; use in-memory or stub data.
+- **Scope:** Pure logic only: task tree building, “where to read” rule (DESIGN Appendix A step 2), frontmatter parsing, task ID/branch naming (DESIGN §3), validation rules (e.g. checkin validation DESIGN §6.5). No VCS involvement; use in-memory or stub data.
 
 ### 5.2 Scenario-based tests: one harness, two backends
 
@@ -154,100 +148,13 @@ Phase 0 is not required to be developed under TDD.
 
 ---
 
-### 6.1 `tt task list`
+### 6.1 Phase 1 – Migrate `tt` commands
 
-- **Design reference:** DESIGN §5.2, §4.1, §7.1, §7.2, Appendix A.
-- **Behavior:**
-  - **Full list:** `tt task list` (with optional `--project <project-id>` repeatable, `--detached`, `--all`). Generate the project todo list per DESIGN Appendix A.1: enumerate project branches, traverse each project's subtree via `subtask:` entries, for each discovered task determine where to read its file (merged vs ongoing), filter by `--project`/`--detached`/`--all`, emit markdown per DESIGN §4.1. Orphaned tasks excluded by default; with `--detached`, add detached section; with `--all`, show all sections.
-  - **Focused list:** `tt task list --focus`. Generate the focused todo list per DESIGN Appendix A.2: resolve current task, walk to project via frontmatter parent chain, load task files with same “where to read” rule, emit same markdown format for the subset.
-- **Output:** Markdown to stdout only. No hooks.
-- **TDD:** Start with unit tests in tt-core for “where to read” and project-based tree building; then scenario tests (mock VCS) for full and focused list; optionally e2e with real jj.
+There is an existing **bootstrap** implementation of all `tt` commands at `./scripts/cli/tt`.
 
----
+Migrate each of these bootstrap commands in turn, using a red/green/refactor TTD approach. Retain the bootstrap implementations as a sanity check.
 
-### 6.2 `tt workspace init`
-
-- **Design reference:** DESIGN §5.1, §6.2, §9 step 1.
-- **Signature:** `tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>]`. Alias: `tt init`.
-- **Preconditions:** Clean working directory in the repo; no existing `.tt` in the repo root. Otherwise abort with an error.
-- **Behavior:** Create the virtual worktree directory at `<path-to-virtual-project-folder>`. In the repo root, create `.tt/config.toml` with optional task prefix (default `task/`) and project prefix (default `project/`) per DESIGN §3. Create a `HEAD` symlink in the virtual project folder that initially points to the repo; it will be updated on each `tt task checkout` to the most recently checked-out task workspace.
-- **No hooks** in DESIGN §8.
-
----
-
-### 6.3 `tt task create`
-
-- **Design reference:** DESIGN §5.2, §6.1, §3 (task ID, branch and file naming).
-- **Signature:** `tt task create [--parent <parent-task-id> | --project [--target <commit-rev>]] [--slug <slug>] [--title <title>] [--description <description>] [--label <label> ...] [--propagate [<propagate-flags>]] [--force]`. Alias: `tt create`. `--parent` and `--project` are mutually exclusive.
-- **Behavior (summary):**
-  - **With `--parent`** (default: current branch): If parent branch has multiple parents (merge commit), refuse. Create a commit **on the parent’s branch** that adds `subtask: [ ] <task-id>` to the parent task file. Create the child branch from that commit. On the child branch, create the task file (`.tt/task/<slug>-<hex>.md`) with `status: TODO` and create `TASK.md` symlink in repo root pointing to it. Generate task ID per DESIGN §3 (`task/<slug>-<hex>`). With `--propagate`, run propagate with given flags after creation.
-  - **With `--project`:** Create a project task. The project branch forks from the target commit revision, defaulting to the current revision. If the target revision exists within a task tree, refuse. Create the project task file on the project branch. Generate project ID per DESIGN §3 (`project/<slug>-<hex>`).
-  - Prompt for title/description if not provided. With `--force`, overwrite if branch already exists.
-- **Hooks:** **pre-create** (parent task worktree when `--parent`, current worktree when `--project`; blocking), **post-create** (new task/project worktree if created, else current; optional). Env: see DESIGN §8 table.
-
----
-
-### 6.4 `tt task checkout`
-
-- **Design reference:** DESIGN §5.2, §6.2.
-- **Signature:** `tt task checkout <task-id> [--worktree [=<path>]] [--force]`. Alias: `tt checkout`.
-- **Behavior (summary):** With `--worktree`: ensure task is checked out in its own jj workspace (create if necessary). Without `--worktree`: checkout in closest ancestor task workspace or current workspace. Refuse if target workspace has local changes unless `--force`. Update task status to IN-PROGRESS if currently TODO. When creating a new worktree, run **setup** hook (optional / non-blocking). Update virtual project `HEAD` symlink to the task’s workspace.
-- **Hooks:** **setup** (new worktree only, optional), **pre-checkout** (current/outgoing worktree, blocking), **post-checkout** (checked-out worktree, optional). Env: see DESIGN §8.
-
----
-
-### 6.5 `tt task checkin`
-
-- **Design reference:** DESIGN §5.2, §6.3, §6.4.
-- **Signature:** `tt task checkin [--rebase | --merge] [--force] [--delete] [--target <branch>]`. Alias: `tt checkin`.
-- **Validation (DESIGN §6.4):** Before merging, run all checks: clean working copy, current task has exactly one parent or is a project task with no parents (project tasks must specify `--target` branch; all other tasks cannot specify `--target`), no incomplete child tasks, no disallowed task file changes in merge range, TASK.md change rule; with `--rebase`/`--merge` optionally propagate first and bail on conflict unless `--force`. Abort on first failure.
-- **Behavior (summary):** If `--rebase`/`--merge`, propagate from parent first (bail on conflict unless `--force`). Run **pre-checkin** (child worktree, blocking). Create **checkin commit** on child branch: (a) rewrite `TASK.md` to point to parent’s task file, (b) optionally delete child task file if `--delete`, (c) update parent task file frontmatter so the corresponding `subtask:` is `[x]` and optionally include task title if `--delete`. Merge child into parent. Run **pre-receive** then **post-receive** on parent worktree. Switch worktree to parent, update HEAD symlink, remove child worktree if dedicated.
-- **Hooks:** **pre-checkin** (child worktree, blocking), **pre-receive** (parent worktree, blocking), **post-receive** (parent, optional). Env: see DESIGN §8.
-
----
-
-### 6.6 `tt task status`
-
-- **Design reference:** DESIGN §5.2.
-- **Signature:** `tt task status`. Alias: `tt status`.
-- **Behavior:** Resolve current branch to current task. Print current task ID and branch name, and the status of all direct child tasks (from the current task file’s `subtask:` entries in frontmatter). Output format is implementation-defined (human-readable).
-- **No hooks.**
-
----
-
-### 6.7 `tt task show`
-
-- **Design reference:** DESIGN §5.2.
-- **Signature:** `tt task show [<task-id>]`. Alias: `tt show`.
-- **Behavior:** If `<task-id>` omitted, use current task. Otherwise use the given task. Load that task’s task file from the correct branch (same “where to read” rule as todo list). Print frontmatter and body to stdout.
-- **No hooks.**
-
----
-
-### 6.8 `tt task propagate`
-
-- **Design reference:** DESIGN §5.2, §6.6.
-- **Signature:** `tt task propagate [--from=<parent-id>] [--to=<descendant-id>]... [--rebase | --merge] [--shallow] [--force]`. Alias: `tt propagate`.
-- **Behavior (summary):** Default: `--from` = current task, `--to` = all descendants (or direct children with `--shallow`). Strategy: rebase by default; `--merge` merges parent into each child. Preconditions: clean WC, no merge at tip, no untracked changes in affected worktrees. Update each target branch so its base is the parent’s current tip (deterministic order: parent before children). Sync worktrees to new commits. With `--force`, proceed despite conflicts (may leave conflict state for user).
-- **Hooks:** **pre-propagate** (current/source worktree, blocking), **post-propagate** (same, optional). Env: see DESIGN §8.
-
----
-
-### 6.9 `tt task reorder`
-
-- **Design reference:** DESIGN §5.2, §6.5.
-- **Signature:** `tt task reorder <task-id> <modifier>`. Modifier: one of `--up`, `--down`, `--after <other-task-id>`, `--before <other-task-id>` (mutually exclusive).
-- **Behavior:** Update the current task file’s frontmatter to reorder the direct child `<task-id>` relative to siblings. Fail if reorder is impossible (e.g. already first with `--up`, or `<other-task-id>` is not a sibling). Do not modify branches or task files on disk beyond the current task file’s `subtask:` order.
-- **No hooks.**
-
----
-
-### 6.10 `tt task remove`
-
-- **Design reference:** DESIGN §5.2, §6.5.
-- **Signature:** `tt task remove <task-id>`. Alias: none in DESIGN; implement per §5.
-- **Behavior:** Remove `<task-id>` from the current task file’s `subtask:` frontmatter. The child’s branch and task file are **not** deleted. Run **pre-remove** then **post-remove**.
-- **Hooks:** **pre-remove** (parent task worktree, blocking), **post-remove** (same, optional). Env: see DESIGN §8.
+The bootstrap implementations should agree with the design document: if not, stop and ask for feedback on how to continue.
 
 ---
 
@@ -255,8 +162,6 @@ Phase 0 is not required to be developed under TDD.
 
 Hooks are shell scripts or executables under `.tt/hooks/<name>`. Exit 0 = proceed; non-zero = abort (with stderr shown). Missing hook = skipped. Blocking vs optional: pre- hooks are blocking; post- hooks and **setup** are optional (non-zero is reported but does not abort).
 
-Every hook receives at least **TT_WORKSPACE_DIR** and **TT_WORKTREE_DIR**. Full table (when, where, blocking, extra env) is in DESIGN §8. Implement all hooks listed there for the commands that trigger them (§6.3–§6.10).
+Every hook receives at least **TT_WORKSPACE_DIR** and **TT_WORKTREE_DIR**. Full table (when, where, blocking, extra env) is in DESIGN §8. Implement all hooks listed there for the commands that trigger them (§6.3–§6.11).
 
 ---
-
-*End of implementation specification.*

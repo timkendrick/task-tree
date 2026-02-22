@@ -1,0 +1,306 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task propagate — Rebase/merge descendant task branches onto their parent's current tip.
+#
+# Computes the transitive closure of child branches registered under --from (or the current
+# branch) and rebases each one that is behind the parent onto the parent's current tip.
+#
+# Usage:
+#   propagate [options...]
+#
+# Options:
+#   --from PARENT_ID  Parent task/project branch to propagate from (default: current branch)
+#   --to CHILD_ID     Limit propagation to specific child(ren) (repeatable; default: all)
+#   --rebase          Rebase descendants onto parent tip (default)
+#   --merge           Merge parent tip into each descendant branch
+#   --shallow         Update direct children only (do not recurse into grandchildren)
+#   --force           Proceed even if conflicts occur after rebase/merge
+#   --dry-run         Show what would be done without making changes
+#   --repo PATH       Repository root (default: walk up to find .jj)
+
+readonly SCRIPT_NAME="${0##*/}"
+
+# Global: specific --to targets (empty array = all descendants)
+TO_FILTER=()
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} [options...]
+
+Rebase or merge descendant task branches onto their parent's current tip.
+
+Options:
+  --from PARENT_ID  Parent task/project branch to propagate from (default: current branch)
+  --to CHILD_ID     Limit propagation to specific child(ren) (repeatable; default: all)
+  --rebase          Rebase descendants onto parent tip (default)
+  --merge           Merge parent tip into descendants instead of rebasing
+  --shallow         Update direct children only (no recursive propagation)
+  --force           Proceed even if conflicts occur
+  --dry-run         Show planned changes without applying them
+  --repo PATH       Repository root (default: find .jj)
+
+Examples:
+  ${SCRIPT_NAME}                                          # rebase all descendants of current task
+  ${SCRIPT_NAME} --from project/bootstrap-cli-d35756ce   # propagate from a specific project
+  ${SCRIPT_NAME} --shallow                                # direct children only
+  ${SCRIPT_NAME} --to task/tt-task-create-5841c217        # one specific child
+  ${SCRIPT_NAME} --merge --shallow                        # merge parent into direct children
+
+EOF
+  exit 1
+}
+
+# Usage: is_up_to_date REPO CHILD_BOOKMARK PARENT_BOOKMARK
+# Returns 0 (true) if there are no commits in CHILD_BOOKMARK's ancestry that are not
+# already in PARENT_BOOKMARK's ancestry. This handles the case where the child has been
+# partially checked in (some commits already merged via a handoff commit), or where the
+# parent is already a direct or indirect ancestor of the child.
+is_up_to_date() {
+  local repo="$1" child="$2" parent="$3"
+  local result
+  # Compute the unmerged range: ancestors of child NOT yet in parent's ancestry.
+  # If empty, the child has nothing new to propagate.
+  result="$(jj -R "$repo" log -r "roots(::${child} ~ ::${parent})" \
+    --no-graph -T 'commit_id' 2>/dev/null)" || true
+  [[ -z "$result" ]]
+}
+
+# Usage: get_subtask_ids REPO BOOKMARK TASK_FILE
+# Prints one subtask task-id per line (regardless of checkbox state).
+get_subtask_ids() {
+  local repo="$1" bookmark="$2" task_file="$3"
+  local content
+  content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || true
+  [[ -z "$content" ]] && return 0
+  printf '%s' "$content" | awk '
+    /^---$/ { in_fm = !in_fm; next }
+    in_fm && /^subtask:[ \t]*\[[ -]\]/ {
+      sub(/^subtask:[ \t]*\[[ -]\][ \t]*/, "")
+      if ($1 != "") print $1
+    }
+  '
+}
+
+# Usage: propagate_one_rebase REPO CHILD_BOOKMARK FROM_BOOKMARK FORCE DRY_RUN
+# Rebases the unmerged range of CHILD_BOOKMARK onto FROM_BOOKMARK.
+# If the child has been partially checked in (some commits already in FROM's ancestry
+# via a prior handoff merge), only the commits not yet in FROM's ancestry are rebased.
+propagate_one_rebase() {
+  local repo="$1" child="$2" from="$3" force="$4" dry_run="$5"
+  local jj_opts=(-R "$repo")
+
+  # Compute the roots of the unmerged range: commits in child's ancestry not yet in
+  # from's ancestry. These are the commits to rebase directly onto from.
+  local rebase_roots
+  rebase_roots="$(jj "${jj_opts[@]}" log -r "roots(::${child} ~ ::${from})" \
+    --no-graph -T 'commit_id' 2>/dev/null)" || true
+
+  if [[ -z "$rebase_roots" ]]; then
+    # No unmerged commits — already up to date (guard; caller should have checked this)
+    return 0
+  fi
+
+  if [[ "$dry_run" == true ]]; then
+    log "  [dry-run] rebase $child onto $from"
+    return 0
+  fi
+
+  jj "${jj_opts[@]}" rebase -s "roots(::${child} ~ ::${from})" -d "$from"
+
+  if [[ "$force" != true ]] && has_conflicts "$repo" "${child}::"; then
+    log "Error: Conflicts detected in $child after rebase onto $from."
+    log "  Undoing. Use --force to proceed despite conflicts."
+    jj "${jj_opts[@]}" op undo
+    return 1
+  fi
+}
+
+# Usage: propagate_one_merge REPO CHILD_BOOKMARK FROM_BOOKMARK FORCE DRY_RUN ORIGINAL_REV
+# Creates a merge commit on CHILD_BOOKMARK combining its current tip with FROM_BOOKMARK.
+propagate_one_merge() {
+  local repo="$1" child="$2" from="$3" force="$4" dry_run="$5" original_rev="$6"
+  local jj_opts=(-R "$repo")
+
+  if [[ "$dry_run" == true ]]; then
+    log "  [dry-run] merge $from into $child"
+    return 0
+  fi
+
+  # Create a merge commit (two parents: child tip + from tip), then move child bookmark there.
+  jj "${jj_opts[@]}" new "$child" "$from"
+  jj "${jj_opts[@]}" bookmark set "$child"
+
+  if [[ "$force" != true ]] && has_conflicts "$repo" "$child"; then
+    log "Error: Conflicts in $child after merging $from."
+    log "  Undoing. Use --force to proceed despite conflicts."
+    jj "${jj_opts[@]}" op undo  # undo bookmark set
+    jj "${jj_opts[@]}" op undo  # undo jj new
+    # Restore working copy (jj new moved it)
+    jj "${jj_opts[@]}" edit "$original_rev" 2>/dev/null || true
+    return 1
+  fi
+
+  # Restore working copy after jj new moved it
+  jj "${jj_opts[@]}" edit "$original_rev" 2>/dev/null || true
+}
+
+# Usage: propagate_from REPO FROM_BOOKMARK TASK_PREFIX PROJECT_PREFIX STRATEGY SHALLOW FORCE DRY_RUN ORIGINAL_REV DEPTH
+# Recursively propagates all registered subtasks of FROM_BOOKMARK onto FROM_BOOKMARK's current tip.
+propagate_from() {
+  local repo="$1"
+  local from_bookmark="$2"
+  local task_prefix="$3"
+  local project_prefix="$4"
+  local strategy="$5"
+  local shallow="$6"
+  local force="$7"
+  local dry_run="$8"
+  local original_rev="$9"
+  local depth="${10:-0}"
+
+  # Derive task file path from bookmark name
+  local suffix
+  if is_task_branch "$from_bookmark" "$task_prefix"; then
+    suffix="${from_bookmark#$task_prefix}"
+  elif is_project_branch "$from_bookmark" "$project_prefix"; then
+    suffix="${from_bookmark#$project_prefix}"
+  else
+    log "  Warning: $from_bookmark is not a task/project branch; cannot enumerate subtasks"
+    return 0
+  fi
+
+  local task_file=".tt/task/${suffix}.md"
+  local subtasks
+  subtasks="$(get_subtask_ids "$repo" "$from_bookmark" "$task_file")" || true
+  [[ -z "$subtasks" ]] && return 0
+
+  local jj_opts=(-R "$repo")
+
+  while IFS= read -r child_id; do
+    [[ -z "$child_id" ]] && continue
+
+    # Only process recognised task/project branches
+    if ! is_task_branch "$child_id" "$task_prefix" && \
+       ! is_project_branch "$child_id" "$project_prefix"; then
+      continue
+    fi
+
+    # Apply --to filter at top level only
+    if [[ $depth -eq 0 ]] && [[ ${#TO_FILTER[@]} -gt 0 ]]; then
+      local in_filter=false
+      for t in "${TO_FILTER[@]}"; do
+        [[ "$t" == "$child_id" ]] && { in_filter=true; break; }
+      done
+      [[ "$in_filter" == false ]] && continue
+    fi
+
+    # Check bookmark exists in repo
+    if ! jj "${jj_opts[@]}" log -r "$child_id" --no-graph -T '' 2>/dev/null; then
+      log "  $child_id: bookmark not found in repo; skipping"
+      continue
+    fi
+
+    if is_up_to_date "$repo" "$child_id" "$from_bookmark"; then
+      log "  $child_id: already up to date"
+    else
+      log "  $child_id: $strategy onto $from_bookmark"
+      if [[ "$strategy" == rebase ]]; then
+        propagate_one_rebase "$repo" "$child_id" "$from_bookmark" "$force" "$dry_run"
+      else
+        propagate_one_merge "$repo" "$child_id" "$from_bookmark" "$force" "$dry_run" "$original_rev"
+      fi
+    fi
+
+    # Recurse into child's subtasks unless --shallow
+    if [[ "$shallow" == false ]]; then
+      propagate_from "$repo" "$child_id" "$task_prefix" "$project_prefix" \
+        "$strategy" "$shallow" "$force" "$dry_run" "$original_rev" "$((depth + 1))"
+    fi
+  done <<< "$subtasks"
+}
+
+main() {
+  local from=''
+  local strategy='rebase'
+  local shallow=false
+  local force=false
+  local dry_run=false
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --from)
+        [[ $# -lt 2 ]] && { log "Error: --from requires an argument"; usage; }
+        from="$2"; shift 2 ;;
+      --to)
+        [[ $# -lt 2 ]] && { log "Error: --to requires an argument"; usage; }
+        TO_FILTER+=("$2"); shift 2 ;;
+      --rebase) strategy='rebase'; shift ;;
+      --merge)  strategy='merge';  shift ;;
+      --shallow) shallow=true; shift ;;
+      --force)   force=true;   shift ;;
+      --dry-run) dry_run=true; shift ;;
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage ;;
+      *)
+        log "Error: Unknown option: $1"; usage ;;
+    esac
+  done
+
+  # Resolve repo root
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+  local jj_opts=(-R "$repo")
+
+  # Resolve --from: explicit or current branch
+  local from_bookmark
+  if [[ -n "$from" ]]; then
+    from_bookmark="$from"
+    if ! jj "${jj_opts[@]}" log -r "$from_bookmark" --no-graph -T '' 2>/dev/null; then
+      log "Error: --from '$from_bookmark' not found in repository"
+      exit 1
+    fi
+  else
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    from_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    if [[ -z "$from_bookmark" ]]; then
+      log "Error: Not on a task or project branch. Use --from to specify the source."
+      exit 1
+    fi
+  fi
+
+  log "Propagating from: $from_bookmark"
+  [[ "$dry_run" == true ]] && log "(dry-run: no changes will be made)"
+
+  # Capture @ to restore after merge operations move it
+  local original_rev
+  original_rev="$(get_worktree_current_rev "$repo")"
+  trap '[[ -n "'"$original_rev"'" ]] && jj -R "'"$repo"'" edit "'"$original_rev"'" 2>/dev/null || true' EXIT
+
+  propagate_from "$repo" "$from_bookmark" "$task_prefix" "$project_prefix" \
+    "$strategy" "$shallow" "$force" "$dry_run" "$original_rev" 0
+
+  log "Propagate complete."
+}
+
+main "$@"

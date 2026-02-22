@@ -1,0 +1,9 @@
+# task-tree (tt) configuration
+
+# Task ID prefix (default: task/)
+# Full task ID format: <prefix><slug>-<hex>
+task_prefix = "task/"
+
+# Project ID prefix (default: project/)
+# Full project ID format: <prefix><slug>-<hex>
+project_prefix = "project/"

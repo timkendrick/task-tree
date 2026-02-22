@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task parent — Print the parent task ID of the current (or given) task.
+#
+# Usage: parent [<task-id>] [--project] [--repo PATH] [-h|--help]
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} [<task-id>] [--project] [--repo PATH]
+
+Print the parent task ID of the current task (default) or the given task.
+With --project, walks up the hierarchy to find the nearest ancestor project.
+Exits non-zero if no parent is found or if multiple parents are found.
+
+Options:
+  <task-id>    Task branch name (default: current task).
+  --project    Find the nearest ancestor project instead of immediate parent.
+  --repo PATH  Repository root (default: find .jj).
+  -h, --help   Show this help.
+
+EOF
+  exit 1
+}
+
+main() {
+  local task_id_arg=''
+  local repo=''
+  local find_project=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"; shift 2 ;;
+      --project) find_project=true; shift ;;
+      -h|--help) usage ;;
+      -*)
+        log "Error: Unknown option: $1"; usage ;;
+      *)
+        if [[ -z "$task_id_arg" ]]; then
+          task_id_arg="$1"; shift
+        else
+          log "Error: Unexpected argument: $1"; usage
+        fi ;;
+    esac
+  done
+
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  local task_id
+  if [[ -z "$task_id_arg" ]]; then
+    local resolve_out
+    if ! resolve_out="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"; then
+      log "Error: Not on a task or project branch."
+      exit 1
+    fi
+    local current_branch
+    current_branch="$(printf '%s' "$resolve_out" | sed -n '3p')"
+    if [[ -z "$current_branch" ]]; then
+      log "Error: Not on a task or project branch."
+      exit 1
+    fi
+    task_id="$current_branch"
+  else
+    task_id="$task_id_arg"
+  fi
+
+  if "$find_project"; then
+    local project='' exit_code=0
+    project="$(find_parent_project "$repo" "$task_id" "$task_prefix" "$project_prefix")" || exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+      [[ $exit_code -eq 1 ]] && log "Error: No ancestor project found for '$task_id'."
+      exit $exit_code
+    fi
+    printf '%s\n' "$project"
+  else
+    local parent='' exit_code=0
+    parent="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+      [[ $exit_code -eq 1 ]] && log "Error: No parent found for '$task_id'."
+      exit $exit_code
+    fi
+    printf '%s\n' "$parent"
+  fi
+}
+
+main "$@"
