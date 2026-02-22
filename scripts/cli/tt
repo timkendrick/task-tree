@@ -24,6 +24,7 @@ usage() {
   local exit_code="${1:-1}"
   cat >&2 <<EOF
 Usage: ${SCRIPT_NAME} <command> <subcommand> [args...]
+   or: ${SCRIPT_NAME} <alias> [args...]
 
 Dispatch to a tt subcommand. Commands and subcommands are discovered from
 the filesystem under the CLI scripts directory.
@@ -32,6 +33,20 @@ Examples:
   ${SCRIPT_NAME} task create --slug phase-0 --title "Phase 0"
   ${SCRIPT_NAME} project init /path/to/repo /path/to/virtual
 
+Aliases (shorthand for common subcommands):
+  ${SCRIPT_NAME} create       →  tt task create
+  ${SCRIPT_NAME} checkout     →  tt task checkout
+  ${SCRIPT_NAME} checkin      →  tt task checkin
+  ${SCRIPT_NAME} show         →  tt task show
+  ${SCRIPT_NAME} parent       →  tt task parent
+  ${SCRIPT_NAME} propagate    →  tt task propagate
+  ${SCRIPT_NAME} checkpoint   →  tt task checkpoint
+  ${SCRIPT_NAME} complete     →  tt task complete
+  ${SCRIPT_NAME} delete       →  tt task delete
+  ${SCRIPT_NAME} list         →  tt task list
+  ${SCRIPT_NAME} add-context  →  tt task add-context
+  ${SCRIPT_NAME} switch       →  tt workspace switch
+
 EOF
   exit "$exit_code"
 }
@@ -39,6 +54,22 @@ EOF
 main() {
   local script_dir
   script_dir="$(cd "$(dirname "$0")" && pwd)"
+
+  # Resolve top-level aliases before dispatching
+  case "${1:-}" in
+    switch)      set -- workspace switch      "${@:2}" ;;
+    create)      set -- task     create       "${@:2}" ;;
+    checkout)    set -- task     checkout     "${@:2}" ;;
+    checkin)     set -- task     checkin      "${@:2}" ;;
+    show)        set -- task     show         "${@:2}" ;;
+    parent)      set -- task     parent       "${@:2}" ;;
+    propagate)   set -- task     propagate    "${@:2}" ;;
+    checkpoint)  set -- task     checkpoint   "${@:2}" ;;
+    complete)    set -- task     complete     "${@:2}" ;;
+    delete)      set -- task     delete       "${@:2}" ;;
+    list)        set -- task     list         "${@:2}" ;;
+    add-context) set -- task     add-context  "${@:2}" ;;
+  esac
 
   if [[ $# -ge 1 && ( "$1" == "--help" || "$1" == "-h" ) ]]; then
     usage 0
