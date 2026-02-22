@@ -32,6 +32,7 @@ subtask: [ ] task/tt-task-move-091c3d4f
 subtask: [ ] task/tt-task-gc-65957c43
 subtask: [ ] task/tt-workspace-doctor-fe9143d1
 subtask: [ ] task/tt-task-list-focus-f23d4002
+subtask: [ ] task/edit-different-task-32e8518e
 ---
 
 [`task/tt-task-list-6638a980`](.tt/task/tt-task-list-6638a980.md) Implement `tt task list` CLI command
