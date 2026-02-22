@@ -8,11 +8,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task add-context — append a free-form context block to the current task file.
 #
 # Usage:
-#   add-context [-m <message>] [--no-timestamp] [--repo PATH] [--workspace-dir PATH]
+#   add-context [<task-id>] [-m|--message <message>] [--no-timestamp]
+#               [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
 #
 # Options:
+#   <task-id>            Task branch to append context to (default: current branch).
 #   -m, --message <msg>  Provide message inline, skipping editor.
 #   --no-timestamp       Skip prepending the timestamp heading (only valid with --message).
+#   --worktree=<path>    Worktree to use when task has multiple worktrees.
 #   --repo PATH          Repository root (default: walk up from CWD to find .jj).
 #   --workspace-dir PATH Virtual project dir. Overrides workspace_dir in .tt/config.toml.
 
@@ -20,9 +23,12 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [-m <message>] [--no-timestamp] [--repo PATH] [--workspace-dir PATH]
+Usage: ${SCRIPT_NAME} [<task-id>] [-m <message>] [--no-timestamp] [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
 
 Append a free-form context block to the current task file body, without creating a commit.
+
+If no message is provided, this command will open an interactive editor.
+
 The block is formatted as:
 
   ## YYYY-MM-DD HH:MM
@@ -32,13 +38,16 @@ The block is formatted as:
   ---
 
 Options:
+  <task-id>             Task branch to append context to (default: current branch).
   -m, --message <msg>   Provide message inline (skips editor).
   --no-timestamp        Omit the timestamp heading.
+  --worktree=<path>     Worktree to use when task has multiple worktrees.
   --repo PATH           Repository root (default: walk up from CWD to find .jj).
   --workspace-dir PATH  Virtual project dir. Overrides workspace_dir in .tt/config.toml.
 
 Examples:
   ${SCRIPT_NAME} -m "Discovered that foo needs refactoring"
+  ${SCRIPT_NAME} task/foo-abc123 -m "Remote note on another task"
   ${SCRIPT_NAME} -m "See notes above" --no-timestamp
   ${SCRIPT_NAME}           # opens editor pre-filled with timestamp heading
 
@@ -49,6 +58,8 @@ EOF
 main() {
   local message=''
   local no_timestamp=false
+  local task_id_arg=''
+  local worktree_arg=''
   local repo=''
   local workspace_dir=''
 
@@ -67,6 +78,7 @@ main() {
         no_timestamp=true
         shift
         ;;
+      --worktree=*) worktree_arg="${1#--worktree=}"; shift ;;
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"
@@ -85,9 +97,11 @@ main() {
         usage
         ;;
       *)
-        log "Error: Unexpected argument: $1"
-        usage
-        ;;
+        if [[ -z "$task_id_arg" ]]; then
+          task_id_arg="$1"; shift
+        else
+          log "Error: Unexpected argument: $1"; usage
+        fi ;;
     esac
   done
 
@@ -107,17 +121,60 @@ main() {
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  # Resolve current branch
-  local resolve_output current_rev task_file bookmark
-  resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-  current_rev="$(printf '%s' "$resolve_output" | sed -n '1p')"
-  task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
-  bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+  # Resolve current branch and task file
+  local task_file bookmark
 
-  # Precondition: must be on a task or project branch
-  if [[ -z "$bookmark" ]]; then
-    log "Error: not on a task or project branch."
-    exit 1
+  if [[ -n "$task_id_arg" ]]; then
+    bookmark="$task_id_arg"
+    local suffix
+    if is_task_branch "$bookmark" "$task_prefix"; then
+      suffix="${bookmark#$task_prefix}"
+    elif is_project_branch "$bookmark" "$project_prefix"; then
+      suffix="${bookmark#$project_prefix}"
+    else
+      log "Error: '$task_id_arg' is not a task or project branch."
+      exit 1
+    fi
+    if ! jj -R "$repo" log -r "$bookmark" --no-graph -T '' 2>/dev/null; then
+      log "Error: Branch '$bookmark' not found in repository."
+      exit 1
+    fi
+    task_file=".tt/task/${suffix}.md"
+  else
+    local resolve_output current_rev
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    current_rev="$(printf '%s' "$resolve_output" | sed -n '1p')"
+    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
+    bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    if [[ -z "$bookmark" ]]; then
+      log "Error: not on a task or project branch."
+      exit 1
+    fi
+  fi
+
+  # Resolve target worktree
+  local current_worktree target_worktree
+  current_worktree="$(resolve_current_worktree "$repo")"
+
+  local found_worktrees wt_count
+  found_worktrees="$(find_worktrees_for_branch "$repo" "$bookmark" "$task_prefix" "$project_prefix")"
+  wt_count="$(printf '%s' "$found_worktrees" | grep -c . 2>/dev/null || true)"
+
+  if [[ -n "$task_id_arg" && "$wt_count" -eq 0 ]]; then
+    # No dedicated worktree; only safe if we're already on this branch
+    local current_bookmark
+    current_bookmark="$(resolve_current "$repo" "$task_prefix" "$project_prefix" | sed -n '3p')"
+    if [[ "$current_bookmark" != "$bookmark" ]]; then
+      log "Error: No worktree found for '$bookmark'. Check it out first with:"
+      log "  tt task checkout $bookmark --worktree"
+      exit 1
+    fi
+    target_worktree="$current_worktree"
+  else
+    if ! target_worktree="$(resolve_task_worktree "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
+        "$current_worktree" "$worktree_arg")"; then
+      exit 1
+    fi
   fi
 
   # Compute timestamp
@@ -148,7 +205,7 @@ main() {
   fi
 
   # Resolve task file path and verify it exists
-  local task_file_path="$repo/$task_file"
+  local task_file_path="$target_worktree/$task_file"
   if [[ ! -f "$task_file_path" ]]; then
     log "Error: task file not found: $task_file_path"
     exit 1
