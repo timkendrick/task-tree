@@ -192,7 +192,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 - **`tt task reorder <task-id> <modifier>`** — Reorder a direct child task. Modifier is one of `--up`, `--down`, `--after <other-task-id>`, or `--before <other-task-id>` (mutually exclusive). Fails if the reorder is impossible (e.g. already first with `--up`, or `<other-task-id>` is not a sibling). See §6.7.
 
-- **`tt task delete [<task-id>] [--force] [--recursive]`** — Remove a task from its parent branch. Removes the `subtask:` entry from the parent task file's frontmatter and removes the child task file from the parent branch, creating a `Remove subtask: <title> (<task-id>)` commit on the parent branch. The child's VCS bookmark is not deleted. Defaults to the current branch if no `<task-id>` is given. Requires task `status: DONE` unless `--force` is specified (which also skips the clean working-copy check). Aborts if the task has subtasks of its own, unless `--force` or `--recursive` is specified. Aborts if no parent is found. See §6.9.
+- **`tt task delete [<task-id>] [--force]`** — Remove a task and its entire descendant subtree from the parent branch. Collects the full subtree via union traversal (reads subtask lists from both each task's own branch and the parent branch's copy at every level). Creates a single `Remove subtask: <title> (<task-id>)` commit on the parent branch that removes the top-level `subtask:` entry and all descendant task files present on that branch. After the commit, deletes all bookmarks in the subtree (`jj bookmark delete`). Dedicated workspaces are forgotten from jj; files left on disk with a warning. Defaults to the current branch if no `<task-id>` is given. Requires task `status: DONE` unless `--force` is specified (which also skips the clean working-copy check). Aborts if no parent is found. See §6.9.
 
 ---
 
@@ -395,9 +395,9 @@ Child tasks are ordered via the current task file's `subtask:` frontmatter. **`t
 
 ### 6.9 Delete (`tt task delete`)
 
-`tt task delete` removes a task from its parent branch. It is the canonical mechanism for purging a task from the project: after this command, the task is no longer discoverable via `tt task list` because its `subtask:` entry is gone from the parent task file.
+`tt task delete` removes a task and its entire descendant subtree from the parent branch. It is the canonical mechanism for purging a task from the project: after this command, the task is no longer discoverable via `tt task list` because its `subtask:` entry is gone from the parent task file.
 
-**Usage:** `tt task delete [<task-id>] [--force] [--recursive] [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]`
+**Usage:** `tt task delete [<task-id>] [--force] [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]`
 
 If no `<task-id>` is given, the command operates on the current branch.
 
@@ -405,26 +405,25 @@ If no `<task-id>` is given, the command operates on the current branch.
 
 - Working copy is clean. Skipped with `--force`.
 - Current branch is a task or project branch (when no explicit `<task-id>` is given).
-- Task `status` is `DONE`. Skipped with `--force`.
-- Task has no subtasks of its own (no `subtask:` entries in its task file). Skipped with `--force` or `--recursive`.
+- Top-level task `status` is `DONE`. Skipped with `--force`. (Descendants' status is not checked.)
 - Exactly one parent branch is found (via `find_parent_branch`). Parentless tasks (top-level projects with no parent) cannot be deleted this way; the command aborts.
 
 **Behavior:**
 
 1. Locate the parent branch using `find_parent_branch` (same logic as `tt task checkin`).
-2. Determine the target workspace using `find_worktrees_for_branch` on the parent branch: 0 found → use main repo workspace; 1 found → use that workspace; 2+ → require `--worktree=<path>`.
-3. Run **pre-delete** hook (blocking) in the current worktree.
-4. In the target workspace, create a new WC branching from the parent bookmark (`jj new <parent_bookmark>`).
-5. Remove the `subtask:` entry for this task from the parent task file's frontmatter.
-6. Remove the child task file (`.tt/task/<slug>.md`) from the target workspace.
-7. Commit: `Remove subtask: <title> (<task-id>)`. Advance the parent bookmark to this commit.
-8. Leave a clean open WC in the target workspace (`jj new '@'`).
-9. If the task has a dedicated workspace (`<workspace-dir>/<task-id>/`): run `jj workspace forget <name>` to deregister it from jj, but **do not delete the files**. Alert the user that the workspace directory still exists and must be cleaned up manually.
-10. Run **post-delete** hook (non-blocking).
+2. Collect the full descendant subtree via union traversal: for each discovered task, read subtask lists from both (a) the task's own branch and (b) the parent branch's copy of the task file. Union of both is used at every level, recursively, until no new IDs are found.
+3. Determine the target workspace using `find_worktrees_for_branch` on the parent branch: 0 found → use main repo workspace; 1 found → use that workspace; 2+ → require `--worktree=<path>`.
+4. Run **pre-delete** hook (blocking) in the current worktree.
+5. In the target workspace, create a new WC branching from the parent bookmark (`jj new <parent_bookmark>`).
+6. Remove the `subtask:` entry for the top-level task from the parent task file's frontmatter.
+7. Remove the top-level task file and all descendant task files present on the parent branch (best-effort).
+8. Commit: `Remove subtask: <title> (<task-id>)`. Advance the parent bookmark to this commit.
+9. Leave a clean open WC in the target workspace (`jj new '@'`).
+10. Bulk delete bookmarks: run `jj bookmark delete` for every task in the subtree (root + all descendants). Log a warning for any that cannot be deleted.
+11. For each task in the subtree: if a dedicated workspace exists at `<workspace-dir>/<task-id>/`, run `jj workspace forget <name>` to deregister it from jj, but **do not delete the files**. Alert the user that the workspace directory still exists and must be cleaned up manually.
+12. Run **post-delete** hook (non-blocking).
 
-**`--recursive`:** If the task has subtasks, deletes them first (depth-first, innermost first) before deleting the task itself. Each subtask must also satisfy the DONE and clean-WC preconditions (skipped with `--force`).
-
-**Delegation from `tt task checkin --delete`:** When `tt task checkin` is run with `--delete`, it first performs the normal checkin (handoff + merge commits on the parent branch), then invokes `tt task delete` on the same task. This produces two commits on the parent branch: the `Merge subtask:` commit from checkin, followed by the `Remove subtask:` commit from delete.
+**Delegation from `tt task checkin --delete`:** When `tt task checkin` is run with `--delete`, it first performs the normal checkin (handoff + merge commits on the parent branch), then invokes `tt task delete` on the same task. This produces two commits on the parent branch: the `Merge subtask:` commit from checkin, followed by the `Remove subtask:` commit from delete. All subtree bookmarks are deleted after the `Remove subtask:` commit.
 
 **Hooks:** Runs **pre-delete** (blocking) before any VCS operation, and **post-delete** (non-blocking) after success.
 
