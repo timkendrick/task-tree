@@ -152,6 +152,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt checkout` | `tt task checkout` |
 | `tt checkin` | `tt task checkin` |
 | `tt status` | `tt task status` |
+| `tt parent` | `tt task parent` |
 | `tt propagate` | `tt task propagate` |
 | `tt checkpoint` | `tt task checkpoint` |
 | `tt complete` | `tt task complete` |
@@ -182,6 +183,8 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 - **`tt task list [--project <project-id>]... [--detached] | [--all]`** — Generate and print the full project todo list to stdout. Tasks are grouped by project; orphaned tasks are excluded by default. Optional `--project`, `--detached` and `--all` filter which sections are shown. Output format is the markdown described in §4.1. See §7.1 and Appendix A.
 
 - **`tt task list --focus`** — Generate and print the focused todo list (current task and its direct ancestors only) in the same markdown format. See §7.2 and Appendix A.
+
+- **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step. No hooks.
 
 - **`tt task status [<task-id>]`** — Show the metadata and direct child tasks of the current task (default) or the given task. Reads from the correct branch per the "where to read" rule (§7.1 / Appendix A step 3): merged tasks are read from the parent branch that received the checkin; ongoing tasks are read from their own branch. Output format: lowercase header block (`task`, `branch`, `worktree`, `status`, `title`), followed by a subtasks section and a description section, both always present and separated by `---` dividers (see §6.7 for exact format). The `worktree` field shows the closest ancestor worktree for the given task. Output to stdout only. No hooks.
 

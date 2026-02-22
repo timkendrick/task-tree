@@ -244,6 +244,29 @@ find_parent_branch() {
   printf '%s' "$found"
 }
 
+# Usage: find_parent_project REPO TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Walks up the task hierarchy from TASK_ID to find the nearest ancestor project branch.
+# Outputs the project branch name to stdout.
+# Exit 0: project found (printed to stdout).
+# Exit 1: no ancestor project found.
+# Exit 2: multiple parents found at some level (error printed to stderr by find_parent_branch).
+find_parent_project() {
+  local repo="$1" task_id="$2" task_prefix="$3" project_prefix="$4"
+  local cursor="$task_id"
+  while true; do
+    local parent='' exit_code=0
+    parent="$(find_parent_branch "$repo" "$cursor" "$task_prefix" "$project_prefix")" || exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+      return $exit_code
+    fi
+    if is_project_branch "$parent" "$project_prefix"; then
+      printf '%s' "$parent"
+      return 0
+    fi
+    cursor="$parent"
+  done
+}
+
 # Usage: find_branch_for_task REPO TASK_ID TASK_PREFIX PROJECT_PREFIX
 # Locates the canonical branch for TASK_ID using the "where to read" rule:
 # scans all task/project bookmarks for one whose owner task file contains
