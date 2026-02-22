@@ -1,5 +1,5 @@
 ---
 title: "Rust CLI implementation"
-status: TODO
+status: IN-PROGRESS
 description: "Rust implementation of existing bootstrap `tt` commands"
 ---

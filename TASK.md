@@ -1,1 +1,1 @@
-.tt/task/bootstrap-cli-d35756ce.md
+.tt/task/rust-cli-86972d17.md
