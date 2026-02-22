@@ -427,6 +427,17 @@ main() {
     exit 0
   fi
 
+  # Refuse to create a child under a completed (DONE) parent task.
+  if [[ -n "$parent_task_file" ]]; then
+    local parent_status
+    parent_status="$(jj "${jj_opts[@]}" file show "$parent_task_file" --revision "$parent_bookmark" 2>/dev/null \
+      | awk '/^status:/ { print $2; exit }')"
+    if [[ "$parent_status" == "DONE" ]]; then
+      log "Error: Parent task '$parent_bookmark' has status DONE. Completed tasks are immutable; create new tasks under a different parent."
+      exit 1
+    fi
+  fi
+
   # Capture revision user had checked out; restore it on exit so we leave them where they were.
   # Use inline trap to capture values at definition time (locals are gone when EXIT runs).
   local original_rev

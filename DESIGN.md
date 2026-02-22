@@ -276,6 +276,10 @@ Note that `Checkpoint:` at the bottom of the task/T arm in the partial diagram i
 
 **With `--parent`:** The tool creates a commit **on the parent task's branch** (regardless of which branch is currently checked out) that both creates the new task file (with `status: TODO`) in `.tt/task/` and adds `subtask: [ ] <task-id>` to the parent task file, described as `Create task: <title> (<task-id>)`. The parent bookmark is advanced to this commit. The child task's branch is then initialised with a `Describe task: <title> (<task-id>)` commit that adds the description frontmatter; the task bookmark is set to this commit. The `TASK.md` symlink is created when the task is first checked out (see §6.2). After task creation, if the working copy was already on the parent branch, it is left at the updated parent branch tip; otherwise it is restored to its original position.
 
+**Preconditions** (checked before any VCS operation; any failure aborts the command):
+
+- The parent task's `status` must not be `DONE`. Completed tasks are immutable; any new work related to a completed task must be created under a different parent. The tool aborts with an error if the resolved parent task file has `status: DONE`.
+
 Because the parent task file is modified, sibling (and descendant) branches may need to be updated to avoid conflicts at checkin. The optional `--propagate` flag runs `tt task propagate --from <parent>` after creating the task; it accepts `--rebase | --merge` (propagation strategy; default rebase), `--shallow` (direct children of the parent only), and `--force` (proceed despite conflicts). If the named child branch already exists, the tool notifies the user and refuses unless `--force` is specified.
 
 **With `--project`:** The tool creates a parentless project task using the project prefix. The project branch is created from `--target <commit-rev>` if specified, else the current revision (any branch). The tool refuses to proceed if the target revision already exists within a task tree. No parent task file is modified. The project task file is created on the project branch.
