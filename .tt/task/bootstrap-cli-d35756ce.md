@@ -19,6 +19,7 @@ subtask: [ ] task/tt-task-describe-9463850e
 subtask: [ ] task/rename-tt-task-status-94b2b9a0
 subtask: [ ] task/tt-task-show-subtask-titles-8ea41199
 subtask: [ ] task/tt-task-propagate-from-96aca8f7
+subtask: [ ] task/tt-task-complete-a24cbd24
 ---
 
 [`task/tt-task-list-6638a980`](.tt/task/tt-task-list-6638a980.md) Implement `tt task list` CLI command
