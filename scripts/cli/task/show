@@ -180,7 +180,30 @@ main() {
     printf 'Subtasks:\n'
     while IFS= read -r line; do
       [[ -z "$line" ]] && continue
-      printf -- '- %s\n' "$line"
+      local checkbox subtask_id subtask_title=""
+      checkbox="${line:0:3}"
+      subtask_id="${line:4}"
+      local subtask_branch subtask_file subtask_content
+      if subtask_branch="$(find_branch_for_task "$repo" "$subtask_id" "$task_prefix" "$project_prefix" 2>/dev/null)"; then
+        local subtask_id_suffix
+        if is_task_branch "$subtask_id" "$task_prefix"; then
+          subtask_id_suffix="${subtask_id#$task_prefix}"
+        elif is_project_branch "$subtask_id" "$project_prefix"; then
+          subtask_id_suffix="${subtask_id#$project_prefix}"
+        else
+          subtask_id_suffix=""
+        fi
+        if [[ -n "$subtask_id_suffix" ]]; then
+          subtask_file=".tt/task/${subtask_id_suffix}.md"
+          subtask_content="$(jj -R "$repo" file show -r "$subtask_branch" -- "$subtask_file" 2>/dev/null || true)"
+          subtask_title="$(parse_frontmatter_field "$subtask_content" "title" 2>/dev/null || true)"
+        fi
+      fi
+      if [[ -n "$subtask_title" ]]; then
+        printf -- '- %s %s  %s\n' "$checkbox" "$subtask_id" "$subtask_title"
+      else
+        printf -- '- %s\n' "$line"
+      fi
     done <<< "$subtasks"
   else
     printf '[No subtasks]\n'
