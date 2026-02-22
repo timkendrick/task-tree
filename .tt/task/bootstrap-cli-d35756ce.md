@@ -6,7 +6,7 @@ subtask: [x] task/tt-task-list-6638a980
 subtask: [x] task/tt-task-create-5841c217
 subtask: [x] task/tt-task-checkout-f126cd1f
 subtask: [x] task/tt-task-propagate-286501f8
-subtask: [ ] task/tt-task-checkpoint-2827d127
+subtask: [x] task/tt-task-checkpoint-2827d127
 subtask: [ ] task/tt-task-add-context-af1b6a26
 subtask: [x] task/tt-task-checkin-59f599a6
 subtask: [x] task/tt-task-status-3f469fc0
