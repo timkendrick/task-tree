@@ -98,24 +98,19 @@ main() {
       exit 1
     fi
   else
-    if ! bookmark="$(find_branch_for_task "$repo" "$task_id_arg" "$task_prefix" "$project_prefix")"; then
-      log "Error: Could not locate branch for task '$task_id_arg'."
-      exit 1
-    fi
+    bookmark="$task_id_arg"
     local suffix
     if is_task_branch "$bookmark" "$task_prefix"; then
       suffix="${bookmark#$task_prefix}"
     elif is_project_branch "$bookmark" "$project_prefix"; then
       suffix="${bookmark#$project_prefix}"
     else
-      if is_task_branch "$task_id_arg" "$task_prefix"; then
-        suffix="${task_id_arg#$task_prefix}"
-      elif is_project_branch "$task_id_arg" "$project_prefix"; then
-        suffix="${task_id_arg#$project_prefix}"
-      else
-        log "Error: Cannot derive task file path for '$task_id_arg'."
-        exit 1
-      fi
+      log "Error: '$task_id_arg' is not a task or project branch."
+      exit 1
+    fi
+    if ! jj -R "$repo" log -r "$bookmark" --no-graph -T '' 2>/dev/null; then
+      log "Error: Branch '$bookmark' not found in repository."
+      exit 1
     fi
     task_file=".tt/task/${suffix}.md"
   fi
