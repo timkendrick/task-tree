@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task current — Print the current task or project ID.
+#
+# Usage: current [--repo PATH] [-h|--help]
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} [--repo PATH]
+
+Print the current task or project branch name to stdout.
+
+Options:
+  --repo PATH  Repository root (default: find .jj).
+  -h, --help   Show this help.
+
+EOF
+  exit 1
+}
+
+main() {
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage ;;
+      -*) log "Error: Unknown option: $1"; usage ;;
+      *)  log "Error: Unexpected argument: $1"; usage ;;
+    esac
+  done
+
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  local resolve_out
+  if ! resolve_out="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"; then
+    log "Error: Not on a task or project branch."
+    exit 1
+  fi
+
+  local current_branch
+  current_branch="$(printf '%s' "$resolve_out" | sed -n '3p')"
+  if [[ -z "$current_branch" ]]; then
+    log "Error: Not on a task or project branch."
+    exit 1
+  fi
+
+  printf '%s\n' "$current_branch"
+}
+
+main "$@"
