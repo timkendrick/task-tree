@@ -189,6 +189,43 @@ prompt() {
   printf '%s' "$msg"
 }
 
+# Usage: has_conflicts REPO_OR_WORKTREE REVSET
+# Returns 0 (true) if any commit in REVSET has conflicts.
+has_conflicts() {
+  local repo="$1" revset="$2"
+  local result
+  result="$(jj -R "$repo" log -r "$revset" \
+    --no-graph -T 'if(conflict, "yes\n")' 2>/dev/null)" || true
+  [[ -n "$result" ]]
+}
+
+# Usage: find_worktrees_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
+# Outputs one workspace root path per line for each jj workspace where
+# BOOKMARK is the current branch (resolved via resolve_current).
+find_worktrees_for_branch() {
+  local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
+  # Get all workspace names + root paths
+  local ws_list
+  ws_list="$(jj -R "$repo" workspace list --no-pager 2>/dev/null)" || return 0
+  while IFS= read -r ws_line; do
+    [[ -z "$ws_line" ]] && continue
+    # Format: "name: /path/to/root (@ rev)"
+    local ws_name ws_root
+    ws_name="$(printf '%s' "$ws_line" | awk '{print $1}' | tr -d ':')"
+    ws_root="$(printf '%s' "$ws_line" | awk '{print $2}')"
+    [[ -z "$ws_root" ]] && continue
+    [[ ! -d "$ws_root" ]] && continue
+    # Resolve current bookmark in this workspace
+    local resolve_out
+    resolve_out="$(resolve_current "$ws_root" "$task_prefix" "$project_prefix" 2>/dev/null)" || continue
+    local ws_bookmark
+    ws_bookmark="$(printf '%s' "$resolve_out" | sed -n '3p')"
+    if [[ "$ws_bookmark" == "$bookmark" ]]; then
+      printf '%s\n' "$ws_root"
+    fi
+  done <<< "$ws_list"
+}
+
 # Usage: resolve_current REPO TASK_PREFIX PROJECT_PREFIX
 #
 # Resolve the "current branch" (closest ancestor of the working copy @ that has a bookmark).

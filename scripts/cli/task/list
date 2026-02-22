@@ -123,21 +123,6 @@ get_metadata_from_content() {
   local all_branches="$4"
   local repo="$5"
 
-  # Check merged + deleted: subtask: [x] ID Title
-  if [[ -n "$merged_branch" ]]; then
-    if ! printf '%s' "$content" | grep -q "\.tt/task/"; then
-      local line
-      line="$(printf '%s' "$content" | grep -E "subtask:\s*\[x\]\s+${task_id}\s+" | head -1)"
-      if [[ -n "$line" ]]; then
-        local title
-        title="${line#*${task_id}}"
-        title="${title#"${title%%[![:space:]]*}"}"
-        printf '[x]|%s' "$title"
-        return 0
-      fi
-    fi
-  fi
-
   local title=''
   local status='TODO'
   while IFS= read -r line; do
@@ -226,22 +211,10 @@ emit_tree() {
   content="$(read_task_file_at_rev "$repo" "$source_branch" "$path" 2>/dev/null)" || true
 
   local checkbox title
-  if [[ -n "$merged_line" ]]; then
-    if printf '%s' "$content" | grep -qE "subtask:\s*\[x\]\s+${task_id}\s+"; then
-      title="$(printf '%s' "$content" | grep -E "subtask:\s*\[x\]\s+${task_id}\s+" | head -1 | sed "s/.*${task_id}[ \t]*//")"
-      checkbox='[x]'
-    else
-      local meta
-      meta="$(get_metadata_from_content "$content" "$task_id" "$source_branch" "$all_branches" "$repo")"
-      checkbox="${meta%%|*}"
-      title="${meta#*|}"
-    fi
-  else
-    local meta
-    meta="$(get_metadata_from_content "$content" "$task_id" "" "$all_branches" "$repo")"
-    checkbox="${meta%%|*}"
-    title="${meta#*|}"
-  fi
+  local meta
+  meta="$(get_metadata_from_content "$content" "$task_id" "${merged_line:+$source_branch}" "$all_branches" "$repo")"
+  checkbox="${meta%%|*}"
+  title="${meta#*|}"
 
   emit_task_line "$indent" "$checkbox" "$task_id" "$title" "$current_task_id"
 
