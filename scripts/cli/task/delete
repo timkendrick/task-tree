@@ -130,54 +130,6 @@ collect_subtree() {
   printf '%s' "$descendants"
 }
 
-# Usage: find_parent_branch REPO TASK_ID TASK_PREFIX PROJECT_PREFIX
-# Scans all bookmarks for subtask: entry containing TASK_ID.
-find_parent_branch() {
-  local repo="$1" task_id="$2" task_prefix="$3" project_prefix="$4"
-  local jj_opts=(-R "$repo")
-
-  local all_bookmarks
-  all_bookmarks="$(jj "${jj_opts[@]}" log -r 'bookmarks()' \
-    -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' --no-graph 2>/dev/null)" || true
-
-  local found=''
-  while IFS= read -r branch; do
-    [[ -z "$branch" ]] && continue
-    if ! is_task_branch "$branch" "$task_prefix" && \
-       ! is_project_branch "$branch" "$project_prefix"; then
-      continue
-    fi
-    [[ "$branch" == "$task_id" ]] && continue
-
-    local suffix
-    if is_task_branch "$branch" "$task_prefix"; then
-      suffix="${branch#$task_prefix}"
-    else
-      suffix="${branch#$project_prefix}"
-    fi
-    local path=".tt/task/${suffix}.md"
-    local content
-    content="$(jj "${jj_opts[@]}" file show -r "$branch" -- "$path" 2>/dev/null)" || continue
-    if printf '%s' "$content" | grep -qE "^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]+${task_id}([[:space:]]|$)"; then
-      if [[ -n "$found" ]]; then
-        log "Error: Multiple parent branches found for '$task_id':"
-        log "  $found"
-        log "  $branch"
-        exit 1
-      fi
-      found="$branch"
-    fi
-  done <<< "$all_bookmarks"
-
-  if [[ -z "$found" ]]; then
-    log "Error: No parent branch found containing subtask entry for '$task_id'."
-    log "  Parentless tasks cannot be deleted with this command."
-    exit 1
-  fi
-
-  printf '%s' "$found"
-}
-
 main() {
   local task_id_arg=''
   local force=false
@@ -288,7 +240,11 @@ main() {
 
   # Find parent branch
   local parent_bookmark
-  parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")"
+  parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
+    local rc=$?
+    [[ $rc -eq 1 ]] && log "Error: No parent branch found for '$task_id'. Parentless tasks cannot be deleted with this command."
+    exit 1
+  }
 
   # Derive parent slug and task file path
   local parent_slug parent_task_file

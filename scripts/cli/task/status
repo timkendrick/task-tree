@@ -159,12 +159,17 @@ main() {
     }
   ')"
 
+  # --- Find parent (optional; omitted for parentless/project tasks) ---
+  local parent_branch
+  parent_branch="$(find_parent_branch "$repo" "$branch" "$task_prefix" "$project_prefix" 2>/dev/null)" || parent_branch=""
+
   # --- Print header block ---
   # Labels padded to 9 chars so values align at col 11
   printf -- '---\n'
   printf 'task:     %s\n' "$branch"
   printf 'branch:   %s\n' "$branch"
   printf 'worktree: %s\n' "$worktree"
+  [[ -n "$parent_branch" ]] && printf 'parent:   %s\n' "$parent_branch"
   printf 'status:   %s\n' "$status"
   printf 'title:    %s\n' "$title"
   printf -- '---\n'
