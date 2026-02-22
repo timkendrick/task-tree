@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task edit — Edit title, description, and/or labels of a task.
+#
+# Usage:
+#   edit [<task-id>] [--title TITLE] [--description TEXT] [--label LABEL ...] [--delete-label LABEL ...]
+#
+# Options:
+#   <task-id>             Target task ID (default: current branch)
+#   --title TITLE         New title (preserves existing if omitted)
+#   --description TEXT    New description (preserves existing if omitted)
+#   --label LABEL         Append a label (repeatable)
+#   --delete-label LABEL  Remove a label if present (repeatable, silent no-op if absent)
+#   --worktree PATH       Specify worktree when multiple exist for the task
+#   --repo PATH           Repository root (default: walk up to .jj)
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} [<task-id>] [options...]
+
+Edit title, description, and/or labels of a task.
+
+Options:
+  <task-id>              Task ID to edit (default: current task).
+  --title TITLE          New title (preserves existing if omitted).
+  --description TEXT     New description (preserves existing if omitted).
+  --label LABEL          Append a label (repeatable).
+  --delete-label LABEL   Remove a label if present (repeatable, silent no-op if absent).
+  --worktree PATH        Worktree path when multiple exist for the task.
+  --repo PATH            Repository root (default: walk up from CWD to find .jj).
+
+If none of --title, --description, --label, or --delete-label are given, opens
+an editor pre-populated with the current description text (interactive mode).
+
+EOF
+  exit 1
+}
+
+# Usage: rewrite_task_file FILE TITLE STATUS DESCRIPTION LABELS...
+#
+# Reads body (content after the second ---) from the existing file,
+# writes new frontmatter + preserved body.
+rewrite_task_file() {
+  local file="$1"
+  local title="$2"
+  local status="$3"
+  local description="$4"
+  shift 4
+  local -a labels=("$@")
+
+  # Extract body (everything after the second ---)
+  local body
+  body="$(awk '/^---$/{n++; if(n==2){found=1; next}} found{print}' "$file")"
+
+  {
+    echo '---'
+    echo "title: \"${title//\"/\\\"}\""
+    echo "status: $status"
+    if [[ -n "$description" ]]; then
+      echo "description: $(printf '%s' "$description" | jq -Rs '.')"
+    fi
+    for label in "${labels[@]+"${labels[@]}"}"; do
+      echo "label: $label"
+    done
+    echo '---'
+    if [[ -n "$body" ]]; then
+      printf '%s\n' "$body"
+    fi
+  } > "$file"
+}
+
+main() {
+  local task_id_arg=''
+  local new_title=''
+  local new_description=''
+  local has_title=false
+  local has_description=false
+  local -a add_labels=()
+  local -a delete_labels=()
+  local worktree_arg=''
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title)
+        [[ $# -lt 2 ]] && { log "Error: --title requires an argument"; usage; }
+        new_title="$2"; has_title=true; shift 2 ;;
+      --description)
+        [[ $# -lt 2 ]] && { log "Error: --description requires an argument"; usage; }
+        new_description="$2"; has_description=true; shift 2 ;;
+      --label)
+        [[ $# -lt 2 ]] && { log "Error: --label requires an argument"; usage; }
+        add_labels+=("$2"); shift 2 ;;
+      --delete-label)
+        [[ $# -lt 2 ]] && { log "Error: --delete-label requires an argument"; usage; }
+        delete_labels+=("$2"); shift 2 ;;
+      --worktree)
+        [[ $# -lt 2 ]] && { log "Error: --worktree requires an argument"; usage; }
+        worktree_arg="$2"; shift 2 ;;
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage ;;
+      -*)
+        log "Error: Unknown option: $1"; usage ;;
+      *)
+        if [[ -z "$task_id_arg" ]]; then
+          task_id_arg="$1"; shift
+        else
+          log "Error: Unexpected argument: $1"; usage
+        fi ;;
+    esac
+  done
+
+  # Resolve repo root
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # Resolve bookmark and task_file
+  local bookmark task_file
+  if [[ -z "$task_id_arg" ]]; then
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
+    bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+
+    if [[ -z "$bookmark" ]]; then
+      log "Error: Not on a task or project branch."
+      exit 1
+    fi
+  else
+    bookmark="$task_id_arg"
+    local suffix
+    if is_task_branch "$bookmark" "$task_prefix"; then
+      suffix="${bookmark#$task_prefix}"
+    elif is_project_branch "$bookmark" "$project_prefix"; then
+      suffix="${bookmark#$project_prefix}"
+    else
+      log "Error: '$task_id_arg' is not a task or project branch."
+      exit 1
+    fi
+    if ! jj -R "$repo" log -r "$bookmark" --no-graph -T '' 2>/dev/null; then
+      log "Error: Branch '$bookmark' not found in repository."
+      exit 1
+    fi
+    task_file=".tt/task/${suffix}.md"
+  fi
+
+  # Resolve worktree
+  local current_worktree
+  current_worktree="$(resolve_current_worktree "$repo")"
+
+  local target_worktree
+  if ! target_worktree="$(resolve_task_worktree "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
+      "$current_worktree" "$worktree_arg")"; then
+    exit 1
+  fi
+
+  # Precondition: WC must be clean
+  if ! is_wc_clean "$target_worktree"; then
+    log "Error: Working copy has uncommitted changes. Commit or discard first."
+    exit 1
+  fi
+
+  # Read current task file content from bookmark
+  local task_content
+  task_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || {
+    log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
+    exit 1
+  }
+
+  # Parse current values
+  # description is stored as a JSON string; extract the raw JSON value and decode it with jq
+  # so that current_description holds the actual text (avoiding double-escaping on rewrite).
+  local current_title current_status current_description_json current_description
+  current_title="$(parse_frontmatter_field "$task_content" "title")"
+  current_status="$(parse_frontmatter_field "$task_content" "status")"
+  current_description_json="$(printf '%s' "$task_content" \
+    | awk '/^---$/{n++; next} n==1 && /^description:/{sub(/^description:[[:space:]]*/,""); print; exit}')"
+  if [[ -n "$current_description_json" ]]; then
+    current_description="$(printf '%s' "$current_description_json" | jq -r '.')"
+  else
+    current_description=''
+  fi
+
+  # Parse current labels (multiple label: lines)
+  local -a current_labels=()
+  while IFS= read -r lbl; do
+    [[ -n "$lbl" ]] && current_labels+=("$lbl")
+  done < <(printf '%s' "$task_content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^label:/{sub(/^label:[[:space:]]*/,""); print}')
+
+  # Interactive mode: no metadata flags given — open editor for description
+  local interactive=false
+  if [[ "$has_title" == false && "$has_description" == false && ${#add_labels[@]} -eq 0 && ${#delete_labels[@]} -eq 0 ]]; then
+    interactive=true
+  fi
+
+  # Determine final values
+  local final_title final_description
+  final_title="${new_title:-$current_title}"
+
+  if [[ "$interactive" == true ]]; then
+    local edited_description
+    edited_description="$(printf '%s' "${current_description}" | prompt)" || {
+      log "Error: Editor exited with non-zero status."
+      exit 1
+    }
+    final_description="$edited_description"
+  elif [[ "$has_description" == true ]]; then
+    final_description="$new_description"
+  else
+    final_description="$current_description"
+  fi
+
+  # Apply label changes
+  local -a final_labels=()
+  for lbl in "${current_labels[@]+"${current_labels[@]}"}"; do
+    local skip=false
+    for del in "${delete_labels[@]+"${delete_labels[@]}"}"; do
+      if [[ "$lbl" == "$del" ]]; then
+        skip=true
+        break
+      fi
+    done
+    [[ "$skip" == false ]] && final_labels+=("$lbl")
+  done
+  for lbl in "${add_labels[@]+"${add_labels[@]}"}"; do
+    final_labels+=("$lbl")
+  done
+
+  # Write updated task file to target worktree filesystem
+  rewrite_task_file "$target_worktree/$task_file" \
+    "$final_title" "$current_status" "$final_description" "${final_labels[@]+"${final_labels[@]}"}"
+
+  # Only commit if the task file actually changed
+  if is_wc_clean "$target_worktree"; then
+    log "No changes to task $bookmark."
+    printf '%s\n' "$bookmark"
+    return 0
+  fi
+
+  jj -R "$target_worktree" commit -m "Edit task: $final_title ($bookmark)"
+  jj -R "$target_worktree" bookmark set "$bookmark"
+
+  printf '%s\n' "$bookmark"
+}
+
+main "$@"

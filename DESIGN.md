@@ -170,6 +170,8 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 - **`tt task create [--parent <parent-task-id> | --project [--target <commit-rev>]] [--slug <slug>] [--title <title>] [--description <description>] [--label <label> ...] [--propagate [--rebase | --merge] [--shallow] [--force]] [--force]`** — Create a new task or project. With `--parent` (default: current branch): creates a commit on the parent's branch that both creates the new task file (with `status: TODO`) and registers `subtask: [ ] <task-id>` in the parent's task file; the child branch is forked as an empty commit from this updated parent tip. The `TASK.md` symlink is created at first checkout. With `--project` (mutually exclusive with `--parent`): creates a parentless project using the project prefix; the project branch forks from `--target` if specified, else the current revision. Prompts for summary/description if not provided. With `--propagate`, propagates the parent's new commit to its existing descendant branches after creation (equivalent to running `tt task propagate --from <parent>` with any given flags); supports `--rebase | --merge` (strategy; default rebase), `--shallow` (direct children only), and `--force` (proceed despite conflicts). With `--force` (outside of `--propagate`), overwrites if the child branch already exists. See §6.1.
 
+- **`tt task edit [<task-id>] [--title <title>] [--description <text>] [--label <label> ...] [--delete-label <label> ...] [--worktree <path>] [--repo <path>]`** — Edit the title, description, and/or labels of a task. Fields not supplied are preserved. With no metadata flags, opens an editor pre-populated with the current description (interactive mode). `--label` appends; `--delete-label` removes (silent no-op if absent). Requires a clean working copy. Creates an `Edit task: <title> (<task-id>)` commit and advances the task bookmark. See §6.1.1.
+
 - **`tt task checkout <task-id> [--worktree [=<path>] [--switch]] [--force]`** — Switch to the given task branch. With `--worktree`, uses or creates a dedicated jj workspace for that task; otherwise uses the closest ancestor task workspace or the current workspace. Refuses if the target workspace has local changes unless `--force`. Updates task status to IN-PROGRESS if TODO, runs `setup` hook when creating a new worktree. Without `--worktree`, always updates the virtual project's `HEAD` symlink; with `--worktree`, only updates `HEAD` if `--switch` is also provided (`--switch` is only valid with `--worktree`). See §6.2.
 
 - **`tt task checkpoint [--message <msg>]`** — Record the current state and advance the task bookmark. If the working copy is empty, moves the bookmark to the working copy's parent commit (and updates that commit's description if `--message` is given). If the working copy has pending changes, creates a new commit from those changes (`jj commit`, using `--message` as the description) and moves the bookmark to it. The target commit must be a strict descendant of the current bookmark tip, unless `--force` is specified. Prints a short confirmation on success. See §6.3. Hooks: **pre-checkpoint**, **post-checkpoint**.
@@ -210,7 +212,7 @@ Each task and project branch follows a structured lifecycle of named commits. Th
 | `Create project: <title>` | `tt task create --project` | Creates the project task file on the project branch |
 | `Begin task: <title> (<task-id>)` | `tt task checkout` | First checkout: creates `TASK.md` symlink and sets status → `IN-PROGRESS`; advances task bookmark |
 | `Create task: <child-title> (<task-id>)` | `tt task create` | On the parent branch: creates child task file and registers `subtask: [ ] <task-id>` in the parent file; parent bookmark advances |
-| `Describe task: <title> (<task-id>)` | `tt task create` | First commit on the child branch: adds description frontmatter to the child task file; task bookmark initialised here |
+| `Edit task: <title> (<task-id>)` | `tt task edit` (also invoked by `tt task create`) | Sets title, description, and labels in the task file frontmatter; task bookmark initialised here on the child branch |
 | `Checkpoint: <message> (<task-id>)` or `Checkpoint: <task-title> (<task-id>)` | `tt task checkpoint` | Advances the task bookmark to the current working state |
 | `Complete task: <title> (<task-id>)` | `tt task complete` | Sets status → `DONE` in the task file; final task bookmark advance |
 | `Handoff: <title> (<task-id>)` | `tt task checkin` | Off-mainline merge-source commit; child bookmark does **not** advance to this commit |
@@ -236,7 +238,7 @@ project/P:
   │ │  ↑ task/T
   │ ○  Begin task: <T-title> (task/T)                ← tt task checkout
   │ │  ↑ task/T
-  │ ○  Describe task: <T-title> (task/T)             ← tt task create  (child branch init)
+  │ ○  Edit task: <T-title> (task/T)                  ← tt task edit  (child branch init)
   │    ↑ task/T  (initial bookmark position)
   ├─╯
   ○  Create task: <T-title> (task/T)                 ← tt task create  (on parent branch)
@@ -276,7 +278,7 @@ Note that `Checkpoint:` at the bottom of the task/T arm in the partial diagram i
 
 ### 6.1 Task creation (`tt task create`)
 
-**With `--parent`:** The tool creates a commit **on the parent task's branch** (regardless of which branch is currently checked out) that both creates the new task file (with `status: TODO`) in `.tt/task/` and adds `subtask: [ ] <task-id>` to the parent task file, described as `Create task: <title> (<task-id>)`. The parent bookmark is advanced to this commit. The child task's branch is then initialised with a `Describe task: <title> (<task-id>)` commit that adds the description frontmatter; the task bookmark is set to this commit. The `TASK.md` symlink is created when the task is first checked out (see §6.2). After task creation, if the working copy was already on the parent branch, it is left at the updated parent branch tip; otherwise it is restored to its original position.
+**With `--parent`:** The tool creates a commit **on the parent task's branch** (regardless of which branch is currently checked out) that both creates the new task file stub (containing only `status: TODO`) in `.tt/task/` and adds `subtask: [ ] <task-id>` to the parent task file, described as `Create task: <title> (<task-id>)`. The parent bookmark is advanced to this commit. The child task's branch is then initialised by invoking `tt task edit` to set the title, description, and labels; the task bookmark is initialised here with an `Edit task: <title> (<task-id>)` commit. The `TASK.md` symlink is created when the task is first checked out (see §6.2). After task creation, if the working copy was already on the parent branch, it is left at the updated parent branch tip; otherwise it is restored to its original position.
 
 **Preconditions** (checked before any VCS operation; any failure aborts the command):
 
@@ -285,6 +287,34 @@ Note that `Checkpoint:` at the bottom of the task/T arm in the partial diagram i
 Because the parent task file is modified, sibling (and descendant) branches may need to be updated to avoid conflicts at checkin. The optional `--propagate` flag runs `tt task propagate --from <parent>` after creating the task; it accepts `--rebase | --merge` (propagation strategy; default rebase), `--shallow` (direct children of the parent only), and `--force` (proceed despite conflicts). If the named child branch already exists, the tool notifies the user and refuses unless `--force` is specified.
 
 **With `--project`:** The tool creates a parentless project task using the project prefix. The project branch is created from `--target <commit-rev>` if specified, else the current revision (any branch). The tool refuses to proceed if the target revision already exists within a task tree. No parent task file is modified. The project task file is created on the project branch.
+
+### 6.1.1 Task editing (`tt task edit`)
+
+**Purpose:** Edit the title, description, and/or labels of any task at any point in its lifetime. Also invoked internally by `tt task create` to write initial metadata on the child branch.
+
+**Options:**
+
+```
+[<task-id>]           Target task ID (default: current branch)
+--title TITLE         New title (preserves existing if omitted)
+--description TEXT    New description (preserves existing if omitted)
+--label LABEL         Append a label (repeatable)
+--delete-label LABEL  Remove a label if present (repeatable, silent no-op if absent)
+--worktree PATH       Specify worktree when multiple exist for the task
+--repo PATH           Repository root (default: walk up to .jj)
+```
+
+**Interactive mode** (no `--title`, `--description`, `--label`, or `--delete-label` given): opens an editor pre-populated with the current description text. Comment lines (`#`-prefixed) are stripped and the result is trimmed; an empty result clears the description.
+
+**Partial updates:** fields not supplied on the CLI retain their current values.
+
+**Label semantics:** `--label` appends; `--delete-label` removes (no error if absent).
+
+**Preconditions:** must be on a task or project branch; working copy must be clean.
+
+**Commit:** `Edit task: <title> (<task-id>)`. The task bookmark is advanced to this commit.
+
+**Output:** prints `<task-id>` on success.
 
 ### 6.2 Checkout behavior (`tt task checkout`)
 
