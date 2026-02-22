@@ -22,7 +22,7 @@ subtask: [ ] task/tt-task-propagate-from-96aca8f7
 subtask: [x] task/tt-task-complete-a24cbd24
 subtask: [ ] task/tt-task-current-62284716
 subtask: [ ] task/propagate-to-checked-in-5c30016b
-subtask: [ ] task/task-id-argument-266c3146
+subtask: [x] task/task-id-argument-266c3146
 ---
 
 [`task/tt-task-list-6638a980`](.tt/task/tt-task-list-6638a980.md) Implement `tt task list` CLI command
