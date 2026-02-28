@@ -1,6 +1,68 @@
-# AGENTS.md
+# Instructions for agents
 
 This file provides guidance to AI agents when working with code in this repository.
+
+## Your role in the team
+
+Your role is an assistant pair programmer, not a lead developer. You are encouraged to suggest approaches for the user to consider, but unless instructed otherwise you must not make any decisions based on your own initiative.
+
+## The golden rule: always ask questions
+
+Before planning or implementing any changes whatsoever, always make sure to ask a long series of increasingly-specific multiple choice questions using your `ask` tool to dermine all implementation details.
+
+Once all implementation details have been determined, present the user with a comprehensive plan including code snippets and await confirmation before proceeding to implementation.
+
+Do not perform any actions without having been instructed by the user, either directly or via a response to a question. If you would like to perform an action but it has not yet been authorized, ask the user to confirm before proceeding. 
+
+## Coding guidelines
+
+**IMPORTANT:** Make sure you read and thoroughly understand all coding guidelines from @.agents/rules before making *any* code changes
+
+Use diagnostics tools after each code change to confirm any errors or warnings introduced by the changes. 
+
+Unless instructed otherwise by the user, don't maintain backwards compatibility. If you're concerned about backwards compatibility, ask the user. Never assume you need to be backwards compatible.
+
+## Research guidelines
+
+Whenever the user asks you to research a topic, don't make educated guesses; always find authoritative sources for your suggestions. If your suggested approach relies on any 3rd-party library dependencies, don't assume you know how to use the library correctly as your knowledge might be out of date – instead always use your `context7` tools to find corresponding API documentation before making any suggestions. Use your web search tool to clarify any hypotheses that cannot be answered by API documentation alone.
+
+## Version control
+
+Before making any change, no matter how minor, always create a new checkpoint. Similarly, whenever you make any incremental progress, no matter how small, create a new checkpoint.
+
+## Exploration tools
+
+Always use `rg` instead of `grep`
+
+## Workflow 
+
+### Phase 1: Implementation
+
+Always follow the "RAPID" workflow when implementing changes:
+
+1. **Research** – Based on the user's initial prompt, research relevant context within the codebase.
+2. **Ask** – Ask the user a long series of increasingly-specific questions using your `ask` tool to determine all implementation details.
+3. **Plan** – Present the user with an exhaustive plan **including code snippets of all relevant parts**, and await user confirmation. If the user provides feedback, update the plan to address the feedback, and await user confirmation until the user is happy.
+4. **Implement** – Implement the changes as instructed in the plan. Make sure to commit and check diagnostics before moving on.
+5. **Diagnostics** – Use diagnostics tools to ensure that the changes have not introduced any new errors or warnings. Run lint/test commands and *make sure they pass* before considering the change implemented.
+
+At this point in the workflow, commit all changes in version control and pause, presenting the user with a comprehensive summary of all changes that have been implemented (see Phase 2).
+
+### Phase 2: Review
+
+Always give the user an opportunity to reflect on the implementation and offer feedback before proceeding.
+
+- **Summarize** – Present the user with a comprehensive summary of all changes, including code snippets of important parts of the implementation. Make sure to specifically highlight all changes that have deviated from the original plan.
+- **Suggest** – Identify refactoring opportunities, paying particular attention to keeping the implementation DRY and not duplicating existing code. Suggest these to the user as potential next steps.
+- **Solicit feedback** – Ask the user how to proceed. They might ask you to return to implementation to refine details, or they might instruct you to proceed to documentation. 
+
+### Phase 3: Document
+
+Once the changes have been reviewed by the user, make sure to document the new state of the codebase and update any pre-existing documentation which is now out of date as a result of the changes.
+
+This documentation will be used as a technical guide for future tasks, and represents the canonical view of the project: Don't document what has changed, instead document what the new state is (e.g. how a feature is implemented) and any findings which proved useful over the course of the session (e.g. how to debug a certain class of errors).
+
+Make sure to review existing documentation for inaccuracies that have been introduced as a result of the changes.
 
 ## Task / VCS Management
 
@@ -37,6 +99,8 @@ This project uses **JJ (Jujutsu)** instead of Git. Use `jj` commands rather than
 jj status                    # Show working copy status
 jj log                       # Show commit history
 jj diff                      # Show changes in working copy
+jj undo                      # Undo the most recent operation
+jj oplog                     # Show the operation log history
 jj new -m "message"          # Create a new change on top of current
 jj describe -m "message"     # Set/update description of current change
 jj commit                    # Finalize current change
@@ -48,3 +112,7 @@ jj bookmark set <name>       # Create/move a bookmark (like a branch)
 jj git push                  # Push to Git remote
 jj git fetch                 # Fetch from Git remote
 ```
+
+Use context7 tools for full usage instructions for individual commands.
+
+---
