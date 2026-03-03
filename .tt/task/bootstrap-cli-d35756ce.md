@@ -35,7 +35,7 @@ subtask: [x] task/tt-task-list-focus-f23d4002
 subtask: [ ] task/edit-different-task-32e8518e
 subtask: [ ] task/zsh-completions-0538e4f5
 subtask: [x] task/agents-md-tt-workflow-b41db319
-subtask: [ ] task/update-agent-workflow-561dfe81
+subtask: [x] task/update-agent-workflow-561dfe81
 subtask: [x] task/tt-task-create-checkout-46e1393e
 ---
 
