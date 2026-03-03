@@ -304,6 +304,9 @@ main() {
       "TT_BRANCH=$task_id"
   fi
 
+  if [[ -n "$previous_task_id" ]]; then
+    log "  Switched from: $previous_task_id"
+  fi
   log "Checked out: $task_id"
   if [[ "$worktree_flag" == true ]]; then
     log "  Worktree: $target_worktree"
