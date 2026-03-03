@@ -68,21 +68,21 @@ Make sure to review existing documentation for inaccuracies that have been intro
 
 Use the **bootstrap** `./scripts/cli/tt` CLI for task and VCS management. This bash-based tool is the current implementation while the full Rust CLI is being developed.
 
-**When to use tt vs jj.** Use `tt` for the day-to-day task workflow: creating tasks, switching context, recording checkpoints, completing work, and merging it back. `tt` understands the task hierarchy, keeps task files and frontmatter in sync, and performs the right sequence of VCS operations for you. Reserve `jj` for low-level operations: inspecting history (`jj log`), viewing diffs (`jj diff`), undoing changes (`jj undo`), or any operation that manipulates commits and branches directly without going through the task model.
-
 ### Standard tt workflow
 
 The standard workflow for working with tasks:
 
 1. **Create a task** — `./scripts/cli/tt task create [--parent <parent-task-id>] [--slug <slug>] [--title <title>] [--description <description>] [--label <label> ...] [--propagate [--rebase | --merge] [--shallow] [--force]] [--checkout [--worktree[=<path>]]]`. Creates a new task under the parent (default: current branch), adds `subtask: [ ] <task-id>` to the parent, and forks the child branch. With `--propagate`, updates sibling branches. With `--checkout`, runs checkout on the newly created task; `--worktree` optionally uses or creates a dedicated jj workspace. Run `./scripts/cli/tt task create --help` for options.
 
-2. **Begin a task** — `./scripts/cli/tt task checkout <task-id> [--worktree [=<path>] [--switch]] [--force]`. Switches to the task branch, updates status to IN-PROGRESS if TODO, creates TASK.md symlink on first checkout. With `--worktree`, uses or creates a dedicated jj workspace. Run `./scripts/cli/tt task checkout --help` for options.
+2. **Begin a task** — `./scripts/cli/tt task checkout <task-id> [--worktree [=<path>]]`. Switches to the task branch, updates status to IN-PROGRESS if TODO, creates TASK.md symlink on first checkout. With `--worktree`, uses or creates a dedicated jj workspace. Run `./scripts/cli/tt task checkout --help` for options.
 
-3. **Work on the task** — Make commits on the branch and accumulate context in `./TASK.md`. Run `./scripts/cli/tt task checkpoint [--message <message>]` to create a named checkpoint commit and advance the task bookmark. Run `./scripts/cli/tt task checkpoint --help` for options.
+3. **Work on the task** — Make commits on the branch and accumulate context in `./TASK.md`.
+   - **Add context** — Run `./scripts/cli/tt task add-context [-m <msg>] [--no-timestamp]` to append a context block to the task file body (no commit). Run `./scripts/cli/tt task add-context --help` for options.
+   - **Checkpoint** — Run `./scripts/cli/tt task checkpoint [--message <message>]` to create a named checkpoint commit and advance the task bookmark. Run `./scripts/cli/tt task checkpoint --help` for options.
 
-4. **Complete the task** — `./scripts/cli/tt task complete [<task-id>] [--worktree=<path>] [--force]`. Marks the task DONE with a `Complete task:` commit. Requires all child tasks done unless `--force`. Run `./scripts/cli/tt task complete --help` for options.
+4. **Complete the task** — Run `./scripts/cli/tt task complete`. Marks the task DONE with a `Complete task:` commit. Requires all child tasks done. Run `./scripts/cli/tt task complete --help` for options.
 
-5. **Finish the task** — `./scripts/cli/tt task checkin [<task-id>] [--rebase | --merge] [--force] [--delete] [--target <branch>] [--worktree=<path>]`. Merges the task into its parent. With `--complete`, runs complete first if not DONE. Project tasks require `--target`. Run `./scripts/cli/tt task checkin --help` for options.
+5. **Finish the task** — `./scripts/cli/tt task checkin [<task-id>]  [--target] [--complete]`. Merges the task into its parent. With `--complete`, runs complete first if not DONE. Project tasks require `--target`. Run `./scripts/cli/tt task checkin --help` for options.
 
 Note that steps 1 and 2 can be combined into a single `tt task create --checkout` command, and steps 4 and 5 can be combined into a single `tt task checkin --complete` command.
 
@@ -100,6 +100,8 @@ Use `./scripts/cli/tt task <subcommand> --help` for detailed options on any comm
 ### Self-hosted task management
 
 Progress on the implementation is represented as tasks in a tt task tree: create top-level tasks that correspond to the work (e.g. Phase 0, each command, or other coarse-grained units). Initially, when the tool does not yet exist or only partially exists, set up that structure by **manually** creating the VCS branches and **manually** creating or editing the task files (`.tt/task/...`) so that the task tree and branches match DESIGN.md’s model. As the tool gains functionality, **gradually use tt for day-to-day work**: create new tasks with `tt task create`, switch context with `tt task checkout`, merge completed work with `tt task checkin`, and use `tt task list` and related commands to view and manage the tree. The repository thus becomes both the implementation of tt and a working example of its own workflow; new commands are developed and then used to manage the next slice of work.
+
+**When to use tt vs jj.** Use `tt` for the day-to-day task workflow: creating tasks, switching context, recording checkpoints, completing work, and merging it back. `tt` understands the task hierarchy, keeps task files and frontmatter in sync, and performs the right sequence of VCS operations for you. Reserve `jj` for low-level operations: inspecting history (`jj log`), viewing diffs (`jj diff`), undoing changes (`jj undo`), or any operation that manipulates commits and branches directly without going through the task model.
 
 ## Version Control
 
