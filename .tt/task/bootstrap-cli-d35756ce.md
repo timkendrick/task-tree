@@ -26,13 +26,14 @@ subtask: [x] task/task-id-argument-266c3146
 subtask: [ ] task/standardize-stdio-9a3e669c
 subtask: [ ] task/tt-task-checkin-project-0ce9b81f
 subtask: [ ] task/tt-task-checkin-switch-b8ba57c3
-subtask: [ ] task/tt-task-checkout-log-previous-224e7312
+subtask: [x] task/tt-task-checkout-log-previous-224e7312
 subtask: [ ] task/tt-task-rename-8db18f41
 subtask: [ ] task/tt-task-move-091c3d4f
 subtask: [ ] task/tt-task-gc-65957c43
 subtask: [ ] task/tt-workspace-doctor-fe9143d1
 subtask: [x] task/tt-task-list-focus-f23d4002
 subtask: [ ] task/edit-different-task-32e8518e
+subtask: [ ] task/zsh-completions-0538e4f5
 ---
 
 [`task/tt-task-list-6638a980`](.tt/task/tt-task-list-6638a980.md) Implement `tt task list` CLI command
