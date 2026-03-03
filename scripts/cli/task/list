@@ -181,6 +181,9 @@ emit_task_line() {
 }
 
 # Recursively emit task tree.
+# Optional: focus_chain (newline-sep root..current), focus_index (0-based).
+# When focus_chain is set, only recurses into the child matching chain[focus_index+1];
+# at the leaf (current task), recurses into all children.
 emit_tree() {
   local repo="$1"
   local branch="$2"
@@ -191,6 +194,8 @@ emit_tree() {
   local merged_map="$7"  # newline-sep "TASK_ID:BRANCH"
   local all_branches="$8"
   local current_task_id="${9:-}"
+  local focus_chain="${10:-}"
+  local focus_index="${11:-0}"
 
   local suffix
   if [[ "$task_id" == project/* ]]; then
@@ -221,13 +226,28 @@ emit_tree() {
   local child_indent="${indent}   "
   local subs_output
   subs_output="$(get_subtask_entries "$content")" || true
+
+  local next_in_chain=''
+  local chain_count=0
+  if [[ -n "$focus_chain" ]]; then
+    chain_count="$(printf '%s' "$focus_chain" | grep -c . 2>/dev/null || true)"
+    if [[ "$((focus_index + 1))" -lt "$chain_count" ]]; then
+      next_in_chain="$(printf '%s' "$focus_chain" | sed -n "$((focus_index + 2))p")"
+    fi
+  fi
+
   while IFS='|' read -r sub_cb sub_id sub_title; do
     [[ -z "$sub_id" ]] && continue
+    if [[ -n "$focus_chain" ]]; then
+      if [[ -n "$next_in_chain" ]]; then
+        [[ "$sub_id" != "$next_in_chain" ]] && continue
+      fi
+    fi
     local child_branch="$sub_id"
     local child_merged
     child_merged="$(printf '%s' "$merged_map" | grep -E "^${sub_id}:" | head -1)" || true
     [[ -n "$child_merged" ]] && child_branch="${child_merged#*:}"
-    emit_tree "$repo" "$child_branch" "$sub_id" "$child_indent" "$task_prefix" "$project_prefix" "$merged_map" "$all_branches" "$current_task_id"
+    emit_tree "$repo" "$child_branch" "$sub_id" "$child_indent" "$task_prefix" "$project_prefix" "$merged_map" "$all_branches" "$current_task_id" "$focus_chain" "$((focus_index + 1))"
   done <<< "$subs_output" || true
 }
 
@@ -436,7 +456,7 @@ main() {
 
     local root
     root="$(printf '%s' "$chain" | head -1)"
-    emit_tree "$repo" "$root" "$root" "" "$task_prefix" "$project_prefix" "$merged_map" "$all_task_project_branches" "$current_task_id"
+    emit_tree "$repo" "$root" "$root" "" "$task_prefix" "$project_prefix" "$merged_map" "$all_task_project_branches" "$current_task_id" "$chain" "0"
     exit 0
   fi
 
