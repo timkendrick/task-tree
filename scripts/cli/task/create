@@ -30,6 +30,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --rebase               (with --propagate) Rebase descendants onto parent tip (default)
 #   --merge                (with --propagate) Merge parent tip into descendants
 #   --shallow              (with --propagate) Propagate to direct children only
+#   --checkout             After creation, run checkout on the newly created task
+#   --worktree[=<path>]    (with --checkout) Use or create a dedicated jj workspace for the task
 #
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -55,6 +57,8 @@ Options:
   --rebase              (with --propagate) Rebase descendants onto parent tip (default)
   --merge               (with --propagate) Merge parent tip into descendants
   --shallow             (with --propagate) Propagate to direct children only
+  --checkout            After creation, run checkout on the newly created task
+  --worktree[=<path>]   (with --checkout) Use or create a dedicated jj workspace for the task
 
 Examples:
   ${SCRIPT_NAME}                                    # prompts for title, slug, description
@@ -63,6 +67,8 @@ Examples:
   ${SCRIPT_NAME} --project --title "Main app" --description "Primary application"
   ${SCRIPT_NAME} --project --title "Main app" --target abc123 --description "Fork from specific revision"
   ${SCRIPT_NAME} --title "New feature" --description "Add new feature" --propagate --shallow
+  ${SCRIPT_NAME} --slug my-task --title "My task" --checkout
+  ${SCRIPT_NAME} --slug my-task --title "My task" --checkout --worktree
 
 EOF
   exit 1
@@ -218,6 +224,9 @@ main() {
   local propagate=false
   local propagate_strategy='rebase'
   local propagate_shallow=false
+  local checkout=false
+  local checkout_worktree=false
+  local checkout_worktree_path=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -286,6 +295,19 @@ main() {
         propagate_shallow=true
         shift
         ;;
+      --checkout)
+        checkout=true
+        shift
+        ;;
+      --worktree)
+        checkout_worktree=true
+        shift
+        ;;
+      --worktree=*)
+        checkout_worktree=true
+        checkout_worktree_path="${1#--worktree=}"
+        shift
+        ;;
       -h|--help)
         usage
         ;;
@@ -338,6 +360,11 @@ main() {
 
   if [[ -n "$target" && "$is_project" == false ]]; then
     log "Error: --target is only valid with --project"
+    exit 1
+  fi
+
+  if [[ "$checkout_worktree" == true && "$checkout" == false ]]; then
+    log "Error: --worktree is only valid with --checkout"
     exit 1
   fi
 
@@ -504,6 +531,19 @@ main() {
     [[ "$dry_run" == true ]] && propagate_args+=(--dry-run)
     log "Propagating from $parent_bookmark..."
     "$SCRIPT_DIR/propagate" "${propagate_args[@]}"
+  fi
+
+  if [[ "$checkout" == true ]]; then
+    trap - EXIT
+    local -a checkout_args=(--repo "$repo" "$task_id")
+    if [[ "$checkout_worktree" == true ]]; then
+      if [[ -n "$checkout_worktree_path" ]]; then
+        checkout_args+=(--worktree="$checkout_worktree_path")
+      else
+        checkout_args+=(--worktree)
+      fi
+    fi
+    "$SCRIPT_DIR/checkout" "${checkout_args[@]}"
   fi
 
   printf '%s\n' "$task_id"
