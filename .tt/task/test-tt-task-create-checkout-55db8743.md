@@ -1,3 +1,4 @@
 ---
-status: TODO
+title: "Test tt task create --checkout"
+status: DONE
 ---
