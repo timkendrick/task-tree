@@ -318,18 +318,11 @@ main() {
     exit 1
   }
 
-  # Update the subtask entry in the parent task file to reflect the child's status:
-  #   DONE        -> [x]
-  #   IN-PROGRESS -> [-]
-  # The [ ] -> [-] update on partial checkin keeps the parent frontmatter in sync
-  # with the child's actual status so callers can read it without fetching each
-  # child branch.
+  # Update the subtask entry in the parent task file to reflect the child's status.
+  # Use status_to_checkbox so the symbol is consistent with all other display code
+  # and handles any future status values (e.g. TODO if a task is ever un-begun).
   local updated_parent_content new_cb
-  if [[ "$task_status" == "DONE" ]]; then
-    new_cb='[x]'
-  else
-    new_cb='[-]'
-  fi
+  new_cb="$(status_to_checkbox "$task_status")"
   updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" -v cb="$new_cb" '
     /^---$/ { in_fm = !in_fm; print; next }
     in_fm && /^subtask:[[:space:]]*\[[ \-]\]/ {
