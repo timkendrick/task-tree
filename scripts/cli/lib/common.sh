@@ -422,3 +422,15 @@ resolve_current() {
     fi
   fi
 }
+
+# Map a task status field to a GFM checkbox string.
+# TODO -> [ ], IN-PROGRESS -> [-], DONE/Done -> [x], else [ ]
+status_to_checkbox() {
+  local s="$1"
+  case "$s" in
+    TODO)        printf '[ ]' ;;
+    IN-PROGRESS) printf '[-]' ;;
+    DONE|Done)   printf '[x]' ;;
+    *)           printf '[?]' ;;
+  esac
+}

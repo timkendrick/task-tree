@@ -103,18 +103,6 @@ parse_frontmatter() {
   '
 }
 
-# Map status: field to GFM checkbox.
-# TODO -> [ ], IN-PROGRESS -> [-], DONE/done -> [x], else [ ]
-status_to_checkbox() {
-  local s="$1"
-  case "$s" in
-    TODO) printf '[ ]' ;;
-    IN-PROGRESS) printf '[-]' ;;
-    DONE|Done) printf '[x]' ;;
-    *) printf '[ ]' ;;
-  esac
-}
-
 # Get checkbox and title from content string.
 get_metadata_from_content() {
   local content="$1"
