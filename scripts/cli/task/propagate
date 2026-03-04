@@ -183,13 +183,16 @@ propagate_one_merge() {
   jj "${jj_opts[@]}" edit "$original_rev" 2>/dev/null || true
 }
 
-# Usage: create_resume_commit REPO CHILD_BOOKMARK ORIGINAL_REV
-# Creates a new empty commit on top of CHILD_BOOKMARK and advances the bookmark to it.
-# Used after propagating a partially-checked-in child to mark where resumed work begins.
+# Usage: create_resume_commit REPO CHILD_BOOKMARK ORIGINAL_REV DESTINATION
+# Creates a new empty commit on top of DESTINATION and advances CHILD_BOOKMARK to it.
+# DESTINATION defaults to CHILD_BOOKMARK when not supplied (post-rebase/merge case).
+# For fully-merged IN-PROGRESS children, pass the parent bookmark as DESTINATION so the
+# child advances to the parent tip rather than staying behind it.
 create_resume_commit() {
-  local repo="$1" child="$2" original_rev="$3"
+  local repo="$1" child="$2" original_rev="$3" destination="${4:-}"
+  [[ -z "$destination" ]] && destination="$child"
   local jj_opts=(-R "$repo")
-  jj "${jj_opts[@]}" new "$child"
+  jj "${jj_opts[@]}" new "$destination"
   jj "${jj_opts[@]}" bookmark set "$child"
   jj "${jj_opts[@]}" edit "$original_rev" 2>/dev/null || true
 }
@@ -260,7 +263,7 @@ propagate_from() {
         # but we must advance the child bookmark to the parent tip so work can resume.
         log "  $child_id: checked in but still in progress — creating resume commit"
         if [[ "$dry_run" != true ]]; then
-          create_resume_commit "$repo" "$child_id" "$original_rev"
+          create_resume_commit "$repo" "$child_id" "$original_rev" "$from_bookmark"
         fi
       else
         log "  $child_id: already up to date"
