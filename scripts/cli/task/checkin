@@ -388,18 +388,13 @@ ${context_text}
     "TT_INCOMING_BRANCH=$task_id"
 
   # --- Post-checkin cleanup ---
-  if [[ "$task_status" != "DONE" ]]; then
-    # Partial checkin: restore WC in target_ws, user stays on child branch
-    jj -R "$target_ws" edit "$original_rev"
-    log "Partial checkin complete: $task_id -> $parent_bookmark"
-    log "  User remains on child branch; parent updated with handoff/merge."
-  else
-    # Complete checkin
-    if [[ "$target_ws" != "$current_worktree" ]] && [[ "$target_ws" != "$repo" || "$repo" != "$current_worktree" ]]; then
-      # target_ws is a dedicated parent worktree different from current
-      perform_workspace_switch "$repo" "${workspace_dir:-}" "$parent_bookmark" \
-        "$target_ws" "$current_worktree" "$task_id"
+  # Always switch to the parent branch after checkin, regardless of task status.
+  if [[ "$target_ws" != "$current_worktree" ]] && [[ "$target_ws" != "$repo" || "$repo" != "$current_worktree" ]]; then
+    # target_ws is a dedicated parent worktree different from current
+    perform_workspace_switch "$repo" "${workspace_dir:-}" "$parent_bookmark" \
+      "$target_ws" "$current_worktree" "$task_id"
 
+    if [[ "$task_status" == "DONE" ]]; then
       # Clean up child worktree if it's at the conventional path
       local child_ws_path="${workspace_dir:+${workspace_dir}/${task_id}}"
       if [[ -n "$child_ws_path" ]] && [[ -d "$child_ws_path" ]] && \
@@ -412,11 +407,15 @@ ${context_text}
         fi
         rm -rf "$child_ws_path"
       fi
-    else
-      # target_ws is same as current workspace — WC is already on parent branch
-      log "Now on parent branch: $parent_bookmark"
     fi
+  else
+    # target_ws is same as current workspace — WC is already on parent branch
+    log "Now on parent branch: $parent_bookmark"
+  fi
 
+  if [[ "$task_status" != "DONE" ]]; then
+    log "Partial checkin complete: $task_id -> $parent_bookmark"
+  else
     log "Checkin complete: $task_id -> $parent_bookmark"
   fi
 
