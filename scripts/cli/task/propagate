@@ -70,15 +70,36 @@ is_up_to_date() {
   [[ -z "$result" ]]
 }
 
-# Usage: is_partially_checked_in REPO CHILD_BOOKMARK PARENT_BOOKMARK
+# Usage: is_checked_in REPO CHILD_BOOKMARK PARENT_BOOKMARK
 # Returns 0 (true) if CHILD_BOOKMARK is a strict ancestor of PARENT_BOOKMARK,
 # meaning a prior handoff commit from the child has already been merged into the parent.
-is_partially_checked_in() {
+is_checked_in() {
   local repo="$1" child="$2" parent="$3"
   local result
   result="$(jj -R "$repo" --ignore-working-copy log -r "${child}..${parent}" \
     --no-graph -T 'commit_id' 2>/dev/null)" || true
   [[ -n "$result" ]]
+}
+
+# Usage: is_partially_checked_in REPO CHILD_BOOKMARK PARENT_BOOKMARK TASK_PREFIX PROJECT_PREFIX
+# Returns 0 (true) if the child has been checked in to the parent AND the child's task
+# status is not DONE — i.e. it was a partial (in-progress) checkin and work should continue.
+is_partially_checked_in() {
+  local repo="$1" child="$2" parent="$3" task_prefix="$4" project_prefix="$5"
+  is_checked_in "$repo" "$child" "$parent" || return 1
+  local suffix
+  if is_task_branch "$child" "$task_prefix"; then
+    suffix="${child#$task_prefix}"
+  elif is_project_branch "$child" "$project_prefix"; then
+    suffix="${child#$project_prefix}"
+  else
+    return 1
+  fi
+  local task_file=".tt/task/${suffix}.md"
+  local content status
+  content="$(jj -R "$repo" --ignore-working-copy file show -r "$child" -- "$task_file" 2>/dev/null)" || true
+  status="$(parse_frontmatter_field "$content" "status")"
+  [[ "$status" != "DONE" ]]
 }
 
 # Usage: get_subtask_ids REPO BOOKMARK TASK_FILE
@@ -229,12 +250,22 @@ propagate_from() {
       continue
     fi
 
-    if is_up_to_date "$repo" "$child_id" "$from_bookmark"; then
-      log "  $child_id: already up to date"
-    else
-      local partial=false
-      is_partially_checked_in "$repo" "$child_id" "$from_bookmark" && partial=true
+    local partial=false
+    is_partially_checked_in "$repo" "$child_id" "$from_bookmark" "$task_prefix" "$project_prefix" \
+      && partial=true
 
+    if is_up_to_date "$repo" "$child_id" "$from_bookmark"; then
+      if [[ "$partial" == true ]]; then
+        # Child is fully merged into parent but still IN-PROGRESS: no rebase needed,
+        # but we must advance the child bookmark to the parent tip so work can resume.
+        log "  $child_id: checked in but still in progress — creating resume commit"
+        if [[ "$dry_run" != true ]]; then
+          create_resume_commit "$repo" "$child_id" "$original_rev"
+        fi
+      else
+        log "  $child_id: already up to date"
+      fi
+    else
       log "  $child_id: $strategy onto $from_bookmark"
       if [[ "$strategy" == rebase ]]; then
         propagate_one_rebase "$repo" "$child_id" "$from_bookmark" "$force" "$dry_run"
