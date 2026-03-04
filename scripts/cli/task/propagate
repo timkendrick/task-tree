@@ -70,17 +70,30 @@ is_up_to_date() {
   [[ -z "$result" ]]
 }
 
+# Usage: is_partially_checked_in REPO CHILD_BOOKMARK PARENT_BOOKMARK
+# Returns 0 (true) if CHILD_BOOKMARK is a strict ancestor of PARENT_BOOKMARK,
+# meaning a prior handoff commit from the child has already been merged into the parent.
+is_partially_checked_in() {
+  local repo="$1" child="$2" parent="$3"
+  local result
+  result="$(jj -R "$repo" --ignore-working-copy log -r "${child}..${parent}" \
+    --no-graph -T 'commit_id' 2>/dev/null)" || true
+  [[ -n "$result" ]]
+}
+
 # Usage: get_subtask_ids REPO BOOKMARK TASK_FILE
-# Prints one subtask task-id per line (regardless of checkbox state).
+# Prints one subtask task-id per line for all checkboxes ([ ], [-], [x]).
+# Includes [x] entries so that partially-checked-in children that are still
+# active can be propagated to; is_up_to_date handles skipping truly finished ones.
 get_subtask_ids() {
   local repo="$1" bookmark="$2" task_file="$3"
   local content
-  content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || true
+  content="$(jj -R "$repo" --ignore-working-copy file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || true
   [[ -z "$content" ]] && return 0
   printf '%s' "$content" | awk '
     /^---$/ { in_fm = !in_fm; next }
-    in_fm && /^subtask:[ \t]*\[[ -]\]/ {
-      sub(/^subtask:[ \t]*\[[ -]\][ \t]*/, "")
+    in_fm && /^subtask:[ \t]*\[[ x-]\]/ {
+      sub(/^subtask:[ \t]*\[[ x-]\][ \t]*/, "")
       if ($1 != "") print $1
     }
   '
@@ -149,6 +162,17 @@ propagate_one_merge() {
   jj "${jj_opts[@]}" edit "$original_rev" 2>/dev/null || true
 }
 
+# Usage: create_resume_commit REPO CHILD_BOOKMARK ORIGINAL_REV
+# Creates a new empty commit on top of CHILD_BOOKMARK and advances the bookmark to it.
+# Used after propagating a partially-checked-in child to mark where resumed work begins.
+create_resume_commit() {
+  local repo="$1" child="$2" original_rev="$3"
+  local jj_opts=(-R "$repo")
+  jj "${jj_opts[@]}" new "$child"
+  jj "${jj_opts[@]}" bookmark set "$child"
+  jj "${jj_opts[@]}" edit "$original_rev" 2>/dev/null || true
+}
+
 # Usage: propagate_from REPO FROM_BOOKMARK TASK_PREFIX PROJECT_PREFIX STRATEGY SHALLOW FORCE DRY_RUN ORIGINAL_REV DEPTH
 # Recursively propagates all registered subtasks of FROM_BOOKMARK onto FROM_BOOKMARK's current tip.
 propagate_from() {
@@ -200,7 +224,7 @@ propagate_from() {
     fi
 
     # Check bookmark exists in repo
-    if ! jj "${jj_opts[@]}" log -r "$child_id" --no-graph -T '' 2>/dev/null; then
+    if ! jj "${jj_opts[@]}" --ignore-working-copy log -r "$child_id" --no-graph -T '' 2>/dev/null; then
       log "  $child_id: bookmark not found in repo; skipping"
       continue
     fi
@@ -208,11 +232,19 @@ propagate_from() {
     if is_up_to_date "$repo" "$child_id" "$from_bookmark"; then
       log "  $child_id: already up to date"
     else
+      local partial=false
+      is_partially_checked_in "$repo" "$child_id" "$from_bookmark" && partial=true
+
       log "  $child_id: $strategy onto $from_bookmark"
       if [[ "$strategy" == rebase ]]; then
         propagate_one_rebase "$repo" "$child_id" "$from_bookmark" "$force" "$dry_run"
       else
         propagate_one_merge "$repo" "$child_id" "$from_bookmark" "$force" "$dry_run" "$original_rev"
+      fi
+
+      if [[ "$partial" == true ]] && [[ "$dry_run" != true ]]; then
+        log "  $child_id: creating resume commit"
+        create_resume_commit "$repo" "$child_id" "$original_rev"
       fi
     fi
 
