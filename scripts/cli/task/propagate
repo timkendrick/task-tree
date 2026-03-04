@@ -65,9 +65,16 @@ is_up_to_date() {
   local result
   # Compute the unmerged range: ancestors of child NOT yet in parent's ancestry.
   # If empty, the child has nothing new to propagate.
-  result="$(jj -R "$repo" log -r "roots(::${child} ~ ::${parent})" \
+  result="$(jj -R "$repo" --ignore-working-copy log -r "roots(::${child} ~ ::${parent})" \
     --no-graph -T 'commit_id' 2>/dev/null)" || true
-  [[ -z "$result" ]]
+  [[ -z "$result" ]] && return 0
+  # Also up to date if all unmerged roots are already descendants of parent
+  # (e.g. a resume commit was placed directly on the parent tip after a prior propagate).
+  local non_descendant_roots
+  non_descendant_roots="$(jj -R "$repo" --ignore-working-copy log \
+    -r "roots(::${child} ~ ::${parent}) ~ (${parent}+)" \
+    --no-graph -T 'commit_id' 2>/dev/null)" || true
+  [[ -z "$non_descendant_roots" ]]
 }
 
 # Usage: is_checked_in REPO CHILD_BOOKMARK PARENT_BOOKMARK
