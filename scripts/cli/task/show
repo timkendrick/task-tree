@@ -191,8 +191,7 @@ main() {
     printf 'Subtasks:\n'
     while IFS= read -r line; do
       [[ -z "$line" ]] && continue
-      local checkbox subtask_id subtask_title=""
-      checkbox="${line:0:3}"
+      local checkbox subtask_id subtask_status subtask_title=""
       subtask_id="${line:4}"
       local subtask_branch subtask_file subtask_content
       if subtask_branch="$(find_branch_for_task "$repo" "$subtask_id" "$task_prefix" "$project_prefix" 2>/dev/null)"; then
@@ -207,13 +206,16 @@ main() {
         if [[ -n "$subtask_id_suffix" ]]; then
           subtask_file=".tt/task/${subtask_id_suffix}.md"
           subtask_content="$(jj -R "$repo" --ignore-working-copy file show -r "$subtask_branch" -- "$subtask_file" 2>/dev/null || true)"
+          subtask_status="$(parse_frontmatter_field "$subtask_content" "status" 2>/dev/null || true)"
           subtask_title="$(parse_frontmatter_field "$subtask_content" "title" 2>/dev/null || true)"
         fi
       fi
+      [[ -z "$subtask_status" ]] && subtask_status="TODO"
+      checkbox="$(status_to_checkbox "$subtask_status")"
       if [[ -n "$subtask_title" ]]; then
         printf -- '- %s %s  %s\n' "$checkbox" "$subtask_id" "$subtask_title"
       else
-        printf -- '- %s\n' "$line"
+        printf -- '- %s\n' "$checkbox" "$subtask_id"
       fi
     done <<< "$subtasks"
   else

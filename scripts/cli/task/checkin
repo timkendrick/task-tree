@@ -318,17 +318,19 @@ main() {
     exit 1
   }
 
-  # Change [ ] or [-] to [x] for this subtask in the handoff commit
-  local updated_parent_content
-  updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" '
+  # Update the subtask entry in the parent task file to reflect the child's status.
+  # Use status_to_checkbox so the symbol is consistent with all other display code
+  # and handles any future status values (e.g. TODO if a task is ever un-begun).
+  local updated_parent_content new_cb
+  new_cb="$(status_to_checkbox "$task_status")"
+  updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" -v cb="$new_cb" '
     /^---$/ { in_fm = !in_fm; print; next }
     in_fm && /^subtask:[[:space:]]*\[[ \-]\]/ {
-      line = $0
-      rest = line
+      rest = $0
       sub(/^subtask:[[:space:]]*\[[[:space:]\-]\][[:space:]]*/, "", rest)
       split(rest, parts, /[[:space:]]/)
       if (parts[1] == id) {
-        sub(/\[[ \-]\]/, "[x]")
+        sub(/\[[ \-]\]/, cb)
       }
       print; next
     }
