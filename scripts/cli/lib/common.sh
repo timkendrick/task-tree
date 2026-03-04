@@ -214,7 +214,7 @@ find_parent_branch() {
   local jj_opts=(-R "$repo")
 
   local all_bookmarks
-  all_bookmarks="$(jj "${jj_opts[@]}" log -r 'bookmarks()' \
+  all_bookmarks="$(jj "${jj_opts[@]}" --ignore-working-copy log -r 'bookmarks()' \
     -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' --no-graph 2>/dev/null)" || true
 
   local found=''
@@ -230,7 +230,7 @@ find_parent_branch() {
     fi
     local path=".tt/task/${suffix}.md"
     local content
-    content="$(jj "${jj_opts[@]}" file show -r "$branch" -- "$path" 2>/dev/null)" || continue
+    content="$(jj "${jj_opts[@]}" --ignore-working-copy file show -r "$branch" -- "$path" 2>/dev/null)" || continue
     if printf '%s' "$content" | grep -qE "^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]+${task_id}([[:space:]]|$)"; then
       if [[ -n "$found" ]]; then
         log "Error: Multiple parent branches found for '$task_id': '$found' and '$branch'."
@@ -276,7 +276,7 @@ find_parent_project() {
 find_branch_for_task() {
   local repo="$1" task_id="$2" task_prefix="$3" project_prefix="$4"
   local all_bookmarks
-  all_bookmarks="$(jj -R "$repo" log -r 'bookmarks()' \
+  all_bookmarks="$(jj -R "$repo" --ignore-working-copy log -r 'bookmarks()' \
     -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' --no-graph 2>/dev/null)" || true
 
   while IFS= read -r branch; do
@@ -290,7 +290,7 @@ find_branch_for_task() {
     fi
     local path=".tt/task/${suffix}.md"
     local c
-    c="$(jj -R "$repo" file show -r "$branch" -- "$path" 2>/dev/null)" || continue
+    c="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$path" 2>/dev/null)" || continue
     if printf '%s' "$c" | grep -qE "^subtask:[[:space:]]*\[x\][[:space:]]+${task_id}([[:space:]]|$)"; then
       printf '%s' "$branch"
       return 0
@@ -298,7 +298,7 @@ find_branch_for_task() {
   done <<< "$all_bookmarks"
 
   # Not merged — use task's own branch
-  if jj -R "$repo" log -r "$task_id" --no-graph -T '' 2>/dev/null; then
+  if jj -R "$repo" --ignore-working-copy log -r "$task_id" --no-graph -T '' 2>/dev/null; then
     printf '%s' "$task_id"
     return 0
   fi
@@ -364,7 +364,7 @@ find_worktrees_for_branch() {
   local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
   # Get all workspace names + root paths
   local ws_list
-  ws_list="$(jj -R "$repo" workspace list --no-pager 2>/dev/null)" || return 0
+  ws_list="$(jj -R "$repo" --ignore-working-copy workspace list --no-pager 2>/dev/null)" || return 0
   while IFS= read -r ws_line; do
     [[ -z "$ws_line" ]] && continue
     # Format: "name: /path/to/root (@ rev)"
@@ -402,14 +402,14 @@ resolve_current() {
   local jj_opts=(-R "$repo")
   local current_branch
 
-  current_branch="$(jj "${jj_opts[@]}" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || true
+  current_branch="$(jj "${jj_opts[@]}" --ignore-working-copy log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || true
   current_branch="${current_branch%%,*}"  # Take first if comma-separated
 
   if [[ -z "$current_branch" ]]; then
     printf '%s\n\n\n' '@'
   else
     local parent_rev
-    if ! parent_rev="$(jj "${jj_opts[@]}" log -r "$current_branch" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"; then
+    if ! parent_rev="$(jj "${jj_opts[@]}" --ignore-working-copy log -r "$current_branch" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"; then
       log "Error: Could not resolve current branch: $current_branch"
       exit 1
     fi
