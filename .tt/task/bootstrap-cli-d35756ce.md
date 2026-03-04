@@ -37,6 +37,7 @@ subtask: [ ] task/zsh-completions-0538e4f5
 subtask: [x] task/agents-md-tt-workflow-b41db319
 subtask: [x] task/update-agent-workflow-561dfe81
 subtask: [x] task/tt-task-create-checkout-46e1393e
+subtask: [ ] task/partial-checkin-checkboxes-2c982b11
 ---
 
 [`task/tt-task-list-6638a980`](.tt/task/tt-task-list-6638a980.md) Implement `tt task list` CLI command
