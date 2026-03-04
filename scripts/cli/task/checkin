@@ -318,22 +318,27 @@ main() {
     exit 1
   }
 
-  # Change [ ] or [-] to [x] for this subtask in the handoff commit
+  # If the task is DONE, mark the subtask entry [x] in the parent task file.
+  # For partial checkins (IN-PROGRESS), the subtask entry is left unchanged.
   local updated_parent_content
-  updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" '
-    /^---$/ { in_fm = !in_fm; print; next }
-    in_fm && /^subtask:[[:space:]]*\[[ \-]\]/ {
-      line = $0
-      rest = line
-      sub(/^subtask:[[:space:]]*\[[[:space:]\-]\][[:space:]]*/, "", rest)
-      split(rest, parts, /[[:space:]]/)
-      if (parts[1] == id) {
-        sub(/\[[ \-]\]/, "[x]")
+  if [[ "$task_status" == "DONE" ]]; then
+    updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" '
+      /^---$/ { in_fm = !in_fm; print; next }
+      in_fm && /^subtask:[[:space:]]*\[[ \-]\]/ {
+        line = $0
+        rest = line
+        sub(/^subtask:[[:space:]]*\[[[:space:]\-]\][[:space:]]*/, "", rest)
+        split(rest, parts, /[[:space:]]/)
+        if (parts[1] == id) {
+          sub(/\[[ \-]\]/, "[x]")
+        }
+        print; next
       }
-      print; next
-    }
-    { print }
-  ')"
+      { print }
+    ')"
+  else
+    updated_parent_content="$parent_task_content"
+  fi
 
   # Append context block to body if --context provided
   if [[ -n "$context_text" ]]; then
