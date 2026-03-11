@@ -45,7 +45,10 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} delete       →  tt task delete
   ${SCRIPT_NAME} list         →  tt task list
   ${SCRIPT_NAME} add-context  →  tt task add-context
+  ${SCRIPT_NAME} init         →  tt workspace init
   ${SCRIPT_NAME} switch       →  tt workspace switch
+  ${SCRIPT_NAME} current      →  tt task current
+  ${SCRIPT_NAME} edit         →  tt task edit
 
 EOF
   exit "$exit_code"
@@ -57,7 +60,10 @@ main() {
 
   # Resolve top-level aliases before dispatching
   case "${1:-}" in
+    init)        set -- workspace init        "${@:2}" ;;
     switch)      set -- workspace switch      "${@:2}" ;;
+    current)     set -- task     current      "${@:2}" ;;
+    edit)        set -- task     edit         "${@:2}" ;;
     create)      set -- task     create       "${@:2}" ;;
     checkout)    set -- task     checkout     "${@:2}" ;;
     checkin)     set -- task     checkin      "${@:2}" ;;

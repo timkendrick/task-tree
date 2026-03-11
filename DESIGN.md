@@ -159,6 +159,8 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt delete` | `tt task delete` |
 | `tt list` | `tt task list` |
 | `tt add-context` | `tt task add-context` |
+| `tt current` | `tt task current` |
+| `tt edit` | `tt task edit` |
 
 ### 5.1 Workspace
 
