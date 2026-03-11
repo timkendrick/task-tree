@@ -37,7 +37,7 @@ subtask: [x] task/agents-md-tt-workflow-b41db319
 subtask: [x] task/update-agent-workflow-561dfe81
 subtask: [x] task/tt-task-create-checkout-46e1393e
 subtask: [x] task/partial-checkin-checkboxes-2c982b11
-subtask: [ ] task/tt-task-edit-explicit-id-a5691a7c
+subtask: [x] task/tt-task-edit-explicit-id-a5691a7c
 subtask: [x] task/fix-empty-propagate-commits-c763e236
 ---
 
