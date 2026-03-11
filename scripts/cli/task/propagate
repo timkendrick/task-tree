@@ -196,28 +196,28 @@ propagate_one_merge() {
 # For fully-merged IN-PROGRESS children, pass the parent bookmark as DESTINATION so the
 # child advances to the parent tip rather than staying behind it.
 #
-# Idempotent: if child is already descended from (or equal to) destination, does nothing
-# instead of creating a redundant empty commit.
+# Idempotent: if child is already equal to destination, does nothing instead of
+# creating a redundant empty commit.
 create_resume_commit() {
   local repo="$1" child="$2" original_rev="$3" destination="${4:-}"
   [[ -z "$destination" ]] && destination="$child"
   local jj_opts=(-R "$repo")
 
-  # Check if child is already descended from destination (or equal to it)
+  # Check if child and destination are already the same commit
   # If so, skip creating a new commit (idempotent behavior)
-  local child_ancestors
-  child_ancestors="$(jj "${jj_opts[@]}" --ignore-working-copy log -r "::${child}" \
-    --no-graph -T 'commit_id ++ "\n"' 2>/dev/null)" || true
+  local child_commit
+  child_commit="$(jj "${jj_opts[@]}" --ignore-working-copy log -r "$child" \
+    -n 1 --no-graph -T 'commit_id' 2>/dev/null)" || true
   local destination_commit
   destination_commit="$(jj "${jj_opts[@]}" --ignore-working-copy log -r "$destination" \
     -n 1 --no-graph -T 'commit_id' 2>/dev/null)" || true
 
-  if printf '%s' "$child_ancestors" | grep -qx "$destination_commit"; then
-    # Child is already descended from destination — no need to create another commit
+  if [[ "$child_commit" == "$destination_commit" ]]; then
+    # Child is already at destination — no need to create another commit
     return 0
   fi
 
-  # Child is not descended from destination — create a resume commit
+  # Child is not at destination — create a resume commit
   jj "${jj_opts[@]}" new "$destination"
   jj "${jj_opts[@]}" bookmark set "$child"
   jj "${jj_opts[@]}" edit "$original_rev" 2>/dev/null || true
