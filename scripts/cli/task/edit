@@ -247,19 +247,62 @@ main() {
     final_labels+=("$lbl")
   done
 
-  # Write updated task file to target worktree filesystem
-  rewrite_task_file "$target_worktree/$task_file" \
-    "$final_title" "$current_status" "$final_description" "${final_labels[@]+"${final_labels[@]}"}"
-
-  # Only commit if the task file actually changed
-  if is_wc_clean "$target_worktree"; then
-    log "No changes to task $bookmark."
-    printf '%s\n' "$bookmark"
-    return 0
+  # Determine if the target task is the current branch in the current worktree.
+  # If not, we must commit directly on the target branch via jj edit+new, since
+  # committing in the current worktree and then moving the target bookmark sideways
+  # would be refused by jj.
+  local current_bookmark
+  current_bookmark="$(resolve_current "$repo" "$task_prefix" "$project_prefix" | sed -n '3p')"
+  local cross_branch=false
+  if [[ "$target_worktree" == "$current_worktree" && "$current_bookmark" != "$bookmark" ]]; then
+    cross_branch=true
   fi
 
-  jj -R "$target_worktree" commit -m "Edit task: $final_title ($bookmark)"
-  jj -R "$target_worktree" bookmark set "$bookmark"
+  if [[ "$cross_branch" == true ]]; then
+    # Cross-branch edit: commit directly on the target branch using jj operations.
+    # Since @ is empty (is_wc_clean guarantees this), save the parent commit_id so
+    # we can restore the WC after the edit with `jj new -r <parent>`.
+    local original_parent_rev
+    original_parent_rev="$(jj -R "$repo" log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)"
+
+    # Switch WC to the target bookmark, create a new empty change on top of it,
+    # write the task file, commit, advance the bookmark, then return to the original parent.
+    jj -R "$repo" edit "$bookmark"
+    jj -R "$repo" new
+
+    # Write updated task file now that we're on the target branch
+    rewrite_task_file "$repo/$task_file" \
+      "$final_title" "$current_status" "$final_description" "${final_labels[@]+"${final_labels[@]}"}"
+
+    # Only commit if the task file actually changed
+    if is_wc_clean "$repo"; then
+      log "No changes to task $bookmark."
+      jj -R "$repo" abandon
+      jj -R "$repo" new -r "$original_parent_rev"
+      printf '%s\n' "$bookmark"
+      return 0
+    fi
+
+    jj -R "$repo" commit -m "Edit task: $final_title ($bookmark)"
+    jj -R "$repo" bookmark set "$bookmark" -r '@-'
+
+    # Return to the original working copy position
+    jj -R "$repo" new -r "$original_parent_rev"
+  else
+    # Same-branch edit: write to the target worktree filesystem and commit normally.
+    rewrite_task_file "$target_worktree/$task_file" \
+      "$final_title" "$current_status" "$final_description" "${final_labels[@]+"${final_labels[@]}"}"
+
+    # Only commit if the task file actually changed
+    if is_wc_clean "$target_worktree"; then
+      log "No changes to task $bookmark."
+      printf '%s\n' "$bookmark"
+      return 0
+    fi
+
+    jj -R "$target_worktree" commit -m "Edit task: $final_title ($bookmark)"
+    jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
+  fi
 
   printf '%s\n' "$bookmark"
 }
