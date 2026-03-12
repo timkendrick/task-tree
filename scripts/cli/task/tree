@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt task list — Generate and print the project todo list (bootstrap)
+# tt task tree — Generate and print the project todo list (bootstrap)
 #
 # Full list: tasks grouped by project; optional filtering.
 # Focused list: current task and its ancestors only.
