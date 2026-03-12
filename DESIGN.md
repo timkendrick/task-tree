@@ -157,7 +157,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt checkpoint` | `tt task checkpoint` |
 | `tt complete` | `tt task complete` |
 | `tt delete` | `tt task delete` |
-| `tt list` | `tt task list` |
+| `tt tree` | `tt task tree` |
 | `tt add-context` | `tt task add-context` |
 | `tt current` | `tt task current` |
 | `tt edit` | `tt task edit` |
@@ -184,9 +184,9 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 - **`tt task add-context [<task-id>] [-m <msg>] [--no-timestamp] [--worktree=<path>]`** — Append a free-form context block to the current task file body (or the task file for `<task-id>`), without creating a commit. The block is formatted as `## YYYY-MM-DD HH:MM\n\n<text>\n\n---`. If `--message` is not provided, opens an editor pre-filled with the timestamp heading. With `--no-timestamp`, omits the timestamp heading from both the inline message and the editor template. Aborts if the resulting message is empty. Modifies the task file directly in the working copy. When `<task-id>` is given, the task must have a checked-out worktree; `--worktree=<path>` disambiguates when multiple worktrees exist.
 
-- **`tt task list [--project <project-id>]... [--detached] | [--all]`** — Generate and print the full project todo list to stdout. Tasks are grouped by project; orphaned tasks are excluded by default. Optional `--project`, `--detached` and `--all` filter which sections are shown. Output format is the markdown described in §4.1. See §7.1 and Appendix A.
+- **`tt task tree [--project <project-id>]... [--detached] | [--all]`** — Generate and print the full project todo list to stdout. Tasks are grouped by project; orphaned tasks are excluded by default. Optional `--project`, `--detached` and `--all` filter which sections are shown. Output format is the markdown described in §4.1. See §7.1 and Appendix A.
 
-- **`tt task list --focus`** — Generate and print the focused todo list (current task and its direct ancestors only) in the same markdown format. See §7.2 and Appendix A.
+- **`tt task tree --focus`** — Generate and print the focused todo list (current task and its direct ancestors only) in the same markdown format. See §7.2 and Appendix A.
 
 - **`tt task current`** — Print the current task or project branch name to stdout. Exits with 1 if the working copy is not on a task or project branch. No hooks.
 
@@ -439,7 +439,7 @@ Child tasks are ordered via the current task file's `subtask:` frontmatter. **`t
 
 ### 6.9 Delete (`tt task delete`)
 
-`tt task delete` removes a task and its entire descendant subtree from the parent branch. It is the canonical mechanism for purging a task from the project: after this command, the task is no longer discoverable via `tt task list` because its `subtask:` entry is gone from the parent task file.
+`tt task delete` removes a task and its entire descendant subtree from the parent branch. It is the canonical mechanism for purging a task from the project: after this command, the task is no longer discoverable via `tt task tree` because its `subtask:` entry is gone from the parent task file.
 
 **Usage:** `tt task delete [<task-id>] [--force] [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]`
 
