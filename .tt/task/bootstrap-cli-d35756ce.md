@@ -40,6 +40,7 @@ subtask: [x] task/partial-checkin-checkboxes-2c982b11
 subtask: [x] task/tt-task-edit-explicit-id-a5691a7c
 subtask: [x] task/fix-empty-propagate-commits-c763e236
 subtask: [x] task/additional-task-aliases-e8065e3d
+subtask: [ ] task/rename-tt-task-tree-30ea3da5
 ---
 
 [`task/tt-task-list-6638a980`](.tt/task/tt-task-list-6638a980.md) Implement `tt task list` CLI command
