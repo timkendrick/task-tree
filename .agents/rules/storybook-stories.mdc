@@ -1,0 +1,278 @@
+---
+description: Storybook stories coding conventions
+globs: *.stories.ts,*.stories.tsx
+alwaysApply: true
+---
+
+# Storybook Stories Patterns
+
+## Story Configuration Requirements
+
+### Meta Object Configuration
+
+All component props **MUST** be specified in the story `meta` object:
+
+```typescript
+// ✅ Good: All props specified in meta
+const meta: Meta<typeof MyComponent> = {
+  title: 'Components/Button',
+  component: MyComponent,
+  tags: ['autodocs'],
+  argTypes: {
+    variant: {
+      control: { type: 'select' },
+      options: ['primary', 'secondary', 'tertiary'],
+    },
+    size: {
+      control: { type: 'select' },
+      options: ['small', 'medium', 'large'],
+    },
+    disabled: {
+      control: { type: 'boolean' },
+    },
+    onClick: {
+      action: 'clicked',
+    },
+  },
+};
+```
+
+### Title Structure
+
+The `title` **MUST** reflect the component's location within the current package hierarchy using slashes:
+
+```typescript
+// ✅ Good: Reflects package hierarchy
+const meta: Meta<typeof Button> = {
+  title: 'Components/Button', // @my-scope/ui-components/src/components/Button
+};
+
+const meta: Meta<typeof DataTable> = {
+  title: 'Components/DataTable', // @my-scope/ui-components/src/components/DataTable
+};
+
+const meta: Meta<typeof TextInputFormField> = {
+  title: 'Components/InputForm/InputFormField/TextInputFormField', // @my-scope/ui-components/src/components/InputForm/InputFormField/TextInputFormField
+};
+
+const meta: Meta<typeof HomePage> = {
+  title: 'Pages/HomePage', // @my-scope/ui/src/pages/HomePage
+};
+```
+
+### Story Type Declaration
+
+Declare a `type Story = StoryObj<typeof MyComponent>`, where `MyComponent` is the component under test. **Do not infer the Story type from the `meta`**:
+
+```typescript
+// ✅ Good: Explicit Story type declaration
+type Story = StoryObj<typeof MyComponent>;
+
+// ✅ Good: Generic component with explicit type parameter
+type Story<T> = StoryObj<typeof MyComponent<T>>;
+
+// ❌ Avoid: Inferring from meta
+const meta: Meta<typeof MyComponent> = { /* ... */ };
+type Story = StoryObj<typeof meta.component>; // Don't do this
+```
+
+## Custom Render Functions
+
+When declaring a custom `render` property within a `Story` configuration, **DO NOT** declare it as an anonymous function. **INSTEAD** declare it as a named function declaration React component named `Renderer`, that takes a `props` argument and returns `JSX.Element` (imported from the `react` module):
+
+### ✅ Preferred Pattern
+
+```typescript
+import type { JSX } from 'react';
+
+export const ControlledInput: Story = {
+  render: function Renderer(props): JSX.Element {
+    const {} = props;
+
+    const [value, setValue] = useState<string | null>(null);
+
+    return (
+      <input value={value} />
+    );
+  },
+};
+```
+
+### ❌ Avoid These Patterns
+
+```typescript
+export const ControlledInput: Story = {
+  // Don't use anonymous functions
+  render: () => {
+    // eslint warning: react-hooks/rules-of-hooks
+    const [value, setValue] = useState<string | null>(null);
+
+    return (
+      <input value={value} />
+    );
+  },
+};
+
+// Don't use arrow functions
+export const BadExample: Story = {
+  render: (props) => <MyComponent {...props} />,
+};
+```
+
+## Required Story Examples
+
+### Interactive Components
+
+If the component is interactive, **always include a story named `Interactive` as the first example**, including enough dummy functionality for the user to experiment with the component in the browser:
+
+```typescript
+export const Interactive: Story = {
+  args: {
+    variant: 'primary',
+    size: 'medium',
+    disabled: false,
+    children: 'Click me',
+  },
+  render: function Renderer(props): JSX.Element {
+    const {} = props;
+    const [clickCount, setClickCount] = useState(0);
+    const [isDisabled, setIsDisabled] = useState(false);
+
+    const handleClick = () => {
+      setClickCount(prev => prev + 1);
+    };
+
+    return (
+      <div className="space-y-4">
+        <div className="flex gap-4">
+          <Button
+            {...props}
+            disabled={isDisabled}
+            onClick={handleClick}
+          >
+            {props.children} (Clicked {clickCount} times)
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => setIsDisabled(!isDisabled)}
+          >
+            {isDisabled ? 'Enable' : 'Disable'} Button
+          </Button>
+        </div>
+        <p className="text-sm text-gray-600">
+          Click the button to see it in action. Use the toggle to enable/disable it.
+        </p>
+      </div>
+    );
+  },
+};
+```
+
+## Complete Story File Example
+
+```typescript
+import type { JSX } from 'react';
+import type { Meta, StoryObj } from '@storybook/react';
+import { useState } from 'react';
+
+import { Button } from './Button';
+
+const meta: Meta<typeof Button> = {
+  title: 'Components/Button',
+  component: Button,
+  tags: ['autodocs'],
+  argTypes: {
+    variant: {
+      control: { type: 'select' },
+      options: ['primary', 'secondary', 'tertiary'],
+    },
+    size: {
+      control: { type: 'select' },
+      options: ['small', 'medium', 'large'],
+    },
+    disabled: {
+      control: { type: 'boolean' },
+    },
+    onClick: {
+      action: 'clicked',
+    },
+    className: {
+      control: { type: 'text' },
+    },
+  },
+};
+
+type Story = StoryObj<typeof Button>;
+
+export default meta;
+
+export const Interactive: Story = {
+  args: {
+    variant: 'primary',
+    size: 'medium',
+    disabled: false,
+    children: 'Click me',
+  },
+  render: function Renderer(props): JSX.Element {
+    const { children, ...storyProps } = props;
+
+    const [clickCount, setClickCount] = useState(0);
+    const [isDisabled, setIsDisabled] = useState(false);
+
+    const handleClick = () => {
+      setClickCount(prev => prev + 1);
+    };
+
+    return (
+      <div className="space-y-4">
+        <div className="flex gap-4">
+          <Button
+            {...storyProps}
+            disabled={isDisabled}
+            onClick={handleClick}
+          >
+            {children} (Clicked {clickCount} times)
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => setIsDisabled(!isDisabled)}
+          >
+            {isDisabled ? 'Enable' : 'Disable'} Button
+          </Button>
+        </div>
+        <p className="text-sm text-gray-600">
+          Click the button to see it in action. Use the toggle to enable/disable it.
+        </p>
+      </div>
+    );
+  },
+};
+
+export const Primary: Story = {
+  args: {
+    variant: 'primary',
+    children: 'Primary Button',
+  },
+};
+
+export const Secondary: Story = {
+  args: {
+    variant: 'secondary',
+    children: 'Secondary Button',
+  },
+};
+
+export const Large: Story = {
+  args: {
+    size: 'large',
+    children: 'Large Button',
+  },
+};
+
+export const Disabled: Story = {
+  args: {
+    disabled: true,
+    children: 'Disabled Button',
+  },
+};
+```

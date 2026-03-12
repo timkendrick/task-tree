@@ -1,0 +1,19 @@
+---
+description: Bash shell script documentation conventions
+globs: *.sh
+alwaysApply: true
+---
+- You MUST use the following shebang: `#!/usr/bin/env bash`
+- You MUST use `set -euo pipefail`
+- You MUST include a `usage()` function to describe arguments
+  - When the `--help` flag is specified, the `usage()` function logs to stdout and the script exits with status 0
+  - When invalid arguments are specified, `usage()` function is redirected to stderr and the script exits with status 1
+- You MUST parse all command-line arguments before performing any actions
+- You MUST log diagnostic/error information to stderr, and script output to stdout
+- You SHOULD include a `log()` function for emitting diagnostic output to stderr
+  - Depending on the complexity of the script, this can perform additional behavior (timestamp, log levels etc).
+- You MUST respect the `NO_COLOR` environment variable when outputting ANSI escape sequences
+- You MUST follow responsible engineering practices:
+  - Ensure errors are propagated (e.g. by providing `|| exit` to compound commands within `for` loops)
+  - Extract reusable utilities (e.g. ANSI escape sequences) and isolated subroutines into reusable DRY helper functions
+- You SHOULD provide shell completions for scripts with complex combinations of arguments
