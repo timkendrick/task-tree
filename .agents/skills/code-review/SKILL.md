@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Analyze implementation details and identify potential issues
+description: Analyze implementation details and identify potential issues. Always use before completing any non-trivial implementation task.
 ---
 
 # Overview
@@ -26,6 +26,7 @@ This step will help you identify whether the implementation details align with t
 Build a full understanding of the change before diving into small details. Consider the following questions:
 
 - Does the code achieve the high-level goal?
+- Have any relevant high-level tests been written to ensure the code achieves these goals?
 - Is there a simpler way to implement the same functionality?
 - Is there a more elegant way to implement the same functionality?
 - Is the code modular, reusable and maintainable, or is it tightly coupled and specific to a single use case?
@@ -65,12 +66,12 @@ Sometimes, you may encounter a line of code that you are unsure about. In this c
 
 ## Step 4: Discuss the issues with the user
 
-Once all the code has been analyzed, present a summary of the full list of identified issues to the user. For each issue, provide a brief description and the relevant code snippet.
+Once all the code has been analyzed, use your `plan` skill to create a new plan containing a thorough analysis of the full list of identified issues.
 
-Discuss each issue with the user in turn, using your 'ask questions' tool to determine based on the user's responses whether it is a valid concern and how it should be addressed.
+Add a section to the plan for each FIXME in turn, provide a brief description and the relevant background context and code snippet, providing multiple-choice suggestions where releveant to determine based on the user's feedback whether it is a valid concern and how it should be addressed.
 
-Once each issue has been discussed, capture the outcome of the discussion by updating the individual FIXME comments with any conclusions from the corresponding discussion.
+Present a summary of the plan to the user and await their feedback.
 
-Compile the user's answers into a clear action plan for how to address each issue, including any necessary refactoring or additional testing.
+Once all unanswered questions have been addressed, rewrite the plan into a clear action plan for how to address each FIXME, including any necessary refactoring or additional testing.
 
-Present the user with the action plan and ask for feedback on the plan, offering to save it to a file in @.agents/plans once the user is satisfied with the details.
+Do not make any code changes until explicitly instructed by the user.

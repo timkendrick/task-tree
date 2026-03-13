@@ -1,6 +1,6 @@
 ## Coding guidelines
 
-**IMPORTANT:** Make sure you read and thoroughly understand all coding guidelines from @.agents/rules before making *any* code changes
+**IMPORTANT:** Make sure you read and thoroughly understand all coding guidelines from `@.agents/rules/` before making *any* code changes
 
 ## Task / VCS Management
 
