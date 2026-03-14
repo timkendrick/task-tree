@@ -45,8 +45,9 @@ Only the **current** task's task file is writable by the user; all other task fi
 
 - **Task ID:** Each task has a unique identifier of the form `<prefix><slug>-<hex>`, where `<prefix>` is the task prefix (configurable in `.tt/config.toml`, default `task/`), `<slug>` is a human-readable segment, and `<hex>` is an auto-generated 8-character hexadecimal string (e.g. `task/authentication-ea434dde`). The user cannot set the hex suffix; it is generated to avoid collisions. The slug defaults to a value derived from the task summary (e.g. lowercased, hyphenated); the user may override with `tt task create --slug <slug>`. Duplicate slugs are allowed; the 8-hex suffix ensures task IDs are unique.
 - **Project ID:** Projects use the same format with a different prefix: `<project_prefix><slug>-<hex>` (e.g. `project/main-app-ea434dde`). The project prefix is configurable in `.tt/config.toml`, default `project/`.
+- **Context ID:** Each context file has an identifier of the form `context/<slug>-<hex>`, where `<slug>` is derived from the context title and `<hex>` is an auto-generated 8-character hexadecimal string (e.g. `context/initial-research-ab3243f0`). Context IDs are referenced within the owning task file's frontmatter.
 - **Config:** `.tt/config.toml` stores `task_prefix` (default `task/`) and `project_prefix` (default `project/`), both set via `tt workspace init`.
-- **Branch and file naming:** Task branches use `task/<slug>-<hex>`; project branches use `project/<slug>-<hex>`. Task files for both are stored in `.tt/task` (e.g. `.tt/task/<slug>-<hex>.md`).
+- **Branch and file naming:** Task branches use `task/<slug>-<hex>`; project branches use `project/<slug>-<hex>`. Each task file is stored in its own directory: `.tt/task/<slug>-<hex>/TASK.md`. Context files for a task are stored alongside it: `.tt/task/<slug>-<hex>/context/<ctx-slug>-<ctx-hex>.md`.
 
 ---
 
@@ -65,54 +66,60 @@ Filtering: **`--project <project-id>`** (repeatable) and **`--detached`**. With 
 Example:
 
 ```markdown
-- [-] [project/main-app-2c382538](.tt/task/main-app-2c382538.md) Main app
-   - [-] [task/authentication-ea434dde](.tt/task/authentication-ea434dde.md) Implement user authentication
-   - [x] [task/email-signup-a4048c0f](.tt/task/email-signup-a4048c0f.md) Allow user creation with email address
-   - [-] [task/add-oauth-flow-8cf8d966](.tt/task/add-oauth-flow-8cf8d966.md) Integrate OAuth2 signin flow
-      - [x] [task/research-oauth-flow-c10103b7](.tt/task/research-oauth-flow-c10103b7.md) Research SSO auth flow
-      - [-] [task/determine-sso-providers-3ddc3c2f](.tt/task/determine-sso-providers-3ddc3c2f.md) Determine supported SSO providers
-      - [ ] [task/plan-feature-9fdbbd60](.tt/task/plan-feature-9fdbbd60.md) Plan feature
-      - [ ] [task/write-e2e-tests-8961d5b1](.tt/task/write-e2e-tests-8961d5b1.md) Write end-to-end tests
-      - [ ] [task/implement-feature-7702ec93](.tt/task/implement-feature-7702ec93.md) Implement feature
-      - [ ] [task/review-implementation-34a0507c](.tt/task/review-implementation-34a0507c.md) Review feature implementation
-      - [ ] [task/update-docs-6369ad14](.tt/task/update-docs-6369ad14.md) Update documentation
-      - [ ] [task/update-context-48c3fa01](.tt/task/update-context-48c3fa01.md) Update parent task context
-   - [ ] [task/forgotten-password-ef19c63e](.tt/task/forgotten-password-ef19c63e.md) Implement 'forgotten password' signin
-   - [ ] [task/landing-page-4613e4c8](.tt/task/landing-page-4613e4c8.md) Build landing page
-   - [ ] [task/pricing-page-cdf2d632](.tt/task/pricing-page-cdf2d632.md) Build pricing page
-- [ ] [project/docs-site-28cecfa8](.tt/task/docs-site-28cecfa8.md) Documentation website
-- [ ] [project/deployment-f7b045f1](.tt/task/deployment-f7b045f1.md) Deploy to cloud infrastructure
+- [-] [project/main-app-2c382538](.tt/task/main-app-2c382538/TASK.md) Main app
+   - [-] [task/authentication-ea434dde](.tt/task/authentication-ea434dde/TASK.md) Implement user authentication
+   - [x] [task/email-signup-a4048c0f](.tt/task/email-signup-a4048c0f/TASK.md) Allow user creation with email address
+   - [-] [task/add-oauth-flow-8cf8d966](.tt/task/add-oauth-flow-8cf8d966/TASK.md) Integrate OAuth2 signin flow
+      - [x] [task/research-oauth-flow-c10103b7](.tt/task/research-oauth-flow-c10103b7/TASK.md) Research SSO auth flow
+      - [-] [task/determine-sso-providers-3ddc3c2f](.tt/task/determine-sso-providers-3ddc3c2f/TASK.md) Determine supported SSO providers
+      - [ ] [task/plan-feature-9fdbbd60](.tt/task/plan-feature-9fdbbd60/TASK.md) Plan feature
+      - [ ] [task/write-e2e-tests-8961d5b1](.tt/task/write-e2e-tests-8961d5b1/TASK.md) Write end-to-end tests
+      - [ ] [task/implement-feature-7702ec93](.tt/task/implement-feature-7702ec93/TASK.md) Implement feature
+      - [ ] [task/review-implementation-34a0507c](.tt/task/review-implementation-34a0507c/TASK.md) Review feature implementation
+      - [ ] [task/update-docs-6369ad14](.tt/task/update-docs-6369ad14/TASK.md) Update documentation
+      - [ ] [task/update-context-48c3fa01](.tt/task/update-context-48c3fa01/TASK.md) Update parent task context
+   - [ ] [task/forgotten-password-ef19c63e](.tt/task/forgotten-password-ef19c63e/TASK.md) Implement 'forgotten password' signin
+   - [ ] [task/landing-page-4613e4c8](.tt/task/landing-page-4613e4c8/TASK.md) Build landing page
+   - [ ] [task/pricing-page-cdf2d632](.tt/task/pricing-page-cdf2d632/TASK.md) Build pricing page
+- [ ] [project/docs-site-28cecfa8](.tt/task/docs-site-28cecfa8/TASK.md) Documentation website
+- [ ] [project/deployment-f7b045f1](.tt/task/deployment-f7b045f1/TASK.md) Deploy to cloud infrastructure
 
 Orphaned tasks:
 
-- [ ] [task/product-research-5fb4e979](.tt/task/product-research-5fb4e979.md) Initial product research
-- [ ] [task/auth-mvp-spike-3a2e63d2](.tt/task/auth-mvp-spike-3a2e63d2.md) Auth MVP spike
+- [ ] [task/product-research-5fb4e979](.tt/task/product-research-5fb4e979/TASK.md) Initial product research
+- [ ] [task/auth-mvp-spike-3a2e63d2](.tt/task/auth-mvp-spike-3a2e63d2/TASK.md) Auth MVP spike
 ```
 
 ### 4.2 Task file
 
-Each task file pertains to one task and holds its context. Metadata is in Markdown frontmatter: one-line summary (`title`), task status, full description (e.g. JSON string), labels, and child tasks via `subtask:` entries. The order of `subtask:` entries defines the display order of children in the todo list. The body is free-form markdown used as a scratch pad during implementation.
+Each task file pertains to one task and holds its context. Metadata is in Markdown frontmatter: one-line summary (`title`), task status, creation and modification timestamps, labels, child tasks via `subtask:` entries, and associated context files via `context:` entries. The order of `subtask:` entries defines the display order of children in the todo list. The **body** (everything after the closing `---`) is free-form markdown used as the task description and implementation notes.
 
-Example — task not yet started (`.tt/task/pricing-page-cdf2d632.md`):
+Example — task not yet started (`.tt/task/pricing-page-cdf2d632/TASK.md`):
 
 ```markdown
 ---
 title: Build pricing page
 status: TODO
-description: "Create a basic web page that explains the different pricing tiers.\n\nWe'll need a pricing grid that shows the various tiers, making sure to include options for monthly/yearly plans."
+created: 2026-03-12T23:04:57Z
+updated: 2026-03-12T23:04:57Z
 label: design
 label: front-end
 label: back-end
 ---
+Create a basic web page that explains the different pricing tiers.
+
+We'll need a pricing grid that shows the various tiers, making sure to include
+options for monthly/yearly plans.
 ```
 
-Example — in-progress task (`.tt/task/add-oauth-flow-8cf8d966.md`):
+Example — in-progress task with context files (`.tt/task/add-oauth-flow-8cf8d966/TASK.md`):
 
 ```markdown
 ---
 title: Integrate OAuth2 signin flow
 status: IN-PROGRESS
-description: "Users should be able to sign into the application from a variety of providers via a Single-Sign-On (SSO) process.\n\n\The list of providers should be extensible and configurable via environment variables.\n\nSupported providers are TBD."
+created: 2026-03-12T23:04:57Z
+updated: 2026-03-12T23:10:00Z
 label: back-end
 label: auth
 subtask: [x] task/research-oauth-flow-c10103b7
@@ -123,18 +130,42 @@ subtask: [ ] task/implement-feature-7702ec93
 subtask: [ ] task/review-implementation-34a0507c
 subtask: [ ] task/update-docs-6369ad14
 subtask: [ ] task/update-context-48c3fa01
+context: context/initial-research-ab3243f0
+context: context/provider-comparison-7f8e2d1a
 ---
-- OAuth2 spec: https://oauth.net/2/
-- Relevant project source files:
-  - `docs/auth`
-  - `src/views/login`
+Users should be able to sign into the application from a variety of providers
+via a Single-Sign-On (SSO) process.
+
+The list of providers should be extensible and configurable via environment
+variables.
 ```
 
-At merge time, the parent task's frontmatter is updated with the completed child (e.g. `subtask: [x] <task-id>`). The user may request full removal of the child task from the parent branch using `tt task delete` (or `tt task checkin --delete`, which runs the normal checkin and then delegates to `tt task delete`). This removes the child task file and its `subtask:` entry from the parent's frontmatter entirely, making the task invisible in the todo list. If `--delete` is not used, the task file remains in the repository and the `subtask: [x]` entry is preserved.
+At merge time, the parent task's frontmatter is updated with the completed child (e.g. `subtask: [x] <task-id>`). The user may request full removal of the child task from the parent branch using `tt task delete` (or `tt task checkin --delete`, which runs the normal checkin and then delegates to `tt task delete`). This removes the child task directory and its `subtask:` entry from the parent's frontmatter entirely, making the task invisible in the todo list. If `--delete` is not used, the task directory remains in the repository and the `subtask: [x]` entry is preserved.
 
 ### 4.3 Metadata storage and TASK.md
 
-Task files for ongoing tasks exist only on their respective branches; when generating the overall todo list, the task file contents must be retrieved from all the respective branches. Within a task's own branch, the task file is referenced via a `TASK.md` symbolic link in the repository root (e.g. `./TASK.md -> .tt/task/add-oauth-flow-8cf8d966.md`). When retrieving task metadata from frontmatter, only the most recent state of the task file is considered; all former revisions are ignored. Change history for a task's metadata can be tracked via the revision history of the task file.
+Task files for ongoing tasks exist only on their respective branches; when generating the overall todo list, the task file contents must be retrieved from all the respective branches. Within a task's own branch, the task file is referenced via a `TASK.md` symbolic link in the repository root (e.g. `./TASK.md -> .tt/task/add-oauth-flow-8cf8d966/TASK.md`). When retrieving task metadata from frontmatter, only the most recent state of the task file is considered; all former revisions are ignored. Change history for a task's metadata can be tracked via the revision history of the task file.
+
+### 4.4 Context files
+
+Context files are standalone freeform markdown documents associated with a task. They are stored alongside the task file in its directory: `.tt/task/<slug>-<hex>/context/<ctx-slug>-<ctx-hex>.md`. Each context file has a `title` (mandatory), `created` (ISO 8601 UTC timestamp), and `updated` (ISO 8601 UTC timestamp, refreshed on each edit) in its YAML frontmatter, followed by an arbitrary markdown body.
+
+Example (`.tt/task/add-oauth-flow-8cf8d966/context/initial-research-ab3243f0.md`):
+
+```markdown
+---
+title: "Initial OAuth2 research"
+created: 2026-03-12T23:04:57Z
+updated: 2026-03-12T23:04:57Z
+---
+OAuth2 spec: https://oauth.net/2/
+
+Relevant project source files:
+- `docs/auth`
+- `src/views/login`
+```
+
+Context files are referenced in the owning task's frontmatter via `context: context/<ctx-slug>-<ctx-hex>` entries (one per file).
 
 The tool uses **jj (Jujutsu)** initially as the backing store; git support may be added later. The tool keeps the VCS in sync with the current task or branch (e.g. after `tt task checkout` and `tt task checkin`) so the working copy reflects the current task context.
 
@@ -170,9 +201,9 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 ### 5.2 Task
 
-- **`tt task create [--parent <parent-task-id> | --project [--target <commit-rev>]] [--slug <slug>] [--title <title>] [--description <description>] [--label <label> ...] [--propagate [--rebase | --merge] [--shallow] [--force]] [--checkout [--worktree[=<path>]]] [--force]`** — Create a new task or project. With `--parent` (default: current branch): creates a commit on the parent's branch that both creates the new task file (with `status: TODO`) and registers `subtask: [ ] <task-id>` in the parent's task file; the child branch is forked as an empty commit from this updated parent tip. The `TASK.md` symlink is created at first checkout. With `--project` (mutually exclusive with `--parent`): creates a parentless project using the project prefix; the project branch forks from `--target` if specified, else the current revision. Prompts for summary/description if not provided. With `--propagate`, propagates the parent's new commit to its existing descendant branches after creation (equivalent to running `tt task propagate --from <parent>` with any given flags); supports `--rebase | --merge` (strategy; default rebase), `--shallow` (direct children only), and `--force` (proceed despite conflicts). With `--checkout`, runs `tt task checkout` on the newly created task before exiting; `--worktree[=<path>]` (only valid with `--checkout`) passes through to checkout to use or create a dedicated jj workspace. With `--force` (outside of `--propagate`), overwrites if the child branch already exists. See §6.1.
+- **`tt task create [--parent <parent-task-id> | --project [--target <commit-rev>]] [--slug <slug>] [--title <title>] [--body <text>] [--label <label> ...] [--propagate [--rebase | --merge] [--shallow] [--force]] [--checkout [--worktree[=<path>]]] [--force]`** — Create a new task or project. With `--parent` (default: current branch): creates a commit on the parent's branch that both creates the new task stub directory (with `status: TODO`, `created`, and `updated` timestamps in `TASK.md`) and registers `subtask: [ ] <task-id>` in the parent's task file; the child branch is forked as an empty commit from this updated parent tip. The `TASK.md` symlink is created at first checkout. With `--project` (mutually exclusive with `--parent`): creates a parentless project using the project prefix; the project branch forks from `--target` if specified, else the current revision. Prompts for title/body if not provided. With `--propagate`, propagates the parent's new commit to its existing descendant branches after creation (equivalent to running `tt task propagate --from <parent>` with any given flags); supports `--rebase | --merge` (strategy; default rebase), `--shallow` (direct children only), and `--force` (proceed despite conflicts). With `--checkout`, runs `tt task checkout` on the newly created task before exiting; `--worktree[=<path>]` (only valid with `--checkout`) passes through to checkout to use or create a dedicated jj workspace. With `--force` (outside of `--propagate`), overwrites if the child branch already exists. See §6.1.
 
-- **`tt task edit [<task-id>] [--title <title>] [--description <text>] [--label <label> ...] [--delete-label <label> ...] [--worktree <path>] [--repo <path>]`** — Edit the title, description, and/or labels of a task. Fields not supplied are preserved. With no metadata flags, opens an editor pre-populated with the current description (interactive mode). `--label` appends; `--delete-label` removes (silent no-op if absent). Requires a clean working copy. Creates an `Edit task: <title> (<task-id>)` commit and advances the task bookmark. See §6.1.1.
+- **`tt task edit [<task-id>] [--title <title>] [--body <text>] [--label <label> ...] [--delete-label <label> ...] [--worktree <path>] [--repo <path>]`** — Edit the title, body, and/or labels of a task. Fields not supplied are preserved. With no metadata flags, opens an editor pre-populated with the current body text (interactive mode). `--label` appends; `--delete-label` removes (silent no-op if absent). Requires a clean working copy. Creates an `Edit task: <title> (<task-id>)` commit and advances the task bookmark. See §6.1.1.
 
 - **`tt task checkout <task-id> [--worktree [=<path>] [--switch]] [--force]`** — Switch to the given task branch. With `--worktree`, uses or creates a dedicated jj workspace for that task; otherwise uses the closest ancestor task workspace or the current workspace. Refuses if the target workspace has local changes unless `--force`. Updates task status to IN-PROGRESS if TODO, runs `setup` hook when creating a new worktree. Without `--worktree`, always updates the virtual project's `HEAD` symlink; with `--worktree`, only updates `HEAD` if `--switch` is also provided (`--switch` is only valid with `--worktree`). See §6.2.
 
@@ -182,7 +213,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 - **`tt task checkin [<task-id>] [--context <markdown>] [--complete] [--rebase | --merge] [--force] [--delete] [--target <branch>] [--worktree=<path>]`** — Merge the current task branch (or `<task-id>`) into its parent (or, for a project task, into the branch specified by `--target`). Supports **partial checkins** (task status `IN-PROGRESS`; shares work-in-progress with the parent) and **complete checkins** (task status `DONE`; marks the task finished). Always creates a **handoff commit** (child bookmark does not advance) and merges it into the parent as `Merge subtask: <title> (<task-id>)`. The handoff always updates the corresponding `subtask:` entry in the parent's frontmatter to reflect the child's current status (`[x]` if `DONE`, `[-]` if `IN-PROGRESS`). The user is always switched to the parent worktree after the merge. With `--complete`: first runs `tt task complete` if the task is not already `DONE`, then proceeds with checkin. With `--context <markdown>`, appends a summary section to the parent task file body. With `--delete` (requires task `status: DONE`): after the normal checkin completes, delegates to `tt task delete` to remove the child task file and `subtask:` entry from the parent branch (two separate commits on the parent branch). `--worktree=<path>` disambiguates when the child task has multiple worktrees. Runs validation (see §6.6); with `--rebase`/`--merge`, first propagates from parent and bails on conflict unless `--force`. Project tasks must specify `--target`; regular tasks cannot use `--target`. See §6.5 and §6.6.
 
-- **`tt task add-context [<task-id>] [-m <msg>] [--no-timestamp] [--worktree=<path>]`** — Append a free-form context block to the current task file body (or the task file for `<task-id>`), without creating a commit. The block is formatted as `## YYYY-MM-DD HH:MM\n\n<text>\n\n---`. If `--message` is not provided, opens an editor pre-filled with the timestamp heading. With `--no-timestamp`, omits the timestamp heading from both the inline message and the editor template. Aborts if the resulting message is empty. Modifies the task file directly in the working copy. When `<task-id>` is given, the task must have a checked-out worktree; `--worktree=<path>` disambiguates when multiple worktrees exist.
+- **`tt task add-context [<task-id>] [--title <title>] [--slug <slug>] [--body <text>] [--worktree=<path>]`** — Create a new context file associated with the current task (or `<task-id>`). Prompts for title and slug (like task creation) if not provided; opens an editor for the body if `--body` is not given. Generates a context ID of the form `context/<ctx-slug>-<ctx-hex>` and writes the context file to `.tt/task/<task-slug>/context/<ctx-slug>-<ctx-hex>.md`. Adds a `context: context/<ctx-slug>-<ctx-hex>` entry to the task file's frontmatter and refreshes the task's `updated` timestamp. Creates a commit: `Add context: <context-title> (<task-id>)` and advances the task bookmark. When `<task-id>` is given, the task must have a checked-out worktree; `--worktree=<path>` disambiguates when multiple worktrees exist.
 
 - **`tt task tree [--project <project-id>]... [--detached] | [--all]`** — Generate and print the full project todo list to stdout. Tasks are grouped by project; orphaned tasks are excluded by default. Optional `--project`, `--detached` and `--all` filter which sections are shown. Output format is the markdown described in §4.1. See §7.1 and Appendix A.
 
@@ -192,7 +223,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 - **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step. No hooks.
 
-- **`tt task show [<task-id>]`** — Show the metadata and direct child tasks of the current task (default) or the given task. Reads from the correct branch per the "where to read" rule (§7.1 / Appendix A step 3): merged tasks are read from the parent branch that received the checkin; ongoing tasks are read from their own branch. Output format: lowercase header block (`task`, `branch`, `worktree`, `status`, `title`), followed by a subtasks section and a description section, both always present and separated by `---` dividers (see §6.7 for exact format). The `worktree` field shows the closest ancestor worktree for the given task. Output to stdout only. No hooks.
+- **`tt task show [<task-id>]`** — Show the metadata and direct child tasks of the current task (default) or the given task. Reads from the correct branch per the "where to read" rule (§7.1 / Appendix A step 3): merged tasks are read from the parent branch that received the checkin; ongoing tasks are read from their own branch. Output format: lowercase header block (`task`, `branch`, `worktree`, `status`, `title`), followed by a subtasks section, a context section (listing context file titles and IDs), and a body section, all always present and separated by `---` dividers (see §6.7 for exact format). The `worktree` field shows the closest ancestor worktree for the given task. Output to stdout only. No hooks.
 
 - **`tt task propagate [--from=<parent-id>] [--to=<descendant-id>]... [--rebase | --merge] [--shallow] [--force]`** — Update descendant task branches so their base is the parent's current tip. Default is to rebase all descendants of the current task; `--merge` merges instead; `--shallow` updates only direct children; `--force` proceeds despite rebase/merge conflicts. Preconditions: clean WC, no merge commits at tip, no untracked changes in affected worktrees. See §6.8.
 
@@ -280,7 +311,7 @@ Note that `Checkpoint:` at the bottom of the task/T arm in the partial diagram i
 
 ### 6.1 Task creation (`tt task create`)
 
-**With `--parent`:** The tool creates a commit **on the parent task's branch** (regardless of which branch is currently checked out) that both creates the new task file stub (containing only `status: TODO`) in `.tt/task/` and adds `subtask: [ ] <task-id>` to the parent task file, described as `Create task: <title> (<task-id>)`. The parent bookmark is advanced to this commit. The child task's branch is then initialised by invoking `tt task edit` to set the title, description, and labels; the task bookmark is initialised here with an `Edit task: <title> (<task-id>)` commit. The `TASK.md` symlink is created when the task is first checked out (see §6.2). After task creation, if the working copy was already on the parent branch, it is left at the updated parent branch tip; otherwise it is restored to its original position.
+**With `--parent`:** The tool creates a commit **on the parent task's branch** (regardless of which branch is currently checked out) that both creates a minimal task stub directory (`.tt/task/<slug>-<hex>/TASK.md` containing `status: TODO`, `created`, and `updated` timestamps) and adds `subtask: [ ] <task-id>` to the parent task file, described as `Create task: <title> (<task-id>)`. The parent bookmark is advanced to this commit. The child task's branch is then initialised by invoking `tt task edit` to set the title, body, and labels; the task bookmark is initialised here with an `Edit task: <title> (<task-id>)` commit. The `TASK.md` symlink is created when the task is first checked out (see §6.2). After task creation, if the working copy was already on the parent branch, it is left at the updated parent branch tip; otherwise it is restored to its original position.
 
 **Preconditions** (checked before any VCS operation; any failure aborts the command):
 
@@ -299,14 +330,14 @@ Because the parent task file is modified, sibling (and descendant) branches may 
 ```
 [<task-id>]           Target task ID (default: current branch)
 --title TITLE         New title (preserves existing if omitted)
---description TEXT    New description (preserves existing if omitted)
+--body TEXT           New body text (preserves existing if omitted)
 --label LABEL         Append a label (repeatable)
 --delete-label LABEL  Remove a label if present (repeatable, silent no-op if absent)
 --worktree PATH       Specify worktree when multiple exist for the task
 --repo PATH           Repository root (default: walk up to .jj)
 ```
 
-**Interactive mode** (no `--title`, `--description`, `--label`, or `--delete-label` given): opens an editor pre-populated with the current description text. Comment lines (`#`-prefixed) are stripped and the result is trimmed; an empty result clears the description.
+**Interactive mode** (no `--title`, `--body`, `--label`, or `--delete-label` given): opens an editor pre-populated with the current body text. Comment lines (`#`-prefixed) are stripped and the result is trimmed; an empty result clears the body.
 
 **Partial updates:** fields not supplied on the CLI retain their current values.
 
@@ -314,11 +345,13 @@ Because the parent task file is modified, sibling (and descendant) branches may 
 
 **Preconditions:** must be on a task or project branch; working copy must be clean.
 
-**Commit:** `Edit task: <title> (<task-id>)`. The task bookmark is advanced to this commit.
+**Commit:** `Edit task: <title> (<task-id>)`. The task bookmark is advanced to this commit. The `updated` timestamp is refreshed.
 
 **Output:** prints `<task-id>` on success.
 
 ### 6.2 Checkout behavior (`tt task checkout`)
+
+The `TASK.md` symlink in the repository root points to the task file within its directory: `TASK.md -> .tt/task/<slug>-<hex>/TASK.md`.
 
 With **`--worktree`**: the tool ensures the task is checked out in its own jj workspace (creating it if necessary). Without `--worktree`: the tool checks out the task branch in the closest ancestor task workspace (if any), or the current workspace if no ancestors have their own workspace.
 
@@ -399,15 +432,8 @@ In both modes, with `--rebase` or `--merge`, the tool first propagates from the 
 
 The handoff commit contains:
 
-1. `TASK.md` rewritten to point to the parent task's task file (`rm TASK.md && ln -s .tt/task/<parent-slug>.md TASK.md`), resolving the TASK.md conflict with the parent branch.
-2. If `--context <markdown>` is provided: a new section appended to the **parent task file's body** in the format:
-   ```markdown
-   [`<task-id>`](.tt/task/<task-slug>.md) <task-title>
-
-   <markdown>
-
-   ---
-   ```
+1. `TASK.md` rewritten to point to the parent task's task file (`rm TASK.md && ln -s .tt/task/<parent-slug>/TASK.md TASK.md`), resolving the TASK.md conflict with the parent branch.
+2. If `--context <markdown>` is provided: a new context file is created in the parent task directory (`.tt/task/<parent-slug>/context/<ctx-slug>-<ctx-hex>.md`) with title `Handoff: <child-task-title>`, and a corresponding `context: context/<ctx-slug>-<ctx-hex>` entry is added to the parent task file's frontmatter.
 3. The corresponding `subtask:` entry in the parent task file's frontmatter is updated to reflect the child's current status: `subtask: [x] <task-id>` if `DONE`, or `subtask: [-] <task-id>` if `IN-PROGRESS`.
 
 The handoff commit is described as `Handoff: <task-title> (<task-id>)`.
@@ -460,7 +486,7 @@ If no `<task-id>` is given, the command operates on the current branch.
 4. Run **pre-delete** hook (blocking) in the current worktree.
 5. In the target workspace, create a new WC branching from the parent bookmark (`jj new <parent_bookmark>`).
 6. Remove the `subtask:` entry for the top-level task from the parent task file's frontmatter.
-7. Remove the top-level task file and all descendant task files present on the parent branch (best-effort).
+7. Remove the top-level task directory and all descendant task directories present on the parent branch (best-effort via `rm -rf`).
 8. Commit: `Remove subtask: <title> (<task-id>)`. Advance the parent bookmark to this commit.
 9. Leave a clean open WC in the target workspace (`jj new '@'`).
 10. Bulk delete bookmarks: run `jj bookmark delete` for every task in the subtree (root + all descendants). Log a warning for any that cannot be deleted.
@@ -559,7 +585,7 @@ The standard workflow:
 4. **Begin a task** — `tt task checkout <task-id> [--worktree [=<path>] [--switch]] [--force]`. The tool checks the target workspace is clean (or clobbers changes if `--force` is specified), verifies the task or project branch exists, uses or creates the appropriate workspace per §6.2, sets task status to IN-PROGRESS in a new commit if the task status is currently TODO, runs `setup` when initializing a new worktree, and updates the `HEAD` symlink (unless `--worktree` is used without `--switch`). See §6.2.
 
 5. **Work on the task** — User commits changes on the branch and accumulates context in `./TASK.md`.
-   - **Add context** — Run `tt task add-context [-m <msg>] [--no-timestamp]` to append a context block to the task file body. Modifies the working copy only; no commit. See §5.2.
+   - **Add context** — Run `tt task add-context [--title <title>] [--body <text>]` to create a new context file associated with the current task. Creates a commit. See §5.2.
    - **Checkpoint** — Run `tt task checkpoint [--message <message>]` to create a named `Checkpoint: <message>` commit and advance the task bookmark. See §6.3.
 
 6. **Complete the task** — `tt task complete [<task-id>] [--worktree=<path>] [--force]`. When work is done, marks the task `DONE` with a `Complete task: <title> (<task-id>)` commit and advances the task bookmark. Requires all child tasks to be done unless `--force`. Can be invoked from any workspace by passing `<task-id>`. See §6.4.
@@ -591,7 +617,7 @@ Multiple tasks can be checked out simultaneously; the symlinked HEAD worktree fa
    - **Deleted:** Task was removed via `tt task delete`; no branch contains a `subtask:` entry for T. → T is not discovered and does not appear in the todo list.
    - Implementation: for each task T, scan all task and project branches B; on B, read the owner task file. If any such file contains `subtask: [x] <T>`, then T is merged and the canonical branch for T is B; otherwise the canonical branch for T is T's own branch.
 
-   Once the canonical branch is determined, the task file path is derived from T's ID: strip the task or project prefix from the ID to get `<slug>-<hex>`, then read `.tt/task/<slug>-<hex>.md` on the canonical branch. Task metadata (title, status, subtask list) is read exclusively from this file. Task titles are never stored inline in `subtask:` entries; they are always looked up from the task file on the canonical branch.
+   Once the canonical branch is determined, the task file path is derived from T's ID: strip the task or project prefix from the ID to get `<slug>-<hex>`, then read `.tt/task/<slug>-<hex>/TASK.md` on the canonical branch. Task metadata (title, status, subtask list) is read exclusively from this file. Task titles are never stored inline in `subtask:` entries; they are always looked up from the task file on the canonical branch.
 
 4. **Orphan detection (when `--detached` is present)**
 
@@ -607,7 +633,7 @@ Multiple tasks can be checked out simultaneously; the symlinked HEAD worktree fa
 6. **Emit the markdown**
 
    - For each project section to be output, emit the project task as an unindented bullet entry, then recurse into each child's children. Under the detached section, each orphaned task is a top-level bullet nested under the detached section header (they have no parent in the discovered tree). Sibling order is always the order of `subtask:` entries in the parent task file.
-   - For each task line, output: checkbox from status (`[ ]` / `[-]` / `[x]`); link `[<prefix><slug>-<hex>](.tt/task/<slug>-<hex>.md)`; title (read from `title:` in the task file on the canonical branch, as determined in step 3). Indentation reflects hierarchy.
+   - For each task line, output: checkbox from status (`[ ]` / `[-]` / `[x]`); link `[<prefix><slug>-<hex>](.tt/task/<slug>-<hex>/TASK.md)`; title (read from `title:` in the task file on the canonical branch, as determined in step 3). Indentation reflects hierarchy.
 
 **End-to-end summary:** Enumerate project branches → for each project traverse subtree via `subtask:` entries → for each discovered task T find where to read T's file (merged vs ongoing) → if `--detached`, find orphaned task branches and add to detached section → filter sections by `--project`/`--detached` → for each section emit header and walk tree depth-first (checkbox + link + title per task) → output markdown.
 
