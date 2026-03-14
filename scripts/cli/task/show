@@ -74,7 +74,7 @@ main() {
   project_prefix="$(get_project_prefix "$repo")"
 
   # --- Resolve branch and task file ---
-  local branch task_file
+  local branch task_file task_suffix
 
   if [[ -z "$task_id_arg" ]]; then
     # No task-id: use current branch
@@ -86,6 +86,11 @@ main() {
     if [[ -z "$branch" ]]; then
       log "Error: Not on a task or project branch."
       exit 1
+    fi
+    if is_task_branch "$branch" "$task_prefix"; then
+      task_suffix="${branch#$task_prefix}"
+    else
+      task_suffix="${branch#$project_prefix}"
     fi
   else
     # Explicit task-id: find its canonical branch via "where to read" rule
@@ -111,7 +116,8 @@ main() {
         exit 1
       fi
     fi
-    task_file=".tt/task/${suffix}.md"
+    task_suffix="$suffix"
+    task_file="$(task_file_path "$suffix")"
   fi
 
   # --- Find worktree ---
@@ -134,20 +140,11 @@ main() {
   status="$(parse_frontmatter_field "$content" "status")"
   [[ -z "$status" ]] && status="TODO"
 
-  # Decode description: extract raw value (with quotes) then jq-decode
-  local description_raw description
-  description_raw="$(printf '%s' "$content" | awk '
-    /^---$/ { n++; next }
-    n==1 && /^description:/ {
-      sub(/^description:[[:space:]]*/, "")
-      print; exit
-    }
-  ')"
-  if [[ -n "$description_raw" ]]; then
-    description="$(printf '%s' "$description_raw" | jq -r '.' 2>/dev/null)" || description=""
-  else
-    description=""
-  fi
+  # Body is everything after the second ---
+  local body
+  body="$(parse_body "$content")"
+  # Trim leading/trailing blank lines from body
+  body="$(printf '%s' "$body" | awk 'NF{found=1} found{print}' | sed -e 's/[[:space:]]*$//')"
 
   # Parse subtask lines from frontmatter
   local subtasks
@@ -155,6 +152,16 @@ main() {
     /^---$/ { n++; next }
     n==1 && /^subtask:/ {
       sub(/^subtask:[[:space:]]*/, "")
+      print
+    }
+  ')"
+
+  # Parse context references from frontmatter
+  local contexts
+  contexts="$(printf '%s' "$content" | awk '
+    /^---$/ { n++; next }
+    n==1 && /^context:/ {
+      sub(/^context:[[:space:]]*/, "")
       print
     }
   ')"
@@ -174,7 +181,6 @@ main() {
   parent_branch="$(find_parent_branch "$repo" "$branch" "$task_prefix" "$project_prefix" 2>/dev/null)" || parent_branch=""
 
   # --- Print header block ---
-  # Labels padded to 9 chars so values align at col 11
   printf -- '---\n'
   printf 'task:     %s\n' "$branch"
   printf 'branch:   %s\n' "$branch"
@@ -204,7 +210,7 @@ main() {
           subtask_id_suffix=""
         fi
         if [[ -n "$subtask_id_suffix" ]]; then
-          subtask_file=".tt/task/${subtask_id_suffix}.md"
+          subtask_file="$(task_file_path "$subtask_id_suffix")"
           subtask_content="$(jj -R "$repo" --ignore-working-copy file show -r "$subtask_branch" -- "$subtask_file" 2>/dev/null || true)"
           subtask_status="$(parse_frontmatter_field "$subtask_content" "status" 2>/dev/null || true)"
           subtask_title="$(parse_frontmatter_field "$subtask_content" "title" 2>/dev/null || true)"
@@ -224,10 +230,34 @@ main() {
   printf '\n'
   printf -- '---\n'
 
-  # --- Print description section ---
+  # --- Print context section ---
   printf '\n'
-  if [[ -n "$description" ]]; then
-    printf '%s\n' "$description"
+  if [[ -n "$contexts" ]]; then
+    printf 'Context:\n'
+    while IFS= read -r ctx_id; do
+      [[ -z "$ctx_id" ]] && continue
+      # Resolve context file path on the task's branch
+      local ctx_file
+      ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
+      local ctx_content ctx_title
+      ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$ctx_file" 2>/dev/null || true)"
+      ctx_title="$(parse_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
+      if [[ -n "$ctx_title" ]]; then
+        printf -- '- %s (%s)\n' "$ctx_title" "$ctx_id"
+      else
+        printf -- '- %s\n' "$ctx_id"
+      fi
+    done <<< "$contexts"
+  else
+    printf '[No context files]\n'
+  fi
+  printf '\n'
+  printf -- '---\n'
+
+  # --- Print body section ---
+  printf '\n'
+  if [[ -n "$body" ]]; then
+    printf '%s\n' "$body"
   else
     printf '[No description]\n'
   fi
