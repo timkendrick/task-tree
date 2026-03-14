@@ -76,13 +76,13 @@ parse_frontmatter_field_all() {
   '
 }
 
-# JSON-string → raw text (uses jq if available, else fallback)
+# JSON-string → raw text (uses jq if available, else minimal fallback)
 json_decode() {
   local s="$1"
   if command -v jq >/dev/null 2>&1; then
     printf '%s' "$s" | jq -r '.' 2>/dev/null || printf '%s' "$s"
   else
-    # Minimal fallback: strip surrounding quotes, unescape \" and \\n
+    # Minimal fallback: strip surrounding quotes, unescape \" and \n
     local stripped="${s#\"}"
     stripped="${stripped%\"}"
     printf '%s' "$stripped" | sed 's/\\"/"/g; s/\\n/\n/g'
@@ -90,23 +90,32 @@ json_decode() {
 }
 
 # ---------------------------------------------------------------------------
-# Context chunk parsing
+# Context chunk writing
 #
-# Splits the body on "---" separator lines and classifies each segment:
-#   - timestamp context:   starts with "## YYYY-MM-DD HH:MM"
-#   - checkin context:     starts with "[task/...](..." link
-#   - description text:    everything else
+# Splits a body on "---" separator lines, classifies each segment, writes
+# context files directly to disk, and outputs one "context/<slug>-<hex>"
+# ID per line to stdout (for the caller to collect as context refs).
 #
-# Outputs to stdout: one record per chunk, using NUL as a field separator:
-#   CHUNK_TYPE \0 TITLE \0 BODY
+# Segment classification:
+#   - timestamp context:  starts with "## YYYY-MM-DD HH:MM"
+#   - checkin context:    starts with "[task/...](...)" link
+#   - description text:   everything else (printed to &3 for caller to capture)
 #
-# where CHUNK_TYPE is "context" or "desc".
+# Usage:
+#   context_refs="$(write_context_chunks "$body" "$ctx_dir" 3>"$desc_tmpfile")"
+#   residual_desc="$(cat "$desc_tmpfile")"
+#
+# For simplicity we use a single invocation: the function writes context files
+# and prints context IDs to stdout; residual description segments are appended
+# to the file at path $RESIDUAL_DESC_FILE (a global set by the caller).
 # ---------------------------------------------------------------------------
-parse_context_chunks() {
+RESIDUAL_DESC_FILE=''
+
+write_context_chunks() {
   local body="$1"
+  local ctx_dir="$2"
 
   # Split body on lines that are exactly "---"
-  local IFS_SAVED="$IFS"
   local segment=''
   local -a segments=()
 
@@ -133,31 +142,62 @@ parse_context_chunks() {
     trimmed="$(printf '%s' "$seg" | awk 'NF{found=1} found{print}')"
     [[ -z "$trimmed" ]] && continue
 
-    # Detect timestamp heading: ## YYYY-MM-DD HH:MM
     local first_line
     first_line="$(printf '%s' "$trimmed" | head -1)"
+
+    # Detect timestamp heading: ## YYYY-MM-DD HH:MM
     if [[ "$first_line" =~ ^##[[:space:]]+([0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]+[0-9]{2}:[0-9]{2}) ]]; then
       local ts_str="${BASH_REMATCH[1]}"
       local ctx_title="Context from ${ts_str}"
-      # Body is everything after the first line
       local ctx_body
       ctx_body="$(printf '%s' "$trimmed" | tail -n +2 | awk 'NF{found=1} found{print}')"
-      printf '%s\x00%s\x00%s\n' "context" "$ctx_title" "$ctx_body"
+      _write_one_context_file "$ctx_dir" "$ctx_title" "$ctx_body"
 
-    # Detect checkin context block: starts with [task/...](...) title
+    # Detect checkin context block: starts with [task/...](...) link
     elif [[ "$first_line" =~ ^\[task/[^]]+\]\( ]]; then
-      # Title = the text of the link + the rest of the line (if any)
       local ctx_title
       ctx_title="$(printf '%s' "$first_line" | sed 's/^\[//; s/\].*//')"
       local ctx_body
       ctx_body="$(printf '%s' "$trimmed" | tail -n +2 | awk 'NF{found=1} found{print}')"
-      printf '%s\x00%s\x00%s\n' "context" "$ctx_title" "$ctx_body"
+      _write_one_context_file "$ctx_dir" "$ctx_title" "$ctx_body"
 
     else
-      # Description text
-      printf '%s\x00%s\x00%s\n' "desc" "" "$trimmed"
+      # Residual description text — append to the caller's file
+      if [[ -n "$RESIDUAL_DESC_FILE" ]]; then
+        printf '%s\n' "$trimmed" >> "$RESIDUAL_DESC_FILE"
+      fi
     fi
   done
+}
+
+# Write a single context file; prints the context ID to stdout.
+_write_one_context_file() {
+  local ctx_dir="$1"
+  local ctx_title="$2"
+  local ctx_body="$3"
+
+  local ctx_slug
+  ctx_slug="$(title_to_slug "$ctx_title")"
+  [[ -z "$ctx_slug" ]] && ctx_slug="context"
+  local ctx_hex
+  ctx_hex="$(generate_hex)"
+  local ctx_id="context/${ctx_slug}-${ctx_hex}"
+  local ctx_ts
+  ctx_ts="$(generate_timestamp)"
+
+  mkdir -p "$ctx_dir"
+  {
+    printf -- '---\n'
+    printf 'title: "%s"\n' "${ctx_title//\"/\\\"}"
+    printf 'created: %s\n' "$ctx_ts"
+    printf 'updated: %s\n' "$ctx_ts"
+    printf -- '---\n'
+    if [[ -n "$ctx_body" ]]; then
+      printf '%s\n' "$ctx_body"
+    fi
+  } > "$ctx_dir/${ctx_slug}-${ctx_hex}.md"
+
+  printf '%s\n' "$ctx_id"
 }
 
 # ---------------------------------------------------------------------------
@@ -172,7 +212,7 @@ migrate_bookmark() {
 
   local changed=false
 
-  # Find all flat task files: .tt/task/*.md (not directories, not TASK.md inside dirs)
+  # Find all flat task files: .tt/task/*.md (not inside subdirectories)
   local task_dir="$REPO_DIR/.tt/task"
   [[ ! -d "$task_dir" ]] && {
     log "  No .tt/task/ directory found; skipping."
@@ -180,7 +220,7 @@ migrate_bookmark() {
     return 0
   }
 
-  local flat_files=()
+  local -a flat_files=()
   while IFS= read -r f; do
     flat_files+=("$f")
   done < <(find "$task_dir" -maxdepth 1 -name '*.md' -type f 2>/dev/null || true)
@@ -197,7 +237,7 @@ migrate_bookmark() {
     local new_dir="$task_dir/$filename"
     local new_task_file="$new_dir/TASK.md"
 
-    # Skip if already in directory format (shouldn't happen but be safe)
+    # Skip if already in directory format
     if [[ -d "$new_dir" ]]; then
       log "  Skipping already-migrated: $filename"
       continue
@@ -215,14 +255,10 @@ migrate_bookmark() {
     status="$(parse_frontmatter_field "$content" "status")"
     created="$(parse_frontmatter_field "$content" "created")"
     [[ -z "$status" ]] && status="TODO"
-
-    # If no created timestamp, use current time (migration approximation)
-    if [[ -z "$created" ]]; then
-      created="$(generate_timestamp)"
-    fi
+    [[ -z "$created" ]] && created="$(generate_timestamp)"
     local updated="$created"
 
-    # Decode description from JSON-encoded frontmatter field
+    # Decode JSON-encoded description from frontmatter
     local description_raw description
     description_raw="$(printf '%s' "$content" | awk '
       /^---$/ { n++; next }
@@ -237,13 +273,12 @@ migrate_bookmark() {
       description=""
     fi
 
-    # Parse labels (repeatable)
+    # Parse labels and subtask entries (preserve as-is)
     local -a labels=()
     while IFS= read -r lbl; do
       [[ -n "$lbl" ]] && labels+=("$lbl")
     done < <(parse_frontmatter_field_all "$content" "label")
 
-    # Parse subtask entries (preserve as-is, e.g. "[ ] task/foo-abc12345")
     local -a subtasks=()
     while IFS= read -r st; do
       [[ -n "$st" ]] && subtasks+=("$st")
@@ -253,74 +288,38 @@ migrate_bookmark() {
     local body
     body="$(printf '%s' "$content" | awk '/^---$/{n++; if(n==2){found=1; next}} found{print}')"
 
-    # Parse context chunks from body
-    local desc_parts=()
-    local -a ctx_titles=()
-    local -a ctx_bodies=()
+    # Pass 1: write context files directly to disk, collect context IDs and
+    # any residual description text from the body.
+    local ctx_dir="$new_dir/context"
+    local -a context_refs=()
+    local residual_desc=''
 
     if [[ -n "$body" ]]; then
-      while IFS=$'\n' read -r line; do
-        [[ -z "$line" ]] && continue
-        local chunk_type chunk_title chunk_body
-        # Split on NUL fields
-        chunk_type="$(printf '%s' "$line" | cut -d$'\x00' -f1)"
-        chunk_title="$(printf '%s' "$line" | cut -d$'\x00' -f2)"
-        chunk_body="$(printf '%s' "$line" | cut -d$'\x00' -f3-)"
-        case "$chunk_type" in
-          context)
-            ctx_titles+=("$chunk_title")
-            ctx_bodies+=("$chunk_body")
-            ;;
-          desc)
-            desc_parts+=("$chunk_body")
-            ;;
-        esac
-      done < <(parse_context_chunks "$body")
+      local residual_tmpfile
+      residual_tmpfile="$(mktemp)"
+      RESIDUAL_DESC_FILE="$residual_tmpfile"
+
+      while IFS= read -r ctx_id; do
+        [[ -n "$ctx_id" ]] && context_refs+=("$ctx_id")
+      done < <(write_context_chunks "$body" "$ctx_dir")
+
+      residual_desc="$(cat "$residual_tmpfile")"
+      rm -f "$residual_tmpfile"
+      RESIDUAL_DESC_FILE=''
     fi
 
-    # Combine description: frontmatter description + any residual body desc parts
+    # Combine description: frontmatter description + residual body text
     local final_body="$description"
-    for dp in "${desc_parts[@]+"${desc_parts[@]}"}"; do
+    if [[ -n "$residual_desc" ]]; then
       if [[ -n "$final_body" ]]; then
-        final_body="${final_body}"$'\n\n'"$dp"
+        final_body="${final_body}"$'\n\n'"$residual_desc"
       else
-        final_body="$dp"
+        final_body="$residual_desc"
       fi
-    done
+    fi
 
-    # Create new directory structure
-    mkdir -p "$new_dir/context"
-
-    # Generate context file entries for frontmatter
-    local -a context_refs=()
-    local n_ctx=${#ctx_titles[@]}
-    for (( i=0; i<n_ctx; i++ )); do
-      local ctx_title="${ctx_titles[$i]}"
-      local ctx_body="${ctx_bodies[$i]}"
-      local ctx_slug
-      ctx_slug="$(title_to_slug "$ctx_title")"
-      [[ -z "$ctx_slug" ]] && ctx_slug="context"
-      local ctx_hex
-      ctx_hex="$(generate_hex)"
-      local ctx_id="context/${ctx_slug}-${ctx_hex}"
-      context_refs+=("$ctx_id")
-
-      # Write context file
-      local ctx_ts
-      ctx_ts="$(generate_timestamp)"
-      {
-        printf -- '---\n'
-        printf 'title: "%s"\n' "${ctx_title//\"/\\\"}"
-        printf 'created: %s\n' "$ctx_ts"
-        printf 'updated: %s\n' "$ctx_ts"
-        printf -- '---\n'
-        if [[ -n "$ctx_body" ]]; then
-          printf '%s\n' "$ctx_body"
-        fi
-      } > "$new_dir/${ctx_id}.md"
-    done
-
-    # Write new TASK.md
+    # Pass 2: write TASK.md with all context refs known
+    mkdir -p "$new_dir"
     {
       printf -- '---\n'
       if [[ -n "$title" ]]; then
@@ -347,14 +346,13 @@ migrate_bookmark() {
     # Remove old flat file
     rm -f "$flat_file"
 
-    # Update TASK.md symlink if it points to the old file
+    # Update TASK.md symlink if it pointed to the old file
     local symlink_path="$REPO_DIR/TASK.md"
     if [[ -L "$symlink_path" ]]; then
       local current_target
       current_target="$(readlink "$symlink_path")"
-      local expected_old_rel=".tt/task/${filename}.md"
-      local expected_old_abs="$task_dir/${filename}.md"
-      if [[ "$current_target" == "$expected_old_rel" || "$current_target" == "$expected_old_abs" ]]; then
+      if [[ "$current_target" == ".tt/task/${filename}.md" ||
+            "$current_target" == "$task_dir/${filename}.md" ]]; then
         ln -sf ".tt/task/${filename}/TASK.md" "$symlink_path"
         log "  Updated TASK.md symlink -> .tt/task/${filename}/TASK.md"
       fi
@@ -398,7 +396,6 @@ main() {
   cd "$REPO_DIR"
 
   if [[ -n "$target_bookmark" ]]; then
-    # Migrate a single bookmark
     migrate_bookmark "$target_bookmark"
   else
     # Migrate all task and project bookmarks
@@ -409,7 +406,6 @@ main() {
     local -a bookmarks_to_migrate=()
     while IFS= read -r b; do
       [[ -z "$b" ]] && continue
-      # Only migrate task/ and project/ bookmarks
       if [[ "$b" == task/* || "$b" == project/* ]]; then
         bookmarks_to_migrate+=("$b")
       fi
