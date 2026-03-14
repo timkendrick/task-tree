@@ -6,10 +6,11 @@
 #   .tt/task/<slug>/context/...md  — one context file per context chunk in the body
 #
 # Usage:
-#   scripts/migrate-task-files.sh [<bookmark>]
+#   scripts/migrate-task-files.sh [--repo PATH] [<bookmark>]
 #
 # With no argument: migrates all bookmarks.
 # With a bookmark name: migrates only that bookmark (useful for testing).
+# With --repo PATH: use PATH as the jj repo root (default: parent of script dir).
 #
 # The script creates new commits on each bookmark (via `jj new <bookmark>` +
 # `jj commit -m "Migrate task files to directory format"` + `jj bookmark set`).
@@ -378,7 +379,21 @@ migrate_bookmark() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
-  local target_bookmark="${1:-}"
+  local target_bookmark=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; exit 1; }
+        REPO_DIR="$2"; shift 2 ;;
+      --repo=*)
+        REPO_DIR="${1#--repo=}"; shift ;;
+      -*)
+        log "Error: Unknown option: $1"; exit 1 ;;
+      *)
+        target_bookmark="$1"; shift ;;
+    esac
+  done
 
   cd "$REPO_DIR"
 
