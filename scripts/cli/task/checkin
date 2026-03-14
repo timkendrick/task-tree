@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # Options:
 #   <task-id>             Task branch to check in (default: current branch).
-#   --context <markdown>  Append a context block to the parent task file body.
+#   --context <markdown>  Create a context file on the parent task with handoff notes.
 #   --complete            Run `tt task complete` first if status is not DONE.
 #   --rebase              Rebase child onto parent before checkin.
 #   --merge               Merge parent into child before checkin.
@@ -35,7 +35,7 @@ Merge the current task branch (or <task-id>) into its parent branch.
 
 Options:
   <task-id>             Task branch to check in (default: current branch).
-  --context <markdown>  Append a context block to parent task file.
+  --context <markdown>  Create a context file on the parent task with handoff notes.
   --complete            Run complete first if status is not DONE.
   --rebase              Rebase child onto parent before checkin.
   --merge               Merge parent into child before checkin.
@@ -137,7 +137,7 @@ main() {
       log "Error: Branch '$child_bookmark' not found in repository."
       exit 1
     fi
-    task_file=".tt/task/${child_slug}.md"
+    task_file="$(task_file_path "$child_slug")"
   else
     local resolve_output
     resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
@@ -238,7 +238,7 @@ main() {
   else
     parent_slug="${parent_bookmark#$project_prefix}"
   fi
-  parent_task_file=".tt/task/${parent_slug}.md"
+  parent_task_file="$(task_file_path "$parent_slug")"
 
   log "Checking in: $child_bookmark -> $parent_bookmark"
 
@@ -266,9 +266,12 @@ main() {
   if [[ -n "$diff_output" ]]; then
     while IFS= read -r changed_path; do
       [[ -z "$changed_path" ]] && continue
-      if [[ "$changed_path" != "$task_file" ]]; then
+      # Allow changes within the task's own directory
+      local task_dir
+      task_dir="$(task_dir_path "$child_slug")"
+      if [[ "$changed_path" != "$task_file" && "$changed_path" != "$task_dir"/* ]]; then
         log "Error: Unmerged range touches unexpected task file: $changed_path"
-        log "  Only '$task_file' may differ from parent in the unmerged range."
+        log "  Only files under '$task_dir/' may differ from parent in the unmerged range."
         exit 1
       fi
     done <<< "$diff_output"
@@ -307,8 +310,8 @@ main() {
   # New WC branching from child bookmark (stages files for handoff)
   jj -R "$target_ws" new "$child_bookmark"
 
-  # Rewrite TASK.md symlink to point to parent task file
-  ln -sf ".tt/task/${parent_slug}.md" "$target_ws/TASK.md"
+  # Rewrite TASK.md symlink to point to parent task file (directory format)
+  ln -sf ".tt/task/${parent_slug}/TASK.md" "$target_ws/TASK.md"
 
   # Build updated parent task file content
   local parent_task_content
@@ -319,8 +322,6 @@ main() {
   }
 
   # Update the subtask entry in the parent task file to reflect the child's status.
-  # Use status_to_checkbox so the symbol is consistent with all other display code
-  # and handles any future status values (e.g. TODO if a task is ever un-begun).
   local updated_parent_content new_cb
   new_cb="$(status_to_checkbox "$task_status")"
   updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" -v cb="$new_cb" '
@@ -337,14 +338,39 @@ main() {
     { print }
   ')"
 
-  # Append context block to body if --context provided
+  # If --context is provided, create a context file on the parent task
   if [[ -n "$context_text" ]]; then
-    updated_parent_content="${updated_parent_content}
-[${task_id}](.tt/task/${child_slug}.md) ${task_title}
+    local ctx_title="Handoff: ${task_title}"
+    local ctx_slug
+    ctx_slug="$(title_to_slug "$ctx_title")"
+    local ctx_hex
+    ctx_hex="$(generate_hex)"
+    local ctx_id="context/${ctx_slug}-${ctx_hex}"
+    local ctx_file
+    ctx_file="$(task_context_path "$parent_slug" "$ctx_id")"
+    local ctx_ts
+    ctx_ts="$(generate_timestamp)"
 
-${context_text}
+    # Create context directory if needed
+    mkdir -p "$target_ws/$(dirname "$ctx_file")"
 
----"
+    # Write context file
+    {
+      printf -- '---\n'
+      printf 'title: "%s"\n' "${ctx_title//\"/\\\"}"
+      printf 'created: %s\n' "$ctx_ts"
+      printf 'updated: %s\n' "$ctx_ts"
+      printf -- '---\n'
+      printf '%s\n' "$context_text"
+    } > "$target_ws/$ctx_file"
+
+    # Add context reference to parent task file frontmatter
+    updated_parent_content="$(printf '%s' "$updated_parent_content" | awk -v ctx="$ctx_id" '
+      /^---$/ { sep++; if (sep == 2) { print "context: " ctx } }
+      { print }
+    ')"
+
+    log "Created context file: $ctx_file"
   fi
 
   printf '%s\n' "$updated_parent_content" > "$target_ws/$parent_task_file"
