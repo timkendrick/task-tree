@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Options:
 #   --title TITLE          Task title (prompted if missing and stdin is a TTY)
 #   --slug SLUG            Human-readable slug (prompted with suggested default if missing)
-#   --description "TEXT"   Task description (prompted if missing and stdin is a TTY)
+#   --body "TEXT"          Task body/description (prompted if missing and stdin is a TTY)
 #   --parent TASK-ID       Parent task ID (default: current branch); mutually exclusive with --project
 #   --project              Create a parentless project task; mutually exclusive with --parent
 #   --target COMMIT-REV    (with --project) Fork project branch from this revision (default: current @)
@@ -45,7 +45,7 @@ Create a task file and jj bookmark for task-tree bootstrap.
 Options:
   --title TITLE         Task title/summary (prompted if missing and interactive)
   --slug SLUG           Human-readable slug (prompted with suggested default if missing)
-  --description TEXT    Task description (prompted if missing and interactive)
+  --body TEXT           Task body/description (prompted if missing and interactive)
   --parent TASK-ID      Parent task ID (default: current branch); mutually exclusive with --project
   --project             Create a parentless project task; mutually exclusive with --parent
   --target COMMIT-REV   (with --project) Fork project branch from this revision (default: current @)
@@ -61,66 +61,17 @@ Options:
   --worktree[=<path>]   (with --checkout) Use or create a dedicated jj workspace for the task
 
 Examples:
-  ${SCRIPT_NAME}                                    # prompts for title, slug, description
-  ${SCRIPT_NAME} --title "Phase 0: Test harness" --description "Set up the test harness"
-  ${SCRIPT_NAME} --slug tt-task-list --title "tt task list" --parent task/phase-0-abc123de --label tdd --description "Implement tt task list"
-  ${SCRIPT_NAME} --project --title "Main app" --description "Primary application"
-  ${SCRIPT_NAME} --project --title "Main app" --target abc123 --description "Fork from specific revision"
-  ${SCRIPT_NAME} --title "New feature" --description "Add new feature" --propagate --shallow
+  ${SCRIPT_NAME}                                    # prompts for title, slug, body
+  ${SCRIPT_NAME} --title "Phase 0: Test harness" --body "Set up the test harness"
+  ${SCRIPT_NAME} --slug tt-task-list --title "tt task list" --parent task/phase-0-abc123de --label tdd --body "Implement tt task list"
+  ${SCRIPT_NAME} --project --title "Main app" --body "Primary application"
+  ${SCRIPT_NAME} --project --title "Main app" --target abc123 --body "Fork from specific revision"
+  ${SCRIPT_NAME} --title "New feature" --body "Add new feature" --propagate --shallow
   ${SCRIPT_NAME} --slug my-task --title "My task" --checkout
   ${SCRIPT_NAME} --slug my-task --title "My task" --checkout --worktree
 
 EOF
   exit 1
-}
-
-# Generate slug from title: replace non-alphanumeric with -, collapse consecutive, lowercase, trim.
-title_to_slug() {
-  local t="$1"
-  printf '%s' "$t" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | tr -s '-' | sed 's/^-//;s/-$//'
-}
-
-# Validate slug: only lowercase alphanumeric and single hyphens; no leading/trailing hyphens.
-# Returns 0 if valid, 1 and logs error if invalid.
-validate_slug() {
-  local s="$1"
-  if [[ -z "$s" ]]; then
-    log "Error: Slug cannot be empty"
-    return 1
-  fi
-  if [[ "$s" =~ [A-Z] ]]; then
-    log "Error: Slug must be lowercase: $s"
-    return 1
-  fi
-  if [[ "$s" =~ ^- ]]; then
-    log "Error: Slug cannot start with hyphen: $s"
-    return 1
-  fi
-  if [[ "$s" =~ -$ ]]; then
-    log "Error: Slug cannot end with hyphen: $s"
-    return 1
-  fi
-  if [[ "$s" =~ -- ]]; then
-    log "Error: Slug cannot contain consecutive hyphens: $s"
-    return 1
-  fi
-  if [[ "$s" =~ [^a-z0-9-] ]]; then
-    log "Error: Slug must contain only lowercase letters, digits, and hyphens: $s"
-    return 1
-  fi
-  return 0
-}
-
-generate_task_hex() {
-  # Generate 8-character hex for task ID uniqueness (per DESIGN §3)
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 4
-  elif [[ -r /dev/urandom ]]; then
-    od -An -N4 -tx1 /dev/urandom | tr -d ' \n' | head -c 8
-  else
-    log "Error: Need openssl or /dev/urandom to generate task ID"
-    exit 1
-  fi
 }
 
 # Usage: resolve_parent PARENT_ARG REPO TASK_PREFIX PROJECT_PREFIX
@@ -153,9 +104,11 @@ resolve_parent() {
       exit 1
     fi
     if is_task_branch "$parent_task_id" "$task_prefix"; then
-      printf '%s\n%s\n%s\n' "$parent_rev" ".tt/task/${parent_task_id#$task_prefix}.md" "$parent_task_id"
+      local suffix="${parent_task_id#$task_prefix}"
+      printf '%s\n%s\n%s\n' "$parent_rev" "$(task_file_path "$suffix")" "$parent_task_id"
     elif is_project_branch "$parent_task_id" "$project_prefix"; then
-      printf '%s\n%s\n%s\n' "$parent_rev" ".tt/task/${parent_task_id#$project_prefix}.md" "$parent_task_id"
+      local suffix="${parent_task_id#$project_prefix}"
+      printf '%s\n%s\n%s\n' "$parent_rev" "$(task_file_path "$suffix")" "$parent_task_id"
     else
       printf '%s\n\n\n' "$parent_rev"
     fi
@@ -164,14 +117,22 @@ resolve_parent() {
   fi
 }
 
-# Usage: write_task_stub REPO TASK_FILE_PATH
+# Usage: write_task_stub REPO TASK_SUFFIX
 #
-# Write a minimal task file stub containing only status: TODO.
+# Write a minimal task file stub in the directory format.
+# Creates .tt/task/<suffix>/TASK.md with status, created, updated timestamps.
 write_task_stub() {
   local repo="$1"
-  local task_file_path="$2"
-  printf -- '---\nstatus: TODO\n---\n' > "$repo/$task_file_path"
-  log "Created task file: $task_file_path"
+  local suffix="$2"
+  local dir
+  dir="$(task_dir_path "$suffix")"
+  local file
+  file="$(task_file_path "$suffix")"
+  local ts
+  ts="$(generate_timestamp)"
+  mkdir -p "$repo/$dir"
+  printf -- '---\nstatus: TODO\ncreated: %s\nupdated: %s\n---\n' "$ts" "$ts" > "$repo/$file"
+  log "Created task file: $file"
 }
 
 # Usage: add_subtask_to_frontmatter PARENT_PATH TASK_ID
@@ -189,31 +150,12 @@ add_subtask_to_frontmatter() {
   mv "$tmpfile" "$parent_path"
 }
 
-# Usage: add_description_to_frontmatter FILE_PATH DESCRIPTION
-#
-# Insert a description: line into the YAML frontmatter of an existing task file,
-# immediately before the closing ---.
-add_description_to_frontmatter() {
-  local file_path="$1"
-  local description="$2"
-  local desc_yaml
-  desc_yaml="description: $(printf '%s' "$description" | jq -Rs '.')"
-  local tmpfile
-  tmpfile="$(mktemp)"
-  DESC_YAML="$desc_yaml" awk '
-    BEGIN { desc = ENVIRON["DESC_YAML"] }
-    /^---$/ { sep++; if (sep == 2) { print desc } }
-    { print }
-  ' "$file_path" > "$tmpfile"
-  mv "$tmpfile" "$file_path"
-}
-
 main() {
   local slug=''
   local slug_explicit=false
   local title=''
-  local description=''
-  local has_description=false
+  local body=''
+  local has_body=false
   local -a labels=()
   local is_project=false
   local target=''
@@ -241,10 +183,10 @@ main() {
         title="$2"
         shift 2
         ;;
-      --description)
-        [[ $# -lt 2 ]] && { log "Error: --description requires an argument"; usage; }
-        description="$2"
-        has_description=true
+      --body|--description)
+        [[ $# -lt 2 ]] && { log "Error: $1 requires an argument"; usage; }
+        body="$2"
+        has_body=true
         shift 2
         ;;
       --label)
@@ -347,9 +289,9 @@ main() {
     exit 1
   fi
 
-  if [[ "$has_description" == false ]]; then
+  if [[ "$has_body" == false ]]; then
     if [[ -t 0 ]]; then
-      description="$(prompt_raw </dev/null)"
+      body="$(prompt_raw </dev/null)"
     fi
   fi
 
@@ -420,14 +362,15 @@ main() {
 
   # Generate task ID
   local task_hex
-  task_hex="$(generate_task_hex)"
+  task_hex="$(generate_hex)"
   local task_id="${active_prefix}${slug}-${task_hex}"
-  local task_filename="${slug}-${task_hex}.md"
-  local task_file_path=".tt/task/${task_filename}"
+  local task_suffix="${slug}-${task_hex}"
+  local task_file
+  task_file="$(task_file_path "$task_suffix")"
 
   if [[ "$dry_run" == true ]]; then
     log "Dry run: would create task $task_id"
-    log "  Task file: $task_file_path"
+    log "  Task file: $task_file"
     log "  Title: $title"
     log "  Mode: $( [[ "$is_project" == true ]] && echo project || echo task )"
     log "  Parent rev: $parent_rev"
@@ -480,24 +423,24 @@ main() {
 
   if [[ "$is_project" == true ]]; then
     # Project task: first commit creates the stub task file; second commit (via edit) sets metadata.
-    write_task_stub "$repo" "$task_file_path"
+    write_task_stub "$repo" "$task_suffix"
     jj "${jj_opts[@]}" describe -m "Create project: $title"
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
     jj "${jj_opts[@]}" new "@"
     jj "${jj_opts[@]}" bookmark set "$task_id"
     local edit_args=(--repo "$repo" --title "$title")
-    [[ -n "$description" ]] && edit_args+=(--description "$description")
+    [[ -n "$body" ]] && edit_args+=(--body "$body")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
     "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id"
   elif [[ -n "$parent_task_file" ]]; then
     # Child task: commit on parent branch creates the stub and registers the subtask;
-    # the child branch's initial commit (via edit) sets title, description, and labels.
+    # the child branch's initial commit (via edit) sets title, body, and labels.
     local parent_path="$repo/$parent_task_file"
     if [[ ! -f "$parent_path" ]]; then
       log "Error: Parent task file not found: $parent_path"
       exit 1
     fi
-    write_task_stub "$repo" "$task_file_path"
+    write_task_stub "$repo" "$task_suffix"
     add_subtask_to_frontmatter "$parent_path" "$task_id"
     log "Added subtask to parent: $parent_task_file"
     jj "${jj_opts[@]}" describe -m "Create task: $title ($task_id)"
@@ -505,18 +448,18 @@ main() {
     jj "${jj_opts[@]}" new "@"
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
     local edit_args=(--repo "$repo" --title "$title")
-    [[ -n "$description" ]] && edit_args+=(--description "$description")
+    [[ -n "$body" ]] && edit_args+=(--body "$body")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
     "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id"
   else
     # Child task with no identifiable parent task file (e.g. branching from a non-task bookmark).
     # Create the stub and bookmark without modifying any parent; edit sets metadata.
-    write_task_stub "$repo" "$task_file_path"
+    write_task_stub "$repo" "$task_suffix"
     jj "${jj_opts[@]}" describe -m "Create task: $title ($task_id)"
     jj "${jj_opts[@]}" new "@"
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
     local edit_args=(--repo "$repo" --title "$title")
-    [[ -n "$description" ]] && edit_args+=(--description "$description")
+    [[ -n "$body" ]] && edit_args+=(--body "$body")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
     "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id"
   fi
