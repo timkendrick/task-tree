@@ -5,15 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt task edit — Edit title, description, and/or labels of a task.
+# tt task edit — Edit title, body, and/or labels of a task.
 #
 # Usage:
-#   edit [<task-id>] [--title TITLE] [--description TEXT] [--label LABEL ...] [--delete-label LABEL ...]
+#   edit [<task-id>] [--title TITLE] [--body TEXT] [--label LABEL ...] [--delete-label LABEL ...]
 #
 # Options:
 #   <task-id>             Target task ID (default: current branch)
 #   --title TITLE         New title (preserves existing if omitted)
-#   --description TEXT    New description (preserves existing if omitted)
+#   --body TEXT           New body/description (preserves existing if omitted)
 #   --label LABEL         Append a label (repeatable)
 #   --delete-label LABEL  Remove a label if present (repeatable, silent no-op if absent)
 #   --worktree PATH       Specify worktree when multiple exist for the task
@@ -25,49 +25,58 @@ usage() {
   cat >&2 <<EOF
 Usage: ${SCRIPT_NAME} [<task-id>] [options...]
 
-Edit title, description, and/or labels of a task.
+Edit title, body, and/or labels of a task.
 
 Options:
   <task-id>              Task ID to edit (default: current task).
   --title TITLE          New title (preserves existing if omitted).
-  --description TEXT     New description (preserves existing if omitted).
+  --body TEXT            New body/description (preserves existing if omitted).
   --label LABEL          Append a label (repeatable).
   --delete-label LABEL   Remove a label if present (repeatable, silent no-op if absent).
   --worktree PATH        Worktree path when multiple exist for the task.
   --repo PATH            Repository root (default: walk up from CWD to find .jj).
 
-If none of --title, --description, --label, or --delete-label are given, opens
-an editor pre-populated with the current description text (interactive mode).
+If none of --title, --body, --label, or --delete-label are given, opens
+an editor pre-populated with the current body text (interactive mode).
 
 EOF
   exit 1
 }
 
-# Usage: rewrite_task_file FILE TITLE STATUS DESCRIPTION LABELS...
+# Usage: rewrite_task_file FILE TITLE STATUS BODY CREATED LABELS... SUBTASKS... CONTEXTS...
 #
-# Reads body (content after the second ---) from the existing file,
-# writes new frontmatter + preserved body.
+# Rewrites the task file with new frontmatter + body.
+# LABELS, SUBTASKS, CONTEXTS are passed as arrays via nameref (bash 4.3+), so we
+# instead collect them via additional positional args prefixed with "label:", "subtask:", "context:".
+#
+# Simplified signature: rewrite_task_file FILE TITLE STATUS BODY CREATED
+# plus arrays passed as caller-managed env vars REWRITE_LABELS, REWRITE_SUBTASKS, REWRITE_CONTEXTS.
 rewrite_task_file() {
   local file="$1"
   local title="$2"
   local status="$3"
-  local description="$4"
-  shift 4
-  local -a labels=("$@")
+  local body="$4"
+  local created="$5"
+  # REWRITE_LABELS, REWRITE_SUBTASKS, REWRITE_CONTEXTS are caller-set env arrays (via 'local -a' + export trick)
+  # We read them via indirect references below.
 
-  # Extract body (everything after the second ---)
-  local body
-  body="$(awk '/^---$/{n++; if(n==2){found=1; next}} found{print}' "$file")"
+  local updated
+  updated="$(generate_timestamp)"
 
   {
     echo '---'
     echo "title: \"${title//\"/\\\"}\""
     echo "status: $status"
-    if [[ -n "$description" ]]; then
-      echo "description: $(printf '%s' "$description" | jq -Rs '.')"
-    fi
-    for label in "${labels[@]+"${labels[@]}"}"; do
+    echo "created: $created"
+    echo "updated: $updated"
+    for label in "${REWRITE_LABELS[@]+"${REWRITE_LABELS[@]}"}"; do
       echo "label: $label"
+    done
+    for subtask in "${REWRITE_SUBTASKS[@]+"${REWRITE_SUBTASKS[@]}"}"; do
+      echo "subtask: $subtask"
+    done
+    for ctx in "${REWRITE_CONTEXTS[@]+"${REWRITE_CONTEXTS[@]}"}"; do
+      echo "context: $ctx"
     done
     echo '---'
     if [[ -n "$body" ]]; then
@@ -79,9 +88,9 @@ rewrite_task_file() {
 main() {
   local task_id_arg=''
   local new_title=''
-  local new_description=''
+  local new_body=''
   local has_title=false
-  local has_description=false
+  local has_body=false
   local -a add_labels=()
   local -a delete_labels=()
   local worktree_arg=''
@@ -92,9 +101,9 @@ main() {
       --title)
         [[ $# -lt 2 ]] && { log "Error: --title requires an argument"; usage; }
         new_title="$2"; has_title=true; shift 2 ;;
-      --description)
-        [[ $# -lt 2 ]] && { log "Error: --description requires an argument"; usage; }
-        new_description="$2"; has_description=true; shift 2 ;;
+      --body|--description)
+        [[ $# -lt 2 ]] && { log "Error: $1 requires an argument"; usage; }
+        new_body="$2"; has_body=true; shift 2 ;;
       --label)
         [[ $# -lt 2 ]] && { log "Error: --label requires an argument"; usage; }
         add_labels+=("$2"); shift 2 ;;
@@ -162,7 +171,7 @@ main() {
       log "Error: Branch '$bookmark' not found in repository."
       exit 1
     fi
-    task_file=".tt/task/${suffix}.md"
+    task_file="$(task_file_path "$suffix")"
   fi
 
   # Resolve worktree
@@ -188,19 +197,14 @@ main() {
     exit 1
   }
 
-  # Parse current values
-  # description is stored as a JSON string; extract the raw JSON value and decode it with jq
-  # so that current_description holds the actual text (avoiding double-escaping on rewrite).
-  local current_title current_status current_description_json current_description
+  # Parse current values from frontmatter
+  local current_title current_status current_created current_body
   current_title="$(parse_frontmatter_field "$task_content" "title")"
   current_status="$(parse_frontmatter_field "$task_content" "status")"
-  current_description_json="$(printf '%s' "$task_content" \
-    | awk '/^---$/{n++; next} n==1 && /^description:/{sub(/^description:[[:space:]]*/,""); print; exit}')"
-  if [[ -n "$current_description_json" ]]; then
-    current_description="$(printf '%s' "$current_description_json" | jq -r '.')"
-  else
-    current_description=''
-  fi
+  current_created="$(parse_frontmatter_field "$task_content" "created")"
+
+  # Body is everything after the second ---
+  current_body="$(parse_body "$task_content")"
 
   # Parse current labels (multiple label: lines)
   local -a current_labels=()
@@ -208,27 +212,44 @@ main() {
     [[ -n "$lbl" ]] && current_labels+=("$lbl")
   done < <(printf '%s' "$task_content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^label:/{sub(/^label:[[:space:]]*/,""); print}')
 
-  # Interactive mode: no metadata flags given — open editor for description
+  # Parse current subtask lines (preserve as-is, full "[ ] task/..." string)
+  local -a current_subtasks=()
+  while IFS= read -r st; do
+    [[ -n "$st" ]] && current_subtasks+=("$st")
+  done < <(printf '%s' "$task_content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^subtask:/{sub(/^subtask:[[:space:]]*/,""); print}')
+
+  # Parse current context references (preserve as-is)
+  local -a current_contexts=()
+  while IFS= read -r ctx; do
+    [[ -n "$ctx" ]] && current_contexts+=("$ctx")
+  done < <(printf '%s' "$task_content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^context:/{sub(/^context:[[:space:]]*/,""); print}')
+
+  # If created is empty (old format task file), generate one now
+  if [[ -z "$current_created" ]]; then
+    current_created="$(generate_timestamp)"
+  fi
+
+  # Interactive mode: no metadata flags given — open editor for body
   local interactive=false
-  if [[ "$has_title" == false && "$has_description" == false && ${#add_labels[@]} -eq 0 && ${#delete_labels[@]} -eq 0 ]]; then
+  if [[ "$has_title" == false && "$has_body" == false && ${#add_labels[@]} -eq 0 && ${#delete_labels[@]} -eq 0 ]]; then
     interactive=true
   fi
 
   # Determine final values
-  local final_title final_description
+  local final_title final_body
   final_title="${new_title:-$current_title}"
 
   if [[ "$interactive" == true ]]; then
-    local edited_description
-    edited_description="$(printf '%s' "${current_description}" | prompt)" || {
+    local edited_body
+    edited_body="$(printf '%s' "${current_body}" | prompt)" || {
       log "Error: Editor exited with non-zero status."
       exit 1
     }
-    final_description="$edited_description"
-  elif [[ "$has_description" == true ]]; then
-    final_description="$new_description"
+    final_body="$edited_body"
+  elif [[ "$has_body" == true ]]; then
+    final_body="$new_body"
   else
-    final_description="$current_description"
+    final_body="$current_body"
   fi
 
   # Apply label changes
@@ -258,6 +279,11 @@ main() {
     cross_branch=true
   fi
 
+  # Export arrays for rewrite_task_file
+  export REWRITE_LABELS=("${final_labels[@]+"${final_labels[@]}"}")
+  export REWRITE_SUBTASKS=("${current_subtasks[@]+"${current_subtasks[@]}"}")
+  export REWRITE_CONTEXTS=("${current_contexts[@]+"${current_contexts[@]}"}")
+
   if [[ "$cross_branch" == true ]]; then
     # Cross-branch edit: commit directly on the target branch using jj operations.
     # Since @ is empty (is_wc_clean guarantees this), save the parent commit_id so
@@ -272,7 +298,7 @@ main() {
 
     # Write updated task file now that we're on the target branch
     rewrite_task_file "$repo/$task_file" \
-      "$final_title" "$current_status" "$final_description" "${final_labels[@]+"${final_labels[@]}"}"
+      "$final_title" "$current_status" "$final_body" "$current_created"
 
     # Only commit if the task file actually changed
     if is_wc_clean "$repo"; then
@@ -280,6 +306,7 @@ main() {
       jj -R "$repo" abandon
       jj -R "$repo" new -r "$original_parent_rev"
       printf '%s\n' "$bookmark"
+      unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
       return 0
     fi
 
@@ -291,12 +318,13 @@ main() {
   else
     # Same-branch edit: write to the target worktree filesystem and commit normally.
     rewrite_task_file "$target_worktree/$task_file" \
-      "$final_title" "$current_status" "$final_description" "${final_labels[@]+"${final_labels[@]}"}"
+      "$final_title" "$current_status" "$final_body" "$current_created"
 
     # Only commit if the task file actually changed
     if is_wc_clean "$target_worktree"; then
       log "No changes to task $bookmark."
       printf '%s\n' "$bookmark"
+      unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
       return 0
     fi
 
@@ -304,6 +332,7 @@ main() {
     jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
   fi
 
+  unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
   printf '%s\n' "$bookmark"
 }
 
