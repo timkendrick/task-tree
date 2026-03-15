@@ -30,7 +30,6 @@ subtask: [x] task/tt-task-checkin-switch-b8ba57c3
 subtask: [x] task/tt-task-checkout-log-previous-224e7312
 subtask: [ ] task/tt-task-rename-8db18f41
 subtask: [ ] task/tt-task-move-091c3d4f
-subtask: [ ] task/tt-task-gc-65957c43
 subtask: [ ] task/tt-workspace-doctor-fe9143d1
 subtask: [x] task/tt-task-list-focus-f23d4002
 subtask: [ ] task/zsh-completions-0538e4f5
