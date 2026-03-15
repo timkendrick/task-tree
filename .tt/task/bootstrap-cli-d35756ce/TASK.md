@@ -47,6 +47,7 @@ context: context/context-from-2026-02-21-22-12-e533801d
 subtask: [ ] task/tt-task-prune-9a1ce601
 subtask: [ ] task/tt-task-get-context-e83871a2
 subtask: [ ] task/tt-task-delete-context-5f97f98a
+subtask: [ ] task/tt-task-prompt-6060d454
 ---
 Implement shell script implementations of all `tt` CLI commands
 
