@@ -1,1 +1,1 @@
-.tt/task/standalone-context-files-cf299caa.md
+.tt/task/standalone-context-files-cf299caa/TASK.md
