@@ -50,6 +50,7 @@ subtask: [ ] task/tt-task-delete-context-5f97f98a
 subtask: [ ] task/tt-task-prompt-6060d454
 subtask: [ ] task/tt-task-checkin-propagate-fe6f7554
 subtask: [ ] task/tt-task-show-expand-context-310f87ca
+subtask: [ ] task/tt-workspace-branch-status-8c69b854
 ---
 Implement shell script implementations of all `tt` CLI commands
 
