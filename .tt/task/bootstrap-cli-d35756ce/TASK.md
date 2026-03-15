@@ -41,7 +41,7 @@ subtask: [x] task/tt-task-edit-explicit-id-a5691a7c
 subtask: [x] task/fix-empty-propagate-commits-c763e236
 subtask: [x] task/additional-task-aliases-e8065e3d
 subtask: [x] task/rename-tt-task-tree-30ea3da5
-subtask: [ ] task/standalone-context-files-cf299caa
+subtask: [x] task/standalone-context-files-cf299caa
 context: context/task-tt-task-list-6638a980-d50c1e36
 context: context/context-from-2026-02-21-22-12-e533801d
 subtask: [ ] task/tt-task-prune-9a1ce601
