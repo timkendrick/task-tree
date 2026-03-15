@@ -1,1 +1,1 @@
-.tt/task/rust-cli-86972d17.md
+.tt/task/rust-cli-86972d17/TASK.md
