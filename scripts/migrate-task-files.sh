@@ -153,10 +153,10 @@ write_context_chunks() {
       ctx_body="$(printf '%s' "$trimmed" | tail -n +2 | awk 'NF{found=1} found{print}')"
       _write_one_context_file "$ctx_dir" "$ctx_title" "$ctx_body"
 
-    # Detect checkin context block: starts with [task/...](...) link
-    elif [[ "$first_line" =~ ^\[task/[^]]+\]\( ]]; then
+    # Detect checkin context block: starts with [task/...](...) or [`task/`...](...) link
+    elif [[ "$first_line" =~ ^\[.?task/[^]]+\]\( ]]; then
       local ctx_title
-      ctx_title="$(printf '%s' "$first_line" | sed 's/^\[//; s/\].*//')"
+      ctx_title="$(printf '%s' "$first_line" | sed 's/^\[`\{0,1\}//; s/`\{0,1\}\].*//')"
       local ctx_body
       ctx_body="$(printf '%s' "$trimmed" | tail -n +2 | awk 'NF{found=1} found{print}')"
       _write_one_context_file "$ctx_dir" "$ctx_title" "$ctx_body"
@@ -378,6 +378,10 @@ migrate_bookmark() {
 # ---------------------------------------------------------------------------
 main() {
   local target_bookmark=''
+  local workspace_dir=''
+  local workspace_revision=''
+  # Not local: _ws_cleanup trap needs access to this after main() returns
+  _RETAIN_WORKSPACE=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -386,12 +390,77 @@ main() {
         REPO_DIR="$2"; shift 2 ;;
       --repo=*)
         REPO_DIR="${1#--repo=}"; shift ;;
+      --workspace)
+        [[ $# -lt 2 ]] && { log "Error: --workspace requires an argument"; exit 1; }
+        workspace_dir="$2"; shift 2 ;;
+      --workspace=*)
+        workspace_dir="${1#--workspace=}"; shift ;;
+      --revision)
+        [[ $# -lt 2 ]] && { log "Error: --revision requires an argument"; exit 1; }
+        workspace_revision="$2"; shift 2 ;;
+      --revision=*)
+        workspace_revision="${1#--revision=}"; shift ;;
+      --retain-workspace)
+        _RETAIN_WORKSPACE=true; shift ;;
       -*)
         log "Error: Unknown option: $1"; exit 1 ;;
       *)
         target_bookmark="$1"; shift ;;
     esac
   done
+
+  # If --workspace is given, create an isolated jj workspace, run migration
+  # inside it, then clean up (unless --retain-workspace).
+  if [[ -n "$workspace_dir" ]]; then
+    [[ -z "$target_bookmark" ]] && { log "Error: --workspace requires a bookmark argument"; exit 1; }
+
+    # If --revision is given, verify it is an ancestor of the target bookmark.
+    # This ensures the target bookmark already contains the correct version of
+    # the migration script before we run it against its files.
+    if [[ -n "$workspace_revision" ]]; then
+      local ancestry_check
+      ancestry_check="$(jj -R "$REPO_DIR" --ignore-working-copy \
+        log -r "${workspace_revision}::${target_bookmark}" --no-graph \
+        -T 'commit_id ++ "\n"' 2>/dev/null)" || true
+      if [[ -z "$ancestry_check" ]]; then
+        log "Error: '$workspace_revision' is not an ancestor of '$target_bookmark'."
+        log "Rebase the test bookmark onto the feature branch first:"
+        log "  jj rebase -b $target_bookmark -d $workspace_revision"
+        exit 1
+      fi
+      log "Ancestry check passed: $workspace_revision is an ancestor of $target_bookmark"
+    fi
+
+    # These are globals (not local) so _ws_cleanup can reference them after
+    # main() returns (bash trap functions don't inherit local scope).
+    _WS_NAME="migrate-$$"
+    _WS_ORIGINAL_REPO_DIR="$REPO_DIR"
+    _WS_DIR="$workspace_dir"
+
+    log "Creating workspace '$_WS_NAME' at $_WS_DIR"
+    jj -R "$_WS_ORIGINAL_REPO_DIR" workspace add \
+      --revision "$target_bookmark" \
+      --name "$_WS_NAME" \
+      "$_WS_DIR"
+
+    # Print the workspace name to stdout (all other output goes to stderr via log())
+    printf '%s\n' "$_WS_NAME"
+
+    # Override REPO_DIR so all subsequent jj -R calls use the new workspace
+    REPO_DIR="$_WS_DIR"
+
+    _ws_cleanup() {
+      if [[ "$_RETAIN_WORKSPACE" != true ]]; then
+        jj -R "$_WS_ORIGINAL_REPO_DIR" workspace forget "$_WS_NAME" 2>/dev/null || true
+        rm -rf "$_WS_DIR"
+        log "Cleaned up workspace: $_WS_DIR"
+      else
+        log "Retaining workspace: $_WS_DIR (name: $_WS_NAME)"
+        log "To clean up manually: jj -R \"$_WS_ORIGINAL_REPO_DIR\" workspace forget \"$_WS_NAME\" && rm -rf \"$_WS_DIR\""
+      fi
+    }
+    trap '_ws_cleanup' EXIT
+  fi
 
   cd "$REPO_DIR"
 
