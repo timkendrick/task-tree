@@ -102,7 +102,8 @@ is_partially_checked_in() {
   else
     return 1
   fi
-  local task_file=".tt/task/${suffix}.md"
+  local task_file
+  task_file="$(task_file_path "$suffix")"
   local content status
   content="$(jj -R "$repo" --ignore-working-copy file show -r "$child" -- "$task_file" 2>/dev/null)" || true
   status="$(parse_frontmatter_field "$content" "status")"
@@ -156,7 +157,7 @@ propagate_one_rebase() {
   if [[ "$force" != true ]] && has_conflicts "$repo" "${child}::"; then
     log "Error: Conflicts detected in $child after rebase onto $from."
     log "  Undoing. Use --force to proceed despite conflicts."
-    jj "${jj_opts[@]}" op undo
+    jj "${jj_opts[@]}" undo
     return 1
   fi
 }
@@ -179,8 +180,8 @@ propagate_one_merge() {
   if [[ "$force" != true ]] && has_conflicts "$repo" "$child"; then
     log "Error: Conflicts in $child after merging $from."
     log "  Undoing. Use --force to proceed despite conflicts."
-    jj "${jj_opts[@]}" op undo  # undo bookmark set
-    jj "${jj_opts[@]}" op undo  # undo jj new
+    jj "${jj_opts[@]}" undo  # undo bookmark set
+    jj "${jj_opts[@]}" undo  # undo jj new
     # Restore working copy (jj new moved it)
     jj "${jj_opts[@]}" edit "$original_rev" 2>/dev/null || true
     return 1
@@ -248,7 +249,8 @@ propagate_from() {
     return 0
   fi
 
-  local task_file=".tt/task/${suffix}.md"
+  local task_file
+  task_file="$(task_file_path "$suffix")"
   local subtasks
   subtasks="$(get_subtask_ids "$repo" "$from_bookmark" "$task_file")" || true
   [[ -z "$subtasks" ]] && return 0
