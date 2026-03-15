@@ -1,6 +1,103 @@
 # Common functions for tt bootstrap CLI scripts.
 # Source this file; do not execute directly.
 
+# ---------------------------------------------------------------------------
+# Shared slug / ID / timestamp helpers (used by create, edit, add-context)
+# ---------------------------------------------------------------------------
+
+# Generate slug from title: replace non-alphanumeric with -, collapse consecutive, lowercase, trim.
+title_to_slug() {
+  local t="$1"
+  printf '%s' "$t" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | tr -s '-' | sed 's/^-//;s/-$//'
+}
+
+# Validate slug: only lowercase alphanumeric and single hyphens; no leading/trailing hyphens.
+# Returns 0 if valid, 1 and logs error if invalid.
+validate_slug() {
+  local s="$1"
+  if [[ -z "$s" ]]; then
+    log "Error: Slug cannot be empty"
+    return 1
+  fi
+  if [[ "$s" =~ [A-Z] ]]; then
+    log "Error: Slug must be lowercase: $s"
+    return 1
+  fi
+  if [[ "$s" =~ ^- ]]; then
+    log "Error: Slug cannot start with hyphen: $s"
+    return 1
+  fi
+  if [[ "$s" =~ -$ ]]; then
+    log "Error: Slug cannot end with hyphen: $s"
+    return 1
+  fi
+  if [[ "$s" =~ -- ]]; then
+    log "Error: Slug cannot contain consecutive hyphens: $s"
+    return 1
+  fi
+  if [[ "$s" =~ [^a-z0-9-] ]]; then
+    log "Error: Slug must contain only lowercase letters, digits, and hyphens: $s"
+    return 1
+  fi
+  return 0
+}
+
+# Generate an 8-character random hex string for task/context IDs.
+generate_hex() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 4
+  elif [[ -r /dev/urandom ]]; then
+    od -An -N4 -tx1 /dev/urandom | tr -d ' \n' | head -c 8
+  else
+    log "Error: Need openssl or /dev/urandom to generate ID"
+    exit 1
+  fi
+}
+
+# Generate an ISO 8601 UTC timestamp (e.g. 2026-03-12T23:04:57Z).
+generate_timestamp() {
+  date -u '+%Y-%m-%dT%H:%M:%SZ'
+}
+
+# ---------------------------------------------------------------------------
+# Task/context file path helpers
+# ---------------------------------------------------------------------------
+
+# Usage: task_file_path SUFFIX
+# Returns the canonical path to a task's TASK.md file.
+# SUFFIX is the slug-hex part (e.g. "my-task-abc12345").
+task_file_path() {
+  local suffix="$1"
+  printf '.tt/task/%s/TASK.md' "$suffix"
+}
+
+# Usage: task_dir_path SUFFIX
+# Returns the canonical directory path for a task.
+task_dir_path() {
+  local suffix="$1"
+  printf '.tt/task/%s' "$suffix"
+}
+
+# Usage: task_context_path SUFFIX CTX_ID
+# Returns the canonical path to a context file.
+# CTX_ID is "context/<ctx-slug>-<ctx-hex>" (without .md).
+task_context_path() {
+  local suffix="$1"
+  local ctx_id="$2"
+  printf '.tt/task/%s/%s.md' "$suffix" "$ctx_id"
+}
+
+# ---------------------------------------------------------------------------
+# Body parsing helper
+# ---------------------------------------------------------------------------
+
+# Usage: parse_body CONTENT
+# Outputs everything after the second "---" line (the frontmatter closing delimiter).
+parse_body() {
+  local content="$1"
+  printf '%s' "$content" | awk '/^---$/{n++; if(n==2){found=1; next}} found{print}'
+}
+
 log() {
   printf '%s\n' "$*" >&2
 }
@@ -228,7 +325,8 @@ find_parent_branch() {
     else
       suffix="${branch#$project_prefix}"
     fi
-    local path=".tt/task/${suffix}.md"
+    local path
+    path="$(task_file_path "$suffix")"
     local content
     content="$(jj "${jj_opts[@]}" --ignore-working-copy file show -r "$branch" -- "$path" 2>/dev/null)" || continue
     if printf '%s' "$content" | grep -qE "^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]+${task_id}([[:space:]]|$)"; then
@@ -288,7 +386,8 @@ find_branch_for_task() {
     else
       suffix="${branch#$project_prefix}"
     fi
-    local path=".tt/task/${suffix}.md"
+    local path
+    path="$(task_file_path "$suffix")"
     local c
     c="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$path" 2>/dev/null)" || continue
     if printf '%s' "$c" | grep -qE "^subtask:[[:space:]]*\[x\][[:space:]]+${task_id}([[:space:]]|$)"; then
@@ -414,9 +513,9 @@ resolve_current() {
       exit 1
     fi
     if is_task_branch "$current_branch" "$task_prefix"; then
-      printf '%s\n%s\n%s\n' "$parent_rev" ".tt/task/${current_branch#$task_prefix}.md" "$current_branch"
+      printf '%s\n%s\n%s\n' "$parent_rev" "$(task_file_path "${current_branch#$task_prefix}")" "$current_branch"
     elif is_project_branch "$current_branch" "$project_prefix"; then
-      printf '%s\n%s\n%s\n' "$parent_rev" ".tt/task/${current_branch#$project_prefix}.md" "$current_branch"
+      printf '%s\n%s\n%s\n' "$parent_rev" "$(task_file_path "${current_branch#$project_prefix}")" "$current_branch"
     else
       printf '%s\n\n\n' "$parent_rev"
     fi

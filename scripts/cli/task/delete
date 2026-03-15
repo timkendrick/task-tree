@@ -77,7 +77,7 @@ collect_subtree() {
     else
       own_slug="${current#$project_prefix}"
     fi
-    own_file=".tt/task/${own_slug}.md"
+    own_file="$(task_file_path "$own_slug")"
 
     # Collect subtask IDs from the task's own branch
     local own_subs=""
@@ -197,7 +197,7 @@ main() {
     else
       task_slug="${task_id#$project_prefix}"
     fi
-    task_file=".tt/task/${task_slug}.md"
+    task_file="$(task_file_path "$task_slug")"
   else
     local resolve_output
     resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
@@ -212,6 +212,7 @@ main() {
     else
       task_slug="${task_id#$project_prefix}"
     fi
+    task_file="$(task_file_path "$task_slug")"
   fi
 
   # Precondition: WC must be clean (skip with --force)
@@ -253,7 +254,7 @@ main() {
   else
     parent_slug="${parent_bookmark#$project_prefix}"
   fi
-  parent_task_file=".tt/task/${parent_slug}.md"
+  parent_task_file="$(task_file_path "$parent_slug")"
 
   # Collect full descendant subtree
   local subtree_ids
@@ -317,10 +318,12 @@ main() {
 
   printf '%s\n' "$updated_parent_content" > "$target_ws/$parent_task_file"
 
-  # Remove top-level task file from target workspace (best-effort)
-  rm -f "$target_ws/$task_file"
+  # Remove top-level task directory from target workspace (best-effort)
+  local task_dir
+  task_dir="$(task_dir_path "$task_slug")"
+  rm -rf "$target_ws/$task_dir"
 
-  # Remove all descendant task files from target workspace (best-effort)
+  # Remove all descendant task directories from target workspace (best-effort)
   while IFS= read -r desc_id; do
     [[ -z "$desc_id" ]] && continue
     local desc_slug
@@ -329,7 +332,9 @@ main() {
     else
       desc_slug="${desc_id#$project_prefix}"
     fi
-    rm -f "$target_ws/.tt/task/${desc_slug}.md"
+    local desc_dir
+    desc_dir="$(task_dir_path "$desc_slug")"
+    rm -rf "$target_ws/$desc_dir"
   done <<< "$subtree_ids" || true
 
   # Commit and advance parent bookmark

@@ -162,9 +162,9 @@ emit_task_line() {
     suffix="${task_id#task/}"
   fi
   if [[ -n "$current_task_id" && "$task_id" == "$current_task_id" ]]; then
-    printf '%s- %s **[%s](.tt/task/%s.md) %s**\n' "$indent" "$checkbox" "$task_id" "$suffix" "$title"
+    printf '%s- %s **[%s](.tt/task/%s/TASK.md) %s**\n' "$indent" "$checkbox" "$task_id" "$suffix" "$title"
   else
-    printf '%s- %s [%s](.tt/task/%s.md) %s\n' "$indent" "$checkbox" "$task_id" "$suffix" "$title"
+    printf '%s- %s [%s](.tt/task/%s/TASK.md) %s\n' "$indent" "$checkbox" "$task_id" "$suffix" "$title"
   fi
 }
 
@@ -191,7 +191,8 @@ emit_tree() {
   else
     suffix="${task_id#task/}"
   fi
-  local path=".tt/task/${suffix}.md"
+  local path
+  path="$(task_file_path "$suffix")"
 
   local source_branch="$branch"
   local merged_line
@@ -257,7 +258,8 @@ build_merged_map() {
       else
         continue
       fi
-      local path=".tt/task/${suffix}.md"
+      local path
+      path="$(task_file_path "$suffix")"
       local content
       content="$(read_task_file_at_rev "$repo" "$branch" "$path" 2>/dev/null)" || true
       if printf '%s' "$content" | grep -qE "subtask:\s*\[x\]\s+${task_id}(\s|$)"; then
@@ -301,7 +303,8 @@ collect_task_ids() {
     else
       continue
     fi
-    local path=".tt/task/${suffix}.md"
+    local path
+    path="$(task_file_path "$suffix")"
     local content
     content="$(read_task_file_at_rev "$repo" "$source_branch" "$path" 2>/dev/null)" || true
     local subs
@@ -421,7 +424,8 @@ main() {
         else
           continue
         fi
-        local path=".tt/task/${suffix}.md"
+        local path
+        path="$(task_file_path "$suffix")"
         local content
         content="$(read_task_file_at_rev "$repo" "$branch" "$path" 2>/dev/null)" || true
         if printf '%s' "$content" | grep -qE "subtask:\s*\[[ x\-]\]\s+${current}(\s|$)"; then

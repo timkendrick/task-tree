@@ -160,7 +160,7 @@ main() {
   else
     task_slug="${task_id#"$project_prefix"}"
   fi
-  task_file=".tt/task/${task_slug}.md"
+  task_file="$(task_file_path "$task_slug")"
 
   # Read task frontmatter from the bookmark
   local task_file_content task_title task_status
@@ -263,8 +263,8 @@ main() {
     log "Initializing task: $task_id"
 
     # Create TASK.md symlink in the worktree root
-    ln -sf ".tt/task/${task_slug}.md" "$target_worktree/TASK.md"
-    log "Created TASK.md -> .tt/task/${task_slug}.md"
+    ln -sf ".tt/task/${task_slug}/TASK.md" "$target_worktree/TASK.md"
+    log "Created TASK.md -> .tt/task/${task_slug}/TASK.md"
 
     # Update status to IN-PROGRESS in the task file
     local tmpfile
