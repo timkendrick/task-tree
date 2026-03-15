@@ -45,6 +45,7 @@ subtask: [x] task/rename-tt-task-tree-30ea3da5
 subtask: [ ] task/standalone-context-files-cf299caa
 context: context/task-tt-task-list-6638a980-d50c1e36
 context: context/context-from-2026-02-21-22-12-e533801d
+subtask: [ ] task/tt-task-prune-9a1ce601
 ---
 Implement shell script implementations of all `tt` CLI commands
 
