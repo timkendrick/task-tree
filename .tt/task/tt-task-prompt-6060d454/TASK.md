@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt task prompt` CLI command"
-status: TODO
+status: IN-PROGRESS
 created: 2026-03-15T12:45:09Z
 updated: 2026-03-15T12:45:10Z
 ---
