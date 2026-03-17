@@ -2,6 +2,10 @@
 
 **IMPORTANT:** Make sure you read and thoroughly understand all coding guidelines from `@.agents/rules/` before making *any* code changes
 
+## Design Documentation
+
+A design document for this project exists at `DESIGN.md`. Make sure to keep this up-to-date whenever making changes that affect user-facing features.
+
 ## Task / VCS Management
 
 Use the **bootstrap** `./scripts/cli/tt` CLI for task and VCS management. This bash-based tool is the current implementation while the full Rust CLI is being developed.
