@@ -193,6 +193,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt get-context` | `tt task get-context` |
 | `tt current` | `tt task current` |
 | `tt edit` | `tt task edit` |
+| `tt prompt` | `tt task prompt` |
 
 ### 5.1 Workspace
 
@@ -227,6 +228,8 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 - **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step. No hooks.
 
 - **`tt task show [<task-id>]`** — Show the metadata and direct child tasks of the current task (default) or the given task. Reads from the correct branch per the "where to read" rule (§7.1 / Appendix A step 3): merged tasks are read from the parent branch that received the checkin; ongoing tasks are read from their own branch. Output format: lowercase header block (`task`, `branch`, `worktree`, `status`, `title`), followed by a subtasks section, a context section (listing context file titles and IDs), and a body section, all always present and separated by `---` dividers (see §6.7 for exact format). The `worktree` field shows the closest ancestor worktree for the given task. Output to stdout only. No hooks.
+
+- **`tt task prompt [<task-id>] [--message <text>] [--repo PATH]`** — Emit a self-contained LLM implementation prompt for a task to stdout. Reads the task file from the task's branch (defaulting to the current task if no `<task-id>` is given) and outputs: a heading line (`Implement task: <title>`), a mini frontmatter block (`task:` and `title:`), the task body, a `---` separator, any associated context files (each with its own `context:` / `title:` / `---` block and body), and a closing section listing common `tt` introspection commands. With `--message <text>`, appends an additional `---` separator followed by the verbatim message text at the end of the output. `--repo PATH` overrides the repository root. No VCS writes; no hooks.
 
 - **`tt task propagate [--from=<parent-id>] [--to=<descendant-id>]... [--rebase | --merge] [--shallow] [--force]`** — Update descendant task branches so their base is the parent's current tip. Default is to rebase all descendants of the current task; `--merge` merges instead; `--shallow` updates only direct children; `--force` proceeds despite rebase/merge conflicts. Preconditions: clean WC, no merge commits at tip, no untracked changes in affected worktrees. See §6.8.
 
