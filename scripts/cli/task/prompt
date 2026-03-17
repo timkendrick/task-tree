@@ -8,26 +8,28 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task prompt — Emit a self-contained LLM prompt to implement a task.
 #
 # Usage:
-#   prompt [<task-id>] [--repo PATH] [-h|--help]
+#   prompt [<task-id>] [--repo PATH] [--message TEXT] [-h|--help]
 #
 # Options:
-#   <task-id>    Task ID (branch name) to prompt for. Default: current task.
-#   --repo PATH  Repository root (default: walk up from CWD to find .jj).
-#   -h, --help   Show this help.
+#   <task-id>       Task ID (branch name) to prompt for. Default: current task.
+#   --repo PATH     Repository root (default: walk up from CWD to find .jj).
+#   --message TEXT  Append a custom message section to the prompt.
+#   -h, --help      Show this help.
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [--repo PATH]
+Usage: ${SCRIPT_NAME} [<task-id>] [--repo PATH] [--message TEXT]
 
 Write a self-contained implementation prompt for a task to stdout.
 Defaults to the current task if no task ID is given.
 
 Options:
-  <task-id>    Task branch name to prompt for (default: current task).
-  --repo PATH  Repository root (default: find .jj).
-  -h, --help   Show this help.
+  <task-id>       Task branch name to prompt for (default: current task).
+  --repo PATH     Repository root (default: find .jj).
+  --message TEXT  Append a custom message section to the prompt.
+  -h, --help      Show this help.
 
 EOF
   exit 0
@@ -36,12 +38,16 @@ EOF
 main() {
   local task_id_arg=''
   local repo=''
+  local message=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"; shift 2 ;;
+      --message)
+        [[ $# -lt 2 ]] && { log "Error: --message requires an argument"; usage; }
+        message="$2"; shift 2 ;;
       -h|--help) usage ;;
       -*)
         log "Error: Unknown option: $1"; usage ;;
@@ -182,6 +188,14 @@ main() {
   printf '  tt task tree --focus  # Show the current task within the overall task tree\n'
   printf '  tt task current       # Print the current task ID\n'
   printf '  tt task parent        # Print the parent task ID\n'
+
+  # Optional message section
+  if [[ -n "$message" ]]; then
+    printf '\n'
+    printf -- '---\n'
+    printf '\n'
+    printf '%s\n' "$message"
+  fi
 }
 
 main "$@"
