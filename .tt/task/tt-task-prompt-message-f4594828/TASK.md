@@ -1,6 +1,6 @@
 ---
 title: "Add `--message` argument to `tt task prompt` command"
-status: TODO
+status: IN-PROGRESS
 created: 2026-03-17T08:29:14Z
 updated: 2026-03-17T08:29:14Z
 ---
