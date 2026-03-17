@@ -45,6 +45,7 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} delete       →  tt task delete
   ${SCRIPT_NAME} tree         →  tt task tree
   ${SCRIPT_NAME} add-context  →  tt task add-context
+  ${SCRIPT_NAME} prompt       →  tt task prompt
   ${SCRIPT_NAME} init         →  tt workspace init
   ${SCRIPT_NAME} switch       →  tt workspace switch
   ${SCRIPT_NAME} current      →  tt task current
@@ -75,6 +76,7 @@ main() {
     delete)      set -- task     delete       "${@:2}" ;;
     tree)        set -- task     tree         "${@:2}" ;;
     add-context) set -- task     add-context  "${@:2}" ;;
+    prompt)      set -- task     prompt       "${@:2}" ;;
   esac
 
   if [[ $# -ge 1 && ( "$1" == "--help" || "$1" == "-h" ) ]]; then

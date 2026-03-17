@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task prompt — Emit a self-contained LLM prompt to implement a task.
+#
+# Usage:
+#   prompt [<task-id>] [--repo PATH] [-h|--help]
+#
+# Options:
+#   <task-id>    Task ID (branch name) to prompt for. Default: current task.
+#   --repo PATH  Repository root (default: walk up from CWD to find .jj).
+#   -h, --help   Show this help.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat <<EOF
+Usage: ${SCRIPT_NAME} [<task-id>] [--repo PATH]
+
+Write a self-contained implementation prompt for a task to stdout.
+Defaults to the current task if no task ID is given.
+
+Options:
+  <task-id>    Task branch name to prompt for (default: current task).
+  --repo PATH  Repository root (default: find .jj).
+  -h, --help   Show this help.
+
+EOF
+  exit 0
+}
+
+main() {
+  local task_id_arg=''
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage ;;
+      -*)
+        log "Error: Unknown option: $1"; usage ;;
+      *)
+        if [[ -z "$task_id_arg" ]]; then
+          task_id_arg="$1"; shift
+        else
+          log "Error: Unexpected argument: $1"; usage
+        fi ;;
+    esac
+  done
+
+  # --- Resolve repo root ---
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # --- Resolve branch and task file ---
+  local branch task_file task_suffix
+
+  if [[ -z "$task_id_arg" ]]; then
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
+    branch="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    if [[ -z "$branch" ]]; then
+      log "Error: Not on a task or project branch."
+      exit 1
+    fi
+    if is_task_branch "$branch" "$task_prefix"; then
+      task_suffix="${branch#$task_prefix}"
+    else
+      task_suffix="${branch#$project_prefix}"
+    fi
+  else
+    if ! branch="$(find_branch_for_task "$repo" "$task_id_arg" "$task_prefix" "$project_prefix")"; then
+      log "Error: Could not locate branch for task '$task_id_arg'."
+      exit 1
+    fi
+    if is_task_branch "$branch" "$task_prefix"; then
+      task_suffix="${branch#$task_prefix}"
+    elif is_project_branch "$branch" "$project_prefix"; then
+      task_suffix="${branch#$project_prefix}"
+    else
+      if is_task_branch "$task_id_arg" "$task_prefix"; then
+        task_suffix="${task_id_arg#$task_prefix}"
+      elif is_project_branch "$task_id_arg" "$project_prefix"; then
+        task_suffix="${task_id_arg#$project_prefix}"
+      else
+        log "Error: Cannot derive task file path for '$task_id_arg'."
+        exit 1
+      fi
+    fi
+    task_file="$(task_file_path "$task_suffix")"
+  fi
+
+  # --- Read task file ---
+  local content
+  if ! content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$task_file" 2>/dev/null)"; then
+    log "Error: Could not read task file '$task_file' from '$branch'."
+    exit 1
+  fi
+
+  # --- Parse fields ---
+  local title
+  title="$(parse_frontmatter_field "$content" "title")"
+
+  local body
+  body="$(parse_body "$content")"
+  # Trim leading/trailing blank lines
+  body="$(printf '%s' "$body" | awk 'NF{found=1} found{print}' | sed -e 's/[[:space:]]*$//')"
+
+  # Parse context IDs from frontmatter (one per line)
+  local contexts
+  contexts="$(printf '%s' "$content" | awk '
+    /^---$/ { n++; next }
+    n==1 && /^context:/ {
+      sub(/^context:[[:space:]]*/, "")
+      print
+    }
+  ')"
+
+  # --- Emit prompt ---
+
+  # Heading
+  printf 'Implement task: %s\n' "$title"
+
+  # Mini frontmatter block
+  printf -- '---\n'
+  printf 'task: %s\n' "$branch"
+  printf 'title: %s\n' "$title"
+  printf -- '---\n'
+
+  # Blank line + body + blank line
+  printf '\n'
+  [[ -n "$body" ]] && printf '%s\n' "$body"
+  printf '\n'
+
+  # Separator — doubles as opening delimiter of first context block if any,
+  # or as a standalone section separator if there are no context files.
+  printf -- '---\n'
+
+  # Context blocks (each context block's closing --- opens the next, or closes the section)
+  if [[ -n "$contexts" ]]; then
+    while IFS= read -r ctx_id; do
+      [[ -z "$ctx_id" ]] && continue
+      local ctx_file ctx_content ctx_title ctx_body
+      ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
+      ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$ctx_file" 2>/dev/null || true)"
+      ctx_title="$(parse_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
+      ctx_body="$(parse_body "$ctx_content")"
+      printf 'context: %s\n' "$ctx_id"
+      printf 'title: "%s"\n' "$ctx_title"
+      printf -- '---\n'
+      # Body is printed verbatim; unix convention means the file ends with \n,
+      # and context files include a trailing blank line before ---
+      printf '%s' "$ctx_body"
+      printf -- '---\n'
+    done <<< "$contexts"
+  fi
+
+  # Commands section
+  printf '\n'
+  printf 'Use the following commands for more context:\n'
+  printf '\n'
+  printf '  tt task show          # Show task metadata and subtask/context summary\n'
+  printf '  tt task tree --focus  # Show the current task within the overall task tree\n'
+  printf '  tt task current       # Print the current task ID\n'
+  printf '  tt task parent        # Print the parent task ID\n'
+}
+
+main "$@"

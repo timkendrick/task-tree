@@ -47,7 +47,7 @@ context: context/context-from-2026-02-21-22-12-e533801d
 subtask: [ ] task/tt-task-prune-9a1ce601
 subtask: [ ] task/tt-task-get-context-e83871a2
 subtask: [ ] task/tt-task-delete-context-5f97f98a
-subtask: [ ] task/tt-task-prompt-6060d454
+subtask: [x] task/tt-task-prompt-6060d454
 subtask: [ ] task/tt-task-checkin-propagate-fe6f7554
 subtask: [ ] task/tt-task-show-expand-context-310f87ca
 subtask: [ ] task/tt-workspace-branch-status-8c69b854
