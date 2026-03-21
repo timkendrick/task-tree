@@ -1,6 +1,6 @@
 ---
 title: "Add `--expand-context` flag to `tt task show` command"
-status: TODO
+status: IN-PROGRESS
 created: 2026-03-15T12:53:20Z
 updated: 2026-03-15T12:53:20Z
 ---
