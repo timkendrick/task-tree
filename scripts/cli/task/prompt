@@ -154,12 +154,7 @@ main() {
 
   # Blank line + body + blank line
   printf '\n'
-  [[ -n "$body" ]] && printf '%s\n' "$body"
-  printf '\n'
-
-  # Separator — doubles as opening delimiter of first context block if any,
-  # or as a standalone section separator if there are no context files.
-  printf -- '---\n'
+  [[ -n "$body" ]] && printf '%s\n\n' "$body"
 
   # Context blocks (each context block's closing --- opens the next, or closes the section)
   if [[ -n "$contexts" ]]; then
@@ -170,31 +165,29 @@ main() {
       ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$ctx_file" 2>/dev/null || true)"
       ctx_title="$(parse_quoted_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
       ctx_body="$(parse_body "$ctx_content")"
+      printf -- '---\n'
       printf 'context: %s\n' "$ctx_id"
       printf 'title: "%s"\n' "$ctx_title"
       printf -- '---\n'
-      # Body is printed verbatim; unix convention means the file ends with \n,
-      # and context files include a trailing blank line before ---
-      printf '%s' "$ctx_body"
-      printf -- '---\n'
+      printf '%s\n\n' "$ctx_body"
     done <<< "$contexts"
   fi
 
   # Commands section
+  printf -- '---\n'
   printf '\n'
   printf 'Use the following commands for more context:\n'
   printf '\n'
-  printf '  tt task show          # Show task metadata and subtask/context summary\n'
   printf '  tt task tree --focus  # Show the current task within the overall task tree\n'
   printf '  tt task current       # Print the current task ID\n'
   printf '  tt task parent        # Print the parent task ID\n'
+  printf '\n'
 
   # Optional message section
   if [[ -n "$message" ]]; then
-    printf '\n'
     printf -- '---\n'
     printf '\n'
-    printf '%s\n' "$message"
+    printf '%s\n\n' "$message"
   fi
 }
 
