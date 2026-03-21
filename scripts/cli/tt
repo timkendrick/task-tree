@@ -177,8 +177,8 @@ main() {
     else
       # Check if this is a help request for a namespace
       if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
-        # Show help for the current namespace (don't show directories at leaf level)
-        show_namespace_help "$accumulated_name" "$current_path" "false"
+        # Show help for the current namespace
+        show_namespace_help "$accumulated_name" "$current_path" "true"
         exit 0
       fi
 
