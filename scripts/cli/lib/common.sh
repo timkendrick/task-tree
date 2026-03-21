@@ -254,6 +254,20 @@ parse_frontmatter_field() {
   '
 }
 
+# Usage: parse_frontmatter_field_raw CONTENT FIELD
+# Extracts the raw value of a YAML frontmatter field from multi-line content,
+# preserving any quotes that were in the original.
+parse_frontmatter_field_raw() {
+  local content="$1" field="$2"
+  printf '%s' "$content" | awk -v field="$field" '
+    /^---$/ { n++; next }
+    n == 1 && $0 ~ ("^" field ":") {
+      sub("^" field ":[[:space:]]*", "")
+      print; exit
+    }
+  '
+}
+
 # Usage: raw=$(prompt_raw <<< "$template")
 # Reads template from stdin, opens editor, returns raw file content (no stripping).
 # Exits non-zero if editor exits non-zero.
