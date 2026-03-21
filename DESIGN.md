@@ -173,7 +173,7 @@ The tool uses **jj (Jujutsu)** initially as the backing store; git support may b
 
 ## 5. Commands
 
-The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or `tt task checkout`. Aliases:
+The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or `tt task checkout`. The tt dispatcher supports arbitrary nesting depth through directory structures: directories represent namespaces and executable files represent final commands. For example, `tt task context add` dispatches to `scripts/cli/task/context/add`, where `task/context/` is the namespace and `add` is the executable command. This allows for flexible organization of related subcommands (e.g., all context operations under `tt task context *`) without requiring dispatcher code changes. Aliases:
 
 | Alias | Canonical |
 |-------|-----------|
@@ -189,9 +189,10 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt complete` | `tt task complete` |
 | `tt delete` | `tt task delete` |
 | `tt tree` | `tt task tree` |
-| `tt add-context` | `tt task add-context` |
-| `tt get-context` | `tt task get-context` |
-| `tt list-context` | `tt task list-context` |
+| `tt add-context` | `tt task context add` |
+| `tt get-context` | `tt task context get` |
+| `tt list-context` | `tt task context list` |
+| `tt delete-context` | `tt task context delete` |
 | `tt current` | `tt task current` |
 | `tt edit` | `tt task edit` |
 | `tt prompt` | `tt task prompt` |
