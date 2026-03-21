@@ -141,7 +141,7 @@ main() {
 
   # --- Parse fields ---
   local title status
-  title="$(parse_frontmatter_field "$content" "title")"
+  title="$(parse_quoted_frontmatter_field "$content" "title")"
   status="$(parse_frontmatter_field "$content" "status")"
   [[ -z "$status" ]] && status="TODO"
 
@@ -218,7 +218,7 @@ main() {
           subtask_file="$(task_file_path "$subtask_id_suffix")"
           subtask_content="$(jj -R "$repo" --ignore-working-copy file show -r "$subtask_branch" -- "$subtask_file" 2>/dev/null || true)"
           subtask_status="$(parse_frontmatter_field "$subtask_content" "status" 2>/dev/null || true)"
-          subtask_title="$(parse_frontmatter_field "$subtask_content" "title" 2>/dev/null || true)"
+          subtask_title="$(parse_quoted_frontmatter_field "$subtask_content" "title" 2>/dev/null || true)"
         fi
       fi
       [[ -z "$subtask_status" ]] && subtask_status="TODO"
@@ -246,7 +246,7 @@ main() {
       ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
       local ctx_content ctx_title
       ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$ctx_file" 2>/dev/null || true)"
-      ctx_title="$(parse_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
+      ctx_title="$(parse_quoted_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
       if [[ -n "$ctx_title" ]]; then
         printf -- '- %s (%s)\n' "$ctx_title" "$ctx_id"
       else
@@ -281,7 +281,7 @@ main() {
         if [[ -n "$ctx_content" ]]; then
           # Parse frontmatter fields (using raw for title to preserve formatting)
           local ctx_title ctx_created ctx_updated ctx_body
-          ctx_title="$(parse_frontmatter_field_raw "$ctx_content" "title" 2>/dev/null || true)"
+          ctx_title="$(parse_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
           ctx_created="$(parse_frontmatter_field "$ctx_content" "created" 2>/dev/null || true)"
           ctx_updated="$(parse_frontmatter_field "$ctx_content" "updated" 2>/dev/null || true)"
           ctx_body="$(parse_body "$ctx_content")"

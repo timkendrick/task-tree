@@ -205,7 +205,7 @@ main() {
     log "Error: Could not read task file '$task_file' from '$child_bookmark'."
     exit 1
   }
-  task_title="$(parse_frontmatter_field "$task_content" "title")"
+  task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
   task_status="$(parse_frontmatter_field "$task_content" "status")"
 
   # Validate --delete requires DONE

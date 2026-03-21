@@ -124,7 +124,7 @@ main() {
 
   # --- Parse fields ---
   local title
-  title="$(parse_frontmatter_field "$content" "title")"
+  title="$(parse_quoted_frontmatter_field "$content" "title")"
 
   local body
   body="$(parse_body "$content")"
@@ -168,7 +168,7 @@ main() {
       local ctx_file ctx_content ctx_title ctx_body
       ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
       ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$ctx_file" 2>/dev/null || true)"
-      ctx_title="$(parse_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
+      ctx_title="$(parse_quoted_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
       ctx_body="$(parse_body "$ctx_content")"
       printf 'context: %s\n' "$ctx_id"
       printf 'title: "%s"\n' "$ctx_title"

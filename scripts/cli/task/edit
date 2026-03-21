@@ -199,7 +199,7 @@ main() {
 
   # Parse current values from frontmatter
   local current_title current_status current_created current_body
-  current_title="$(parse_frontmatter_field "$task_content" "title")"
+  current_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
   current_status="$(parse_frontmatter_field "$task_content" "status")"
   current_created="$(parse_frontmatter_field "$task_content" "created")"
 
