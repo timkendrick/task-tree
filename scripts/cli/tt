@@ -122,19 +122,53 @@ main() {
   shift 2
 
   local command_dir="$script_dir/$command"
-  local subcommand_script="$command_dir/$subcommand"
+  local subcommand_path="$command_dir/$subcommand"
 
   if [[ ! -d "$command_dir" ]]; then
     log "tt: command not found: $command"
     exit 1
   fi
 
-  if [[ ! -f "$subcommand_script" ]] || [[ ! -x "$subcommand_script" ]]; then
+  # Check if subcommand is a directory (three-level dispatch)
+  if [[ -d "$subcommand_path" ]]; then
+    if [[ $# -eq 0 ]] || { [[ $# -eq 1 ]] && [[ "$1" == "--help" || "$1" == "-h" ]]; }; then
+      # Show available third-level subcommands
+      log "${SCRIPT_NAME} $command $subcommand <action> [args...]"
+      log ""
+      log "Available actions:"
+      local found=false
+      for f in "$subcommand_path"/*; do
+        if [[ -f "$f" && -x "$f" ]]; then
+          log "  $(basename "$f")"
+          found=true
+        fi
+      done
+      [[ "$found" == false ]] && log "  (none)"
+      exit 0
+    fi
+
+    local action="$1"
+    shift
+    local action_script="$subcommand_path/$action"
+
+    if [[ ! -f "$action_script" ]] || [[ ! -x "$action_script" ]]; then
+      log "tt: action not found: $action"
+      exit 1
+    fi
+
+    # Pass COMMAND_NAME prefix for proper usage messages in third-level scripts
+    export COMMAND_NAME="$command $subcommand"
+
+    exec "$action_script" "$@"
+  fi
+
+  # Standard two-level dispatch
+  if [[ ! -f "$subcommand_path" ]] || [[ ! -x "$subcommand_path" ]]; then
     log "tt: subcommand not found: $subcommand"
     exit 1
   fi
 
-  exec "$subcommand_script" "$@"
+  exec "$subcommand_path" "$@"
 }
 
 main "$@"
