@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../../lib/common.sh
+. "$SCRIPT_DIR/../../lib/common.sh"
+
+# tt task context list — List context IDs for a task.
+#
+# Usage: list [<task-id>] [--task <task-id>] [--repo PATH] [-h|--help]
+#
+# Environment variables:
+#   COMMAND_NAME - Command prefix (e.g., "task context") set by parent dispatcher
+
+readonly SCRIPT_NAME="${COMMAND_NAME:+$COMMAND_NAME }${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} [<task-id>] [--task <task-id>] [--repo PATH]
+
+List the context IDs for the provided task (defaulting to current task) to stdout.
+
+If the task has no context files, nothing is printed and the command exits successfully.
+
+Options:
+  <task-id>           Task to list context from (alternative to --task).
+  --task TASK_ID      Task to list context from (default: current task).
+                      --task takes precedence over the positional argument.
+  --repo PATH         Repository root (default: find .jj).
+  -h, --help          Show this help.
+
+Examples:
+  ${SCRIPT_NAME}
+  ${SCRIPT_NAME} task/foo-abc12345
+  ${SCRIPT_NAME} --task task/foo-abc12345
+
+EOF
+  exit 1
+}
+
+main() {
+  local task_id_arg=''
+  local repo=''
+  local positional_task_id=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task)
+        [[ $# -lt 2 ]] && { log "Error: --task requires an argument"; usage; }
+        task_id_arg="$2"; shift 2 ;;
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage ;;
+      -*)
+        log "Error: Unknown option: $1"; usage ;;
+      *)
+        if [[ -n "$positional_task_id" ]]; then
+          log "Error: Unexpected argument: $1"
+          usage
+        fi
+        positional_task_id="$1"; shift ;;
+    esac
+  done
+
+  # --task takes precedence over positional argument
+  local task_id="${task_id_arg:-$positional_task_id}"
+
+  # Resolve repo root
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # Resolve task branch and suffix
+  local branch task_suffix
+
+  if [[ -n "$task_id" ]]; then
+    branch="$task_id"
+    if ! jj -R "$repo" --ignore-working-copy log -r "$branch" --no-graph -T '' 2>/dev/null; then
+      log "Error: Branch '$branch' not found in repository."
+      exit 1
+    fi
+    if is_task_branch "$branch" "$task_prefix"; then
+      task_suffix="${branch#$task_prefix}"
+    elif is_project_branch "$branch" "$project_prefix"; then
+      task_suffix="${branch#$project_prefix}"
+    else
+      log "Error: '$task_id' is not a task or project branch."
+      exit 1
+    fi
+  else
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    branch="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    if [[ -z "$branch" ]]; then
+      log "Error: Not on a task or project branch. Use --task to specify."
+      exit 1
+    fi
+    if is_task_branch "$branch" "$task_prefix"; then
+      task_suffix="${branch#$task_prefix}"
+    else
+      task_suffix="${branch#$project_prefix}"
+    fi
+  fi
+
+  # Apply "where to read" rule: use find_branch_for_task to locate canonical branch
+  local read_branch
+  if ! read_branch="$(find_branch_for_task "$repo" "$branch" "$task_prefix" "$project_prefix")"; then
+    log "Error: Could not locate branch for task '$branch'."
+    exit 1
+  fi
+
+  # Read task file from canonical branch
+  local task_file
+  task_file="$(task_file_path "$task_suffix")"
+  local task_content
+  if ! task_content="$(jj -R "$repo" --ignore-working-copy file show -r "$read_branch" -- "$task_file" 2>/dev/null)"; then
+    log "Error: Could not read task file '$task_file' from '$read_branch'."
+    exit 1
+  fi
+
+  # Parse context IDs from task frontmatter and output them (one per line)
+  # Exit 0 even if no context IDs found (silent success)
+  printf '%s' "$task_content" | awk '
+    /^---$/ { n++; next }
+    n==1 && /^context:/ {
+      sub(/^context:[[:space:]]*/, "")
+      print
+    }
+  '
+}
+
+main "$@"
