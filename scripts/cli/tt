@@ -47,6 +47,7 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} add-context  →  tt task add-context
   ${SCRIPT_NAME} get-context  →  tt task get-context
   ${SCRIPT_NAME} list-context →  tt task list-context
+  ${SCRIPT_NAME} delete-context → tt task delete-context
   ${SCRIPT_NAME} prompt       →  tt task prompt
   ${SCRIPT_NAME} init         →  tt workspace init
   ${SCRIPT_NAME} switch       →  tt workspace switch
@@ -80,6 +81,7 @@ main() {
     add-context) set -- task     add-context  "${@:2}" ;;
     get-context) set -- task     get-context  "${@:2}" ;;
     list-context) set -- task   list-context  "${@:2}" ;;
+    delete-context) set -- task delete-context "${@:2}" ;;
     prompt)      set -- task     prompt       "${@:2}" ;;
   esac
 
