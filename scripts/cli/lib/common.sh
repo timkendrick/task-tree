@@ -241,17 +241,26 @@ perform_workspace_switch() {
 }
 
 # Usage: parse_frontmatter_field CONTENT FIELD
-# Extracts the value of a YAML frontmatter field from multi-line content.
+# Extracts the raw value of a YAML frontmatter field from multi-line content,
+# preserving any quotes that were in the original.
 parse_frontmatter_field() {
   local content="$1" field="$2"
   printf '%s' "$content" | awk -v field="$field" '
     /^---$/ { n++; next }
     n == 1 && $0 ~ ("^" field ":") {
       sub("^" field ":[[:space:]]*", "")
-      gsub(/^"|"$/, "")
       print; exit
     }
   '
+}
+
+# Usage: parse_quoted_frontmatter_field CONTENT FIELD
+# Extracts the value of a YAML frontmatter field from multi-line content,
+# stripping leading and trailing quotation marks.
+parse_quoted_frontmatter_field() {
+  local value
+  value="$(parse_frontmatter_field "$1" "$2")"
+  printf '%s' "$value" | sed 's/^"\(.*\)"$/\1/'
 }
 
 # Usage: raw=$(prompt_raw <<< "$template")

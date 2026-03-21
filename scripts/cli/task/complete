@@ -149,7 +149,7 @@ main() {
   }
 
   local task_title task_status
-  task_title="$(parse_frontmatter_field "$task_content" "title")"
+  task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
   task_status="$(parse_frontmatter_field "$task_content" "status")"
 
   # If already DONE, nothing to do

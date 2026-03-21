@@ -9,18 +9,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #                (default) or the given task.
 #
 # Usage:
-#   show [<task-id>] [--repo PATH] [-h|--help]
+#   show [<task-id>] [--repo PATH] [--expand-context] [-h|--help]
 #
 # Options:
-#   <task-id>    Task ID (branch name) to show. Default: current task.
-#   --repo PATH  Repository root (default: walk up from CWD to find .jj).
-#   -h, --help   Show this help.
+#   <task-id>          Task ID (branch name) to show. Default: current task.
+#   --repo PATH        Repository root (default: walk up from CWD to find .jj).
+#   --expand-context   Expand and show full content of context files.
+#   -h, --help         Show this help.
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [--repo PATH]
+Usage: ${SCRIPT_NAME} [<task-id>] [--repo PATH] [--expand-context]
 
 Show the metadata and direct child tasks of the current task (default)
 or the given task. Reads from the correct branch per the "where to read"
@@ -28,9 +29,10 @@ rule: merged tasks are read from the parent branch; ongoing tasks are
 read from their own branch.
 
 Options:
-  <task-id>    Task branch name to show (default: current task).
-  --repo PATH  Repository root (default: find .jj).
-  -h, --help   Show this help.
+  <task-id>          Task branch name to show (default: current task).
+  --repo PATH        Repository root (default: find .jj).
+  --expand-context   Expand and show full content of context files.
+  -h, --help         Show this help.
 
 EOF
   exit 1
@@ -39,12 +41,15 @@ EOF
 main() {
   local task_id_arg=''
   local repo=''
+  local expand_context=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"; shift 2 ;;
+      --expand-context)
+        expand_context=true; shift ;;
       -h|--help) usage ;;
       -*)
         log "Error: Unknown option: $1"; usage ;;
@@ -136,7 +141,7 @@ main() {
 
   # --- Parse fields ---
   local title status
-  title="$(parse_frontmatter_field "$content" "title")"
+  title="$(parse_quoted_frontmatter_field "$content" "title")"
   status="$(parse_frontmatter_field "$content" "status")"
   [[ -z "$status" ]] && status="TODO"
 
@@ -213,7 +218,7 @@ main() {
           subtask_file="$(task_file_path "$subtask_id_suffix")"
           subtask_content="$(jj -R "$repo" --ignore-working-copy file show -r "$subtask_branch" -- "$subtask_file" 2>/dev/null || true)"
           subtask_status="$(parse_frontmatter_field "$subtask_content" "status" 2>/dev/null || true)"
-          subtask_title="$(parse_frontmatter_field "$subtask_content" "title" 2>/dev/null || true)"
+          subtask_title="$(parse_quoted_frontmatter_field "$subtask_content" "title" 2>/dev/null || true)"
         fi
       fi
       [[ -z "$subtask_status" ]] && subtask_status="TODO"
@@ -241,7 +246,7 @@ main() {
       ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
       local ctx_content ctx_title
       ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$ctx_file" 2>/dev/null || true)"
-      ctx_title="$(parse_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
+      ctx_title="$(parse_quoted_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
       if [[ -n "$ctx_title" ]]; then
         printf -- '- %s (%s)\n' "$ctx_title" "$ctx_id"
       else
@@ -262,6 +267,48 @@ main() {
     printf '[No description]\n'
   fi
   printf '\n'
+
+  # --- Print expanded context files (if requested) ---
+  if [[ "$expand_context" == true ]]; then
+    if [[ -n "$contexts" ]]; then
+      while IFS= read -r ctx_id; do
+        [[ -z "$ctx_id" ]] && continue
+        # Resolve context file path on the task's branch
+        local ctx_file ctx_content
+        ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
+        ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$ctx_file" 2>/dev/null || true)"
+
+        if [[ -n "$ctx_content" ]]; then
+          # Parse frontmatter fields (using raw for title to preserve formatting)
+          local ctx_title ctx_created ctx_updated ctx_body
+          ctx_title="$(parse_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
+          ctx_created="$(parse_frontmatter_field "$ctx_content" "created" 2>/dev/null || true)"
+          ctx_updated="$(parse_frontmatter_field "$ctx_content" "updated" 2>/dev/null || true)"
+          ctx_body="$(parse_body "$ctx_content")"
+
+          # Output synthetic frontmatter with context id
+          printf -- '---\n'
+          printf 'context: %s\n' "$ctx_id"
+          if [[ -n "$ctx_title" ]]; then
+            printf 'title: %s\n' "$ctx_title"
+          fi
+          if [[ -n "$ctx_created" ]]; then
+            printf 'created: %s\n' "$ctx_created"
+          fi
+          if [[ -n "$ctx_updated" ]]; then
+            printf 'updated: %s\n' "$ctx_updated"
+          fi
+          printf -- '---\n'
+          # Trim leading/trailing blank lines from body
+          ctx_body="$(printf '%s' "$ctx_body" | awk 'NF{found=1} found{print}' | sed -e 's/[[:space:]]*$//')"
+          if [[ -n "$ctx_body" ]]; then
+            printf '%s\n' "$ctx_body"
+          fi
+          printf '\n'
+        fi
+      done <<< "$contexts"
+    fi
+  fi
 }
 
 main "$@"

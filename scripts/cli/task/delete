@@ -229,7 +229,7 @@ main() {
     log "Error: Could not read task file '$task_file' from bookmark '$task_id'."
     exit 1
   }
-  task_title="$(parse_frontmatter_field "$task_content" "title")"
+  task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
   task_status="$(parse_frontmatter_field "$task_content" "status")"
 
   # Precondition: top-level task must be DONE (skip with --force)
