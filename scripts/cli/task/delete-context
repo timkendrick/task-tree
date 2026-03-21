@@ -168,11 +168,11 @@ main() {
       sub(/^context:[[:space:]]*/, "")
       print
     }
-  ')
+  ') || true
 
   # Validate requested context ID exists
   local found=false
-  for known in "${all_ctx_ids[@]}"; do
+  for known in "${all_ctx_ids[@]:-}"; do
     if [[ "$known" == "$ctx_id_arg" ]]; then
       found=true
       break
