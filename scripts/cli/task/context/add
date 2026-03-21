@@ -2,14 +2,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-# shellcheck source=../lib/common.sh
-. "$SCRIPT_DIR/../lib/common.sh"
+# shellcheck source=../../lib/common.sh
+. "$SCRIPT_DIR/../../lib/common.sh"
 
-# tt task add-context — Create a standalone context file for a task.
+# tt task context add — Create a standalone context file for a task.
 #
 # Usage:
-#   add-context [<task-id>] [--title <title>] [--slug <slug>] [--body <text>]
-#               [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
+#   add [<task-id>] [--title <title>] [--slug <slug>] [--body <text>]
+#       [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
 #
 # Options:
 #   <task-id>            Task branch to add context to (default: current branch).
@@ -19,8 +19,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --worktree=<path>    Worktree to use when task has multiple worktrees.
 #   --repo PATH          Repository root (default: walk up from CWD to find .jj).
 #   --workspace-dir PATH Virtual project dir. Overrides workspace_dir in .tt/config.toml.
+#
+# Environment variables:
+#   COMMAND_NAME - Command prefix (e.g., "task context") set by parent dispatcher
 
-readonly SCRIPT_NAME="${0##*/}"
+readonly SCRIPT_NAME="${COMMAND_NAME:+$COMMAND_NAME }${0##*/}"
 
 usage() {
   cat >&2 <<EOF

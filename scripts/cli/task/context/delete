@@ -2,21 +2,24 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-# shellcheck source=../lib/common.sh
-. "$SCRIPT_DIR/../lib/common.sh"
+# shellcheck source=../../lib/common.sh
+. "$SCRIPT_DIR/../../lib/common.sh"
 
-# tt task delete-context — Delete a context file from a task.
+# tt task context delete — Delete a context file from a task.
 #
 # Usage:
-#   delete-context <context-id> [--task <task-id>] [--repo PATH] [-h|--help]
+#   delete <context-id> [--task <task-id>] [--repo PATH] [-h|--help]
 #
 # Options:
 #   <context-id>         Context ID to delete (e.g. context/foo-abc12345).
 #   --task TASK_ID       Task to delete context from (default: current task).
 #   --repo PATH          Repository root (default: walk up from CWD to find .jj).
 #   -h, --help           Show this help.
+#
+# Environment variables:
+#   COMMAND_NAME - Command prefix (e.g., "task context") set by parent dispatcher
 
-readonly SCRIPT_NAME="${0##*/}"
+readonly SCRIPT_NAME="${COMMAND_NAME:+$COMMAND_NAME }${0##*/}"
 
 usage() {
   cat >&2 <<EOF

@@ -46,6 +46,24 @@ This project uses **JJ (Jujutsu)** instead of Git. Use `jj` commands rather than
 
 **When to use tt vs jj.** Use `tt` for the day-to-day task workflow: creating tasks, switching context, recording checkpoints, completing work, and merging it back. `tt` understands the task hierarchy, keeps task files and frontmatter in sync, and performs the right sequence of VCS operations for you. Reserve `jj` for low-level operations: inspecting history (`jj log`), viewing diffs (`jj diff`), undoing changes (`jj undo`), or any operation that manipulates commits and branches directly without going through the task model.
 
-Use context7 tools for full usage instructions for all `jj` commands.
+#### Common JJ Commands
+
+```bash
+jj status                    # Show working copy status
+jj log                       # Show commit history
+jj diff                      # Show changes in working copy
+jj undo                      # Undo the most recent operation
+jj oplog                     # Show the operation log history
+jj new -m "message"          # Create a new change on top of current
+jj commit -m "message"       # Finalize current change, updating message
+jj describe -m "message"     # Set/update description of current change
+jj squash                    # Squash current change into parent
+jj abandon                   # Abandon current change
+jj bookmark set <name>       # Create/move a bookmark (like a branch)
+jj git push                  # Push to Git remote
+jj git fetch                 # Fetch from Git remote
+```
+
+Use `context7` tools for full usage instructions for all `jj` commands.
 
 ---

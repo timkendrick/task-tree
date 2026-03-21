@@ -3,14 +3,17 @@ set -euo pipefail
 
 # tt — task-tree bootstrap CLI dispatcher
 #
-# Dispatches to subcommands based on the first two arguments:
-#   tt <command> <subcommand> [args...]
+# Dynamically dispatches to nested subcommands based on filesystem structure:
+#   tt <command> [<subcommand> [...]] [args...]
 #
-# Subcommands are located via the filesystem:
-#   scripts/cli/<command>/<subcommand>
+# Commands are located via the filesystem:
+#   scripts/cli/<command>/<subcommand>/<...>/<executable>
+#
+# Directories represent namespaces, executables represent final commands.
 #
 # Usage:
 #   tt task create --slug foo --title "Foo"
+#   tt task context add --title "Research" --body "..."
 #   tt project init /path/to/repo /path/to/virtual
 #
 
@@ -20,10 +23,48 @@ log() {
   printf '%s\n' "$*" >&2
 }
 
+# Show help for a namespace (directory) or root
+show_namespace_help() {
+  local name="${1:-}"
+  local dir="$2"
+  local show_directories="${3:-true}"
+
+  if [[ -z "$name" ]]; then
+    cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} <command> [args...]
+
+Dispatch to a tt subcommand. Commands are discovered from
+the filesystem under the CLI scripts directory.
+
+Available commands:
+EOF
+  else
+    cat >&2 <<EOF
+Usage: tt $name <subcommand> [args...]
+
+Available subcommands:
+EOF
+  fi
+
+  local found=false
+  for f in "$dir"/*; do
+    local item="${f##*/}"
+    if [[ "$show_directories" == true && -d "$f" ]]; then
+      log "  $item/"  # Directory (namespace)
+      found=true
+    elif [[ -f "$f" && -x "$f" ]]; then
+      log "  $item"   # Executable command
+      found=true
+    fi
+  done
+  [[ "$found" == false ]] && log "  (none)"
+  exit 0
+}
+
 usage() {
   local exit_code="${1:-1}"
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} <command> <subcommand> [args...]
+Usage: ${SCRIPT_NAME} <command> [args...]
    or: ${SCRIPT_NAME} <alias> [args...]
 
 Dispatch to a tt subcommand. Commands and subcommands are discovered from
@@ -31,6 +72,7 @@ the filesystem under the CLI scripts directory.
 
 Examples:
   ${SCRIPT_NAME} task create --slug phase-0 --title "Phase 0"
+  ${SCRIPT_NAME} task context add --title "Research" --body "..."
   ${SCRIPT_NAME} project init /path/to/repo /path/to/virtual
 
 Aliases (shorthand for common subcommands):
@@ -44,10 +86,10 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} complete     →  tt task complete
   ${SCRIPT_NAME} delete       →  tt task delete
   ${SCRIPT_NAME} tree         →  tt task tree
-  ${SCRIPT_NAME} add-context  →  tt task add-context
-  ${SCRIPT_NAME} get-context  →  tt task get-context
-  ${SCRIPT_NAME} list-context →  tt task list-context
-  ${SCRIPT_NAME} delete-context → tt task delete-context
+  ${SCRIPT_NAME} add-context  →  tt task context add
+  ${SCRIPT_NAME} get-context  →  tt task context get
+  ${SCRIPT_NAME} list-context →  tt task context list
+  ${SCRIPT_NAME} delete-context → tt task context delete
   ${SCRIPT_NAME} prompt       →  tt task prompt
   ${SCRIPT_NAME} init         →  tt workspace init
   ${SCRIPT_NAME} switch       →  tt workspace switch
@@ -78,10 +120,10 @@ main() {
     complete)    set -- task     complete     "${@:2}" ;;
     delete)      set -- task     delete       "${@:2}" ;;
     tree)        set -- task     tree         "${@:2}" ;;
-    add-context) set -- task     add-context  "${@:2}" ;;
-    get-context) set -- task     get-context  "${@:2}" ;;
-    list-context) set -- task   list-context  "${@:2}" ;;
-    delete-context) set -- task delete-context "${@:2}" ;;
+    add-context)  set -- task     context add   "${@:2}" ;;
+    get-context)  set -- task     context get   "${@:2}" ;;
+    list-context) set -- task     context list  "${@:2}" ;;
+    delete-context) set -- task context delete "${@:2}" ;;
     prompt)      set -- task     prompt       "${@:2}" ;;
   esac
 
@@ -90,51 +132,69 @@ main() {
   fi
 
   if [[ $# -eq 0 ]]; then
-    log "Error: ${SCRIPT_NAME} requires <command> and <subcommand>"
+    log "Error: ${SCRIPT_NAME} requires at least <command>"
     usage
   fi
 
-  if [[ $# -eq 1 ]] || { [[ $# -eq 2 ]] && [[ "$2" == "--help" || "$2" == "-h" ]]; }; then
-    local command="$1"
-    local command_dir="$script_dir/$command"
+  # Dynamic dispatch: walk the command hierarchy
+  local current_path="$script_dir"
+  local accumulated_name=""
+  local -a command_parts=()
 
-    if [[ ! -d "$command_dir" ]]; then
-      log "tt: command not found: $command"
+  # Use shift to iterate through arguments instead of indirect expansion
+  while [[ $# -gt 0 ]]; do
+    local arg="$1"
+    shift
+    local next_path="$current_path/$arg"
+
+    if [[ -d "$next_path" ]]; then
+      # Directory → continue to next level (namespace)
+      if [[ -n "$accumulated_name" ]]; then
+        accumulated_name="$accumulated_name $arg"
+      else
+        accumulated_name="$arg"
+      fi
+      current_path="$next_path"
+      command_parts+=("$arg")
+    elif [[ -f "$next_path" && -x "$next_path" ]]; then
+      # Executable file → dispatch
+      if [[ -n "$accumulated_name" ]]; then
+        accumulated_name="$accumulated_name $arg"
+      else
+        accumulated_name="$arg"
+      fi
+
+      # Check if next argument is help flag for this command
+      if [[ $# -ge 1 && ( "$1" == "--help" || "$1" == "-h" ) ]]; then
+        shift
+        export COMMAND_NAME="$accumulated_name"
+        exec "$next_path" "$@"
+      fi
+
+      # Dispatch to the final command
+      export COMMAND_NAME="$accumulated_name"
+      exec "$next_path" "$@"
+    else
+      # Check if this is a help request for a namespace
+      if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+        # Show help for the current namespace
+        show_namespace_help "$accumulated_name" "$current_path" "true"
+        exit 0
+      fi
+
+      # Neither directory nor executable → error
+      if [[ -z "$accumulated_name" ]]; then
+        log "Error: ${SCRIPT_NAME}: command not found: $arg"
+      else
+        log "Error: ${SCRIPT_NAME}: subcommand not found: $arg"
+      fi
       exit 1
     fi
+  done
 
-    log "${SCRIPT_NAME} $command <subcommand> [args...]"
-    log ""
-    log "Available subcommands:"
-    local found=false
-    for f in "$command_dir"/*; do
-      if [[ -f "$f" && -x "$f" ]]; then
-        log "  $(basename "$f")"
-        found=true
-      fi
-    done
-    [[ "$found" == false ]] && log "  (none)"
-    exit 0
-  fi
-
-  local command="$1"
-  local subcommand="$2"
-  shift 2
-
-  local command_dir="$script_dir/$command"
-  local subcommand_script="$command_dir/$subcommand"
-
-  if [[ ! -d "$command_dir" ]]; then
-    log "tt: command not found: $command"
-    exit 1
-  fi
-
-  if [[ ! -f "$subcommand_script" ]] || [[ ! -x "$subcommand_script" ]]; then
-    log "tt: subcommand not found: $subcommand"
-    exit 1
-  fi
-
-  exec "$subcommand_script" "$@"
+  # If we get here, we've exhausted all arguments and landed on a directory
+  # → show namespace help
+  show_namespace_help "${accumulated_name:-root}" "$current_path"
 }
 
 main "$@"

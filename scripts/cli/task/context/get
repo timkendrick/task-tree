@@ -2,21 +2,24 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-# shellcheck source=../lib/common.sh
-. "$SCRIPT_DIR/../lib/common.sh"
+# shellcheck source=../../lib/common.sh
+. "$SCRIPT_DIR/../../lib/common.sh"
 
-# tt task get-context — Print the raw contents of context file(s) for a task.
+# tt task context get — Print the raw contents of context file(s) for a task.
 #
 # Usage:
-#   get-context [<context-id> [...]] [--task <task-id>] [--repo PATH] [-h|--help]
+#   get [<context-id> [...]] [--task <task-id>] [--repo PATH] [-h|--help]
 #
 # Options:
 #   <context-id>...      Context IDs to retrieve (default: all context files).
 #   --task <task-id>     Task to read context from (default: current task).
 #   --repo PATH          Repository root (default: walk up from CWD to find .jj).
 #   -h, --help           Show this help.
+#
+# Environment variables:
+#   COMMAND_NAME - Command prefix (e.g., "task context") set by parent dispatcher
 
-readonly SCRIPT_NAME="${0##*/}"
+readonly SCRIPT_NAME="${COMMAND_NAME:+$COMMAND_NAME }${0##*/}"
 
 usage() {
   cat >&2 <<EOF
