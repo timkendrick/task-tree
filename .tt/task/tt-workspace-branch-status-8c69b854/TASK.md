@@ -1,6 +1,6 @@
 ---
 title: "Move branch status to `tt workspace` command"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-15T12:56:14Z
 updated: 2026-03-15T12:56:14Z
 ---
