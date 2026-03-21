@@ -179,6 +179,8 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 |-------|-----------|
 | `tt init` | `tt workspace init` |
 | `tt switch` | `tt workspace switch` |
+| `tt branch` | `tt workspace branch` |
+| `tt worktree` | `tt workspace worktree` |
 | `tt create` | `tt task create` |
 | `tt checkout` | `tt task checkout` |
 | `tt checkin` | `tt task checkin` |
@@ -202,6 +204,10 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 - **`tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>]`** — Initialize a task-tree project. Creates the virtual workspace directory, `.tt/config.toml` (with optional task prefix and project prefix), and a `HEAD` symlink that initially points to the repo and is later updated to the most recently checked-out task workspace (serving as a quick link to the current development context). Requires a clean working directory and no existing `.tt` in the repo root. See §9 step 1 and §6.2 (HEAD symlink).
 
 - **`tt workspace switch <task-id> [--worktree=<path>] [--force]`** — Update the virtual project's `HEAD` symlink to point to an existing worktree for the given task or project. Unlike `tt task checkout --switch`, this command does not create worktrees, switch VCS branches, or update task status; it only redirects `HEAD`. Refuses if no worktree exists for the task (the user must run `tt task checkout --worktree` first). If multiple worktrees exist for the task, `--worktree=<path>` is required to disambiguate. Refuses if the workspace currently pointed to by `HEAD` has uncommitted changes, unless `--force` is provided. Runs `pre-checkout` and `post-checkout` hooks; hook env vars `TT_PREVIOUS_TASK_ID`/`TT_PREVIOUS_TASK_BRANCH` reflect the task that `HEAD` was pointing to before the switch. Output is the same confirmation as `tt task checkout`. See §6.2.
+
+- **`tt workspace branch <task-id> [--repo PATH]`** — Output the branch name for the given task or project ID to stdout. Accepts a full task or project ID (e.g., `task/foo-abc12345`, `project/bar-def12345`). Exits with an error if the task is not found in the repository. Intended for use in shell command substitution.
+
+- **`tt workspace worktree <task-id> [--repo PATH]`** — Output the worktree path for the given task or project ID to stdout. Accepts a full task or project ID. Falls back to the repository root if no dedicated worktree exists for the task. Exits with an error if the task ID is not found in the repository. Intended for use in shell command substitution.
 
 ### 5.2 Task
 
@@ -233,7 +239,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 - **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step. No hooks.
 
-- **`tt task show [<task-id>] [--expand-context]`** — Show the metadata and direct child tasks of the current task (default) or the given task. Reads from the correct branch per the "where to read" rule (§7.1 / Appendix A step 3): merged tasks are read from the parent branch that received the checkin; ongoing tasks are read from their own branch. Output format: lowercase header block (`task`, `branch`, `worktree`, `status`, `title`), followed by a subtasks section, a context section (listing context file titles and IDs), and a body section, all always present and separated by `---` dividers. The `worktree` field shows the closest ancestor worktree for the given task. With `--expand-context`, additionally prints the full content of context files after the body section, each preceded by `---` and a header indicating the context file title and ID. Output to stdout only. No hooks.
+- **`tt task show [<task-id>] [--expand-context]`** — Show the metadata and direct child tasks of the current task (default) or the given task. Reads from the correct branch per the "where to read" rule (§7.1 / Appendix A step 3): merged tasks are read from the parent branch that received the checkin; ongoing tasks are read from their own branch. Output format: lowercase header block (`task`, `status`, `title`; and `parent` if the task has a parent), followed by a subtasks section, a context section (listing context file titles and IDs), and a body section, all always present and separated by `---` dividers. With `--expand-context`, additionally prints the full content of context files after the body section, each preceded by `---` and a header indicating the context file title and ID. Output to stdout only. No hooks.
 
 - **`tt task prompt [<task-id>] [--message <text>] [--repo PATH]`** — Emit a self-contained LLM implementation prompt for a task to stdout. Reads the task file from the task's branch (defaulting to the current task if no `<task-id>` is given) and outputs: a heading line (`Implement task: <title>`), a mini frontmatter block (`task:` and `title:`), the task body, a `---` separator, any associated context files (each with its own `context:` / `title:` / `---` block and body), and a closing section listing common `tt` introspection commands. With `--message <text>`, appends an additional `---` separator followed by the verbatim message text at the end of the output. `--repo PATH` overrides the repository root. No VCS writes; no hooks.
 

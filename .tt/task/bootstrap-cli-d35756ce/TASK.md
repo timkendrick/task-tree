@@ -50,7 +50,7 @@ subtask: [x] task/tt-task-delete-context-5f97f98a
 subtask: [x] task/tt-task-prompt-6060d454
 subtask: [ ] task/tt-task-checkin-propagate-fe6f7554
 subtask: [x] task/tt-task-show-expand-context-310f87ca
-subtask: [ ] task/tt-workspace-branch-status-8c69b854
+subtask: [x] task/tt-workspace-branch-status-8c69b854
 subtask: [x] task/tt-task-context-subcommands-43ff1903
 subtask: [x] task/tt-task-prompt-message-f4594828
 subtask: [x] task/tt-task-list-context-82eba696

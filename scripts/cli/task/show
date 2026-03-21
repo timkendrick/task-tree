@@ -188,8 +188,6 @@ main() {
   # --- Print header block ---
   printf -- '---\n'
   printf 'task:     %s\n' "$branch"
-  printf 'branch:   %s\n' "$branch"
-  printf 'worktree: %s\n' "$worktree"
   [[ -n "$parent_branch" ]] && printf 'parent:   %s\n' "$parent_branch"
   printf 'status:   %s\n' "$status"
   printf 'title:    %s\n' "$title"
