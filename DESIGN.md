@@ -191,6 +191,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt tree` | `tt task tree` |
 | `tt add-context` | `tt task add-context` |
 | `tt get-context` | `tt task get-context` |
+| `tt list-context` | `tt task list-context` |
 | `tt current` | `tt task current` |
 | `tt edit` | `tt task edit` |
 | `tt prompt` | `tt task prompt` |
@@ -218,6 +219,8 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 - **`tt task add-context [<task-id>] [--title <title>] [--slug <slug>] [--body <text>] [--worktree=<path>]`** — Create a new context file associated with the current task (or `<task-id>`). Prompts for title and slug (like task creation) if not provided; opens an editor for the body if `--body` is not given. Generates a context ID of the form `context/<ctx-slug>-<ctx-hex>` and writes the context file to `.tt/task/<task-slug>/context/<ctx-slug>-<ctx-hex>.md`. Adds a `context: context/<ctx-slug>-<ctx-hex>` entry to the task file's frontmatter and refreshes the task's `updated` timestamp. Creates a commit: `Add context: <context-title> (<task-id>)` and advances the task bookmark. When `<task-id>` is given, the task must have a checked-out worktree; `--worktree=<path>` disambiguates when multiple worktrees exist.
 
 - **`tt task get-context [<context-id> [...]] [--task <task-id>] [--repo PATH]`** — Print the raw contents of one or more context files for a task to stdout. If one or more `<context-id>` positional arguments are given, only those context files are printed (in the order specified); otherwise all context files for the task are printed in declaration order. Output is the raw file contents including frontmatter; multiple files are concatenated with no separator. `--task` specifies which task to read from (default: current task). Applies the "where to read" rule (§7.1 / Appendix A step 3). Exits non-zero if the task has no context files or a specified context ID is not registered on the task. No hooks.
+
+- **`tt task list-context [<task-id>] [--task <task-id>] [--repo PATH]`** — List the context IDs for a task to stdout. If `<task-id>` is provided, lists context for that task; otherwise lists context for the current task. The `--task` flag is an alternative way to specify the task (takes precedence over the positional argument). Context IDs are output one per line in declaration order (as they appear in the task file's frontmatter). Exits with code 0 even if the task has no context files (produces no output in that case). Exits with code 1 if the task is not found or is not a valid task/project branch. Applies the "where to read" rule (§7.1 / Appendix A step 3). No hooks.
 
 - **`tt task tree [--project <project-id>]... [--detached] | [--all]`** — Generate and print the full project todo list to stdout. Tasks are grouped by project; orphaned tasks are excluded by default. Optional `--project`, `--detached` and `--all` filter which sections are shown. Output format is the markdown described in §4.1. See §7.1 and Appendix A.
 
