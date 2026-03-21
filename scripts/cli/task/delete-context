@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task delete-context — Delete a context file from a task.
+#
+# Usage:
+#   delete-context <context-id> [--task <task-id>] [--repo PATH] [-h|--help]
+#
+# Options:
+#   <context-id>         Context ID to delete (e.g. context/foo-abc12345).
+#   --task TASK_ID       Task to delete context from (default: current task).
+#   --repo PATH          Repository root (default: walk up from CWD to find .jj).
+#   -h, --help           Show this help.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} <context-id> [--task <task-id>] [--repo PATH]
+
+Delete a context file from the specified task (default: current task).
+
+Removes both the context file and the corresponding 'context:' entry from
+the task's frontmatter, and updates the task's 'updated' timestamp.
+
+Arguments:
+  <context-id>          Context ID to delete (e.g. context/foo-abc12345).
+
+Options:
+  --task TASK_ID       Task to delete context from (default: current task).
+  --repo PATH          Repository root (default: find .jj).
+  -h, --help           Show this help.
+
+Examples:
+  ${SCRIPT_NAME} context/oauth-notes-abc12345
+  ${SCRIPT_NAME} context/oauth-notes-abc12345 --task task/foo-abc12345
+
+EOF
+  exit 1
+}
+
+main() {
+  local ctx_id_arg=''
+  local task_id_arg=''
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task)
+        [[ $# -lt 2 ]] && { log "Error: --task requires an argument"; usage; }
+        task_id_arg="$2"; shift 2 ;;
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage ;;
+      -*)
+        log "Error: Unknown option: $1"; usage ;;
+      *)
+        if [[ -n "$ctx_id_arg" ]]; then
+          log "Error: Unexpected argument: $1"
+          usage
+        fi
+        ctx_id_arg="$1"; shift ;;
+    esac
+  done
+
+  # Require context ID argument
+  if [[ -z "$ctx_id_arg" ]]; then
+    log "Error: <context-id> is required"
+    usage
+  fi
+
+  # Validate context ID format (must start with "context/")
+  if [[ "$ctx_id_arg" != context/* ]]; then
+    log "Error: Context ID must start with 'context/': $ctx_id_arg"
+    exit 1
+  fi
+
+  # Resolve repo root
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # Resolve task branch and suffix
+  local branch task_suffix
+
+  if [[ -n "$task_id_arg" ]]; then
+    branch="$task_id_arg"
+    if ! jj -R "$repo" --ignore-working-copy log -r "$branch" --no-graph -T '' 2>/dev/null; then
+      log "Error: Branch '$branch' not found in repository."
+      exit 1
+    fi
+    if is_task_branch "$branch" "$task_prefix"; then
+      task_suffix="${branch#$task_prefix}"
+    elif is_project_branch "$branch" "$project_prefix"; then
+      task_suffix="${branch#$project_prefix}"
+    else
+      log "Error: '$task_id_arg' is not a task or project branch."
+      exit 1
+    fi
+  else
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    branch="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    if [[ -z "$branch" ]]; then
+      log "Error: Not on a task or project branch. Use --task to specify."
+      exit 1
+    fi
+    if is_task_branch "$branch" "$task_prefix"; then
+      task_suffix="${branch#$task_prefix}"
+    else
+      task_suffix="${branch#$project_prefix}"
+    fi
+  fi
+
+  # Resolve target worktree
+  local current_worktree target_worktree
+  current_worktree="$(resolve_current_worktree "$repo")"
+
+  if ! target_worktree="$(resolve_task_worktree "$repo" "$branch" "$task_prefix" "$project_prefix" \
+      "$current_worktree" "")"; then
+    exit 1
+  fi
+
+  # Precondition: WC must be clean
+  if ! is_wc_clean "$target_worktree"; then
+    log "Error: Working copy has uncommitted changes. Commit or discard first."
+    exit 1
+  fi
+
+  # Update task bookmark to current tip in target worktree
+  # This ensures any local changes (if we had --force) would be preserved
+  # but since we require clean WC, this just advances the bookmark if needed
+  local current_bookmark
+  current_bookmark="$(resolve_current "$target_worktree" "$task_prefix" "$project_prefix" | sed -n '3p')"
+
+  # Read task file content from current worktree
+  local task_file task_content
+  task_file="$(task_file_path "$task_suffix")"
+  task_content="$(cat "$target_worktree/$task_file" 2>/dev/null)" || {
+    log "Error: Could not read task file '$task_file'."
+    exit 1
+  }
+
+  # Parse context IDs from task frontmatter
+  local -a all_ctx_ids=()
+  while IFS= read -r ctx_id; do
+    [[ -z "$ctx_id" ]] && continue
+    all_ctx_ids+=("$ctx_id")
+  done < <(printf '%s' "$task_content" | awk '
+    /^---$/ { n++; next }
+    n==1 && /^context:/ {
+      sub(/^context:[[:space:]]*/, "")
+      print
+    }
+  ') || true
+
+  # Validate requested context ID exists
+  local found=false
+  for known in "${all_ctx_ids[@]:-}"; do
+    if [[ "$known" == "$ctx_id_arg" ]]; then
+      found=true
+      break
+    fi
+  done
+
+  if [[ "$found" == false ]]; then
+    log "Error: Context ID '$ctx_id_arg' not found in task '$branch'."
+    exit 1
+  fi
+
+  # Read the context file to get its title for the commit message
+  local ctx_file ctx_content ctx_title
+  ctx_file="$(task_context_path "$task_suffix" "$ctx_id_arg")"
+  ctx_content="$(cat "$target_worktree/$ctx_file" 2>/dev/null)" || {
+    log "Error: Could not read context file '$ctx_file'."
+    exit 1
+  }
+  ctx_title="$(parse_quoted_frontmatter_field "$ctx_content" "title")"
+
+  if [[ -z "$ctx_title" ]]; then
+    ctx_title="(untitled)"
+  fi
+
+  # Generate current timestamp for updated field
+  local new_timestamp
+  new_timestamp="$(generate_timestamp)"
+
+  # Remove context entry from task frontmatter and update 'updated' timestamp
+  local updated_task_content
+  updated_task_content="$(printf '%s' "$task_content" | awk -v ctx="$ctx_id_arg" -v ts="$new_timestamp" '
+    /^---$/ { sep++; if (sep == 2) { print "---"; next } }
+    /^context:/ && sep == 1 { sub(/^context:[[:space:]]*/, ""); if ($0 == ctx) next }
+    /^updated:/ && sep == 1 { print "updated: " ts; next }
+    { print }
+  ')"
+
+  printf '%s\n' "$updated_task_content" > "$target_worktree/$task_file"
+
+  # Remove the context file
+  rm -f "$target_worktree/$ctx_file"
+
+  # Commit the changes
+  jj -R "$target_worktree" commit -m "Delete context: $ctx_title ($branch)"
+  jj -R "$target_worktree" bookmark set "$branch" -r '@-'
+
+  log "Deleted context: $ctx_id_arg"
+}
+
+main "$@"
