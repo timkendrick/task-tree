@@ -294,7 +294,7 @@ main() {
   else
     # Same branch: commit normally
     jj -R "$target_worktree" commit -m "Add context: $ctx_title ($bookmark)"
-    jj -R "$target_worktree" bookmark set "$bookmark" -r '@-"
+    jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
   fi
 
   log "Added context: $ctx_id ($bookmark)"
