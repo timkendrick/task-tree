@@ -9,18 +9,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #                (default) or the given task.
 #
 # Usage:
-#   show [<task-id>] [--repo PATH] [-h|--help]
+#   show [<task-id>] [--repo PATH] [--expand-context] [-h|--help]
 #
 # Options:
-#   <task-id>    Task ID (branch name) to show. Default: current task.
-#   --repo PATH  Repository root (default: walk up from CWD to find .jj).
-#   -h, --help   Show this help.
+#   <task-id>          Task ID (branch name) to show. Default: current task.
+#   --repo PATH        Repository root (default: walk up from CWD to find .jj).
+#   --expand-context   Expand and show full content of context files.
+#   -h, --help         Show this help.
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [--repo PATH]
+Usage: ${SCRIPT_NAME} [<task-id>] [--repo PATH] [--expand-context]
 
 Show the metadata and direct child tasks of the current task (default)
 or the given task. Reads from the correct branch per the "where to read"
@@ -28,9 +29,10 @@ rule: merged tasks are read from the parent branch; ongoing tasks are
 read from their own branch.
 
 Options:
-  <task-id>    Task branch name to show (default: current task).
-  --repo PATH  Repository root (default: find .jj).
-  -h, --help   Show this help.
+  <task-id>          Task branch name to show (default: current task).
+  --repo PATH        Repository root (default: find .jj).
+  --expand-context   Expand and show full content of context files.
+  -h, --help         Show this help.
 
 EOF
   exit 1
@@ -39,12 +41,15 @@ EOF
 main() {
   local task_id_arg=''
   local repo=''
+  local expand_context=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"; shift 2 ;;
+      --expand-context)
+        expand_context=true; shift ;;
       -h|--help) usage ;;
       -*)
         log "Error: Unknown option: $1"; usage ;;
@@ -262,6 +267,42 @@ main() {
     printf '[No description]\n'
   fi
   printf '\n'
+
+  # --- Print expanded context files (if requested) ---
+  if [[ "$expand_context" == true ]]; then
+    if [[ -n "$contexts" ]]; then
+      local first=true
+      while IFS= read -r ctx_id; do
+        [[ -z "$ctx_id" ]] && continue
+        if [[ "$first" == true ]]; then
+          printf -- '---\n'
+          printf '\n'
+          printf -- 'Expanded Context:\n'
+          first=false
+        fi
+        # Resolve context file path on the task's branch
+        local ctx_file ctx_content ctx_title
+        ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
+        ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$ctx_file" 2>/dev/null || true)"
+        ctx_title="$(parse_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
+
+        if [[ -n "$ctx_content" ]]; then
+          if [[ -n "$ctx_title" ]]; then
+            printf -- '---\n'
+            printf 'Context: %s (%s)\n\n' "$ctx_title" "$ctx_id"
+          else
+            printf -- '---\n'
+            printf 'Context: %s\n\n' "$ctx_id"
+          fi
+          printf '%s\n' "$ctx_content"
+        fi
+      done <<< "$contexts"
+      if [[ "$first" == false ]]; then
+        printf -- '---\n'
+        printf '\n'
+      fi
+    fi
+  fi
 }
 
 main "$@"
