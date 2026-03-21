@@ -179,6 +179,8 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 |-------|-----------|
 | `tt init` | `tt workspace init` |
 | `tt switch` | `tt workspace switch` |
+| `tt branch` | `tt workspace branch` |
+| `tt worktree` | `tt workspace worktree` |
 | `tt create` | `tt task create` |
 | `tt checkout` | `tt task checkout` |
 | `tt checkin` | `tt task checkin` |
