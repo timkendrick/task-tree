@@ -2,8 +2,7 @@
 title: "Implement `tt task delete-context` command"
 status: IN-PROGRESS
 created: 2026-03-15T10:40:57Z
-updated: 2026-03-21T09:31:41Z
-context: context/test-short-form-alias-f5e0298c
+updated: 2026-03-21T09:31:44Z
 ---
 Context can be added to a task via `tt task add-context`
 
