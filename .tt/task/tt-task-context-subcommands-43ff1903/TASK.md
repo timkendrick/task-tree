@@ -1,6 +1,6 @@
 ---
 title: "Extract task context commands into `tt task context` subcommands"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-15T12:58:42Z
 updated: 2026-03-21T09:15:18Z
 ---
