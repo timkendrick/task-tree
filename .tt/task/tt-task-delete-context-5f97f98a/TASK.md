@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt task delete-context` command"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-15T10:40:57Z
 updated: 2026-03-21T09:31:44Z
 ---
