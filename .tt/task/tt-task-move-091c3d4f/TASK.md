@@ -3,6 +3,7 @@ title: "Implement `tt task move` CLI command"
 status: IN-PROGRESS
 created: 2026-03-15T09:29:31Z
 updated: 2026-03-22T21:09:45Z
+subtask: [ ] task/tt-task-move-conflict-resolution-99500d4f
 ---
 Allow reparenting tasks via `tt task move [--task <task-id>] --parent <parent-task-id>`
 
