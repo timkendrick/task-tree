@@ -1,6 +1,6 @@
 ---
 title: "Support stdin for `tt task context add` body"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-22T15:49:07Z
 updated: 2026-03-22T17:19:29Z
 context: context/plan-slug-required-in-non-interactive-mode-8a6e164a
