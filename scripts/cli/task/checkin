@@ -11,19 +11,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   checkin [<task-id>] [--context <markdown>] [--complete] [--rebase | --merge]
 #           [--force] [--delete] [--target <branch>]
 #           [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
+#           [--propagate] [--propagate-rebase | --propagate-merge]
+#           [--propagate-shallow] [--propagate-force] [--propagate-dry-run]
+#           [--propagate-to <child-id>]
 #
 # Options:
-#   <task-id>             Task branch to check in (default: current branch).
-#   --context <markdown>  Create a context file on the parent task with handoff notes.
-#   --complete            Run `tt task complete` first if status is not DONE.
-#   --rebase              Rebase child onto parent before checkin.
-#   --merge               Merge parent into child before checkin.
-#   --force               Proceed even if conflicts occur.
-#   --delete              Remove child task file and subtask entry (requires DONE).
-#   --target <branch>     Parent branch (required for project tasks).
-#   --worktree=<path>     Worktree to use when task has multiple worktrees.
-#   --repo PATH           Repository root (default: walk up from CWD to find .jj).
-#   --workspace-dir PATH  Virtual project dir (for HEAD symlink and workspace paths).
+#   <task-id>               Task branch to check in (default: current branch).
+#   --context <markdown>    Create a context file on the parent task with handoff notes.
+#   --complete              Run `tt task complete` first if status is not DONE.
+#   --rebase                Rebase child onto parent before checkin.
+#   --merge                 Merge parent into child before checkin.
+#   --force                 Proceed even if conflicts occur.
+#   --delete                Remove child task file and subtask entry (requires DONE).
+#   --target <branch>       Parent branch (required for project tasks).
+#   --worktree=<path>       Worktree to use when task has multiple worktrees.
+#   --repo PATH             Repository root (default: walk up from CWD to find .jj).
+#   --workspace-dir PATH    Virtual project dir (for HEAD symlink and workspace paths).
+#   --propagate             Run `tt task propagate --from <parent>` after checkin.
+#   --propagate-rebase      Propagate strategy: rebase (default).
+#   --propagate-merge       Propagate strategy: merge.
+#   --propagate-shallow     Propagate direct children only (no recursion).
+#   --propagate-force       Propagate even if conflicts occur.
+#   --propagate-dry-run     Show propagation plan without applying changes.
+#   --propagate-to <id>     Limit propagation to this child (repeatable).
 
 readonly SCRIPT_NAME="${0##*/}"
 
@@ -34,18 +44,25 @@ Usage: ${SCRIPT_NAME} [<task-id>] [options...]
 Merge the current task branch (or <task-id>) into its parent branch.
 
 Options:
-  <task-id>             Task branch to check in (default: current branch).
-  --context <markdown>  Create a context file on the parent task with handoff notes.
-  --complete            Run complete first if status is not DONE.
-  --rebase              Rebase child onto parent before checkin.
-  --merge               Merge parent into child before checkin.
-  --force               Proceed despite conflicts.
-  --delete              Remove child task file (requires DONE status).
-  --target <branch>     Parent branch (required for project tasks).
-  --worktree=<path>     Worktree to use when task has multiple worktrees.
-  --repo PATH           Repository root (default: find .jj).
-  --workspace-dir PATH  Virtual project dir.
-  -h, --help            Show this help.
+  <task-id>                 Task branch to check in (default: current branch).
+  --context <markdown>      Create a context file on the parent task with handoff notes.
+  --complete                Run complete first if status is not DONE.
+  --rebase                  Rebase child onto parent before checkin.
+  --merge                   Merge parent into child before checkin.
+  --force                   Proceed despite conflicts.
+  --delete                  Remove child task file (requires DONE status).
+  --target <branch>         Parent branch (required for project tasks).
+  --worktree=<path>         Worktree to use when task has multiple worktrees.
+  --repo PATH               Repository root (default: find .jj).
+  --workspace-dir PATH      Virtual project dir.
+  --propagate               Propagate parent tip to siblings after checkin.
+  --propagate-rebase        Propagate strategy: rebase (default).
+  --propagate-merge         Propagate strategy: merge.
+  --propagate-shallow       Direct children only (no recursion).
+  --propagate-force         Propagate despite conflicts.
+  --propagate-dry-run       Show propagation plan without applying.
+  --propagate-to CHILD_ID   Limit propagation to specific child (repeatable).
+  -h, --help                Show this help.
 
 EOF
   exit 1
@@ -62,6 +79,12 @@ main() {
   local task_id_arg=''
   local repo=''
   local workspace_dir=''
+  local do_propagate=false
+  local propagate_strategy=''
+  local propagate_shallow=false
+  local propagate_force=false
+  local propagate_dry_run=false
+  local -a propagate_to=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -87,6 +110,21 @@ main() {
       --workspace-dir)
         [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
         workspace_dir="$2"; shift 2 ;;
+      --propagate)       do_propagate=true; shift ;;
+      --propagate-rebase)
+        [[ -n "$propagate_strategy" && "$propagate_strategy" != rebase ]] && \
+          { log "Error: --propagate-rebase and --propagate-merge are mutually exclusive"; usage; }
+        propagate_strategy='rebase'; shift ;;
+      --propagate-merge)
+        [[ -n "$propagate_strategy" && "$propagate_strategy" != merge ]] && \
+          { log "Error: --propagate-rebase and --propagate-merge are mutually exclusive"; usage; }
+        propagate_strategy='merge'; shift ;;
+      --propagate-shallow) propagate_shallow=true; shift ;;
+      --propagate-force)   propagate_force=true; shift ;;
+      --propagate-dry-run) propagate_dry_run=true; shift ;;
+      --propagate-to)
+        [[ $# -lt 2 ]] && { log "Error: --propagate-to requires an argument"; usage; }
+        propagate_to+=("$2"); shift 2 ;;
       -h|--help) usage ;;
       *)
         if [[ -z "$task_id_arg" ]]; then
@@ -452,6 +490,23 @@ main() {
       --repo "$repo" \
       ${workspace_dir:+--workspace-dir "$workspace_dir"} \
       ${worktree_arg:+--worktree="$worktree_arg"}
+  fi
+
+  # --- Optional: propagate parent tip to remaining siblings ---
+  if [[ "$do_propagate" == true ]]; then
+    log "Propagating from parent: $parent_bookmark"
+    local -a propagate_args=(
+      --from "$parent_bookmark"
+      --repo "$repo"
+    )
+    [[ -n "$propagate_strategy" ]] && propagate_args+=(--"$propagate_strategy")
+    [[ "$propagate_shallow" == true ]]   && propagate_args+=(--shallow)
+    [[ "$propagate_force" == true ]]     && propagate_args+=(--force)
+    [[ "$propagate_dry_run" == true ]]   && propagate_args+=(--dry-run)
+    for t in "${propagate_to[@]}"; do
+      propagate_args+=(--to "$t")
+    done
+    "$SCRIPT_DIR/propagate" "${propagate_args[@]}"
   fi
 }
 
