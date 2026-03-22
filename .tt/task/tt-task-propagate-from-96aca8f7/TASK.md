@@ -1,6 +1,6 @@
 ---
 title: "Fix `tt task propagate --from <parent-task>`"
-status: TODO
+status: IN-PROGRESS
 created: 2026-03-15T09:29:32Z
 updated: 2026-03-15T09:29:32Z
 ---
