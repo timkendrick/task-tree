@@ -309,6 +309,8 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 - **`tt task delete [<task-id>] [--force]`** — Remove a task and its entire descendant subtree from the parent branch. Collects the full subtree via union traversal (reads subtask lists from both each task's own branch and the parent branch's copy at every level). Creates a single `Remove subtask: <title> (<task-id>)` commit on the parent branch that removes the top-level `subtask:` entry and all descendant task files present on that branch. After the commit, deletes all bookmarks in the subtree (`jj bookmark delete`). Dedicated workspaces are forgotten from jj; files left on disk with a warning. Defaults to the current branch if no `<task-id>` is given. Requires task `status: DONE` unless `--force` is specified (which also skips the clean working-copy check). Aborts if no parent is found. See §6.9.
 
+- **`tt task rename --slug <new-slug> [--task <task-id>] [--repo PATH] [--workspace-dir PATH]`** — Rename a task's slug (the human-readable part of the task ID), preserving the hex suffix. For example: `task/old-name-abc123` → `task/new-name-abc123`. Renames the jj bookmark, the task directory, and updates the parent's subtask reference. Requires a clean working copy. If the task has no parent (e.g., a project), only the bookmark and directory are renamed. Silently succeeds if the new slug matches the current slug. Errors if the new ID would conflict with an existing bookmark. See §6.10.
+
 ---
 
 ## 6. Task and branch operations
@@ -598,6 +600,38 @@ Concretely, for a child branch `C` and parent branch `P`:
 - **Rebase roots:** `roots(::C ~ ::P)` — the root commits of that range (those whose parents are already in P's ancestry). These are the commits that need to be rebased directly onto P.
 - If the unmerged range is empty (the child has no new commits beyond what is already in the parent), the child is considered up to date and is skipped.
 - Otherwise, the rebase roots and all their descendants (within the unmerged range) are rebased onto P: `jj rebase -s "roots(::C ~ ::P)" -d P`.
+
+### 6.10 Task rename (`tt task rename`)
+
+`tt task rename` changes the human-readable slug portion of a task or project ID while preserving the hex suffix. For example, `task/old-name-abc123` becomes `task/new-name-abc123`.
+
+**Options:**
+
+```
+--slug <new-slug>      New slug (required)
+--task <task-id>      Task to rename (default: current task)
+--repo PATH           Repository root (default: walk up from CWD to find .jj)
+--workspace-dir PATH  Virtual project dir
+```
+
+**Rename operations:**
+
+1. **Bookmark rename:** Uses `jj bookmark rename <old-id> <new-id>` to rename the bookmark in jj.
+2. **Directory rename:** Moves `.tt/task/<old-slug>-<hex>/` → `.tt/task/<new-slug>-<hex>/`.
+3. **Symlink update:** If `TASK.md` exists and points to the old directory, updates it to point to the new directory.
+4. **Parent subtask update (if parent exists):** Creates a commit on the parent branch that replaces the old ID with the new ID in the `subtask:` frontmatter entry. The commit message is "Rename task: <title> (<new-id>)" and the parent bookmark is advanced.
+
+**Preconditions:**
+
+- Working copy must be clean.
+- New slug must pass slug validation (lowercase alphanumeric and hyphens, no leading/trailing/consecutive hyphens).
+- New task ID must not conflict with an existing bookmark.
+
+**Parentless tasks:** If the task has no parent (e.g., a project or orphaned task), the command proceeds with bookmark and directory rename only; no parent update is performed.
+
+**Idempotency:** If the new slug is identical to the current slug, the command succeeds silently with no changes.
+
+**Output:** "Task renamed: <old-id> > <new-id>" on success.
 
 ---
 
