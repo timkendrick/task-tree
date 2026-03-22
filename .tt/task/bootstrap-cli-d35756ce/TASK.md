@@ -53,6 +53,7 @@ subtask: [x] task/tt-workspace-branch-status-8c69b854
 subtask: [x] task/tt-task-context-subcommands-43ff1903
 subtask: [x] task/tt-task-prompt-message-f4594828
 subtask: [x] task/tt-task-list-context-82eba696
+subtask: [ ] task/extract-vcs-commands-f70e3a90
 ---
 Implement shell script implementations of all `tt` CLI commands
 
