@@ -1,0 +1,303 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task move — Reparent a task to a different parent.
+#
+# Usage:
+#   move [--task <task-id>] --parent <parent-task-id>
+#        [--repo PATH] [--workspace-dir PATH]
+#
+# Options:
+#   --task TASK-ID         Task to move (default: current task)
+#   --parent TASK-ID       New parent task (required)
+#   --repo PATH            Repository root (default: walk up to find .jj)
+#   --workspace-dir PATH   Virtual project dir (for hooks/context)
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} [--task <task-id>] --parent <parent-task-id> [--repo PATH] [--workspace-dir PATH]
+
+Reparent a task by moving it to a different parent.
+
+Removes the task from its current parent's subtask list, adds it to the new
+parent's subtask list, and rebases the task's unmerged commit range onto the
+new parent's bookmark tip.
+
+Options:
+  --task TASK-ID         Task to move (default: current task)
+  --parent TASK-ID       New parent task (required)
+  --repo PATH            Repository root (default: walk up to find .jj)
+  --workspace-dir PATH   Virtual project dir
+  -h, --help             Show this help
+
+Examples:
+  ${SCRIPT_NAME} --parent project/main-app-abc12345
+  ${SCRIPT_NAME} --task task/foo-abc12345 --parent task/bar-def67890
+
+EOF
+  exit "${1:-1}"
+}
+
+main() {
+  local task_id_arg=''
+  local new_parent_id=''
+  local repo=''
+  local workspace_dir=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task)
+        [[ $# -lt 2 ]] && { log "Error: --task requires an argument"; usage; }
+        task_id_arg="$2"
+        shift 2
+        ;;
+      --parent)
+        [[ $# -lt 2 ]] && { log "Error: --parent requires an argument"; usage; }
+        new_parent_id="$2"
+        shift 2
+        ;;
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"
+        shift 2
+        ;;
+      --workspace-dir)
+        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
+        workspace_dir="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage 0
+        ;;
+      *)
+        log "Error: Unknown option: $1"
+        usage
+        ;;
+    esac
+  done
+
+  # --parent is required
+  if [[ -z "$new_parent_id" ]]; then
+    log "Error: --parent is required"
+    usage
+  fi
+
+  # Resolve repo root
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # Resolve workspace_dir
+  if [[ -z "$workspace_dir" ]]; then
+    workspace_dir="$(get_workspace_dir "$repo")" || true
+  fi
+
+  # Resolve task to move
+  local task_id
+  if [[ -n "$task_id_arg" ]]; then
+    task_id="$task_id_arg"
+    # Validate it is a known task/project branch
+    if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
+      log "Error: '$task_id' is not a recognized task or project ID"
+      exit 1
+    fi
+    if ! jj -R "$repo" log -r "$task_id" --no-graph -T '' 2>/dev/null; then
+      log "Error: Task '$task_id' not found in repository"
+      exit 1
+    fi
+  else
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    task_id="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    if [[ -z "$task_id" ]]; then
+      log "Error: Not on a task or project branch. Use --task to specify."
+      exit 1
+    fi
+  fi
+
+  # Validate new parent exists
+  if ! is_task_branch "$new_parent_id" "$task_prefix" && ! is_project_branch "$new_parent_id" "$project_prefix"; then
+    log "Error: '$new_parent_id' is not a recognized task or project ID"
+    exit 1
+  fi
+  if ! jj -R "$repo" log -r "$new_parent_id" --no-graph -T '' 2>/dev/null; then
+    log "Error: Parent '$new_parent_id' not found in repository"
+    exit 1
+  fi
+
+  # Check working copy is clean
+  if ! is_wc_clean "$repo"; then
+    log "Error: Working copy has uncommitted changes. Commit or discard first."
+    exit 1
+  fi
+
+  # Find old parent
+  local old_parent='' find_parent_exit=0
+  old_parent="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || find_parent_exit=$?
+  if [[ $find_parent_exit -eq 1 ]]; then
+    log "Error: No parent found for '$task_id'. Cannot move a parentless task."
+    exit 1
+  elif [[ $find_parent_exit -ne 0 ]]; then
+    exit $find_parent_exit
+  fi
+
+  # Guard: same parent is a no-op error
+  if [[ "$old_parent" == "$new_parent_id" ]]; then
+    log "Error: Task '$task_id' is already a child of '$new_parent_id'."
+    exit 1
+  fi
+
+  # Guard: cycle detection — walk up from new_parent_id to ensure task_id is not an ancestor
+  local cursor="$new_parent_id"
+  while true; do
+    local p_exit=0
+    local p=''
+    p="$(find_parent_branch "$repo" "$cursor" "$task_prefix" "$project_prefix")" || p_exit=$?
+    if [[ $p_exit -ne 0 ]]; then
+      break  # reached a root without finding task_id — no cycle
+    fi
+    if [[ "$p" == "$task_id" ]]; then
+      log "Error: Cannot move '$task_id' under '$new_parent_id': would create a cycle."
+      exit 1
+    fi
+    cursor="$p"
+  done
+
+  # Derive slugs and task file paths
+  local task_slug
+  if is_task_branch "$task_id" "$task_prefix"; then
+    task_slug="${task_id#"$task_prefix"}"
+  else
+    task_slug="${task_id#"$project_prefix"}"
+  fi
+
+  local old_parent_slug
+  if is_task_branch "$old_parent" "$task_prefix"; then
+    old_parent_slug="${old_parent#"$task_prefix"}"
+  else
+    old_parent_slug="${old_parent#"$project_prefix"}"
+  fi
+
+  local new_parent_slug
+  if is_task_branch "$new_parent_id" "$task_prefix"; then
+    new_parent_slug="${new_parent_id#"$task_prefix"}"
+  else
+    new_parent_slug="${new_parent_id#"$project_prefix"}"
+  fi
+
+  local task_file old_parent_task_file new_parent_task_file
+  task_file="$(task_file_path "$task_slug")"
+  old_parent_task_file="$(task_file_path "$old_parent_slug")"
+  new_parent_task_file="$(task_file_path "$new_parent_slug")"
+
+  # Read task title for commit messages
+  local task_content task_title
+  task_content="$(jj -R "$repo" file show -r "$task_id" -- "$task_file" 2>/dev/null)" || {
+    log "Error: Could not read task file '$task_file' from '$task_id'."
+    exit 1
+  }
+  task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
+
+  # Capture current revision (change_id) to restore @ after the move,
+  # but only if we are not currently on the task being moved.
+  local original_rev=''
+  local current_branch=''
+  local current_resolve
+  current_resolve="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+  current_branch="$(printf '%s' "$current_resolve" | sed -n '3p')"
+  if [[ "$current_branch" != "$task_id" ]]; then
+    original_rev="$(get_worktree_current_rev "$repo")"
+  fi
+
+  # ----------------------------------------------------------------
+  # Step 1: Update old parent — remove subtask entry
+  # ----------------------------------------------------------------
+  log "Updating old parent: $old_parent"
+  jj -R "$repo" new "$old_parent"
+
+  local tmpfile
+  tmpfile="$(mktemp)"
+  # \[.\] matches any single-character checkbox glyph ([ ], [-], [x], etc.)
+  # Use awk rather than sed to avoid '/' in task IDs being misinterpreted
+  # as sed delimiters.
+  awk -v id="$task_id" '
+    /^subtask:[[:space:]]*\[.\][[:space:]]/ {
+      val = $0
+      sub(/^subtask:[[:space:]]*\[.\][[:space:]]*/, "", val)
+      if (val == id) next
+    }
+    { print }
+  ' "$repo/$old_parent_task_file" > "$tmpfile"
+  mv "$tmpfile" "$repo/$old_parent_task_file"
+
+  jj -R "$repo" describe -m "Move task: $task_title ($task_id)"
+  jj -R "$repo" bookmark set "$old_parent"
+  jj -R "$repo" new "@"
+
+  # ----------------------------------------------------------------
+  # Step 2: Update new parent — add subtask entry
+  # ----------------------------------------------------------------
+  log "Updating new parent: $new_parent_id"
+  jj -R "$repo" new "$new_parent_id"
+
+  local tmpfile2
+  tmpfile2="$(mktemp)"
+  awk -v task_id="$task_id" '
+    /^---$/ { sep++; if (sep == 2) { print "subtask: [ ] " task_id } }
+    { print }
+  ' "$repo/$new_parent_task_file" > "$tmpfile2"
+  mv "$tmpfile2" "$repo/$new_parent_task_file"
+
+  jj -R "$repo" describe -m "Move task: $task_title ($task_id)"
+  jj -R "$repo" bookmark set "$new_parent_id"
+  jj -R "$repo" new "@"
+
+  # ----------------------------------------------------------------
+  # Step 3: Rebase task's unmerged range onto new parent
+  # ----------------------------------------------------------------
+  # Compute the roots of the unmerged range: commits in task's ancestry
+  # not yet in old_parent's ancestry.
+  local rebase_roots
+  rebase_roots="$(jj -R "$repo" log \
+      -r "roots(::${task_id} ~ ::${old_parent})" \
+      --no-graph -T 'commit_id' 2>/dev/null)" || true
+
+  if [[ -n "$rebase_roots" ]]; then
+    log "Rebasing $task_id onto $new_parent_id..."
+    jj -R "$repo" rebase \
+        -s "roots(::${task_id} ~ ::${old_parent})" \
+        -d "$new_parent_id"
+  else
+    log "No unmerged commits to rebase for $task_id."
+  fi
+
+  # ----------------------------------------------------------------
+  # Step 4: Restore @ if we were not on the moved task
+  # ----------------------------------------------------------------
+  if [[ -n "$original_rev" ]]; then
+    jj -R "$repo" edit "$original_rev" 2>/dev/null || true
+  fi
+
+  log "Moved: $task_id"
+  log "  Old parent: $old_parent"
+  log "  New parent: $new_parent_id"
+}
+
+main "$@"

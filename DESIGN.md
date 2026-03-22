@@ -198,6 +198,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt current` | `tt task current` |
 | `tt edit` | `tt task edit` |
 | `tt prompt` | `tt task prompt` |
+| `tt move` | `tt task move` |
 
 ### 5.1 Workspace
 
@@ -310,6 +311,8 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 - **`tt task delete [<task-id>] [--force]`** — Remove a task and its entire descendant subtree from the parent branch. Collects the full subtree via union traversal (reads subtask lists from both each task's own branch and the parent branch's copy at every level). Creates a single `Remove subtask: <title> (<task-id>)` commit on the parent branch that removes the top-level `subtask:` entry and all descendant task files present on that branch. After the commit, deletes all bookmarks in the subtree (`jj bookmark delete`). Dedicated workspaces are forgotten from jj; files left on disk with a warning. Defaults to the current branch if no `<task-id>` is given. Requires task `status: DONE` unless `--force` is specified (which also skips the clean working-copy check). Aborts if no parent is found. See §6.9.
 
 - **`tt task rename --slug <new-slug> [--task <task-id>] [--repo PATH] [--workspace-dir PATH]`** — Rename a task's slug (the human-readable part of the task ID), preserving the hex suffix. For example: `task/old-name-abc123` → `task/new-name-abc123`. Renames the jj bookmark, the task directory, and updates the parent's subtask reference. Requires a clean working copy. If the task has no parent (e.g., a project), only the bookmark and directory are renamed. Silently succeeds if the new slug matches the current slug. Errors if the new ID would conflict with an existing bookmark. See §6.10.
+
+- **`tt task move [--task <task-id>] --parent <parent-task-id> [--repo PATH] [--workspace-dir PATH]`** — Reparent a task by moving it to a different parent. Removes the task from its current parent's `subtask:` list and adds it to the new parent's `subtask:` list. Rebases the task's unmerged commit range (commits not yet in the old parent's ancestry) onto the new parent's bookmark tip. Defaults to the current task if `--task` is not given. Checks for a clean working copy before proceeding. Returns a non-zero exit code if the task or parent does not exist. If moving a task that is not currently checked out, captures and restores the current revision (via change ID) after the move. Aborts if the task has no current parent (parentless project), if the new parent is the same as the current parent, or if the move would create a cycle in the task tree. See §6.11.
 
 ---
 
@@ -632,6 +635,38 @@ Concretely, for a child branch `C` and parent branch `P`:
 **Idempotency:** If the new slug is identical to the current slug, the command succeeds silently with no changes.
 
 **Output:** "Task renamed: <old-id> > <new-id>" on success.
+
+### 6.11 Task move (`tt task move`)
+
+`tt task move` reparents a task by changing its parent in the task hierarchy.
+
+**Options:**
+
+```
+[--task <task-id>]              Task to move (default: current task)
+--parent <parent-task-id>       New parent (required)
+--repo PATH                     Repository root (default: walk up to .jj)
+--workspace-dir PATH            Virtual project dir
+```
+
+**Move operations (in order):**
+
+1. **Remove from old parent:** Creates a `Move task: <title> (<task-id>)` commit on the old parent branch that removes the `subtask:` entry for the task. Old parent bookmark advances.
+2. **Add to new parent:** Creates a `Move task: <title> (<task-id>)` commit on the new parent branch that adds `subtask: [ ] <task-id>` to the new parent's frontmatter. New parent bookmark advances.
+3. **Rebase task branch:** Rebases the task's unmerged range (`roots(::task ~ ::old_parent)`) onto the new parent's bookmark tip. If there are no unmerged commits (e.g., the task branch has no commits beyond the old parent's ancestry), this step is skipped.
+
+**Preconditions:**
+
+- Working copy (current worktree) must be clean.
+- `--parent` is required.
+- Both the task and the new parent must exist as valid task/project bookmarks.
+- The task must have exactly one current parent (found via `subtask:` traversal). Parentless tasks (projects) cannot be moved.
+- The new parent must not be the same as the current parent.
+- Moving the task must not create a cycle (the new parent must not be a descendant of the task).
+
+**Restore behavior:** When moving a task that is not currently checked out (`@` is not a descendant of the task's branch), the working copy's change ID is captured before the move and restored after the rebase completes. Because jj tracks change IDs across rebases, the restored revision always reflects the post-rebase state if it was affected.
+
+**Output:** Confirmation lines to stderr: `Moved: <task-id>`, `  Old parent: <old-parent>`, `  New parent: <new-parent>`.
 
 ---
 
