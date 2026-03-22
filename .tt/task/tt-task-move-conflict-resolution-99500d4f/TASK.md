@@ -2,7 +2,8 @@
 title: "Auto-resolve TASK.md conflicts after tt task move rebase"
 status: IN-PROGRESS
 created: 2026-03-22T21:35:26Z
-updated: 2026-03-22T21:35:26Z
+updated: 2026-03-22T21:49:46Z
+context: context/test-scenario-conflict-in-task-task-md-after-move-rebase-6da681ee
 ---
 When `tt task move` rebases a task's unmerged commit range onto a new parent, the rebase can produce a conflict in the task's TASK.md file. This happens because the task's TASK.md on its own branch (e.g. with `status: IN-PROGRESS` and `subtask:` entries) diverges from the new parent's version of that file (which the new parent doesn't have at all, or has a different version of).
 
