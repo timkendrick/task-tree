@@ -1,6 +1,6 @@
 ---
 title: "Add `--propagate` flag to `tt task checkin` command"
-status: TODO
+status: IN-PROGRESS
 created: 2026-03-15T12:47:14Z
 updated: 2026-03-15T12:47:15Z
 ---
