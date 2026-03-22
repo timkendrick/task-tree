@@ -503,7 +503,7 @@ main() {
     [[ "$propagate_shallow" == true ]]   && propagate_args+=(--shallow)
     [[ "$propagate_force" == true ]]     && propagate_args+=(--force)
     [[ "$propagate_dry_run" == true ]]   && propagate_args+=(--dry-run)
-    for t in "${propagate_to[@]}"; do
+    for t in "${propagate_to[@]+"${propagate_to[@]}"}"; do
       propagate_args+=(--to "$t")
     done
     "$SCRIPT_DIR/propagate" "${propagate_args[@]}"
