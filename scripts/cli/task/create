@@ -393,7 +393,7 @@ main() {
   # Capture revision user had checked out; restore it on exit so we leave them where they were.
   # Use inline trap to capture values at definition time (locals are gone when EXIT runs).
   local original_rev
-  original_rev="$(jj "${jj_opts[@]}" log -r '@' -n 1 --no-graph -T 'commit_id')"
+  original_rev="$(get_worktree_current_rev "$repo")"
   # If the working copy is currently on the parent branch (it's our closest ancestor bookmark),
   # leave it at the updated parent tip after task creation rather than restoring to the now-stale
   # original revision. Otherwise, restore as normal.

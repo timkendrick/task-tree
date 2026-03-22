@@ -415,10 +415,14 @@ find_branch_for_task() {
 }
 
 # Usage: get_worktree_current_rev WORKTREE
-# Prints the commit_id of @ in the given worktree. Exits 1 on failure.
+# Prints the change_id of @ in the given worktree. Exits 1 on failure.
+# We return the change_id (not the commit_id) because change IDs survive
+# rebases: if @ is a descendant of a rebased branch, jj creates a new
+# commit with the same change ID, so `jj edit <change_id>` will always
+# resolve to the correct (post-rebase) version of the working-copy commit.
 get_worktree_current_rev() {
   local worktree="$1"
-  jj -R "$worktree" log -r '@' --no-graph -T 'commit_id' 2>/dev/null
+  jj -R "$worktree" log -r '@' --no-graph -T 'change_id' 2>/dev/null
 }
 
 # Usage: resolve_current_worktree REPO

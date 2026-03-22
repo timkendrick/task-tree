@@ -369,7 +369,7 @@ main() {
   local from_bookmark
   if [[ -n "$from" ]]; then
     from_bookmark="$from"
-    if ! jj "${jj_opts[@]}" log -r "$from_bookmark" --no-graph -T '' 2>/dev/null; then
+    if ! jj "${jj_opts[@]}" --ignore-working-copy log -r "$from_bookmark" --no-graph -T '' 2>/dev/null; then
       log "Error: --from '$from_bookmark' not found in repository"
       exit 1
     fi
@@ -386,7 +386,7 @@ main() {
   log "Propagating from: $from_bookmark"
   [[ "$dry_run" == true ]] && log "(dry-run: no changes will be made)"
 
-  # Capture @ to restore after merge operations move it
+  # Capture @ to restore after merge/rebase operations move it.
   local original_rev
   original_rev="$(get_worktree_current_rev "$repo")"
   trap '[[ -n "'"$original_rev"'" ]] && jj -R "'"$repo"'" edit "'"$original_rev"'" 2>/dev/null || true' EXIT
