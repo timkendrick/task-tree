@@ -1,6 +1,6 @@
 ---
 title: "Auto-resolve TASK.md conflicts after tt task move rebase"
-status: TODO
+status: IN-PROGRESS
 created: 2026-03-22T21:35:26Z
 updated: 2026-03-22T21:35:26Z
 ---
