@@ -1,1 +1,1 @@
-.tt/task/context-add-stdin-c0a8e7b6/TASK.md
+.tt/task/bootstrap-cli-d35756ce/TASK.md
