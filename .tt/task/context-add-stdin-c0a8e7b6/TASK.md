@@ -1,6 +1,6 @@
 ---
 title: "Support stdin for `tt task context add` body"
-status: TODO
+status: IN-PROGRESS
 created: 2026-03-22T15:49:07Z
 updated: 2026-03-22T15:49:08Z
 ---
