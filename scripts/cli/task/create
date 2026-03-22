@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # Options:
 #   --title TITLE          Task title (prompted if missing and stdin is a TTY)
-#   --slug SLUG            Human-readable slug (prompted with suggested default if missing)
+#   --slug SLUG            Human-readable slug (required in non-interactive mode; prompted otherwise)
 #   --parent TASK-ID       Parent task ID (default: current branch); mutually exclusive with --project
 #   --project              Create a parentless project task; mutually exclusive with --parent
 #   --target COMMIT-REV    (with --project) Fork project branch from this revision (default: current @)
@@ -43,7 +43,7 @@ Create a task file and jj bookmark for task-tree bootstrap.
 
 Options:
   --title TITLE         Task title/summary (prompted if missing and interactive)
-  --slug SLUG           Human-readable slug (prompted with suggested default if missing)
+  --slug SLUG           Human-readable slug (required in non-interactive mode; prompted otherwise)
   --parent TASK-ID      Parent task ID (default: current branch); mutually exclusive with --project
   --project             Create a parentless project task; mutually exclusive with --parent
   --target COMMIT-REV   (with --project) Fork project branch from this revision (default: current @)
@@ -265,9 +265,9 @@ main() {
     fi
   fi
 
-  local default_slug
-  default_slug="$(title_to_slug "$title")"
   if [[ "$slug_explicit" == false ]]; then
+    local default_slug
+    default_slug="$(title_to_slug "$title")"
     if [[ -z "$default_slug" ]]; then
       log "Error: Could not generate slug from title: $title"
       exit 1
@@ -277,7 +277,8 @@ main() {
       read -e -p "Enter a task identifier (defaults to $default_slug): " prompted_slug
       slug="${prompted_slug:-$default_slug}"
     else
-      slug="$default_slug"
+      log "Error: --slug is required in non-interactive mode"
+      usage
     fi
   fi
   if ! validate_slug "$slug"; then
