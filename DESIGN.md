@@ -211,9 +211,57 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 ### 5.2 Task
 
-- **`tt task create [--parent <parent-task-id> | --project [--target <commit-rev>]] [--slug <slug>] [--title <title>] [--body <text>] [--label <label> ...] [--propagate [--rebase | --merge] [--shallow] [--force]] [--checkout [--worktree[=<path>]]] [--force]`** — Create a new task or project. With `--parent` (default: current branch): creates a commit on the parent's branch that both creates the new task stub directory (with `status: TODO`, `created`, and `updated` timestamps in `TASK.md`) and registers `subtask: [ ] <task-id>` in the parent's task file; the child branch is forked as an empty commit from this updated parent tip. The `TASK.md` symlink is created at first checkout. With `--project` (mutually exclusive with `--parent`): creates a parentless project using the project prefix; the project branch forks from `--target` if specified, else the current revision. Prompts for title/body if not provided. With `--propagate`, propagates the parent's new commit to its existing descendant branches after creation (equivalent to running `tt task propagate --from <parent>` with any given flags); supports `--rebase | --merge` (strategy; default rebase), `--shallow` (direct children only), and `--force` (proceed despite conflicts). With `--checkout`, runs `tt task checkout` on the newly created task before exiting; `--worktree[=<path>]` (only valid with `--checkout`) passes through to checkout to use or create a dedicated jj workspace. With `--force` (outside of `--propagate`), overwrites if the child branch already exists. See §6.1.
+- **`tt task create [--parent <parent-task-id> | --project [--target <commit-rev>]] [--slug <slug>] [--title <title>] [--label <label> ...] [--propagate [--rebase | --merge] [--shallow] [--force]] [--checkout [--worktree[=<path>]]] [--force]`** — Create a new task or project. With `--parent` (default: current branch): creates a commit on the parent's branch that both creates the new task stub directory (with `status: TODO`, `created`, and `updated` timestamps in `TASK.md`) and registers `subtask: [ ] <task-id>` in the parent's task file; the child branch is forked as an empty commit from this updated parent tip. The `TASK.md` symlink is created at first checkout. With `--project` (mutually exclusive with `--parent`): creates a parentless project using the project prefix; the project branch forks from `--target` if specified, else the current revision. Prompts for title if not provided. Reads the task body/description from stdin (via pipe or redirect) if stdin is not a terminal; otherwise opens an editor for body input. With `--propagate`, propagates the parent's new commit to its existing descendant branches after creation (equivalent to running `tt task propagate --from <parent>` with any given flags); supports `--rebase | --merge` (strategy; default rebase), `--shallow` (direct children only), and `--force` (proceed despite conflicts). With `--checkout`, runs `tt task checkout` on the newly created task before exiting; `--worktree[=<path>]` (only valid with `--checkout`) passes through to checkout to use or create a dedicated jj workspace. With `--force` (outside of `--propagate`), overwrites if the child branch already exists. See §6.1.
 
-- **`tt task edit [<task-id>] [--title <title>] [--body <text>] [--label <label> ...] [--delete-label <label> ...] [--worktree <path>] [--repo <path>]`** — Edit the title, body, and/or labels of a task. Fields not supplied are preserved. With no metadata flags, opens an editor pre-populated with the current body text (interactive mode). `--label` appends; `--delete-label` removes (silent no-op if absent). Requires a clean working copy. Creates an `Edit task: <title> (<task-id>)` commit and advances the task bookmark. See §6.1.1.
+  **Examples:**
+  ```bash
+  # Interactive — prompts for title, slug, and opens editor for body
+  tt task create
+
+  # Interactive with title — prompts for slug and opens editor for body
+  tt task create --title "Phase 0: Test harness"
+
+  # Pipe from file
+  cat ./description.md | tt task create --title "Phase 0: Test harness"
+
+  # Redirect from file
+  tt task create --title "Phase 0: Test harness" < ./description.md
+
+  # With parent and labels
+  tt task create --parent task/phase-0-abc123de --slug tt-task-list --label tdd < ./description.md
+
+  # Create project
+  tt task create --project --title "Main app" < ./description.md
+
+  # Create from specific revision
+  tt task create --project --title "Main app" --target abc123 < ./description.md
+
+  # Create and immediately checkout with worktree
+  tt task create --slug my-task --title "My task" --checkout --worktree
+  ```
+
+- **`tt task edit [<task-id>] [--title <title>] [--label <label> ...] [--delete-label <label> ...] [--worktree <path>] [--repo <path>]`** — Edit the title and/or labels of a task. Reads the task body from stdin (via pipe or redirect) if stdin is not a terminal; otherwise preserves the existing body. With no metadata flags and stdin is a terminal, opens an editor pre-populated with the current body text (interactive mode). `--label` appends; `--delete-label` removes (silent no-op if absent). Requires a clean working copy. Creates an `Edit task: <title> (<task-id>)` commit and advances the task bookmark. See §6.1.1.
+
+  **Examples:**
+  ```bash
+  # Interactive — opens editor pre-populated with current body
+  tt task edit
+
+  # Edit current task, preserve body
+  tt task edit --title "New title"
+
+  # Pipe new body to current task
+  echo "New description" | tt task edit
+
+  # Redirect body from file
+  tt task edit < ./description.md
+
+  # Edit specific task with piped body
+  echo "New description" | tt task edit task/abc-123def
+
+  # Edit with both stdin and explicit title
+  cat ./description.md | tt task edit --title "Updated title"
+  ```
 
 - **`tt task checkout <task-id> [--worktree [=<path>] [--switch]] [--force]`** — Switch to the given task branch. With `--worktree`, uses or creates a dedicated jj workspace for that task; otherwise uses the closest ancestor task workspace or the current workspace. Refuses if the target workspace has local changes unless `--force`. Updates task status to IN-PROGRESS if TODO, runs `setup` hook when creating a new worktree. Without `--worktree`, always updates the virtual project's `HEAD` symlink; with `--worktree`, only updates `HEAD` if `--switch` is also provided (`--switch` is only valid with `--worktree`). See §6.2.
 
@@ -223,7 +271,19 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 - **`tt task checkin [<task-id>] [--context <markdown>] [--complete] [--rebase | --merge] [--force] [--delete] [--target <branch>] [--worktree=<path>] [--propagate [--propagate-rebase | --propagate-merge] [--propagate-shallow] [--propagate-force] [--propagate-dry-run] [--propagate-to <child-id>]]`** — Merge the current task branch (or `<task-id>`) into its parent (or, for a project task, into the branch specified by `--target`). Supports **partial checkins** (task status `IN-PROGRESS`; shares work-in-progress with the parent) and **complete checkins** (task status `DONE`; marks the task finished). Always creates a **handoff commit** (child bookmark does not advance) and merges it into the parent as `Merge subtask: <title> (<task-id>)`. The handoff always updates the corresponding `subtask:` entry in the parent's frontmatter to reflect the child's current status (`[x]` if `DONE`, `[-]` if `IN-PROGRESS`). The user is always switched to the parent worktree after the merge. With `--complete`: first runs `tt task complete` if the task is not already `DONE`, then proceeds with checkin. With `--context <markdown>`, appends a summary section to the parent task file body. With `--delete` (requires task `status: DONE`): after the normal checkin completes, delegates to `tt task delete` to remove the child task file and `subtask:` entry from the parent branch (two separate commits on the parent branch). `--worktree=<path>` disambiguates when the child task has multiple worktrees. Runs validation (see §6.6); with `--rebase`/`--merge`, first propagates from parent and bails on conflict unless `--force`. Project tasks must specify `--target`; regular tasks cannot use `--target`. With `--propagate`, after the checkin completes, runs `tt task propagate --from <parent>` to push the newly-merged parent tip down to the parent's remaining children. Accepts `--propagate-rebase | --propagate-merge` (strategy; default rebase), `--propagate-shallow` (direct children only), `--propagate-force` (proceed despite conflicts), `--propagate-dry-run` (show propagation plan without applying; the checkin itself still runs normally), and `--propagate-to <child-id>` (repeatable; limit propagation to specific children). See §6.5 and §6.6.
 
-- **`tt task context add [<task-id>] [--title <title>] [--slug <slug>] [--body <text>] [--worktree=<path>]`** — Create a new context file associated with the current task (or `<task-id>`). Prompts for title and slug (like task creation) if not provided; opens an editor for the body if `--body` is not given. Generates a context ID of the form `context/<ctx-slug>-<ctx-hex>` and writes the context file to `.tt/task/<task-slug>/context/<ctx-slug>-<ctx-hex>.md`. Adds a `context: context/<ctx-slug>-<ctx-hex>` entry to the task file's frontmatter and refreshes the task's `updated` timestamp. Creates a commit: `Add context: <context-title> (<task-id>)` and advances the task bookmark. When `<task-id>` is given, the task must have a checked-out worktree; `--worktree=<path>` disambiguates when multiple worktrees exist.
+- **`tt task context add [<task-id>] [--title <title>] [--slug <slug>] [--worktree=<path>]`** — Create a new context file associated with the current task (or `<task-id>`). Prompts for title and slug (like task creation) if not provided. Reads the context body from stdin (via pipe or redirect) if stdin is not a terminal; otherwise opens an editor for the body. Generates a context ID of the form `context/<ctx-slug>-<ctx-hex>` and writes the context file to `.tt/task/<task-slug>/context/<ctx-slug>-<ctx-hex>.md`. Adds a `context: context/<ctx-slug>-<ctx-hex>` entry to the task file's frontmatter and refreshes the task's `updated` timestamp. Creates a commit: `Add context: <context-title> (<task-id>)` and advances the task bookmark. When `<task-id>` is given, the task must have a checked-out worktree; `--worktree=<path>` disambiguates when multiple worktrees exist.
+
+  **Examples:**
+  ```bash
+  # Pipe a file directly
+  cat ./plan.md | tt task context add --title "Implementation plan"
+
+  # Redirect from file
+  tt task context add --title "Implementation plan" < ./plan.md
+
+  # Interactive (no redirect) — opens editor as before
+  tt task context add --title "Implementation plan"
+  ```
 
 - **`tt task context get [<context-id> [...]] [--task <task-id>] [--repo PATH]`** — Print the raw contents of one or more context files for a task to stdout. If one or more `<context-id>` positional arguments are given, only those context files are printed (in the order specified); otherwise all context files for the task are printed in declaration order. Output is the raw file contents including frontmatter; multiple files are concatenated with no separator. `--task` specifies which task to read from (default: current task). Applies the "where to read" rule (§7.1 / Appendix A step 3). Exits non-zero if the task has no context files or a specified context ID is not registered on the task. No hooks.
 
@@ -348,14 +408,15 @@ Because the parent task file is modified, sibling (and descendant) branches may 
 ```
 [<task-id>]           Target task ID (default: current branch)
 --title TITLE         New title (preserves existing if omitted)
---body TEXT           New body text (preserves existing if omitted)
 --label LABEL         Append a label (repeatable)
 --delete-label LABEL  Remove a label if present (repeatable, silent no-op if absent)
 --worktree PATH       Specify worktree when multiple exist for the task
 --repo PATH           Repository root (default: walk up to .jj)
 ```
 
-**Interactive mode** (no `--title`, `--body`, `--label`, or `--delete-label` given): opens an editor pre-populated with the current body text. Comment lines (`#`-prefixed) are stripped and the result is trimmed; an empty result clears the body.
+**Body input:** The task body (description) is read from stdin (via pipe or redirect) if stdin is not a terminal; otherwise the existing body is preserved.
+
+**Interactive mode** (no `--title`, `--label`, or `--delete-label` given and stdin is a terminal): opens an editor pre-populated with the current body text. Comment lines (`#`-prefixed) are stripped and the result is trimmed; an empty result clears the body.
 
 **Partial updates:** fields not supplied on the CLI retain their current values.
 
@@ -596,14 +657,14 @@ The standard workflow:
 
 1. **Initialize** — `tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>]`. The tool checks that the repo working directory is clean and there is no `.tt` in the repo root. It creates the virtual project directory, `.tt/config.toml` (task prefix default `task/`, project prefix default `project/`), and a `HEAD` symlink that initially points to the repo and is updated on each checkout. See §5.1 and §6.2.
 
-2. **Create a project** — `tt task create --project [--target <commit-rev>] [--slug <slug>] [--title <title>] [--description <description>] [--label <label> ...]`. The tool prompts for title/description (and autosuggested branch name) if needed, creates the project branch from the `--target` VCS revision if specified, defaulting to the current revision, and creates the project task file. If the target revision itself exists within a task tree, the tool notifies the user and refuses to proceed. See §6.1.
+2. **Create a project** — `tt task create --project [--target <commit-rev>] [--slug <slug>] [--title <title>] [--label <label> ...]`. The tool prompts for title (and autosuggested branch name) if needed, reads the task body from stdin (via pipe or redirect) if stdin is not a terminal; otherwise opens an editor for body input. Creates the project branch from the `--target` VCS revision if specified, defaulting to the current revision, and creates the project task file. If the target revision itself exists within a task tree, the tool notifies the user and refuses to proceed. See §6.1.
 
-3. **Create a task** — `tt task create [--parent <parent-task-id>] [--slug <slug>] [--title <title>] [--description <description>] [--label <label> ...] [--propagate [--rebase | --merge] [--shallow] [--force]] [--checkout [--worktree[=<path>]]]`. The tool checks the parent's workspace is clean, prompts for summary/description (and autosuggested branch name) if needed, locates the parent branch (default current branch; parent can be a project or task branch). Creates a single commit on the parent's branch that both creates the new task file (with `status: TODO`) and adds `subtask: [ ] <task-id>` to the parent's task file; advances the parent bookmark to this commit. Forks the child task branch as an empty commit from the updated parent tip. The `TASK.md` symlink is created at first checkout. With `--propagate`, it runs `tt task propagate --from <parent>` with any given flags to bring sibling branches up to date with the parent's new commit. With `--checkout`, it runs `tt task checkout` on the newly created task before exiting; `--worktree[=<path>]` passes through to checkout. See §6.1.
+3. **Create a task** — `tt task create [--parent <parent-task-id>] [--slug <slug>] [--title <title>] [--label <label> ...] [--propagate [--rebase | --merge] [--shallow] [--force]] [--checkout [--worktree[=<path>]]]`. The tool checks the parent's workspace is clean, prompts for title (and autosuggested branch name) if needed, reads the task body from stdin (via pipe or redirect) if stdin is not a terminal; otherwise opens an editor for body input. Locates the parent branch (default current branch; parent can be a project or task branch). Creates a single commit on the parent's branch that both creates the new task file (with `status: TODO`) and adds `subtask: [ ] <task-id>` to the parent's task file; advances the parent bookmark to this commit. Forks the child task branch as an empty commit from the updated parent tip. The `TASK.md` symlink is created at first checkout. With `--propagate`, it runs `tt task propagate --from <parent>` with any given flags to bring sibling branches up to date with the parent's new commit. With `--checkout`, it runs `tt task checkout` on the newly created task before exiting; `--worktree[=<path>]` passes through to checkout. See §6.1.
 
 4. **Begin a task** — `tt task checkout <task-id> [--worktree [=<path>] [--switch]] [--force]`. The tool checks the target workspace is clean (or clobbers changes if `--force` is specified), verifies the task or project branch exists, uses or creates the appropriate workspace per §6.2, sets task status to IN-PROGRESS in a new commit if the task status is currently TODO, runs `setup` when initializing a new worktree, and updates the `HEAD` symlink (unless `--worktree` is used without `--switch`). See §6.2.
 
 5. **Work on the task** — User commits changes on the branch and accumulates context in `./TASK.md`.
-   - **Add context** — Run `tt task context add [--title <title>] [--body <text>]` to create a new context file associated with the current task. Creates a commit. See §5.2.
+   - **Add context** — Run `tt task context add [--title <title>]` and provide context body via stdin (e.g., `cat ./notes.md | tt task context add --title "Research notes"`). If stdin is a terminal, an editor is opened for body input. Creates a commit. See §5.2.
    - **Read context** — Run `tt task context get [<context-id> [...]]` to print the raw contents of one or more context files for the current task to stdout. See §5.2.
    - **Checkpoint** — Run `tt task checkpoint [--message <message>]` to create a named `Checkpoint: <message>` commit and advance the task bookmark. See §6.3.
 

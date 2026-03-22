@@ -8,16 +8,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task edit — Edit title, body, and/or labels of a task.
 #
 # Usage:
-#   edit [<task-id>] [--title TITLE] [--body TEXT] [--label LABEL ...] [--delete-label LABEL ...]
+#   edit [<task-id>] [--title TITLE] [--label LABEL ...] [--delete-label LABEL ...]
 #
 # Options:
 #   <task-id>             Target task ID (default: current branch)
 #   --title TITLE         New title (preserves existing if omitted)
-#   --body TEXT           New body/description (preserves existing if omitted)
 #   --label LABEL         Append a label (repeatable)
 #   --delete-label LABEL  Remove a label if present (repeatable, silent no-op if absent)
 #   --worktree PATH       Specify worktree when multiple exist for the task
 #   --repo PATH           Repository root (default: walk up to .jj)
+#
+# Body is read from stdin (via pipe or redirect) if stdin is not a terminal.
+# With no flags and stdin is a terminal, opens editor pre-populated with current body.
 
 readonly SCRIPT_NAME="${0##*/}"
 
@@ -30,14 +32,22 @@ Edit title, body, and/or labels of a task.
 Options:
   <task-id>              Task ID to edit (default: current task).
   --title TITLE          New title (preserves existing if omitted).
-  --body TEXT            New body/description (preserves existing if omitted).
   --label LABEL          Append a label (repeatable).
   --delete-label LABEL   Remove a label if present (repeatable, silent no-op if absent).
   --worktree PATH        Worktree path when multiple exist for the task.
   --repo PATH            Repository root (default: walk up from CWD to find .jj).
 
-If none of --title, --body, --label, or --delete-label are given, opens
+Body is read from stdin (via pipe or redirect) if stdin is not a terminal;
+otherwise if none of --title, --label, or --delete-label are given, opens
 an editor pre-populated with the current body text (interactive mode).
+
+Examples:
+  ${SCRIPT_NAME}                                       # interactive: opens editor with current body
+  ${SCRIPT_NAME} --title "New title"                   # preserve body (terminal stdin)
+  echo "New description" | ${SCRIPT_NAME}              # stdin pipe, edit current task
+  ${SCRIPT_NAME} < ./description.md                    # stdin redirect, edit current task
+  echo "New description" | ${SCRIPT_NAME} task/abc-123 # stdin pipe, edit specific task
+  ${SCRIPT_NAME} --title "Updated" < ./description.md  # stdin + explicit title
 
 EOF
   exit 1
@@ -88,9 +98,7 @@ rewrite_task_file() {
 main() {
   local task_id_arg=''
   local new_title=''
-  local new_body=''
   local has_title=false
-  local has_body=false
   local -a add_labels=()
   local -a delete_labels=()
   local worktree_arg=''
@@ -101,9 +109,6 @@ main() {
       --title)
         [[ $# -lt 2 ]] && { log "Error: --title requires an argument"; usage; }
         new_title="$2"; has_title=true; shift 2 ;;
-      --body|--description)
-        [[ $# -lt 2 ]] && { log "Error: $1 requires an argument"; usage; }
-        new_body="$2"; has_body=true; shift 2 ;;
       --label)
         [[ $# -lt 2 ]] && { log "Error: --label requires an argument"; usage; }
         add_labels+=("$2"); shift 2 ;;
@@ -229,9 +234,10 @@ main() {
     current_created="$(generate_timestamp)"
   fi
 
-  # Interactive mode: no metadata flags given — open editor for body
+  # Determine interactive mode: no metadata flags and stdin is a terminal → open editor
+  # If stdin is not a terminal, read body from stdin even when no flags are given.
   local interactive=false
-  if [[ "$has_title" == false && "$has_body" == false && ${#add_labels[@]} -eq 0 && ${#delete_labels[@]} -eq 0 ]]; then
+  if [[ "$has_title" == false && ${#add_labels[@]} -eq 0 && ${#delete_labels[@]} -eq 0 && -t 0 ]]; then
     interactive=true
   fi
 
@@ -240,15 +246,18 @@ main() {
   final_title="${new_title:-$current_title}"
 
   if [[ "$interactive" == true ]]; then
+    # Interactive mode with terminal stdin: open editor pre-populated with current body
     local edited_body
     edited_body="$(printf '%s' "${current_body}" | prompt)" || {
       log "Error: Editor exited with non-zero status."
       exit 1
     }
     final_body="$edited_body"
-  elif [[ "$has_body" == true ]]; then
-    final_body="$new_body"
+  elif [[ ! -t 0 ]]; then
+    # Non-terminal stdin (pipe or redirect): read body from stdin
+    final_body="$(cat)"
   else
+    # Terminal stdin but not interactive mode (metadata flags given): preserve current body
     final_body="$current_body"
   fi
 
