@@ -369,7 +369,7 @@ main() {
   local from_bookmark
   if [[ -n "$from" ]]; then
     from_bookmark="$from"
-    if ! jj "${jj_opts[@]}" log -r "$from_bookmark" --no-graph -T '' 2>/dev/null; then
+    if ! jj "${jj_opts[@]}" --ignore-working-copy log -r "$from_bookmark" --no-graph -T '' 2>/dev/null; then
       log "Error: --from '$from_bookmark' not found in repository"
       exit 1
     fi
@@ -386,9 +386,15 @@ main() {
   log "Propagating from: $from_bookmark"
   [[ "$dry_run" == true ]] && log "(dry-run: no changes will be made)"
 
-  # Capture @ to restore after merge operations move it
+  # Capture @ change ID to restore after merge/rebase operations move it.
+  # We use the change ID rather than the commit ID because jj rebases preserve
+  # change IDs: when a descendant of the working-copy commit is rebased (e.g.
+  # when --from targets an ancestor of the current task branch), jj automatically
+  # rebases @ to a new commit with the same change ID. Using the change ID means
+  # `jj edit <change_id>` will always find the current (post-rebase) version of
+  # the working-copy commit rather than the now-obsolete pre-rebase commit ID.
   local original_rev
-  original_rev="$(get_worktree_current_rev "$repo")"
+  original_rev="$(jj -R "$repo" log -r '@' --no-graph -T 'change_id' 2>/dev/null)"
   trap '[[ -n "'"$original_rev"'" ]] && jj -R "'"$repo"'" edit "'"$original_rev"'" 2>/dev/null || true' EXIT
 
   propagate_from "$repo" "$from_bookmark" "$task_prefix" "$project_prefix" \
