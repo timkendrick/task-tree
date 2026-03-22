@@ -15,7 +15,6 @@ subtask: [x] task/task-aliases-d407b6d3
 subtask: [ ] task/standardize-commit-messages-b542cab5
 subtask: [x] task/tt-task-create-description-editor-747ffc60
 subtask: [x] task/tt-task-parent-f4a6a56f
-subtask: [ ] task/tt-task-checkin-flags-2a32d8b4
 subtask: [x] task/tt-task-describe-9463850e
 subtask: [x] task/rename-tt-task-status-94b2b9a0
 subtask: [x] task/tt-task-show-subtask-titles-8ea41199
@@ -48,7 +47,7 @@ subtask: [ ] task/tt-task-prune-9a1ce601
 subtask: [x] task/tt-task-get-context-e83871a2
 subtask: [x] task/tt-task-delete-context-5f97f98a
 subtask: [x] task/tt-task-prompt-6060d454
-subtask: [ ] task/tt-task-checkin-propagate-fe6f7554
+subtask: [x] task/tt-task-checkin-propagate-fe6f7554
 subtask: [x] task/tt-task-show-expand-context-310f87ca
 subtask: [x] task/tt-workspace-branch-status-8c69b854
 subtask: [x] task/tt-task-context-subcommands-43ff1903
