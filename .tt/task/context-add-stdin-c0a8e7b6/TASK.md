@@ -2,7 +2,8 @@
 title: "Support stdin for `tt task context add` body"
 status: IN-PROGRESS
 created: 2026-03-22T15:49:07Z
-updated: 2026-03-22T15:49:08Z
+updated: 2026-03-22T17:19:29Z
+context: context/plan-slug-required-in-non-interactive-mode-8a6e164a
 ---
 Replace the `--body <text>` argument on `tt task context add` with stdin support. When stdin is a pipe or redirect (i.e. not a TTY: `[[ ! -t 0 ]]`), read the body from stdin. When stdin is a terminal, preserve the existing behaviour of opening an editor.
 
