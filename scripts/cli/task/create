@@ -17,8 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # Options:
 #   --title TITLE          Task title (prompted if missing and stdin is a TTY)
-#   --slug SLUG            Human-readable slug (prompted with suggested default if missing)
-#   --body "TEXT"          Task body/description (prompted if missing and stdin is a TTY)
+#   --slug SLUG            Human-readable slug (required in non-interactive mode; prompted otherwise)
 #   --parent TASK-ID       Parent task ID (default: current branch); mutually exclusive with --project
 #   --project              Create a parentless project task; mutually exclusive with --parent
 #   --target COMMIT-REV    (with --project) Fork project branch from this revision (default: current @)
@@ -44,8 +43,7 @@ Create a task file and jj bookmark for task-tree bootstrap.
 
 Options:
   --title TITLE         Task title/summary (prompted if missing and interactive)
-  --slug SLUG           Human-readable slug (prompted with suggested default if missing)
-  --body TEXT           Task body/description (prompted if missing and interactive)
+  --slug SLUG           Human-readable slug (required in non-interactive mode; prompted otherwise)
   --parent TASK-ID      Parent task ID (default: current branch); mutually exclusive with --project
   --project             Create a parentless project task; mutually exclusive with --parent
   --target COMMIT-REV   (with --project) Fork project branch from this revision (default: current @)
@@ -60,13 +58,18 @@ Options:
   --checkout            After creation, run checkout on the newly created task
   --worktree[=<path>]   (with --checkout) Use or create a dedicated jj workspace for the task
 
+Body is read from stdin (via pipe or redirect) if stdin is not a terminal;
+otherwise opens an editor for body input.
+
 Examples:
-  ${SCRIPT_NAME}                                    # prompts for title, slug, body
-  ${SCRIPT_NAME} --title "Phase 0: Test harness" --body "Set up the test harness"
-  ${SCRIPT_NAME} --slug tt-task-list --title "tt task list" --parent task/phase-0-abc123de --label tdd --body "Implement tt task list"
-  ${SCRIPT_NAME} --project --title "Main app" --body "Primary application"
-  ${SCRIPT_NAME} --project --title "Main app" --target abc123 --body "Fork from specific revision"
-  ${SCRIPT_NAME} --title "New feature" --body "Add new feature" --propagate --shallow
+  ${SCRIPT_NAME}                                    # prompts for title, slug, body (editor)
+  ${SCRIPT_NAME} --title "Phase 0: Test harness"   # prompts for body (editor)
+  echo "Set up the test harness" | ${SCRIPT_NAME} --title "Phase 0: Test harness"
+  ${SCRIPT_NAME} --title "Phase 0: Test harness" < ./description.md
+  ${SCRIPT_NAME} --slug tt-task-list --parent task/phase-0-abc123de --label tdd < ./description.md
+  ${SCRIPT_NAME} --project --title "Main app" < ./description.md
+  ${SCRIPT_NAME} --project --title "Main app" --target abc123 < ./description.md
+  ${SCRIPT_NAME} --title "New feature" --propagate --shallow < ./description.md
   ${SCRIPT_NAME} --slug my-task --title "My task" --checkout
   ${SCRIPT_NAME} --slug my-task --title "My task" --checkout --worktree
 
@@ -154,8 +157,6 @@ main() {
   local slug=''
   local slug_explicit=false
   local title=''
-  local body=''
-  local has_body=false
   local -a labels=()
   local is_project=false
   local target=''
@@ -181,12 +182,6 @@ main() {
       --title)
         [[ $# -lt 2 ]] && { log "Error: --title requires an argument"; usage; }
         title="$2"
-        shift 2
-        ;;
-      --body|--description)
-        [[ $# -lt 2 ]] && { log "Error: $1 requires an argument"; usage; }
-        body="$2"
-        has_body=true
         shift 2
         ;;
       --label)
@@ -270,9 +265,9 @@ main() {
     fi
   fi
 
-  local default_slug
-  default_slug="$(title_to_slug "$title")"
   if [[ "$slug_explicit" == false ]]; then
+    local default_slug
+    default_slug="$(title_to_slug "$title")"
     if [[ -z "$default_slug" ]]; then
       log "Error: Could not generate slug from title: $title"
       exit 1
@@ -282,17 +277,27 @@ main() {
       read -e -p "Enter a task identifier (defaults to $default_slug): " prompted_slug
       slug="${prompted_slug:-$default_slug}"
     else
-      slug="$default_slug"
+      log "Error: --slug is required in non-interactive mode"
+      usage
     fi
   fi
   if ! validate_slug "$slug"; then
     exit 1
   fi
 
-  if [[ "$has_body" == false ]]; then
-    if [[ -t 0 ]]; then
-      body="$(prompt_raw </dev/null)"
-    fi
+  # Acquire body text
+  local body
+  if [[ -t 0 ]]; then
+    # Interactive: open editor for body
+    local raw
+    raw="$(prompt_raw </dev/null)" || {
+      log "Error: Editor exited with non-zero status."
+      exit 1
+    }
+    body="$raw"
+  else
+    # Read from stdin (pipe or redirect)
+    body="$(cat)"
   fi
 
   if [[ "$is_project" == true && -n "$parent" ]]; then
@@ -428,10 +433,11 @@ main() {
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
     jj "${jj_opts[@]}" new "@"
     jj "${jj_opts[@]}" bookmark set "$task_id"
+    # Build common args (title, labels)
     local edit_args=(--repo "$repo" --title "$title")
-    [[ -n "$body" ]] && edit_args+=(--body "$body")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
-    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id"
+    # Pipe body to edit
+    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body"
   elif [[ -n "$parent_task_file" ]]; then
     # Child task: commit on parent branch creates the stub and registers the subtask;
     # the child branch's initial commit (via edit) sets title, body, and labels.
@@ -447,21 +453,23 @@ main() {
     jj "${jj_opts[@]}" bookmark set "$parent_bookmark"
     jj "${jj_opts[@]}" new "@"
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
+    # Build common args (title, labels)
     local edit_args=(--repo "$repo" --title "$title")
-    [[ -n "$body" ]] && edit_args+=(--body "$body")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
-    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id"
+    # Pipe body to edit
+    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body"
   else
     # Child task with no identifiable parent task file (e.g. branching from a non-task bookmark).
     # Create the stub and bookmark without modifying any parent; edit sets metadata.
     write_task_stub "$repo" "$task_suffix"
     jj "${jj_opts[@]}" describe -m "Create task: $title ($task_id)"
-    jj "${jj_opts[@]}" new "@"
+    jj "${jjOpts[@]}" new "@"
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
+    # Build common args (title, labels)
     local edit_args=(--repo "$repo" --title "$title")
-    [[ -n "$body" ]] && edit_args+=(--body "$body")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
-    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id"
+    # Pipe body to edit
+    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body"
   fi
 
   log "Created task $task_id (bookmark: $task_id)"

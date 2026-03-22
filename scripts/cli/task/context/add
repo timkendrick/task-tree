@@ -8,14 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task context add — Create a standalone context file for a task.
 #
 # Usage:
-#   add [<task-id>] [--title <title>] [--slug <slug>] [--body <text>]
+#   add [<task-id>] [--title <title>] [--slug <slug>]
 #       [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
 #
 # Options:
 #   <task-id>            Task branch to add context to (default: current branch).
 #   --title TITLE        Context file title (prompted if missing and interactive).
 #   --slug SLUG          Context slug (derived from title if not given).
-#   --body TEXT          Context body text (prompted via editor if missing).
 #   --worktree=<path>    Worktree to use when task has multiple worktrees.
 #   --repo PATH          Repository root (default: walk up from CWD to find .jj).
 #   --workspace-dir PATH Virtual project dir. Overrides workspace_dir in .tt/config.toml.
@@ -27,7 +26,7 @@ readonly SCRIPT_NAME="${COMMAND_NAME:+$COMMAND_NAME }${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [--title TITLE] [--slug SLUG] [--body TEXT]
+Usage: ${SCRIPT_NAME} [<task-id>] [--title TITLE] [--slug SLUG]
                       [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
 
 Create a standalone context file for the current task (or <task-id>).
@@ -36,19 +35,26 @@ A context file is a dated freeform markdown file stored alongside the task
 at .tt/task/<task-slug>/context/<ctx-slug>-<hex>.md. It is referenced in the
 task's frontmatter via a "context: context/<ctx-slug>-<hex>" entry.
 
+Context body is read from stdin (via pipe or redirect) if stdin is not a terminal;
+otherwise an editor is opened for body input.
+
 Options:
   <task-id>             Task branch to add context to (default: current branch).
   --title TITLE         Context file title (prompted if missing and interactive).
   --slug SLUG           Context file slug (derived from title if not given).
-  --body TEXT           Context body text (opens editor if omitted).
   --worktree=<path>     Worktree to use when task has multiple worktrees.
   --repo PATH           Repository root (default: walk up from CWD to find .jj).
   --workspace-dir PATH  Virtual project dir. Overrides workspace_dir in .tt/config.toml.
 
 Examples:
-  ${SCRIPT_NAME} --title "OAuth research notes" --body "See https://oauth.net/2/"
-  ${SCRIPT_NAME} task/foo-abc123 --title "Initial findings"
-  ${SCRIPT_NAME}    # opens editor for title prompt + body
+  # Pipe a file directly
+  cat ./plan.md | tt task context add --title "Implementation plan"
+
+  # Redirect from file
+  tt task context add --title "Implementation plan" < ./plan.md
+
+  # Interactive (no redirect) — opens editor as before
+  tt task context add --title "Implementation plan"
 
 EOF
   exit 1
@@ -57,8 +63,6 @@ EOF
 main() {
   local ctx_title=''
   local ctx_slug=''
-  local body=''
-  local has_body=false
   local task_id_arg=''
   local worktree_arg=''
   local repo=''
@@ -72,9 +76,6 @@ main() {
       --slug)
         [[ $# -lt 2 ]] && { log "Error: --slug requires an argument"; usage; }
         ctx_slug="$2"; shift 2 ;;
-      --body)
-        [[ $# -lt 2 ]] && { log "Error: --body requires an argument"; usage; }
-        body="$2"; has_body=true; shift 2 ;;
       --worktree=*) worktree_arg="${1#--worktree=}"; shift ;;
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
@@ -201,7 +202,7 @@ main() {
       log "Error: Could not generate slug from title: $ctx_title"
       exit 1
     fi
-    if [[ -t 0 && -z "$body" && "$has_body" == false ]]; then
+    if [[ -t 0 ]]; then
       # Interactive: prompt for slug (consistent with task creation)
       local prompted_slug
       read -e -p "Enter a context identifier (defaults to $default_slug): " prompted_slug
@@ -215,14 +216,18 @@ main() {
   fi
 
   # Acquire body text
-  if [[ "$has_body" == false ]]; then
-    # Open editor for body
+  local body=''
+  if [[ -t 0 ]]; then
+    # Interactive: open editor for body
     local raw
     raw="$(prompt_raw </dev/null)" || {
       log "Error: Editor exited with non-zero status."
       exit 1
     }
     body="$raw"
+  else
+    # Read from stdin (pipe or redirect)
+    body="$(cat)"
   fi
 
   # Check if body is empty (only whitespace)
