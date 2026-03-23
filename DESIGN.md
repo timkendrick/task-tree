@@ -202,7 +202,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 ### 5.1 Workspace
 
-- **`tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>]`** — Initialize a task-tree project. Creates the virtual workspace directory, `.tt/config.toml` (with optional task prefix and project prefix), and a `HEAD` symlink that initially points to the repo and is later updated to the most recently checked-out task workspace (serving as a quick link to the current development context). Requires a clean working directory and no existing `.tt` in the repo root. See §9 step 1 and §6.2 (HEAD symlink).
+- **`tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]`** — Initialize a task-tree project. Creates the virtual workspace directory, `.tt/config.toml` (with optional task prefix and project prefix), and a `HEAD` symlink that initially points to the repo and is later updated to the most recently checked-out task workspace (serving as a quick link to the current development context). Creates a `Create workspace` commit in the jj repository. Requires a clean working directory; aborts if `.tt` exists in the repo root as a non-directory entry (use `--force` to remove it). With `--force`, also allows overwriting files in an already-populated virtual folder. See §9 step 1 and §6.2 (HEAD symlink).
 
 - **`tt workspace switch <task-id> [--worktree=<path>] [--force]`** — Update the virtual project's `HEAD` symlink to point to an existing worktree for the given task or project. Unlike `tt task checkout --switch`, this command does not create worktrees, switch VCS branches, or update task status; it only redirects `HEAD`. Refuses if no worktree exists for the task (the user must run `tt task checkout --worktree` first). If multiple worktrees exist for the task, `--worktree=<path>` is required to disambiguate. Refuses if the workspace currently pointed to by `HEAD` has uncommitted changes, unless `--force` is provided. Runs `pre-checkout` and `post-checkout` hooks; hook env vars `TT_PREVIOUS_TASK_ID`/`TT_PREVIOUS_TASK_BRANCH` reflect the task that `HEAD` was pointing to before the switch. Output is the same confirmation as `tt task checkout`. See §6.2.
 
@@ -324,7 +324,7 @@ Each task and project branch follows a structured lifecycle of named commits. Th
 
 | Commit description | Command | Purpose |
 |--------------------|---------|---------|
-| `Create workspace: <desc>` | `tt workspace init` | Adds `.tt/config.toml` to the base branch |
+| `Create workspace` | `tt workspace init` | Adds `.tt/config.toml` to the working copy |
 | `Create project: <title>` | `tt task create --project` | Creates the project task file on the project branch |
 | `Begin task: <title> (<task-id>)` | `tt task checkout` | First checkout: creates `TASK.md` symlink and sets status → `IN-PROGRESS`; advances task bookmark |
 | `Create task: <child-title> (<task-id>)` | `tt task create` | On the parent branch: creates child task file and registers `subtask: [ ] <task-id>` in the parent file; parent bookmark advances |
@@ -338,9 +338,8 @@ Each task and project branch follows a structured lifecycle of named commits. Th
 **Branch lifecycle diagram.** The diagram below shows the commit graph for a project `project/P` containing one task `task/T`, from workspace initialisation through to task completion. Commits are shown newest-first (top) to oldest (bottom), matching `jj log` output. `↑` marks where the named bookmark sits after each commit; `├─╮` is a branch fork (task branches from parent); `○─╯` is a merge (handoff merges into parent).
 
 ```
-(base):
-  ○  Create workspace: <desc>
-     ↑ base
+(initial commit):
+  ○  Create workspace
 
 project/P:
   ○  Checkpoint: ...                                 (continued project work, optional)
@@ -730,7 +729,7 @@ Every hook receives at least:
 
 The standard workflow:
 
-1. **Initialize** — `tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>]`. The tool checks that the repo working directory is clean and there is no `.tt` in the repo root. It creates the virtual project directory, `.tt/config.toml` (task prefix default `task/`, project prefix default `project/`), and a `HEAD` symlink that initially points to the repo and is updated on each checkout. See §5.1 and §6.2.
+1. **Initialize** — `tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]`. The tool checks that the repo working directory is clean and that `.tt` does not exist as a non-directory entry in the repo root. It creates the virtual project directory, `.tt/config.toml` (task prefix default `task/`, project prefix default `project/`), and a `HEAD` symlink that initially points to the repo and is updated on each checkout. It creates a `Create workspace` commit in the jj repository. No named bookmark is created by this command. See §5.1 and §6.2.
 
 2. **Create a project** — `tt task create --project [--target <commit-rev>] [--slug <slug>] [--title <title>] [--label <label> ...]`. The tool prompts for title (and autosuggested branch name) if needed, reads the task body from stdin (via pipe or redirect) if stdin is not a terminal; otherwise opens an editor for body input. Creates the project branch from the `--target` VCS revision if specified, defaulting to the current revision, and creates the project task file. If the target revision itself exists within a task tree, the tool notifies the user and refuses to proceed. See §6.1.
 

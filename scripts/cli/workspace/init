@@ -1,0 +1,274 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt workspace init — initialize a new tt (task-tree) workspace.
+#
+# Usage:
+#   init <path-to-repo> <path-to-virtual-project-folder>
+#       [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]
+#
+# Arguments:
+#   <path-to-repo>                   Path to the jj repository root.
+#   <path-to-virtual-project-folder> Path where the virtual workspace will be created
+#                                    (a directory containing the HEAD symlink).
+#
+# Options:
+#   --task-prefix <prefix>     Task ID prefix (default: "task/").
+#   --project-prefix <prefix>  Project ID prefix (default: "project/").
+#   --force                    Remove an existing non-directory .tt entry in the repo;
+#                              overwrite files in the virtual folder if it already exists.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  local exit_code="${1:-1}"
+  if [[ "$exit_code" -eq 0 ]]; then
+    cat <<EOF
+Usage: ${SCRIPT_NAME} <path-to-repo> <path-to-virtual-project-folder> [options]
+
+Initialize a new task-tree (tt) workspace.
+
+Arguments:
+  <path-to-repo>                   Path to a jj repository root.
+  <path-to-virtual-project-folder>
+                                   Directory to create as the virtual workspace.
+                                   Must not exist (or must be empty) unless --force.
+
+Options:
+  --task-prefix <prefix>     Task ID prefix written to .tt/config.toml (default: "task/").
+  --project-prefix <prefix>  Project ID prefix written to .tt/config.toml (default: "project/").
+  --force                    Remove a non-directory .tt entry if one exists in the repo;
+                             overwrite files in the virtual folder if it already exists.
+  -h, --help                 Show this help and exit.
+
+What this command does:
+  1. Verifies the repo working copy is clean.
+  2. Creates .tt/config.toml in the repo with task_prefix and project_prefix.
+  3. Creates the virtual folder and a HEAD symlink pointing at the repo root.
+  4. Creates a "Create workspace" commit in the jj repo.
+
+Examples:
+  ${SCRIPT_NAME} /path/to/repo /path/to/virtual-workspace
+  ${SCRIPT_NAME} . ~/workspaces/my-project --task-prefix "t/" --project-prefix "p/"
+  ${SCRIPT_NAME} /path/to/repo /path/to/virtual --force
+
+EOF
+  else
+    cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} <path-to-repo> <path-to-virtual-project-folder> [options]
+
+Initialize a new task-tree (tt) workspace.
+
+Arguments:
+  <path-to-repo>                   Path to a jj repository root.
+  <path-to-virtual-project-folder>
+                                   Directory to create as the virtual workspace.
+                                   Must not exist (or must be empty) unless --force.
+
+Options:
+  --task-prefix <prefix>     Task ID prefix written to .tt/config.toml (default: "task/").
+  --project-prefix <prefix>  Project ID prefix written to .tt/config.toml (default: "project/").
+  --force                    Remove a non-directory .tt entry if one exists in the repo;
+                             overwrite files in the virtual folder if it already exists.
+  -h, --help                 Show this help and exit.
+
+EOF
+  fi
+  exit "$exit_code"
+}
+
+# Validate a prefix string: non-empty, lowercase alphanumeric + hyphens + slashes,
+# no leading/trailing hyphens, no consecutive hyphens or consecutive slashes,
+# must start with a lowercase letter or digit.
+validate_prefix() {
+  local p="$1"
+  local label="$2"
+  if [[ -z "$p" ]]; then
+    log "Error: $label cannot be empty"
+    return 1
+  fi
+  if [[ "$p" =~ [A-Z] ]]; then
+    log "Error: $label must be lowercase: '$p'"
+    return 1
+  fi
+  if [[ "$p" =~ ^[^a-z0-9] ]]; then
+    log "Error: $label must start with a lowercase letter or digit: '$p'"
+    return 1
+  fi
+  if [[ "$p" =~ [^a-z0-9/-] ]]; then
+    log "Error: $label must contain only lowercase letters, digits, hyphens, and slashes: '$p'"
+    return 1
+  fi
+  if [[ "$p" =~ -- ]]; then
+    log "Error: $label must not contain consecutive hyphens: '$p'"
+    return 1
+  fi
+  if [[ "$p" =~ // ]]; then
+    log "Error: $label must not contain consecutive slashes: '$p'"
+    return 1
+  fi
+  if [[ "$p" =~ ^- ]] || [[ "$p" =~ -$ ]]; then
+    log "Error: $label must not start or end with a hyphen: '$p'"
+    return 1
+  fi
+  return 0
+}
+
+main() {
+  local repo_arg=''
+  local virtual_arg=''
+  local task_prefix='task/'
+  local project_prefix='project/'
+  local force=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task-prefix)
+        [[ $# -lt 2 ]] && { log "Error: --task-prefix requires an argument"; usage; }
+        task_prefix="$2"
+        shift 2
+        ;;
+      --project-prefix)
+        [[ $# -lt 2 ]] && { log "Error: --project-prefix requires an argument"; usage; }
+        project_prefix="$2"
+        shift 2
+        ;;
+      --force)
+        force=true
+        shift
+        ;;
+      -h|--help)
+        usage 0
+        ;;
+      -*)
+        log "Error: Unknown option: $1"
+        usage
+        ;;
+      *)
+        if [[ -z "$repo_arg" ]]; then
+          repo_arg="$1"
+        elif [[ -z "$virtual_arg" ]]; then
+          virtual_arg="$1"
+        else
+          log "Error: Unexpected argument: $1"
+          usage
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$repo_arg" ]]; then
+    log "Error: <path-to-repo> is required"
+    usage
+  fi
+  if [[ -z "$virtual_arg" ]]; then
+    log "Error: <path-to-virtual-project-folder> is required"
+    usage
+  fi
+
+  # Resolve repo to absolute path
+  if [[ ! -d "$repo_arg" ]]; then
+    log "Error: Repository path does not exist: $repo_arg"
+    exit 1
+  fi
+  local repo_abs
+  repo_abs="$(cd "$repo_arg" && pwd)"
+
+  # Verify it is a jj repo
+  if [[ ! -d "$repo_abs/.jj" ]]; then
+    log "Error: Not a jj repository (no .jj directory): $repo_abs"
+    exit 1
+  fi
+
+  # Check working copy is clean
+  if ! is_wc_clean "$repo_abs"; then
+    log "Error: Working copy has uncommitted changes. Commit or discard changes before initializing."
+    exit 1
+  fi
+
+  # Check that .tt is not a non-directory entry (file or symlink).
+  # If .tt/ is already a directory, silently continue (mkdir -p below is a no-op).
+  if [[ -e "$repo_abs/.tt" && ! -d "$repo_abs/.tt" ]]; then
+    if [[ "$force" == true ]]; then
+      log "Warning: Removing existing non-directory .tt entry (--force): $repo_abs/.tt"
+      rm -f "$repo_abs/.tt"
+    else
+      log "Error: .tt exists but is not a directory: $repo_abs/.tt"
+      log "  Use --force to remove it."
+      exit 1
+    fi
+  fi
+
+  # Validate prefixes
+  validate_prefix "$task_prefix" "--task-prefix" || exit 1
+  validate_prefix "$project_prefix" "--project-prefix" || exit 1
+  if [[ "$task_prefix" == "$project_prefix" ]]; then
+    log "Error: --task-prefix and --project-prefix must differ: both are '$task_prefix'"
+    exit 1
+  fi
+
+  # Resolve virtual folder
+  local virtual_dir
+  if [[ -d "$virtual_arg" ]]; then
+    virtual_dir="$(cd "$virtual_arg" && pwd)"
+    # Check it is empty (unless --force)
+    if [[ "$force" != true ]]; then
+      if [[ -n "$(ls -A "$virtual_dir" 2>/dev/null)" ]]; then
+        log "Error: Virtual folder already exists and is not empty: $virtual_dir"
+        log "  Use --force to overwrite files within it."
+        exit 1
+      fi
+    fi
+  else
+    # The directory does not yet exist; verify parent exists
+    local virtual_parent
+    virtual_parent="$(dirname "$virtual_arg")"
+    if [[ ! -d "$virtual_parent" ]]; then
+      log "Error: Parent directory of virtual folder does not exist: $virtual_parent"
+      exit 1
+    fi
+    virtual_dir="$(cd "$virtual_parent" && pwd)/$(basename "$virtual_arg")"
+  fi
+
+  # All checks passed — proceed with setup
+
+  # Create virtual folder
+  mkdir -p "$virtual_dir"
+
+  # Create .tt/ directory in repo (no-op if it already exists)
+  mkdir -p "$repo_abs/.tt"
+
+  # Write .tt/config.toml
+  local config_file="$repo_abs/.tt/config.toml"
+  cat > "$config_file" <<TOML
+# task-tree (tt) configuration
+
+# Task ID prefix (default: task/)
+# Full task ID format: <prefix><slug>-<hex>
+task_prefix = "${task_prefix}"
+
+# Project ID prefix (default: project/)
+# Full project ID format: <prefix><slug>-<hex>
+project_prefix = "${project_prefix}"
+TOML
+
+  # Create HEAD symlink in virtual folder pointing to repo (absolute path)
+  ln -snf "$repo_abs" "$virtual_dir/HEAD"
+  log "Created HEAD -> $repo_abs"
+
+  # Commit to jj
+  jj -R "$repo_abs" commit -m "Create workspace"
+
+  log "Initialized workspace:"
+  log "  repo:           $repo_abs"
+  log "  config:         $config_file"
+  log "  virtual folder: $virtual_dir"
+  log "  HEAD ->         $repo_abs"
+}
+
+main "$@"
