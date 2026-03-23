@@ -87,6 +87,7 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} delete       →  tt task delete
   ${SCRIPT_NAME} tree         →  tt task tree
   ${SCRIPT_NAME} rename       →  tt task rename
+  ${SCRIPT_NAME} move         →  tt task move
   ${SCRIPT_NAME} add-context  →  tt task context add
   ${SCRIPT_NAME} get-context  →  tt task context get
   ${SCRIPT_NAME} list-context →  tt task context list
@@ -126,6 +127,7 @@ main() {
     delete)      set -- task     delete       "${@:2}" ;;
     tree)        set -- task     tree         "${@:2}" ;;
     rename)      set -- task     rename       "${@:2}" ;;
+    move)        set -- task     move         "${@:2}" ;;
     add-context)  set -- task     context add   "${@:2}" ;;
     get-context)  set -- task     context get   "${@:2}" ;;
     list-context) set -- task     context list  "${@:2}" ;;
