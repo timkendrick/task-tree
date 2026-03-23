@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# Rename a task's slug (human-readable part) while preserving the hex suffix.
+#
+# Usage:
+#   rename --slug <new-slug> [--task <task-id>] [--repo PATH] [--workspace-dir PATH]
+#
+# Options:
+#   --slug SLUG            New slug (required)
+#   --task TASK-ID         Task to rename (default: current task)
+#   --repo PATH            Repository root (default: walk up to find .jj)
+#   --workspace-dir PATH   Virtual project dir (for hooks)
+#
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} --slug <new-slug> [--task <task-id>] [--repo PATH] [--workspace-dir PATH]
+
+Rename a task's slug (the human-readable part of the task ID), preserving the hex suffix.
+For example: task/old-name-abc123 → task/new-name-abc123.
+
+Renames the jj bookmark, the task directory, and updates the parent's subtask reference.
+Requires a clean working copy. If the task has no parent (e.g., a project), only the
+bookmark and directory are renamed. Silently succeeds if the new slug matches the
+current slug. Errors if the new ID would conflict with an existing bookmark.
+
+Options:
+  --slug SLUG            New slug (required)
+  --task TASK-ID         Task to rename (default: current task)
+  --repo PATH            Repository root (default: walk up to find .jj)
+  --workspace-dir PATH   Virtual project dir
+
+Examples:
+  ${SCRIPT_NAME} --slug new-name
+  ${SCRIPT_NAME} --slug new-name --task task/old-name-abc123
+
+EOF
+  exit 1
+}
+
+main() {
+  local slug=''
+  local task_id=''
+  local repo=''
+  local workspace_dir=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --slug)
+        [[ $# -lt 2 ]] && { log "Error: --slug requires an argument"; usage; }
+        slug="$2"
+        shift 2
+        ;;
+      --task)
+        [[ $# -lt 2 ]] && { log "Error: --task requires an argument"; usage; }
+        task_id="$2"
+        shift 2
+        ;;
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"
+        shift 2
+        ;;
+      --workspace-dir)
+        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
+        workspace_dir="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        ;;
+      *)
+        log "Error: Unknown option: $1"
+        usage
+        ;;
+    esac
+  done
+
+  # --slug is required
+  if [[ -z "$slug" ]]; then
+    log "Error: --slug is required"
+    usage
+  fi
+
+  # Validate slug format
+  if ! validate_slug "$slug"; then
+    exit 1
+  fi
+
+  # Resolve repo root: walk up from current directory to find .jj
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository (no .jj directory found). Use --repo to specify."
+      exit 1
+    fi
+  fi
+
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local -a jj_opts=(-R "$repo")
+
+  # Resolve task prefix and project prefix from config
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # Resolve target task
+  local old_id old_slug old_hex
+  if [[ -n "$task_id" ]]; then
+    # Explicit --task provided
+    old_id="$task_id"
+  else
+    # Use current task
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    old_id="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    if [[ -z "$old_id" ]]; then
+      log "Error: No current task found. Use --task to specify."
+      exit 1
+    fi
+  fi
+
+  # Validate old_id is a valid task or project branch
+  if ! is_task_branch "$old_id" "$task_prefix" && ! is_project_branch "$old_id" "$project_prefix"; then
+    log "Error: Invalid task ID: $old_id"
+    exit 1
+  fi
+
+  # Extract old slug and hex from the ID
+  local prefix
+  if is_task_branch "$old_id" "$task_prefix"; then
+    prefix="$task_prefix"
+  else
+    prefix="$project_prefix"
+  fi
+  local suffix="${old_id#$prefix}"  # e.g., "old-name-abc123"
+  old_slug="${suffix%-*}"           # e.g., "old-name"
+  old_hex="${suffix##*-}"           # e.g., "abc123"
+
+  # Check for no-op: if new slug is same as old slug, succeed silently
+  if [[ "$slug" == "$old_slug" ]]; then
+    exit 0
+  fi
+
+  # Construct new task ID
+  local new_id="${prefix}${slug}-${old_hex}"
+
+  # Pre-validate: check if new ID already exists as a bookmark
+  if jj "${jj_opts[@]}" --ignore-working-copy log -r "$new_id" -n 1 --no-graph -T '' 2>/dev/null; then
+    log "Error: Task or project '$new_id' already exists. Choose a different slug."
+    exit 1
+  fi
+
+  # Check for clean working copy
+  if ! is_wc_clean "$repo"; then
+    log "Error: Working copy is not clean. Commit or discard changes first."
+    exit 1
+  fi
+
+  # Find parent branch (optional - may not exist for projects)
+  local parent_bookmark
+  parent_bookmark="$(find_parent_branch "$repo" "$old_id" "$task_prefix" "$project_prefix")" || true
+
+  # Find parent task file path
+  local parent_task_file
+  if [[ -n "$parent_bookmark" ]]; then
+    local parent_suffix
+    if is_task_branch "$parent_bookmark" "$task_prefix"; then
+      parent_suffix="${parent_bookmark#$task_prefix}"
+    else
+      parent_suffix="${parent_bookmark#$project_prefix}"
+    fi
+    parent_task_file="$(task_file_path "$parent_suffix")"
+  fi
+
+  # Get task title for commit message
+  local task_title
+  task_title="$(jj "${jj_opts[@]}" --ignore-working-copy file show -r "$old_id" -- "$(task_file_path "$suffix")" 2>/dev/null \
+    | awk '/^title:/ { for(i=2;i<=NF;i++) printf "%s ", $i; print ""; exit }')"
+
+  if [[ -z "$task_title" ]]; then
+    task_title="($old_id)"
+  else
+    task_title="${task_title% }"  # Remove trailing space
+  fi
+
+  # If parent exists, update parent's subtask entry
+  if [[ -n "$parent_bookmark" && -n "$parent_task_file" ]]; then
+    # Determine workspace for parent
+    local parent_worktree
+    parent_worktree="$(resolve_current_worktree "$repo")"
+
+    # Switch to parent bookmark tip
+    log "Updating parent subtask reference..."
+    jj -R "$parent_worktree" new "$parent_bookmark"
+
+    local parent_path="$repo/$parent_task_file"
+    if [[ ! -f "$parent_path" ]]; then
+      log "Error: Parent task file not found: $parent_path"
+      jj -R "$parent_worktree" abandon
+      exit 1
+    fi
+
+    # Update subtask entry: replace old_id with new_id
+    local tmpfile
+    tmpfile="$(mktemp)"
+    sed "s|^\(subtask:[[:space:]]*\[.\][[:space:]]*\)${old_id}$|\1${new_id}|" "$parent_path" > "$tmpfile"
+    mv "$tmpfile" "$parent_path"
+
+    # Commit parent update
+    jj -R "$parent_worktree" describe -m "Rename task: $task_title ($new_id)"
+    jj -R "$parent_worktree" bookmark set "$parent_bookmark"
+    jj -R "$parent_worktree" new "@"
+  fi
+
+  # Rename the bookmark
+  log "Renaming bookmark..."
+  jj "${jj_opts[@]}" bookmark rename "$old_id" "$new_id"
+
+  # Rename the task directory
+  local old_dir="${repo}/$(task_dir_path "$suffix")"
+  local new_dir="${repo}/$(task_dir_path "${slug}-${old_hex}")"
+
+  if [[ -d "$old_dir" ]]; then
+    log "Renaming task directory..."
+    mv "$old_dir" "$new_dir"
+  else
+    log "Warning: Task directory not found: $old_dir"
+  fi
+
+  # Update TASK.md symlink if it exists and points to old directory
+  local task_md_link="${repo}/TASK.md"
+  if [[ -L "$task_md_link" ]]; then
+    local link_target
+    link_target="$(readlink "$task_md_link")"
+    # Check if the symlink points to the old relative path
+    local old_rel=".tt/task/${suffix}/TASK.md"
+    local new_rel=".tt/task/${slug}-${old_hex}/TASK.md"
+    if [[ "$link_target" == "$old_rel" ]]; then
+      log "Updating TASK.md symlink..."
+      ln -snf "$new_rel" "$task_md_link"
+    fi
+  fi
+
+  # Leave the working copy at the new bookmark
+  log "Switching to renamed task..."
+  jj "${jj_opts[@]}" new "$new_id"
+
+  # Success message
+  printf 'Task renamed: %s > %s\n' "$old_id" "$new_id"
+}
+
+main "$@"

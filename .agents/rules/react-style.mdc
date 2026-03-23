@@ -1,0 +1,711 @@
+---
+description: React coding conventions
+globs: *.tsx
+alwaysApply: true
+---
+
+# React Component Patterns
+
+## Component Structure and Organization
+
+### Component Template Syntax
+
+Use the following syntax to declare React components:
+
+```tsx
+interface MyComponentProps {
+  foo: string;
+  bar: string;
+}
+
+function MyComponent(props: MyComponentProps): ReactNode {
+  const { foo, bar } = props;
+  return `${foo} ${bar}`;
+}
+```
+
+For any exported components, always export the accompanying props interface:
+
+```tsx
+export interface MyComponentProps {
+  foo: string;
+  bar: string;
+}
+
+export function MyComponent(props: MyComponentProps): ReactNode {
+  const { foo, bar } = props;
+  return `${foo} ${bar}`;
+}
+```
+
+Always include the destructuring `props` assignment, even if the component has no props:
+
+```tsx
+interface MyComponentProps {}
+
+function MyComponent(props: MyComponentProps): ReactNode {
+  const {} = props;
+  return null;
+}
+```
+
+### Hoisted Function Declarations for Child Components
+
+When creating reusable child components within a file, prefer hoisted function declarations at the foot of the file over inline components or arrow functions.
+
+#### ✅ Preferred Pattern
+```tsx
+export interface ParentComponentProps {
+  items: Array<{ id: string; title: string; description: string }>;
+}
+
+export function ParentComponent(props: ParentComponentProps): ReactNode {
+  const { items } = props;
+  return (
+    <div>
+      {items.map(({ id, title, description }) => (
+        <ChildComponent key={id} title={title} description={description} />
+      ))}
+    </div>
+  );
+}
+
+interface ChildComponentProps {
+  title: string;
+  description: string;
+}
+
+function ChildComponent(props: ChildComponentProps) {
+  const { title, description } = props;
+  return (
+    <div>
+      <h3>{title}</h3>
+      <p>{description}</p>
+    </div>
+  );
+}
+```
+
+#### ❌ Avoid These Patterns
+```tsx
+// Don't use inline components
+export const ParentComponent = () => {
+  return (
+    <div>
+      <div>
+        <h3>Title 1</h3>
+        <p>Description 1</p>
+      </div>
+      <div>
+        <h3>Title 2</h3>
+        <p>Description 2</p>
+      </div>
+    </div>
+  );
+};
+
+// Don't use arrow function components inside the main component
+export const ParentComponent = () => {
+  const ChildComponent = ({ title, description }) => (
+    <div>
+      <h3>{title}</h3>
+      <p>{description}</p>
+    </div>
+  );
+
+  return <div>{/* ... */}</div>;
+};
+```
+
+## Component Refactoring Guidelines
+
+### When to Extract Child Components
+
+Extract repeated JSX patterns into child components when:
+- The same structure is repeated 2+ times
+- The pattern has configurable properties (props)
+- The pattern represents a logical UI unit
+
+### Prop Interface Design
+
+Always define explicit TypeScript interfaces for component props:
+
+```tsx
+// ✅ Good: Explicit interface
+interface ButtonProps {
+  variant: 'primary' | 'secondary';
+  size?: 'small' | 'medium' | 'large';
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}
+
+function Button(props: ButtonProps) {
+  const { variant, size = 'medium', disabled = false, onClick, children } = props;
+  // Implementation
+}
+
+// ❌ Avoid: Inline prop types
+function Button({ variant, size, disabled, onClick, children }: {
+  variant: 'primary' | 'secondary';
+  size?: 'small' | 'medium' | 'large';
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  // Implementation
+}
+```
+
+### Sequences of child elements
+
+Depending on whether the sequence is generated from an extensible list, determine whether to use data-driven rendering or sequences of hardcoded static JSX child elements.
+
+#### Extensible lists
+
+For extensible lists of items, prefer data-driven rendering:
+
+```tsx
+// ✅ Good: Data-driven rendering
+export function Navigation(props: NavigationProps): ReactNode {
+  const {} = props;
+  const NAVIGATION_ITEMS = [
+    // Extensible set of items
+    { label: 'Home', path: '/', icon: HomeIcon },
+    { label: 'About', path: '/about', icon: InfoIcon },
+    { label: 'Contact', path: '/contact', icon: ContactIcon },
+  ];
+  return (
+    <nav>
+      {NAVIGATION_ITEMS.map(({ path, label, icon }) => (
+        <NavigationItem key={path} label={label} icon={icon} />
+      ))}
+    </nav>
+  );
+}
+
+// ❌ Avoid: Hardcoded repetition
+export function Navigation(props: NavigationProps): ReactNode {
+  const {} = props;
+  return (
+    <nav>
+      <NavigationItem label="Home" path="/" icon={HomeIcon} />
+      <NavigationItem label="About" path="/about" icon={InfoIcon} />
+      <NavigationItem label="Contact" path="/contact" icon={ContactIcon} />
+    </nav>
+  );
+};
+```
+
+#### Static sequences
+
+For static sequences with a fixed set of items, prefer hardcoded repetition:
+
+```tsx
+// ✅ Good: Hardcoded repetition
+function ColumnLayout(props: ColumnLayoutProps): ReactNode {
+  const { ribbon, sidebar, main } = props;
+  return (
+    <>
+      <Column width={32}>{ribbon}</Column>
+      <Column width={128}>{sidebar}</Column>
+      <Column width={null}>{main}</Column>
+    </>
+  );
+}
+
+// ❌ Avoid: Data-driven rendering
+export function ColumnLayout(props: ColumnLayoutProps): ReactNode {
+  const { ribbon, sidebar, main } = props;
+  const COLUMNS = [
+    // Static set of items
+    { id: 'ribbon', width: 32, children: ribbon },
+    { id: 'sidebar', width: 128, children: sidebar },
+    { id: 'main', width: null, children: main },
+  ];
+  return (
+    <>
+      {COLUMNS.map(({ id, width, children }) => (
+        <Column key={id} width={width}>{children}</Column>
+      ))}
+    </>
+  );
+};
+```
+
+## Component Composition Patterns
+
+### Container and Presentation Components
+
+Separate logic from presentation:
+
+```tsx
+// Container component (handles logic)
+export const UserListContainer = () => {
+  const { users, loading, error } = useUsers();
+  
+  if (loading) return <LoadingSpinner />;
+  if (error) return <ErrorMessage error={error} />;
+  
+  return <UserListPresentation users={users} />;
+};
+
+// Presentation component (handles UI)
+interface UserListPresentationProps {
+  users: User[];
+}
+
+function UserListPresentation({ users }: UserListPresentationProps) {
+  return (
+    <div>
+      {users.map((user) => (
+        <UserCard key={user.id} user={user} />
+      ))}
+    </div>
+  );
+}
+```
+
+### Compound Components
+
+For complex components with multiple related parts:
+
+```tsx
+export const Card = ({ children }: { children: React.ReactNode }) => (
+  <div className="card">{children}</div>
+);
+
+function CardHeader({ children }: { children: React.ReactNode }) {
+  return <div className="card-header">{children}</div>;
+}
+
+function CardBody({ children }: { children: React.ReactNode }) {
+  return <div className="card-body">{children}</div>;
+}
+
+function CardFooter({ children }: { children: React.ReactNode }) {
+  return <div className="card-footer">{children}</div>;
+}
+
+// Attach sub-components
+Card.Header = CardHeader;
+Card.Body = CardBody;
+Card.Footer = CardFooter;
+```
+
+## Performance Considerations
+
+### Memoization When Appropriate
+
+Use React.memo for expensive pure components:
+
+```tsx
+import { memo, type ReactNode } from 'react';
+
+interface ExpensiveComponentProps {
+  data: ComplexData[];
+  onAction: (id: string) => void;
+}
+
+const ExpensiveComponent = memo(function ExpensiveComponent(props: ExpensiveComponentProps): ReactNode {
+  const { data, onAction } = props;
+  // Expensive rendering logic
+  return (
+    <div>
+      {data.map((item) => (
+        <ComplexItem key={item.id} item={item} onAction={onAction} />
+      ))}
+    </div>
+  );
+});
+```
+
+## Hook Conventions
+
+### Minimize `useEffect` and `useRef` Usage
+
+**Minimize use of `useEffect` and `useRef`, using only when absolutely necessary.** Prefer deterministic patterns such as `useMemo` and controlled components.
+
+#### ✅ Preferred Patterns
+
+```tsx
+// ✅ Good: Use useMemo for derived values
+export function AddressBook(props: UserListProps): ReactNode {
+  const { users, filter } = props;
+  
+  const filteredUsers = useMemo(
+    () => users.filter(user => user.name.includes(filter)),
+    [users, filter],
+  );
+  
+  return (
+    <div>
+      <UserList users={filteredUsers} />
+    </div>
+  );
+}
+
+// ✅ Good: Use controlled components instead of refs
+export function SearchInput(props: SearchInputProps): ReactNode {
+  const { value, onChange } = props;
+  
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={(e) => onChange(e.currentTarget.value)}
+    />
+  );
+}
+
+// ✅ Good: Use controlled components for form state
+export function LoginForm(props: LoginFormProps): ReactNode {
+  const { email, password, onEmailChange, onPasswordChange, onSubmit } = props;
+  
+  return (
+    <form onSubmit={onSubmit}>
+      <input
+        type="email"
+        value={email}
+        onChange={(e) => onEmailChange(e.currentTarget.value)}
+      />
+      <input
+        type="password"
+        value={password}
+        onChange={(e) => onPasswordChange(e.currentTarget.value)}
+      />
+      <button type="submit">Login</button>
+    </form>
+  );
+}
+```
+
+#### ❌ Avoid These Patterns
+
+```tsx
+// ❌ Avoid: Using useEffect for derived state
+export function AddressBook(props: UserListProps): ReactNode {
+  const { users, filter } = props;
+  const [filteredUsers, setFilteredUsers] = useState<Array<User>>([]);
+  
+  useEffect(() => {
+    setFilteredUsers(users.filter(user => user.name.includes(filter)));
+  }, [users, filter]);
+  
+  return (
+    <div>
+      <UserList users={filteredUsers} />
+    </div>
+  );
+}
+
+// ❌ Avoid: Using refs for uncontrolled components when controlled is possible
+export function SearchInput(props: SearchInputProps): ReactNode {
+  const inputRef = useRef<HTMLInputElement>(null);
+  
+  const handleSubmit = () => {
+    const value = inputRef.current?.value;
+    // Use value...
+  };
+  
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+    />
+  );
+}
+```
+
+
+#### When `useEffect` is Acceptable
+
+`useEffect` should only be used when:
+- Setting up subscriptions to external systems (e.g., WebSocket connections, event listeners)
+- Performing cleanup operations (e.g., unsubscribing, clearing timers)
+- Integrating with imperative APIs (e.g., focusing elements, scrolling to positions)
+- Synchronizing with external state that cannot be controlled via props
+
+#### When `useRef` is Acceptable
+
+`useRef` should only be used when:
+- Storing mutable values that don't trigger re-renders (e.g., timer IDs, previous values for comparison)
+- Accessing DOM elements for imperative operations (e.g., focusing, measuring, scrolling)
+- Storing values that persist across renders but don't need to be in state
+
+### `useEffect` Documentation Requirement
+
+**Whenever adding a `useEffect`, ALWAYS precede it with an explanatory line comment describing the purpose of the effect.**
+
+#### ✅ Required Pattern
+
+```tsx
+export function ChatWindow(props: ChatWindowProps): ReactNode {
+  const { socket, roomId } = props;
+  
+  // Subscribe to WebSocket messages for the current room
+  useEffect(() => {
+    const handleMessage = (message: Message) => {
+      // Handle message...
+    };
+    
+    socket.on('message', handleMessage);
+    
+    return () => {
+      socket.off('message', handleMessage);
+    };
+  }, [socket, roomId]);
+  
+  // Scroll to bottom when new messages arrive
+  useEffect(() => {
+    const chatContainer = document.getElementById('chat-container');
+    if (chatContainer) {
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+  }, [props.messages]);
+  
+  return (
+    <div id="chat-container">
+      {/* Chat content */}
+    </div>
+  );
+}
+```
+
+#### ❌ Avoid This Pattern
+
+```tsx
+export function ChatWindow(props: ChatWindowProps): ReactNode {
+  const { socket, roomId } = props;
+  
+  useEffect(() => {
+    const handleMessage = (message: Message) => {
+      // Handle message...
+    };
+    
+    socket.on('message', handleMessage);
+    
+    return () => {
+      socket.off('message', handleMessage);
+    };
+  }, [socket, roomId]);
+  
+  useEffect(() => { // Missing comment explaining why this effect is needed
+    const chatContainer = document.getElementById('chat-container');
+    if (chatContainer) {
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+  }, [props.messages]);
+  
+  return (
+    <div id="chat-container">
+      {/* Chat content */}
+    </div>
+  );
+}
+```
+
+## Testing Patterns
+
+### Test Child Components Independently
+
+```tsx
+// Component file
+export const ParentComponent = () => {
+  return (
+    <div>
+      <ChildComponent title="Test" description="Test description" />
+    </div>
+  );
+};
+
+interface ChildComponentProps {
+  title: string;
+  description: string;
+}
+
+export function ChildComponent({ title, description }: ChildComponentProps) {
+  return (
+    <div>
+      <h3>{title}</h3>
+      <p>{description}</p>
+    </div>
+  );
+}
+
+// Test file
+import { ChildComponent } from './ParentComponent';
+
+describe(ChildComponent, () => {
+  it('renders title and description', () => {
+    render(<ChildComponent title="Test Title" description="Test Description" />);
+    
+    expect(screen.getByText('Test Title')).toBeInTheDocument();
+    expect(screen.getByText('Test Description')).toBeInTheDocument();
+  });
+});
+```
+
+## Component Test IDs
+
+### Root Element Test IDs
+
+All components that render a single intrinsic element (plain lowercase DOM element) as their root element **MUST** have a `data-testid` attribute assigned to this root element. The test ID should match the component name exactly.
+
+```tsx
+// ✅ Good: Root element has data-testid
+export function Button(props: ButtonProps): ReactNode {
+  const { children, onClick } = props;
+  return (
+    <button data-testid="Button" onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
+// ✅ Good: Child component also has data-testid
+export function Card(props: CardProps): ReactNode {
+  const { children } = props;
+  return (
+    <div data-testid="Card">
+      {children}
+    </div>
+  );
+}
+
+// ❌ Avoid: Missing data-testid on root element
+export function Input(props: InputProps): ReactNode {
+  const { value, onChange } = props;
+  return (
+    <input value={value} onChange={onChange} />
+  );
+}
+```
+
+### Child Component Test IDs
+
+This rule also applies to child components declared within the same file as a parent component:
+
+```tsx
+export function UserProfile(props: UserProfileProps): ReactNode {
+  const { user } = props;
+  return (
+    <div data-testid="UserProfile">
+      <UserAvatar user={user} />
+      <UserDetails user={user} />
+    </div>
+  );
+}
+
+// Child component in same file
+interface UserAvatarProps {
+  user: User;
+}
+
+function UserAvatar(props: UserAvatarProps): ReactNode {
+  const { user } = props;
+  return (
+    <img 
+      data-testid="UserAvatar" 
+      src={user.avatarUrl} 
+      alt={`${user.name}'s avatar`} 
+    />
+  );
+}
+
+// Another child component in same file
+interface UserDetailsProps {
+  user: User;
+}
+
+function UserDetails(props: UserDetailsProps): ReactNode {
+  const { user } = props;
+  return (
+    <div data-testid="UserDetails">
+      <h3>{user.name}</h3>
+      <p>{user.email}</p>
+    </div>
+  );
+}
+```
+
+### Nested Element Test IDs (Slots)
+
+For more fine-grained identification of nested elements within a component's root element, use slot-based test IDs with the format `ComponentName:slot-name`:
+
+```tsx
+export function Modal(props: ModalProps): ReactNode {
+  const { title, children, onClose } = props;
+  return (
+    <div data-testid="Modal">
+      <div data-testid="Modal:header">
+        <h2 data-testid="Modal:title">{title}</h2>
+        <button data-testid="Modal:close-button" onClick={onClose}>
+          ×
+        </button>
+      </div>
+      <div data-testid="Modal:body">
+        {children}
+      </div>
+      <div data-testid="Modal:footer">
+        <button data-testid="Modal:cancel-button">Cancel</button>
+        <button data-testid="Modal:confirm-button">Confirm</button>
+      </div>
+    </div>
+  );
+}
+```
+
+## Scroll pane IDs
+
+All scrollable elements (i.e. elements with an `overflow` CSS style) must specify a `data-scroll-pane-id` attribute to identify the scrollable element. This is used to target the element when replaying user sessions.
+
+The `data-scroll-pane-id` value uses the same format for nested slot element test IDs (i.e. `ComponentName:slot-name`), with a component's root element slot typically named `root`.
+
+```tsx
+export function ChatWindow(props: ChatWindowProps): ReactNode {
+  return (
+    <div
+      data-testid="ChatWindow"
+      data-scroll-pane-id="ChatWindow:root"
+      style={{ overflow: "auto", height: 400 }}
+    >
+      {/* chat content */}
+    </div>
+  );
+}
+```
+
+```tsx
+export function Dashboard(props: DashboardProps): ReactNode {
+  return (
+    <div data-testid="Dashboard">
+      <div
+        data-scroll-pane-id="Dashboard:sidebar"
+        style={{ overflowY: "auto", maxHeight: 300 }}
+      >
+        {/* sidebar content */}
+      </div>
+      <div>
+        {/* main dashboard content */}
+      </div>
+    </div>
+  );
+}
+```
+
+
+### Test ID Naming Convention
+
+- **Root elements**: Use exact component name (`data-testid="Button"`)
+- **Child components**: Use exact component name (`data-testid="UserAvatar"`)
+- **Nested slots**: Use `ComponentName:slot-name` format (`data-testid="Modal:header"`)
+- **Slot names**: Use kebab-case for multi-word slots (`data-testid="DataTable:sort-indicator"`)
+
+### When to Use Test IDs
+
+- **Always**: For components with single intrinsic root elements
+- **Always**: For child components declared in the same file
+- **Optional**: For complex nested elements that need specific testing
+- **Never**: For styling purposes (use CSS classes instead)
+- **Never**: For user-visible content (use proper semantic HTML instead)

@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task checkpoint — record current state and advance the task bookmark.
+#
+# Usage:
+#   checkpoint [-m <message>] [--repo PATH] [--workspace-dir PATH]
+#
+# Options:
+#   -m, --message <msg>  Commit message (skips editor prompt).
+#   --repo PATH          Repository root (default: walk up from CWD to find .jj).
+#   --workspace-dir PATH Virtual project dir. Overrides workspace_dir in .tt/config.toml.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} [-m <message>] [--repo PATH] [--workspace-dir PATH]
+
+Record the current state of work by creating a named commit and advancing the task bookmark.
+
+Options:
+  -m, --message <msg>   Commit message (skips editor prompt).
+  --repo PATH           Repository root (default: walk up from CWD to find .jj).
+  --workspace-dir PATH  Virtual project dir. Overrides workspace_dir in .tt/config.toml.
+
+Examples:
+  ${SCRIPT_NAME} -m "add foo"
+  ${SCRIPT_NAME} --message "refactor bar"
+  ${SCRIPT_NAME}           # opens editor
+
+EOF
+  exit 1
+}
+
+main() {
+  local message=''
+  local repo=''
+  local workspace_dir=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -m|--message)
+        [[ $# -lt 2 ]] && { log "Error: $1 requires an argument"; usage; }
+        message="$2"
+        shift 2
+        ;;
+      --message=*)
+        message="${1#--message=}"
+        shift
+        ;;
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"
+        shift 2
+        ;;
+      --workspace-dir)
+        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
+        workspace_dir="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        ;;
+      -*)
+        log "Error: Unknown option: $1"
+        usage
+        ;;
+      *)
+        log "Error: Unexpected argument: $1"
+        usage
+        ;;
+    esac
+  done
+
+  # Resolve repo root
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # Resolve workspace_dir from flag, then config
+  if [[ -z "$workspace_dir" ]]; then
+    workspace_dir="$(get_workspace_dir "$repo")" || true
+  fi
+
+  # Resolve current branch
+  local resolve_output current_rev task_file bookmark
+  resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+  current_rev="$(printf '%s' "$resolve_output" | sed -n '1p')"
+  task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
+  bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+
+  # Precondition: must be on a task or project branch
+  if [[ -z "$bookmark" ]]; then
+    log "Error: not on a task or project branch."
+    exit 1
+  fi
+
+  # Precondition: verify bookmark exists
+  if ! jj -R "$repo" log -r "$bookmark" --no-graph -T '' 2>/dev/null; then
+    log "Error: bookmark '$bookmark' not found in repository."
+    exit 1
+  fi
+
+  # Get current worktree
+  local current_worktree
+  current_worktree="$(resolve_current_worktree "$repo")"
+
+  # Read task title from task file frontmatter
+  local task_file_content task_title
+  task_file_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || true
+  task_title="$(parse_quoted_frontmatter_field "$task_file_content" "title")"
+
+  # Derive task ID (bookmark name without prefix) for display
+  local task_id="$bookmark"
+
+  # Get message from editor if not provided
+  if [[ -z "$message" ]]; then
+    local template
+    template="$(printf '%s\n\n# Task: %s (%s)\n# An empty message cancels the checkpoint.' \
+      "$task_title" "$task_title" "$task_id")"
+    message="$(prompt <<< "$template")" || exit 1
+    if [[ -z "$message" ]]; then
+      log "Checkpoint cancelled."
+      exit 1
+    fi
+  fi
+
+  # Build full commit message
+  local full_msg="Checkpoint: ${message} (${bookmark})"
+
+  # Pre-checkpoint hook (blocking)
+  run_hook "$repo" "pre-checkpoint" true "$current_worktree" "${workspace_dir:-}" \
+    "TT_TASK_ID=$bookmark" \
+    "TT_TASK_BRANCH=$bookmark" \
+    "TT_MESSAGE=${message}"
+
+  # Create commit (works for empty or non-empty WC)
+  jj -R "$repo" commit -m "$full_msg"
+
+  # Get new commit ID
+  local new_commit
+  new_commit="$(jj -R "$repo" log -r '@-' --no-graph -T 'commit_id.short(8)')"
+
+  # Advance bookmark
+  jj -R "$repo" bookmark set "$bookmark" -r '@-'
+
+  log "Checkpoint: $bookmark → $new_commit"
+
+  # Post-checkpoint hook (non-blocking)
+  run_hook "$repo" "post-checkpoint" false "$current_worktree" "${workspace_dir:-}" \
+    "TT_TASK_ID=$bookmark" \
+    "TT_TASK_BRANCH=$bookmark" \
+    "TT_MESSAGE=${message}" \
+    "TT_COMMIT=${new_commit}"
+}
+
+main "$@"

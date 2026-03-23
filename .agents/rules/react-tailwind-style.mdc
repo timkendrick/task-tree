@@ -1,0 +1,168 @@
+---
+description: React component styling conventions with Tailwind CSS and tailwind-variants
+globs: *.tsx,*.styles.ts
+alwaysApply: true
+---
+
+# React Component Styling
+
+## Component Styling with Tailwind Variants
+
+Use `tailwind-variants` for component styling with separate `.styles.ts` files:
+
+### ✅ Preferred Pattern
+
+```tsx
+// ComponentName.styles.ts
+import { tv } from 'tailwind-variants';
+
+export enum MyComponentVariant {
+  Primary = 'primary',
+  Secondary = 'secondary',
+}
+
+export enum MyComponentSize {
+  Sm = 'sm',
+  Md = 'md',
+  Lg = 'lg',
+}
+
+export default tv({
+  // Always use slots to define component classes
+  slots: {
+    // Root element is always named "root"
+    root: 'base-classes',
+    // Other elements can have arbitrary names
+    another: 'additional-classes',
+  },
+  variants: {
+    variant: {
+      [MyComponentVariant.Primary]: {
+        root: 'primary-classes',
+      },
+      [MyComponentVariant.Secondary]: {
+        root: 'secondary-classes',
+      },
+    },
+    size: {
+      [MyComponentSize.Sm]: {
+        root: 'small-classes',
+      },
+      [MyComponentSize.Md]: {
+        root: 'medium-classes',
+      },
+      [MyComponentSize.Lg]: {
+        root: 'large-classes',
+      },
+    },
+    disabled: {
+      false: {},
+      true: {
+        root: 'pointer-events-disabled',
+      }
+    },
+  },
+  defaultVariants: {
+    variant: MyComponentVariant.Primary,
+    size: MyComponentSize.Md,
+    disabled: false,
+  },
+});
+
+// Subcomponents get their own stylesheet
+export const inner = tv({
+  slots: {
+    root: 'inner-class',
+  },
+});
+```
+
+```tsx
+// MyComponent.tsx
+import { twMerge } from 'tailwind-merge';
+import type { ReactNode } from 'react';
+
+import stylesheet, { inner as innerStylesheet, MyComponentVariant, MyComponentSize } from './MyComponent.styles';
+
+export { MyComponentVariant, MyComponentSize };
+
+export interface MyComponentProps {
+  className?: string;
+  variant?: MyComponentVariant;
+  size?: MyComponentSize;
+  disabled?: boolean;
+  children: ReactNode;
+}
+
+export function MyComponent(props: MyComponentProps): ReactNode {
+  const { className, variant, size, disabled, children } = props;
+
+  const styles = stylesheet({ variant, size, disabled });
+
+  return (
+    <div className={twMerge(styles.root(), className)}>
+      <MyComponentInner className={styles.another()}>{children}</MyComponentInner>
+    </div>
+  );
+}
+
+interface MyComponentInnerProps {
+  className?: string;
+  children: ReactNode;
+}
+
+function MyComponentInner(props: MyComponentInnerProps): ReactNode {
+  const { className, children } = props;
+
+  const styles = innerStylesheet();
+
+  return (
+    <div className={twMerge(styles.root(), className)}>
+      {children}
+    </div>
+  );
+}
+```
+
+### ❌ Avoid These Patterns
+
+```tsx
+// Don't use inline className strings
+function ComponentName({ className }: { className?: string }) {
+  return (
+    <div className={`base-classes ${className || ''}`}>
+      Content
+    </div>
+  );
+}
+
+// Don't perform styling logic within the component
+function ComponentName({ disabled, children }: { children: React.ReactNode }) {
+  const styles = stylesheet({});
+
+  const buttonClass = disabled ? styles.disabled() : styles.enabled();
+
+  return (
+    <div className={buttonClass}>
+      {children}
+    </div>
+  );
+}
+
+// Don't use style objects for styling
+function ComponentName({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ padding: '16px', border: '1px solid #ccc' }}>
+      {children}
+    </div>
+  );
+}
+```
+
+## Styling File Organization
+
+- **Separate styling logic**: Always use `.styles.ts` files for component styling
+- **Import from styles file**: Import style functions from the corresponding `.styles.ts` file
+- **Use tailwind-variants for styling variations**: All conditional styling should be achieved via variants
+- **Use twMerge for composition**: Combine tailwind-variants output with additional className props
+- **Include className prop**: Always include optional `className` prop in component interfaces for external styling

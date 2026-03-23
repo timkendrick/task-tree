@@ -1,0 +1,9 @@
+---
+description: Markdown documentation conventions
+globs: *.md
+alwaysApply: true
+---
+- You MUST NOT include 'version history' documentation that explains changes to the implementation: to avoid confusing the reader, all documentation must describe only the current state of the codebase, with no reference to any prior implementation
+- You MUST NOT copy chunks of implementation source code verbatim into documentation, as this can fall out of sync with source code
+  - You SHOULD instead use pseudocode to describe implementation details
+- You MAY copy type definitions, function signatures, and abridged outlines (e.g. class 'skeletons') into documentation

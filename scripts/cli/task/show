@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task show — Show the metadata and direct child tasks of the current task
+#                (default) or the given task.
+#
+# Usage:
+#   show [<task-id>] [--repo PATH] [--expand-context] [-h|--help]
+#
+# Options:
+#   <task-id>          Task ID (branch name) to show. Default: current task.
+#   --repo PATH        Repository root (default: walk up from CWD to find .jj).
+#   --expand-context   Expand and show full content of context files.
+#   -h, --help         Show this help.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} [<task-id>] [--repo PATH] [--expand-context]
+
+Show the metadata and direct child tasks of the current task (default)
+or the given task. Reads from the correct branch per the "where to read"
+rule: merged tasks are read from the parent branch; ongoing tasks are
+read from their own branch.
+
+Options:
+  <task-id>          Task branch name to show (default: current task).
+  --repo PATH        Repository root (default: find .jj).
+  --expand-context   Expand and show full content of context files.
+  -h, --help         Show this help.
+
+EOF
+  exit 1
+}
+
+main() {
+  local task_id_arg=''
+  local repo=''
+  local expand_context=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"; shift 2 ;;
+      --expand-context)
+        expand_context=true; shift ;;
+      -h|--help) usage ;;
+      -*)
+        log "Error: Unknown option: $1"; usage ;;
+      *)
+        if [[ -z "$task_id_arg" ]]; then
+          task_id_arg="$1"; shift
+        else
+          log "Error: Unexpected argument: $1"; usage
+        fi ;;
+    esac
+  done
+
+  # --- Resolve repo root ---
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # --- Resolve branch and task file ---
+  local branch task_file task_suffix
+
+  if [[ -z "$task_id_arg" ]]; then
+    # No task-id: use current branch
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
+    branch="$(printf '%s' "$resolve_output" | sed -n '3p')"
+
+    if [[ -z "$branch" ]]; then
+      log "Error: Not on a task or project branch."
+      exit 1
+    fi
+    if is_task_branch "$branch" "$task_prefix"; then
+      task_suffix="${branch#$task_prefix}"
+    else
+      task_suffix="${branch#$project_prefix}"
+    fi
+  else
+    # Explicit task-id: find its canonical branch via "where to read" rule
+    if ! branch="$(find_branch_for_task "$repo" "$task_id_arg" "$task_prefix" "$project_prefix")"; then
+      log "Error: Could not locate branch for task '$task_id_arg'."
+      exit 1
+    fi
+    # Derive task file from branch
+    local suffix
+    if is_task_branch "$branch" "$task_prefix"; then
+      suffix="${branch#$task_prefix}"
+    elif is_project_branch "$branch" "$project_prefix"; then
+      suffix="${branch#$project_prefix}"
+    else
+      # branch is the task's own branch but might not match prefixes if unusual
+      # Try using task_id_arg directly for suffix extraction
+      if is_task_branch "$task_id_arg" "$task_prefix"; then
+        suffix="${task_id_arg#$task_prefix}"
+      elif is_project_branch "$task_id_arg" "$project_prefix"; then
+        suffix="${task_id_arg#$project_prefix}"
+      else
+        log "Error: Cannot derive task file path for '$task_id_arg'."
+        exit 1
+      fi
+    fi
+    task_suffix="$suffix"
+    task_file="$(task_file_path "$suffix")"
+  fi
+
+  # --- Find worktree ---
+  local worktree
+  worktree="$(find_worktrees_for_branch "$repo" "$branch" "$task_prefix" "$project_prefix" | head -1)"
+  if [[ -z "$worktree" ]]; then
+    worktree="$repo"
+  fi
+
+  # --- Read task file ---
+  local content
+  if ! content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$task_file" 2>/dev/null)"; then
+    log "Error: Could not read task file '$task_file' from '$branch'."
+    exit 1
+  fi
+
+  # --- Parse fields ---
+  local title status
+  title="$(parse_quoted_frontmatter_field "$content" "title")"
+  status="$(parse_frontmatter_field "$content" "status")"
+  [[ -z "$status" ]] && status="TODO"
+
+  # Body is everything after the second ---
+  local body
+  body="$(parse_body "$content")"
+  # Trim leading/trailing blank lines from body
+  body="$(printf '%s' "$body" | awk 'NF{found=1} found{print}' | sed -e 's/[[:space:]]*$//')"
+
+  # Parse subtask lines from frontmatter
+  local subtasks
+  subtasks="$(printf '%s' "$content" | awk '
+    /^---$/ { n++; next }
+    n==1 && /^subtask:/ {
+      sub(/^subtask:[[:space:]]*/, "")
+      print
+    }
+  ')"
+
+  # Parse context references from frontmatter
+  local contexts
+  contexts="$(printf '%s' "$content" | awk '
+    /^---$/ { n++; next }
+    n==1 && /^context:/ {
+      sub(/^context:[[:space:]]*/, "")
+      print
+    }
+  ')"
+
+  # Parse labels from frontmatter (comma-joined)
+  local labels
+  labels="$(printf '%s' "$content" | awk '
+    /^---$/ { n++; next }
+    n==1 && /^label:/ {
+      sub(/^label:[[:space:]]*/, "")
+      print
+    }
+  ' | paste -sd ',' -)"
+
+  # --- Find parent (optional; omitted for parentless/project tasks) ---
+  local parent_branch
+  parent_branch="$(find_parent_branch "$repo" "$branch" "$task_prefix" "$project_prefix" 2>/dev/null)" || parent_branch=""
+
+  # --- Print header block ---
+  printf -- '---\n'
+  printf 'task:     %s\n' "$branch"
+  [[ -n "$parent_branch" ]] && printf 'parent:   %s\n' "$parent_branch"
+  printf 'status:   %s\n' "$status"
+  printf 'title:    %s\n' "$title"
+  [[ -n "$labels" ]] && printf 'labels:   %s\n' "$labels"
+  printf -- '---\n'
+
+  # --- Print subtasks section ---
+  printf '\n'
+  if [[ -n "$subtasks" ]]; then
+    printf 'Subtasks:\n'
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      local checkbox subtask_id subtask_status subtask_title=""
+      subtask_id="${line:4}"
+      local subtask_branch subtask_file subtask_content
+      if subtask_branch="$(find_branch_for_task "$repo" "$subtask_id" "$task_prefix" "$project_prefix" 2>/dev/null)"; then
+        local subtask_id_suffix
+        if is_task_branch "$subtask_id" "$task_prefix"; then
+          subtask_id_suffix="${subtask_id#$task_prefix}"
+        elif is_project_branch "$subtask_id" "$project_prefix"; then
+          subtask_id_suffix="${subtask_id#$project_prefix}"
+        else
+          subtask_id_suffix=""
+        fi
+        if [[ -n "$subtask_id_suffix" ]]; then
+          subtask_file="$(task_file_path "$subtask_id_suffix")"
+          subtask_content="$(jj -R "$repo" --ignore-working-copy file show -r "$subtask_branch" -- "$subtask_file" 2>/dev/null || true)"
+          subtask_status="$(parse_frontmatter_field "$subtask_content" "status" 2>/dev/null || true)"
+          subtask_title="$(parse_quoted_frontmatter_field "$subtask_content" "title" 2>/dev/null || true)"
+        fi
+      fi
+      [[ -z "$subtask_status" ]] && subtask_status="TODO"
+      checkbox="$(status_to_checkbox "$subtask_status")"
+      if [[ -n "$subtask_title" ]]; then
+        printf -- '- %s %s  %s\n' "$checkbox" "$subtask_id" "$subtask_title"
+      else
+        printf -- '- %s\n' "$checkbox" "$subtask_id"
+      fi
+    done <<< "$subtasks"
+  else
+    printf '[No subtasks]\n'
+  fi
+  printf '\n'
+  printf -- '---\n'
+
+  # --- Print context section ---
+  printf '\n'
+  if [[ -n "$contexts" ]]; then
+    printf 'Context:\n'
+    while IFS= read -r ctx_id; do
+      [[ -z "$ctx_id" ]] && continue
+      # Resolve context file path on the task's branch
+      local ctx_file
+      ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
+      local ctx_content ctx_title
+      ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$ctx_file" 2>/dev/null || true)"
+      ctx_title="$(parse_quoted_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
+      if [[ -n "$ctx_title" ]]; then
+        printf -- '- %s (%s)\n' "$ctx_title" "$ctx_id"
+      else
+        printf -- '- %s\n' "$ctx_id"
+      fi
+    done <<< "$contexts"
+  else
+    printf '[No context files]\n'
+  fi
+  printf '\n'
+  printf -- '---\n'
+
+  # --- Print body section ---
+  printf '\n'
+  if [[ -n "$body" ]]; then
+    printf '%s\n' "$body"
+  else
+    printf '[No description]\n'
+  fi
+  printf '\n'
+
+  # --- Print expanded context files (if requested) ---
+  if [[ "$expand_context" == true ]]; then
+    if [[ -n "$contexts" ]]; then
+      while IFS= read -r ctx_id; do
+        [[ -z "$ctx_id" ]] && continue
+        # Resolve context file path on the task's branch
+        local ctx_file ctx_content
+        ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
+        ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$ctx_file" 2>/dev/null || true)"
+
+        if [[ -n "$ctx_content" ]]; then
+          # Parse frontmatter fields (using raw for title to preserve formatting)
+          local ctx_title ctx_created ctx_updated ctx_body
+          ctx_title="$(parse_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
+          ctx_created="$(parse_frontmatter_field "$ctx_content" "created" 2>/dev/null || true)"
+          ctx_updated="$(parse_frontmatter_field "$ctx_content" "updated" 2>/dev/null || true)"
+          ctx_body="$(parse_body "$ctx_content")"
+
+          # Output synthetic frontmatter with context id
+          printf -- '---\n'
+          printf 'context: %s\n' "$ctx_id"
+          if [[ -n "$ctx_title" ]]; then
+            printf 'title: %s\n' "$ctx_title"
+          fi
+          if [[ -n "$ctx_created" ]]; then
+            printf 'created: %s\n' "$ctx_created"
+          fi
+          if [[ -n "$ctx_updated" ]]; then
+            printf 'updated: %s\n' "$ctx_updated"
+          fi
+          printf -- '---\n'
+          # Trim leading/trailing blank lines from body
+          ctx_body="$(printf '%s' "$ctx_body" | awk 'NF{found=1} found{print}' | sed -e 's/[[:space:]]*$//')"
+          if [[ -n "$ctx_body" ]]; then
+            printf '%s\n' "$ctx_body"
+          fi
+          printf '\n'
+        fi
+      done <<< "$contexts"
+    fi
+  fi
+}
+
+main "$@"

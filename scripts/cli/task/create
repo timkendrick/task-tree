@@ -7,24 +7,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # Create a task file and jj bookmark (branch) for bootstrapping task-tree.
 #
-# For top-level tasks: branches from current branch (or @ if no bookmarks).
-# For child tasks: use --parent <task-id> to add subtask entry to parent first.
+# For project tasks: use --project to create a top-level project branch.
+# For all other tasks (default): branches from current branch or --parent.
 #
 # Usage:
 #   create [options...]
 #   create --title <title> [options...]
 #   create --slug <slug> --title <title> [options...]
 #
-# Optional:
-#   --title TITLE     Task title (prompted if missing and stdin is a TTY)
-#   --slug SLUG       Human-readable slug (default: auto from title)
-#   --parent TASK-ID  Parent task ID (default: current branch)
-#   --description "TEXT"   Task description (use \n for newlines)
-#   --label LABEL     Add a label (repeatable)
-#   --status STATUS   TODO or IN-PROGRESS (default: TODO)
-#   --prefix PREFIX   Task ID prefix (default: task/)
-#   --repo PATH       Repository root (default: walk up to find .jj)
-#   --dry-run         Show what would be done without making changes
+# Options:
+#   --title TITLE          Task title (prompted if missing and stdin is a TTY)
+#   --slug SLUG            Human-readable slug (required in non-interactive mode; prompted otherwise)
+#   --parent TASK-ID       Parent task ID (default: current branch); mutually exclusive with --project
+#   --project              Create a parentless project task; mutually exclusive with --parent
+#   --target COMMIT-REV    (with --project) Fork project branch from this revision (default: current @)
+#   --label LABEL          Add a label (repeatable)
+#   --repo PATH            Repository root (default: walk up to find .jj)
+#   --dry-run              Show what would be done without making changes
+#   --force                Overwrite child branch if it already exists
+#   --propagate            After creation, propagate parent's new commit to sibling branches
+#   --rebase               (with --propagate) Rebase descendants onto parent tip (default)
+#   --merge                (with --propagate) Merge parent tip into descendants
+#   --shallow              (with --propagate) Propagate to direct children only
+#   --checkout             After creation, run checkout on the newly created task
+#   --worktree[=<path>]    (with --checkout) Use or create a dedicated jj workspace for the task
 #
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -35,73 +41,40 @@ Usage: ${SCRIPT_NAME} [options...]
 
 Create a task file and jj bookmark for task-tree bootstrap.
 
-Optional:
-  --title TITLE       Task title/summary (prompted if missing and interactive)
-  --slug SLUG         Human-readable slug (default: auto from title, e.g. phase-0-test-harness)
-  --parent TASK-ID      Parent task ID (default: current branch)
-  --description TEXT    Task description (use \\n for newlines in YAML)
+Options:
+  --title TITLE         Task title/summary (prompted if missing and interactive)
+  --slug SLUG           Human-readable slug (required in non-interactive mode; prompted otherwise)
+  --parent TASK-ID      Parent task ID (default: current branch); mutually exclusive with --project
+  --project             Create a parentless project task; mutually exclusive with --parent
+  --target COMMIT-REV   (with --project) Fork project branch from this revision (default: current @)
   --label LABEL         Add a label (repeatable)
-  --status STATUS       TODO or IN-PROGRESS (default: TODO)
-  --prefix PREFIX       Task ID prefix (default: from .tt/config.toml)
-  --repo PATH         Repository root (default: walk up to find .jj)
-  --dry-run           Show what would be done, do not execute
+  --repo PATH           Repository root (default: walk up to find .jj)
+  --dry-run             Show what would be done, do not execute
+  --force               Overwrite child/project branch if it already exists
+  --propagate           After creation, propagate parent's new commit to sibling branches
+  --rebase              (with --propagate) Rebase descendants onto parent tip (default)
+  --merge               (with --propagate) Merge parent tip into descendants
+  --shallow             (with --propagate) Propagate to direct children only
+  --checkout            After creation, run checkout on the newly created task
+  --worktree[=<path>]   (with --checkout) Use or create a dedicated jj workspace for the task
+
+Body is read from stdin (via pipe or redirect) if stdin is not a terminal;
+otherwise opens an editor for body input.
 
 Examples:
-  ${SCRIPT_NAME}                                    # prompts for title
-  ${SCRIPT_NAME} --title "Phase 0: Test harness"   # slug auto: phase-0-test-harness
-  ${SCRIPT_NAME} --slug tt-task-list --title "tt task list" --parent task/phase-0-abc123de --label tdd
+  ${SCRIPT_NAME}                                    # prompts for title, slug, body (editor)
+  ${SCRIPT_NAME} --title "Phase 0: Test harness"   # prompts for body (editor)
+  echo "Set up the test harness" | ${SCRIPT_NAME} --title "Phase 0: Test harness"
+  ${SCRIPT_NAME} --title "Phase 0: Test harness" < ./description.md
+  ${SCRIPT_NAME} --slug tt-task-list --parent task/phase-0-abc123de --label tdd < ./description.md
+  ${SCRIPT_NAME} --project --title "Main app" < ./description.md
+  ${SCRIPT_NAME} --project --title "Main app" --target abc123 < ./description.md
+  ${SCRIPT_NAME} --title "New feature" --propagate --shallow < ./description.md
+  ${SCRIPT_NAME} --slug my-task --title "My task" --checkout
+  ${SCRIPT_NAME} --slug my-task --title "My task" --checkout --worktree
 
 EOF
   exit 1
-}
-
-# Generate slug from title: replace non-alphanumeric with -, collapse consecutive, lowercase, trim.
-title_to_slug() {
-  local t="$1"
-  printf '%s' "$t" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | tr -s '-' | sed 's/^-//;s/-$//'
-}
-
-# Validate slug: only lowercase alphanumeric and single hyphens; no leading/trailing hyphens.
-# Returns 0 if valid, 1 and logs error if invalid.
-validate_slug() {
-  local s="$1"
-  if [[ -z "$s" ]]; then
-    log "Error: Slug cannot be empty"
-    return 1
-  fi
-  if [[ "$s" =~ [A-Z] ]]; then
-    log "Error: Slug must be lowercase: $s"
-    return 1
-  fi
-  if [[ "$s" =~ ^- ]]; then
-    log "Error: Slug cannot start with hyphen: $s"
-    return 1
-  fi
-  if [[ "$s" =~ -$ ]]; then
-    log "Error: Slug cannot end with hyphen: $s"
-    return 1
-  fi
-  if [[ "$s" =~ -- ]]; then
-    log "Error: Slug cannot contain consecutive hyphens: $s"
-    return 1
-  fi
-  if [[ "$s" =~ [^a-z0-9-] ]]; then
-    log "Error: Slug must contain only lowercase letters, digits, and hyphens: $s"
-    return 1
-  fi
-  return 0
-}
-
-generate_task_hex() {
-  # Generate 8-character hex for task ID uniqueness (per DESIGN §3)
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 4
-  elif [[ -r /dev/urandom ]]; then
-    od -An -N4 -tx1 /dev/urandom | tr -d ' \n' | head -c 8
-  else
-    log "Error: Need openssl or /dev/urandom to generate task ID"
-    exit 1
-  fi
 }
 
 # Usage: resolve_parent PARENT_ARG REPO TASK_PREFIX PROJECT_PREFIX
@@ -134,9 +107,11 @@ resolve_parent() {
       exit 1
     fi
     if is_task_branch "$parent_task_id" "$task_prefix"; then
-      printf '%s\n%s\n%s\n' "$parent_rev" ".tt/task/${parent_task_id#$task_prefix}.md" "$parent_task_id"
+      local suffix="${parent_task_id#$task_prefix}"
+      printf '%s\n%s\n%s\n' "$parent_rev" "$(task_file_path "$suffix")" "$parent_task_id"
     elif is_project_branch "$parent_task_id" "$project_prefix"; then
-      printf '%s\n%s\n%s\n' "$parent_rev" ".tt/task/${parent_task_id#$project_prefix}.md" "$parent_task_id"
+      local suffix="${parent_task_id#$project_prefix}"
+      printf '%s\n%s\n%s\n' "$parent_rev" "$(task_file_path "$suffix")" "$parent_task_id"
     else
       printf '%s\n\n\n' "$parent_rev"
     fi
@@ -145,33 +120,22 @@ resolve_parent() {
   fi
 }
 
-# Usage: write_task_file REPO TASK_FILE_PATH TITLE STATUS DESCRIPTION [LABEL ...]
+# Usage: write_task_stub REPO TASK_SUFFIX
 #
-# Write a task file with YAML frontmatter (title, status, description, labels).
-# DESCRIPTION may be empty. Labels are written as repeated "label: VALUE" entries.
-write_task_file() {
+# Write a minimal task file stub in the directory format.
+# Creates .tt/task/<suffix>/TASK.md with status, created, updated timestamps.
+write_task_stub() {
   local repo="$1"
-  local task_file_path="$2"
-  local title="$3"
-  local status="$4"
-  local description="$5"
-  shift 5
-  local desc_yaml=''
-
-  if [[ -n "$description" ]]; then
-    desc_yaml="description: $(printf '%s' "$description" | jq -Rs '.')"
-  fi
-  {
-    echo '---'
-    echo "title: \"${title//\"/\\\"}\""
-    echo "status: $status"
-    [[ -n "$desc_yaml" ]] && echo "$desc_yaml"
-    for label in "$@"; do
-      echo "label: $label"
-    done
-    echo '---'
-  } > "$repo/$task_file_path"
-  log "Created task file: $task_file_path"
+  local suffix="$2"
+  local dir
+  dir="$(task_dir_path "$suffix")"
+  local file
+  file="$(task_file_path "$suffix")"
+  local ts
+  ts="$(generate_timestamp)"
+  mkdir -p "$repo/$dir"
+  printf -- '---\nstatus: TODO\ncreated: %s\nupdated: %s\n---\n' "$ts" "$ts" > "$repo/$file"
+  log "Created task file: $file"
 }
 
 # Usage: add_subtask_to_frontmatter PARENT_PATH TASK_ID
@@ -191,21 +155,28 @@ add_subtask_to_frontmatter() {
 
 main() {
   local slug=''
+  local slug_explicit=false
   local title=''
-  local description=''
-  local has_description=false
   local -a labels=()
-  local status='TODO'
-  local task_prefix=''
+  local is_project=false
+  local target=''
   local parent=''
   local repo=''
   local dry_run=false
+  local force=false
+  local propagate=false
+  local propagate_strategy='rebase'
+  local propagate_shallow=false
+  local checkout=false
+  local checkout_worktree=false
+  local checkout_worktree_path=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --slug)
         [[ $# -lt 2 ]] && { log "Error: --slug requires an argument"; usage; }
         slug="$2"
+        slug_explicit=true
         shift 2
         ;;
       --title)
@@ -213,25 +184,18 @@ main() {
         title="$2"
         shift 2
         ;;
-      --description)
-        [[ $# -lt 2 ]] && { log "Error: --description requires an argument"; usage; }
-        description="$2"
-        has_description=true
-        shift 2
-        ;;
       --label)
         [[ $# -lt 2 ]] && { log "Error: --label requires an argument"; usage; }
         labels+=("$2")
         shift 2
         ;;
-      --status)
-        [[ $# -lt 2 ]] && { log "Error: --status requires an argument"; usage; }
-        status="$2"
-        shift 2
+      --project)
+        is_project=true
+        shift
         ;;
-      --prefix)
-        [[ $# -lt 2 ]] && { log "Error: --prefix requires an argument"; usage; }
-        task_prefix="$2"
+      --target)
+        [[ $# -lt 2 ]] && { log "Error: --target requires an argument"; usage; }
+        target="$2"
         shift 2
         ;;
       --parent)
@@ -246,6 +210,39 @@ main() {
         ;;
       --dry-run)
         dry_run=true
+        shift
+        ;;
+      --force)
+        force=true
+        shift
+        ;;
+      --propagate)
+        propagate=true
+        shift
+        ;;
+      --rebase)
+        propagate_strategy='rebase'
+        shift
+        ;;
+      --merge)
+        propagate_strategy='merge'
+        shift
+        ;;
+      --shallow)
+        propagate_shallow=true
+        shift
+        ;;
+      --checkout)
+        checkout=true
+        shift
+        ;;
+      --worktree)
+        checkout_worktree=true
+        shift
+        ;;
+      --worktree=*)
+        checkout_worktree=true
+        checkout_worktree_path="${1#--worktree=}"
         shift
         ;;
       -h|--help)
@@ -268,20 +265,53 @@ main() {
     fi
   fi
 
-  if [[ -z "$slug" ]]; then
-    slug="$(title_to_slug "$title")"
-    if [[ -z "$slug" ]]; then
+  if [[ "$slug_explicit" == false ]]; then
+    local default_slug
+    default_slug="$(title_to_slug "$title")"
+    if [[ -z "$default_slug" ]]; then
       log "Error: Could not generate slug from title: $title"
       exit 1
     fi
-  else
-    if ! validate_slug "$slug"; then
-      exit 1
+    if [[ -t 0 ]]; then
+      local prompted_slug
+      read -e -p "Enter a task identifier (defaults to $default_slug): " prompted_slug
+      slug="${prompted_slug:-$default_slug}"
+    else
+      log "Error: --slug is required in non-interactive mode"
+      usage
     fi
   fi
+  if ! validate_slug "$slug"; then
+    exit 1
+  fi
 
-  if [[ "$status" != 'TODO' && "$status" != 'IN-PROGRESS' ]]; then
-    log "Error: --status must be TODO or IN-PROGRESS"
+  # Acquire body text
+  local body
+  if [[ -t 0 ]]; then
+    # Interactive: open editor for body
+    local raw
+    raw="$(prompt_raw </dev/null)" || {
+      log "Error: Editor exited with non-zero status."
+      exit 1
+    }
+    body="$raw"
+  else
+    # Read from stdin (pipe or redirect)
+    body="$(cat)"
+  fi
+
+  if [[ "$is_project" == true && -n "$parent" ]]; then
+    log "Error: --project and --parent are mutually exclusive"
+    exit 1
+  fi
+
+  if [[ -n "$target" && "$is_project" == false ]]; then
+    log "Error: --target is only valid with --project"
+    exit 1
+  fi
+
+  if [[ "$checkout_worktree" == true && "$checkout" == false ]]; then
+    log "Error: --worktree is only valid with --checkout"
     exit 1
   fi
 
@@ -298,46 +328,77 @@ main() {
     exit 1
   fi
 
-  # Resolve task prefix and project prefix: from config if not explicitly set
-  if [[ -z "$task_prefix" ]]; then
-    task_prefix="$(get_task_prefix "$repo")"
-  fi
-  local project_prefix
+  local -a jj_opts=(-R "$repo")
+
+  # Resolve task prefix and project prefix from config
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  # Resolve parent: from --parent or default (current branch)
+  # Choose the active prefix based on mode
+  local active_prefix
+  if [[ "$is_project" == true ]]; then
+    active_prefix="$project_prefix"
+  else
+    active_prefix="$task_prefix"
+  fi
+
+  # Resolve parent: from --parent or default (current branch); not used for --project
   local resolve_output
   local parent_rev=''
   local parent_task_file=''
   local parent_bookmark=''
-  resolve_output="$(resolve_parent "$parent" "$repo" "$task_prefix" "$project_prefix")"
-  parent_rev="$(printf '%s' "$resolve_output" | head -n 1)"
-  parent_task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
-  parent_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+  if [[ "$is_project" == false ]]; then
+    resolve_output="$(resolve_parent "$parent" "$repo" "$task_prefix" "$project_prefix")"
+    parent_rev="$(printf '%s' "$resolve_output" | head -n 1)"
+    parent_task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
+    parent_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+  else
+    # --project mode: fork from --target if given, else current @
+    if [[ -n "$target" ]]; then
+      if ! parent_rev="$(jj "${jj_opts[@]}" log -r "$target" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"; then
+        log "Error: --target revision not found: $target"
+        exit 1
+      fi
+    else
+      parent_rev="$(jj "${jj_opts[@]}" log -r '@' -n 1 --no-graph -T 'commit_id')"
+    fi
+  fi
 
   # Generate task ID
-  local task_hex="$(generate_task_hex)"
-  local task_id="${task_prefix}${slug}-${task_hex}"
-  local task_filename="${slug}-${task_hex}.md"
-  local task_file_path=".tt/task/${task_filename}"
+  local task_hex
+  task_hex="$(generate_hex)"
+  local task_id="${active_prefix}${slug}-${task_hex}"
+  local task_suffix="${slug}-${task_hex}"
+  local task_file
+  task_file="$(task_file_path "$task_suffix")"
 
   if [[ "$dry_run" == true ]]; then
     log "Dry run: would create task $task_id"
-    log "  Task file: $task_file_path"
+    log "  Task file: $task_file"
     log "  Title: $title"
-    log "  Status: $status"
+    log "  Mode: $( [[ "$is_project" == true ]] && echo project || echo task )"
     log "  Parent rev: $parent_rev"
     [[ -n "$parent_task_file" ]] && log "  Parent task file: $parent_task_file"
     log "  JJ bookmark: $task_id"
     exit 0
   fi
 
-  local -a jj_opts=(-R "$repo")
+  # Refuse to create a child under a completed (DONE) parent task.
+  if [[ -n "$parent_task_file" ]]; then
+    local parent_status
+    parent_status="$(jj "${jj_opts[@]}" file show "$parent_task_file" --revision "$parent_bookmark" 2>/dev/null \
+      | awk '/^status:/ { print $2; exit }')"
+    if [[ "$parent_status" == "DONE" ]]; then
+      log "Error: Parent task '$parent_bookmark' has status DONE. Completed tasks are immutable; create new tasks under a different parent."
+      exit 1
+    fi
+  fi
 
   # Capture revision user had checked out; restore it on exit so we leave them where they were.
   # Use inline trap to capture values at definition time (locals are gone when EXIT runs).
   local original_rev
-  original_rev="$(jj "${jj_opts[@]}" log -r '@' -n 1 --no-graph -T 'commit_id')"
+  original_rev="$(get_worktree_current_rev "$repo")"
   # If the working copy is currently on the parent branch (it's our closest ancestor bookmark),
   # leave it at the updated parent tip after task creation rather than restoring to the now-stale
   # original revision. Otherwise, restore as normal.
@@ -349,42 +410,93 @@ main() {
     trap '[[ -n "'"$original_rev"'" ]] && jj -R "'"$repo"'" edit "'"$original_rev"'" 2>/dev/null || true' EXIT
   fi
 
+  # Check whether the target bookmark already exists; refuse unless --force
+  local bookmark_existed=false
+  if jj "${jj_opts[@]}" log -r "$task_id" -n 1 --no-graph -T '' 2>/dev/null; then
+    if [[ "$force" == false ]]; then
+      log "Error: Branch '$task_id' already exists. Use --force to overwrite."
+      exit 1
+    fi
+    bookmark_existed=true
+    log "Warning: Branch '$task_id' already exists; overwriting (--force)."
+  fi
+
   jj "${jj_opts[@]}" new "$parent_rev"
 
   # Ensure .tt/task exists
   mkdir -p "$repo/.tt/task"
 
-  if [[ -n "$parent_task_file" ]]; then
-    # Child task: create task file and register subtask on the parent branch in one commit,
-    # then fork an empty child commit and assign it the task bookmark.
+  if [[ "$is_project" == true ]]; then
+    # Project task: first commit creates the stub task file; second commit (via edit) sets metadata.
+    write_task_stub "$repo" "$task_suffix"
+    jj "${jj_opts[@]}" describe -m "Create project: $title"
+    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
+    jj "${jj_opts[@]}" new "@"
+    jj "${jj_opts[@]}" bookmark set "$task_id"
+    # Build common args (title, labels)
+    local edit_args=(--repo "$repo" --title "$title")
+    for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
+    # Pipe body to edit
+    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body"
+  elif [[ -n "$parent_task_file" ]]; then
+    # Child task: commit on parent branch creates the stub and registers the subtask;
+    # the child branch's initial commit (via edit) sets title, body, and labels.
     local parent_path="$repo/$parent_task_file"
     if [[ ! -f "$parent_path" ]]; then
       log "Error: Parent task file not found: $parent_path"
       exit 1
     fi
-    if ((${#labels[@]} > 0)); then
-      write_task_file "$repo" "$task_file_path" "$title" "$status" "$description" "${labels[@]}"
-    else
-      write_task_file "$repo" "$task_file_path" "$title" "$status" "$description"
-    fi
+    write_task_stub "$repo" "$task_suffix"
     add_subtask_to_frontmatter "$parent_path" "$task_id"
     log "Added subtask to parent: $parent_task_file"
-    jj "${jj_opts[@]}" describe -m "Create task: $title"
+    jj "${jj_opts[@]}" describe -m "Create task: $title ($task_id)"
     jj "${jj_opts[@]}" bookmark set "$parent_bookmark"
     jj "${jj_opts[@]}" new "@"
-    jj "${jj_opts[@]}" bookmark set "$task_id"
+    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
+    # Build common args (title, labels)
+    local edit_args=(--repo "$repo" --title "$title")
+    for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
+    # Pipe body to edit
+    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body"
   else
-    # Top-level task: create task file on the child branch itself.
-    if ((${#labels[@]} > 0)); then
-      write_task_file "$repo" "$task_file_path" "$title" "$status" "$description" "${labels[@]}"
-    else
-      write_task_file "$repo" "$task_file_path" "$title" "$status" "$description"
-    fi
-    jj "${jj_opts[@]}" describe -m "Create project: $title"
-    jj "${jj_opts[@]}" bookmark set "$task_id"
+    # Child task with no identifiable parent task file (e.g. branching from a non-task bookmark).
+    # Create the stub and bookmark without modifying any parent; edit sets metadata.
+    write_task_stub "$repo" "$task_suffix"
+    jj "${jj_opts[@]}" describe -m "Create task: $title ($task_id)"
+    jj "${jjOpts[@]}" new "@"
+    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
+    # Build common args (title, labels)
+    local edit_args=(--repo "$repo" --title "$title")
+    for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
+    # Pipe body to edit
+    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body"
   fi
 
   log "Created task $task_id (bookmark: $task_id)"
+
+  if [[ "$propagate" == true ]] && [[ -n "$parent_bookmark" ]]; then
+    local -a propagate_args=(--from "$parent_bookmark" --repo "$repo")
+    [[ "$propagate_strategy" == merge ]] && propagate_args+=(--merge)
+    [[ "$propagate_shallow" == true ]] && propagate_args+=(--shallow)
+    [[ "$force" == true ]] && propagate_args+=(--force)
+    [[ "$dry_run" == true ]] && propagate_args+=(--dry-run)
+    log "Propagating from $parent_bookmark..."
+    "$SCRIPT_DIR/propagate" "${propagate_args[@]}"
+  fi
+
+  if [[ "$checkout" == true ]]; then
+    trap - EXIT
+    local -a checkout_args=(--repo "$repo" "$task_id")
+    if [[ "$checkout_worktree" == true ]]; then
+      if [[ -n "$checkout_worktree_path" ]]; then
+        checkout_args+=(--worktree="$checkout_worktree_path")
+      else
+        checkout_args+=(--worktree)
+      fi
+    fi
+    "$SCRIPT_DIR/checkout" "${checkout_args[@]}"
+  fi
+
   printf '%s\n' "$task_id"
 }
 

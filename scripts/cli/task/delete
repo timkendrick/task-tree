@@ -1,0 +1,382 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task delete — Remove a task from its parent branch.
+#
+# Usage:
+#   delete [<task-id>] [--force]
+#          [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
+#
+# Removes the subtask: entry from the parent task file and removes the child
+# task file (and all descendant task files) from the parent branch, creating
+# a single "Remove subtask:" commit. All bookmarks in the subtree are deleted.
+#
+# Options:
+#   <task-id>            Task to delete (default: current branch).
+#   --force              Skip DONE status check and clean WC check.
+#   --worktree=<path>    Explicit parent workspace path (for disambiguation).
+#   --repo PATH          Repository root (default: walk up from CWD to find .jj).
+#   --workspace-dir PATH Virtual project dir (for hooks and workspace paths).
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} [<task-id>] [--force] [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
+
+Remove a task from its parent branch.
+
+Arguments:
+  <task-id>             Task to delete (default: current branch).
+
+Options:
+  --force               Skip DONE and clean WC checks.
+  --worktree=<path>     Explicit parent workspace path.
+  --repo PATH           Repository root (default: find .jj).
+  --workspace-dir PATH  Virtual project dir.
+  -h, --help            Show this help.
+
+EOF
+  exit 1
+}
+
+# Usage: collect_subtree REPO ROOT_TASK_ID PARENT_BRANCH TASK_PREFIX PROJECT_PREFIX
+# Outputs one task ID per line — all descendants of ROOT_TASK_ID.
+# For each discovered task, reads subtask lists from BOTH:
+#   (a) the task's own branch
+#   (b) the parent branch's copy of the task file (if it exists there)
+# Union of both is used at every level.
+# ROOT_TASK_ID itself is NOT included in output (only descendants).
+collect_subtree() {
+  local repo="$1" root_id="$2" parent_branch="$3" task_prefix="$4" project_prefix="$5"
+
+  local seen=""        # newline-separated set of visited IDs
+  local to_visit="$root_id"
+  local descendants=""
+
+  while [[ -n "$to_visit" ]]; do
+    local current
+    current="$(printf '%s' "$to_visit" | head -1)"
+    to_visit="$(printf '%s' "$to_visit" | tail -n +2)"
+    [[ -z "$current" ]] && continue
+
+    # Skip if already visited
+    if printf '%s\n' "$seen" | grep -qFx "$current"; then
+      continue
+    fi
+    seen="${seen}${current}"$'\n'
+
+    # Determine this task's file path
+    local own_slug own_file
+    if is_task_branch "$current" "$task_prefix"; then
+      own_slug="${current#$task_prefix}"
+    else
+      own_slug="${current#$project_prefix}"
+    fi
+    own_file="$(task_file_path "$own_slug")"
+
+    # Collect subtask IDs from the task's own branch
+    local own_subs=""
+    local own_content
+    own_content="$(jj -R "$repo" file show -r "$current" -- "$own_file" 2>/dev/null)" || true
+    if [[ -n "$own_content" ]]; then
+      own_subs="$(printf '%s' "$own_content" | awk '
+        /^---$/ { in_fm = !in_fm; next }
+        in_fm && /^subtask:[ \t]*\[[ x\-]\]/ {
+          sub(/^subtask:[ \t]*\[[ x\-]\][ \t]*/, "")
+          if ($1 != "") print $1
+        }
+      ')" || true
+    fi
+
+    # Collect subtask IDs from the parent branch's copy of this task's file
+    local parent_subs=""
+    local parent_content
+    parent_content="$(jj -R "$repo" file show -r "$parent_branch" -- "$own_file" 2>/dev/null)" || true
+    if [[ -n "$parent_content" ]]; then
+      parent_subs="$(printf '%s' "$parent_content" | awk '
+        /^---$/ { in_fm = !in_fm; next }
+        in_fm && /^subtask:[ \t]*\[[ x\-]\]/ {
+          sub(/^subtask:[ \t]*\[[ x\-]\][ \t]*/, "")
+          if ($1 != "") print $1
+        }
+      ')" || true
+    fi
+
+    # Union: add all newly discovered subtask IDs to to_visit
+    local all_subs
+    all_subs="$(printf '%s\n%s\n' "$own_subs" "$parent_subs" | sort -u)"
+    while IFS= read -r sub_id; do
+      [[ -z "$sub_id" ]] && continue
+      if ! is_task_branch "$sub_id" "$task_prefix" && \
+         ! is_project_branch "$sub_id" "$project_prefix"; then
+        continue
+      fi
+      if ! printf '%s\n' "$seen" | grep -qFx "$sub_id"; then
+        to_visit="${to_visit}${sub_id}"$'\n'
+      fi
+    done <<< "$all_subs" || true
+
+    # Add to descendants (everything except root)
+    if [[ "$current" != "$root_id" ]]; then
+      descendants="${descendants}${current}"$'\n'
+    fi
+  done
+
+  printf '%s' "$descendants"
+}
+
+main() {
+  local task_id_arg=''
+  local force=false
+  local worktree_arg=''
+  local repo=''
+  local workspace_dir=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force)      force=true; shift ;;
+      --worktree=*) worktree_arg="${1#--worktree=}"; shift ;;
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"; shift 2 ;;
+      --workspace-dir)
+        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
+        workspace_dir="$2"; shift 2 ;;
+      -h|--help) usage ;;
+      -*)
+        log "Error: Unknown option: $1"; usage ;;
+      *)
+        if [[ -z "$task_id_arg" ]]; then
+          task_id_arg="$1"; shift
+        else
+          log "Error: Unexpected argument: $1"; usage
+        fi
+        ;;
+    esac
+  done
+
+  # Resolve repo root
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  if [[ -z "$workspace_dir" ]]; then
+    workspace_dir="$(get_workspace_dir "$repo")" || true
+  fi
+
+  # Resolve task_id: explicit arg or current branch
+  local task_id task_file task_slug
+  if [[ -n "$task_id_arg" ]]; then
+    task_id="$task_id_arg"
+    if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
+      log "Error: '$task_id' is not a recognized task or project ID."
+      exit 1
+    fi
+    if ! jj -R "$repo" log -r "$task_id" --no-graph -T '' 2>/dev/null; then
+      log "Error: Task '$task_id' not found in repository."
+      exit 1
+    fi
+    if is_task_branch "$task_id" "$task_prefix"; then
+      task_slug="${task_id#$task_prefix}"
+    else
+      task_slug="${task_id#$project_prefix}"
+    fi
+    task_file="$(task_file_path "$task_slug")"
+  else
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
+    task_id="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    if [[ -z "$task_id" ]]; then
+      log "Error: Not on a task or project branch. Pass a task ID explicitly."
+      exit 1
+    fi
+    if is_task_branch "$task_id" "$task_prefix"; then
+      task_slug="${task_id#$task_prefix}"
+    else
+      task_slug="${task_id#$project_prefix}"
+    fi
+    task_file="$(task_file_path "$task_slug")"
+  fi
+
+  # Precondition: WC must be clean (skip with --force)
+  if [[ "$force" != true ]]; then
+    if ! is_wc_clean "$repo"; then
+      log "Error: Working copy has uncommitted changes. Commit or discard first, or use --force."
+      exit 1
+    fi
+  fi
+
+  # Read task content and check status
+  local task_content task_title task_status
+  task_content="$(jj -R "$repo" file show -r "$task_id" -- "$task_file" 2>/dev/null)" || {
+    log "Error: Could not read task file '$task_file' from bookmark '$task_id'."
+    exit 1
+  }
+  task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
+  task_status="$(parse_frontmatter_field "$task_content" "status")"
+
+  # Precondition: top-level task must be DONE (skip with --force)
+  if [[ "$force" != true ]] && [[ "$task_status" != "DONE" ]]; then
+    log "Error: Task '$task_id' is not DONE (status: $task_status)."
+    log "  Use --force to delete regardless of status."
+    exit 1
+  fi
+
+  # Find parent branch
+  local parent_bookmark
+  parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
+    local rc=$?
+    [[ $rc -eq 1 ]] && log "Error: No parent branch found for '$task_id'. Parentless tasks cannot be deleted with this command."
+    exit 1
+  }
+
+  # Derive parent slug and task file path
+  local parent_slug parent_task_file
+  if is_task_branch "$parent_bookmark" "$task_prefix"; then
+    parent_slug="${parent_bookmark#$task_prefix}"
+  else
+    parent_slug="${parent_bookmark#$project_prefix}"
+  fi
+  parent_task_file="$(task_file_path "$parent_slug")"
+
+  # Collect full descendant subtree
+  local subtree_ids
+  subtree_ids="$(collect_subtree "$repo" "$task_id" "$parent_bookmark" \
+    "$task_prefix" "$project_prefix")"
+
+  # Determine target workspace
+  local target_ws
+  local worktrees
+  worktrees="$(find_worktrees_for_branch "$repo" "$parent_bookmark" "$task_prefix" "$project_prefix")"
+  local wt_count
+  wt_count="$(printf '%s' "$worktrees" | grep -c . 2>/dev/null || true)"
+
+  case "$wt_count" in
+    0) target_ws="$repo" ;;
+    1) target_ws="$worktrees" ;;
+    *)
+      if [[ -z "$worktree_arg" ]]; then
+        log "Error: Multiple parent workspaces found; use --worktree=<path>:"
+        printf '%s\n' "$worktrees" | while IFS= read -r p; do log "  $p"; done
+        exit 1
+      fi
+      target_ws="$worktree_arg"
+      ;;
+  esac
+
+  local current_worktree
+  current_worktree="$(resolve_current_worktree "$repo")"
+
+  # Run pre-delete hook (blocking)
+  run_hook "$repo" "pre-delete" true "$current_worktree" "${workspace_dir:-}" \
+    "TT_TASK_ID=$task_id" \
+    "TT_TASK_BRANCH=$task_id" \
+    "TT_PARENT_TASK_ID=$parent_bookmark" \
+    "TT_PARENT_TASK_BRANCH=$parent_bookmark"
+
+  # Create new WC branching from parent bookmark
+  jj -R "$target_ws" new "$parent_bookmark"
+
+  # Read parent task file content
+  local parent_task_content
+  parent_task_content="$(jj -R "$target_ws" file show -r "$parent_bookmark" -- "$parent_task_file" 2>/dev/null)" || {
+    log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
+    jj -R "$target_ws" op undo
+    exit 1
+  }
+
+  # Remove subtask entry for this task from parent frontmatter
+  local updated_parent_content
+  updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" '
+    /^---$/ { in_fm = !in_fm; print; next }
+    in_fm && /^subtask:/ {
+      line = $0
+      rest = line
+      sub(/^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]*/, "", rest)
+      split(rest, parts, /[[:space:]]/)
+      if (parts[1] == id) next
+    }
+    { print }
+  ')"
+
+  printf '%s\n' "$updated_parent_content" > "$target_ws/$parent_task_file"
+
+  # Remove top-level task directory from target workspace (best-effort)
+  local task_dir
+  task_dir="$(task_dir_path "$task_slug")"
+  rm -rf "$target_ws/$task_dir"
+
+  # Remove all descendant task directories from target workspace (best-effort)
+  while IFS= read -r desc_id; do
+    [[ -z "$desc_id" ]] && continue
+    local desc_slug
+    if is_task_branch "$desc_id" "$task_prefix"; then
+      desc_slug="${desc_id#$task_prefix}"
+    else
+      desc_slug="${desc_id#$project_prefix}"
+    fi
+    local desc_dir
+    desc_dir="$(task_dir_path "$desc_slug")"
+    rm -rf "$target_ws/$desc_dir"
+  done <<< "$subtree_ids" || true
+
+  # Commit and advance parent bookmark
+  jj -R "$target_ws" commit -m "Remove subtask: $task_title ($task_id)"
+  jj -R "$target_ws" bookmark set "$parent_bookmark" -r '@-'
+  jj -R "$target_ws" new '@'
+
+  # Bulk bookmark deletion: root + all descendants
+  local all_ids="${task_id}"$'\n'"${subtree_ids}"
+  while IFS= read -r del_id; do
+    [[ -z "$del_id" ]] && continue
+    if jj -R "$repo" log -r "$del_id" --no-graph -T '' 2>/dev/null; then
+      jj -R "$repo" bookmark delete "$del_id" 2>/dev/null || \
+        log "Warning: Could not delete bookmark '$del_id'."
+    fi
+  done <<< "$all_ids" || true
+
+  # Bulk workspace cleanup: root + all descendants
+  while IFS= read -r del_id; do
+    [[ -z "$del_id" || -z "$workspace_dir" ]] && continue
+    local ws_path="${workspace_dir}/${del_id}"
+    if [[ -d "$ws_path" ]] && [[ -d "$ws_path/.jj" || -L "$ws_path/.jj" ]]; then
+      local ws_name
+      ws_name="$(jj -R "$ws_path" workspace list --no-pager 2>/dev/null \
+        | awk -v root="$ws_path" '$2 == root {print $1}' | tr -d ':' || true)"
+      if [[ -n "$ws_name" ]]; then
+        jj -R "$repo" workspace forget "$ws_name" 2>/dev/null || true
+        log "Workspace '$ws_name' ($del_id) forgotten from jj."
+      fi
+      log "Warning: Workspace directory still exists: $ws_path"
+      log "  Files have not been removed. Clean up manually when ready."
+    fi
+  done <<< "$all_ids" || true
+
+  # Run post-delete hook (non-blocking)
+  run_hook "$repo" "post-delete" false "$current_worktree" "${workspace_dir:-}" \
+    "TT_TASK_ID=$task_id" \
+    "TT_TASK_BRANCH=$task_id" \
+    "TT_PARENT_TASK_ID=$parent_bookmark" \
+    "TT_PARENT_TASK_BRANCH=$parent_bookmark"
+
+  log "Deleted: $task_id from $parent_bookmark"
+}
+
+main "$@"

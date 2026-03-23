@@ -1,0 +1,42 @@
+---
+description: TypeScript coding conventions
+globs: *.ts, *.tsx
+alwaysApply: true
+---
+- You MUST use precise types with accurately specified generics wherever possible
+- You MUST NOT use `any` unless unavoidable
+  - You SHOULD use `satisfies` for enforcing type constraints
+- You MUST annotate function return types
+- You MUST use enum types instead of unions to express a primitive variant
+  - You MUST use `const enum` if the type is not exported from the current module
+  - You MUST use `enum` if the type is exported from the current module
+- You MUST prefer `null` over `undefined` to indicate missing values in interface fields
+- You MUST use `Array<T>` instead of `T[]` for type annotations
+- You MUST use `import type { ... } from '...'` if all imports are `type` imports
+- You MUST use `import { Foo, type Bar } from '...'` if only some imports are `type` imports
+- You MUST import Node.js internals via `node:` prefix
+- You MUST prefer immutability over mutation (e.g. prefer `const` over `let`, use conditionals/IIFEs/reduce as appropriate)
+  - Exception: local mutation is acceptable within performance-sensitive inner loops, unbounded recursion etc.
+- You SHOULD prefer named function declarations over function variable assignments
+- You SHOULD extract isolated functionality into helper functions
+- You MUST use function hoisting to declare inner helper functions *below* the outer function so that control flow reads naturally top-to-bottom
+- You SHOULD declare local helper functions AFTER the call site, to help top-to-bottom module legibility
+- You SHOULD prefer functional code over imperative code
+  - Exception: prefer loops over `.forEach()`
+- You SHOULD use discriminated unions, with a `type` field for the discriminant
+- You SHOULD use branded primitive types to enforce nominal typing:
+  ```typescript
+  interface Uuid {
+    source: string;
+    [UUID]: void;
+  }
+  declare const UUID: unique symbol
+  function Uuid(): Uuid {
+    return uuidv4() as UUID;
+  }
+  ```
+- You SHOULD use JSDoc summary for function description instead of inline comments
+- You SHOULD NOT use unnecessary abbreviations in variable names
+- You MUST NOT include 'version history' comments that explain code changes: all comments must make sense without knowledge of any prior implementation
+- You MUST NOT remove any FIXME comments unless you have specifically fixed the issue
+- You MUST confirm with the user before removing any fixed FIXME comments
