@@ -4,6 +4,7 @@ status: TODO
 created: 2026-03-23T07:58:52Z
 updated: 2026-03-23T07:58:52Z
 subtask: [ ] task/standardize-metadata-editing-b5c72f5a
+subtask: [ ] task/standardize-commit-messages-b542cab5
 ---
 The current bootstrap CLI implementation has grown organically, prioritizing feature development over code cleanliness.
 
