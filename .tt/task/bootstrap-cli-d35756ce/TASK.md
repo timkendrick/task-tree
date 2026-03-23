@@ -55,6 +55,7 @@ subtask: [x] task/context-add-stdin-c0a8e7b6
 subtask: [ ] task/tt-workspace-root-beb169de
 subtask: [ ] task/refactor-bootstrap-implementation-40a0bd88
 subtask: [x] task/fix-tt-task-move-end-state-ea001288
+subtask: [ ] task/tt-workspace-init-e67edd30
 ---
 Implement shell script implementations of all `tt` CLI commands
 
