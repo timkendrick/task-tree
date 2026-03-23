@@ -222,19 +222,16 @@ main() {
   old_parent_commit_id="$(jj -R "$repo" log -r "$old_parent" --no-graph -T 'commit_id' 2>/dev/null)"
 
   # Capture the change_id of @- (the parent of @) to restore position after the move.
-  # We capture @- rather than @ because @ is always an empty WC commit (is_wc_clean
-  # already verified this), and jj automatically abandons empty commits when @ is
-  # moved away via `jj new`. Using @-'s change_id (which has actual content) ensures
-  # the reference survives rebases. We use `jj new "$original_rev"` at the end (not
-  # `jj edit`) so that @ ends up as a fresh empty commit on top of the original work,
-  # matching the state before the move operation.
+  # We use `jj new "$original_rev"` at the end (not `jj edit`) so that @ ends up as
+  # a fresh empty commit on top of the original work, # matching the state before
+  # the move operation.
   local original_rev=''
   local current_branch=''
   local current_resolve
   current_resolve="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
   current_branch="$(printf '%s' "$current_resolve" | sed -n '3p')"
   if [[ "$current_branch" != "$task_id" ]]; then
-    original_rev="$(jj -R "$repo" log -r '@-' --no-graph -T 'change_id' 2>/dev/null)"
+    original_rev="$(get_worktree_current_rev "$repo")"
   fi
 
   # ----------------------------------------------------------------
