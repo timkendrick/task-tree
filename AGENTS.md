@@ -38,7 +38,7 @@ This project uses **JJ (Jujutsu)** instead of Git. Use `jj` commands rather than
 
 **Make sure you understand which operations you are performing.** It's easy to perform disorienting changes within jj, so make sure you fully understand where you currently are at all times. To remove any doubt, run `jj log` before and after performing any VCS actions.
 
-**Always have a roll-back strategy.** Before performing any `jj` or `tt` operation, capture the prior repository state operation ID via `jj op log --no-graph -T id -n 1`. This state can then be restored via `jj op restore <operation-id>`. Always use this rollback mechanism rather than attempting to revert individual changes.
+**Always have a roll-back strategy.** Before performing any `jj` operation, capture the prior repository state operation ID via `jj op log --no-graph -T id -n 1`. This state can then be restored via `jj op restore <operation-id>`. Always use this rollback mechanism rather than attempting to revert individual changes.
 
 **JJ commits are cheap.** Always create a new change with `jj new` before making any edits, no matter how small. You can squash or abandon later; starting from a fresh change keeps history clear and makes it easy to iterate.
 

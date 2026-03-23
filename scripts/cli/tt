@@ -108,6 +108,13 @@ main() {
   local script_dir
   script_dir="$(cd "$(dirname "$0")" && pwd)"
 
+  # Log current jj operation ID and rollback instructions to stderr before dispatching
+  local jj_op_id
+  if jj_op_id="$(jj op log --no-graph -T id -n 1 2>/dev/null)"; then
+    log "jj operation ID before command: ${jj_op_id}"
+    log "rollback: \`jj op restore ${jj_op_id}\`"
+  fi
+
   # Resolve top-level aliases before dispatching
   case "${1:-}" in
     init)        set -- workspace init        "${@:2}" ;;
