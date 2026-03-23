@@ -215,6 +215,12 @@ main() {
   }
   task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
 
+  # Capture the old parent's commit ID now, before Step 1 advances its bookmark.
+  # We use commit_id (not change_id) so the reference remains stable even after the
+  # bookmark moves; jj keeps all commits in history and can read from any commit_id.
+  local old_parent_commit_id
+  old_parent_commit_id="$(jj -R "$repo" log -r "$old_parent" --no-graph -T 'commit_id' 2>/dev/null)"
+
   # Capture current revision (change_id) to restore @ after the move,
   # but only if we are not currently on the task being moved.
   local original_rev=''
@@ -227,7 +233,7 @@ main() {
   fi
 
   # ----------------------------------------------------------------
-  # Step 1: Update old parent — remove subtask entry
+  # Step 1: Update old parent — remove subtask entry and task stub dir
   # ----------------------------------------------------------------
   log "Updating old parent: $old_parent"
   jj -R "$repo" new "$old_parent"
@@ -247,12 +253,18 @@ main() {
   ' "$repo/$old_parent_task_file" > "$tmpfile"
   mv "$tmpfile" "$repo/$old_parent_task_file"
 
+  # Remove the task's stub directory from the old parent, mirroring how
+  # tt task create places the stub on the parent branch in the first place.
+  local task_dir
+  task_dir="$(task_dir_path "$task_slug")"
+  rm -rf "${repo:?}/$task_dir"
+
   jj -R "$repo" describe -m "Move task: $task_title ($task_id)"
   jj -R "$repo" bookmark set "$old_parent"
   jj -R "$repo" new "@"
 
   # ----------------------------------------------------------------
-  # Step 2: Update new parent — add subtask entry
+  # Step 2: Update new parent — add subtask entry and task stub dir
   # ----------------------------------------------------------------
   log "Updating new parent: $new_parent_id"
   jj -R "$repo" new "$new_parent_id"
@@ -264,6 +276,21 @@ main() {
     { print }
   ' "$repo/$new_parent_task_file" > "$tmpfile2"
   mv "$tmpfile2" "$repo/$new_parent_task_file"
+
+  # Copy the task's stub file from the old parent commit onto the new parent, using
+  # the commit_id captured before Step 1 moved the bookmark.  This makes the new
+  # parent's copy byte-identical to the old parent's, so jj's 3-way merge sees
+  # "theirs == base" for the stub and cleanly takes "ours" (the task branch's
+  # updated TASK.md) without producing a conflict during the rebase in Step 3.
+  local task_dir_new
+  task_dir_new="$(task_dir_path "$task_slug")"
+  mkdir -p "$repo/$task_dir_new"
+  if jj -R "$repo" file show -r "$old_parent_commit_id" -- "$task_file" \
+       > "$repo/$task_file" 2>/dev/null; then
+    log "Copied task stub from old parent to new parent: $task_file"
+  else
+    log "Warning: Could not copy task stub '$task_file' from old parent; skipping."
+  fi
 
   jj -R "$repo" describe -m "Move task: $task_title ($task_id)"
   jj -R "$repo" bookmark set "$new_parent_id"
