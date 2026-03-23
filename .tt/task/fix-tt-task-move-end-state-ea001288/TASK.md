@@ -1,6 +1,6 @@
 ---
 title: "Fix `tt task move` end state"
-status: TODO
+status: IN-PROGRESS
 created: 2026-03-23T08:03:01Z
 updated: 2026-03-23T08:03:01Z
 ---
