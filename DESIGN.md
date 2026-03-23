@@ -651,9 +651,11 @@ Concretely, for a child branch `C` and parent branch `P`:
 
 **Move operations (in order):**
 
-1. **Remove from old parent:** Creates a `Move task: <title> (<task-id>)` commit on the old parent branch that removes the `subtask:` entry for the task. Old parent bookmark advances.
-2. **Add to new parent:** Creates a `Move task: <title> (<task-id>)` commit on the new parent branch that adds `subtask: [ ] <task-id>` to the new parent's frontmatter. New parent bookmark advances.
+1. **Remove from old parent:** Creates a `Move task: <title> (<task-id>)` commit on the old parent branch that removes the `subtask:` entry for the task **and** deletes the task's stub directory (`.tt/task/<slug>-<hex>/`). Old parent bookmark advances.
+2. **Add to new parent:** Creates a `Move task: <title> (<task-id>)` commit on the new parent branch that adds `subtask: [ ] <task-id>` to the new parent's frontmatter **and** copies the task's stub TASK.md (read from the old parent's pre-Step-1 commit ID) into `.tt/task/<slug>-<hex>/TASK.md` on the new parent. New parent bookmark advances.
 3. **Rebase task branch:** Rebases the task's unmerged range (`roots(::task ~ ::old_parent)`) onto the new parent's bookmark tip. If there are no unmerged commits (e.g., the task branch has no commits beyond the old parent's ancestry), this step is skipped.
+
+**Stub file handling.** `tt task create` always places the task's stub TASK.md on the parent branch. `tt task move` mirrors this invariant: the stub is removed from the old parent (Step 1) and placed on the new parent (Step 2). This is also essential for conflict-free rebasing in Step 3: jj performs a 3-way merge when rebasing, using the old parent tip as the base. If the new parent lacks the stub, jj sees a delete-vs-modify conflict in the task's TASK.md. By placing a byte-identical copy of the stub on the new parent, jj sees "theirs == base" and cleanly takes the task branch's own TASK.md without conflict. The stub is read from the old parent's commit ID (captured before Step 1 advances the bookmark), ensuring the content is byte-identical to what the rebase will use as its merge base.
 
 **Preconditions:**
 
