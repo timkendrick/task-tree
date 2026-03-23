@@ -1,6 +1,6 @@
 ---
 title: "Auto-resolve TASK.md conflicts after tt task move rebase"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-22T21:35:26Z
 updated: 2026-03-22T21:49:46Z
 context: context/test-scenario-conflict-in-task-task-md-after-move-rebase-6da681ee
