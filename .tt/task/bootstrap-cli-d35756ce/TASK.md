@@ -12,7 +12,6 @@ subtask: [x] task/tt-task-add-context-af1b6a26
 subtask: [x] task/tt-task-checkin-59f599a6
 subtask: [x] task/tt-task-status-3f469fc0
 subtask: [x] task/task-aliases-d407b6d3
-subtask: [ ] task/standardize-commit-messages-b542cab5
 subtask: [x] task/tt-task-create-description-editor-747ffc60
 subtask: [x] task/tt-task-parent-f4a6a56f
 subtask: [x] task/tt-task-describe-9463850e
