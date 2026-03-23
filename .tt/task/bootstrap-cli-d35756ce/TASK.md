@@ -22,7 +22,7 @@ subtask: [x] task/tt-task-complete-a24cbd24
 subtask: [x] task/tt-task-current-62284716
 subtask: [x] task/propagate-to-checked-in-5c30016b
 subtask: [x] task/task-id-argument-266c3146
-subtask: [ ] task/tt-task-checkin-project-0ce9b81f
+subtask: [x] task/tt-task-checkin-project-0ce9b81f
 subtask: [x] task/tt-task-checkin-switch-b8ba57c3
 subtask: [x] task/tt-task-checkout-log-previous-224e7312
 subtask: [x] task/tt-task-rename-8db18f41
