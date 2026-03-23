@@ -13,12 +13,8 @@ trap 'rm -rf "$REPO"' EXIT
 echo "=== Setting up temp repo at $REPO ==="
 
 # Init jj repo
-jj -R "$REPO" git init --quiet 2>&1 || jj init --quiet "$REPO" 2>&1 || true
 cd "$REPO"
-jj init --quiet 2>&1 || true
-
-# Make sure we have a jj repo
-jj status 2>&1 | head -3
+jj git init --quiet
 
 # Create a baseline commit on 'main'
 mkdir -p .tt
@@ -36,30 +32,53 @@ echo "My project description" | "$TT" task create \
   --project --slug my-project --title "My Project" \
   --repo "$REPO"
 
-PROJECT_ID="$(jj log -r 'bookmarks()' --no-graph -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' | grep '^project/')"
+PROJECT_ID="$(jj log -r 'bookmarks()' --no-graph \
+  -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' \
+  | grep '^project/')"
 echo "Project ID: $PROJECT_ID"
 
 echo ""
 echo "=== Creating a task under the project ==="
-jj checkout "$PROJECT_ID" 2>/dev/null || jj edit "$PROJECT_ID" 2>/dev/null || true
 echo "Some task work" | "$TT" task create \
+  --parent "$PROJECT_ID" \
   --slug my-task --title "My Task" \
   --repo "$REPO"
 
-TASK_ID="$(jj log -r 'bookmarks()' --no-graph -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' | grep '^task/')"
+TASK_ID="$(jj log -r 'bookmarks()' --no-graph \
+  -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' \
+  | grep '^task/')"
 echo "Task ID: $TASK_ID"
 
 echo ""
-echo "=== Completing the task ==="
-"$TT" task complete --repo "$REPO" "$TASK_ID"
+echo "=== Log before checkin ==="
+jj log --no-graph \
+  -T 'change_id.short() ++ " " ++ local_bookmarks.map(|b| b.name()).join(",") ++ " " ++ description.first_line() ++ "\n"' \
+  -n 10
+
+echo ""
+echo "=== Marking task DONE manually ==="
+jj edit "$TASK_ID"
+TASK_FILE=".tt/task/${TASK_ID#task/}/TASK.md"
+sed -i '' 's/^status: .*/status: DONE/' "$TASK_FILE"
+jj describe -m "Complete task: My Task ($TASK_ID)"
+jj bookmark set "$TASK_ID" -r '@'
+jj new
 
 echo ""
 echo "=== Checking in the task to the project ==="
-"$TT" task checkin --repo "$REPO" "$TASK_ID"
+echo "  Command: tt task checkin $TASK_ID"
+if "$TT" task checkin --repo "$REPO" "$TASK_ID"; then
+  echo "SUCCESS: task checkin to project worked"
+else
+  echo "FAILURE: task checkin to project failed (exit $?)"
+  exit 1
+fi
 
 echo ""
-echo "=== Current log after task checkin ==="
-jj log --no-graph -T 'change_id.short() ++ " " ++ local_bookmarks.map(|b| b.name()).join(",") ++ " " ++ description.first_line() ++ "\n"' -n 10
+echo "=== Log after task checkin ==="
+jj log --no-graph \
+  -T 'change_id.short() ++ " " ++ local_bookmarks.map(|b| b.name()).join(",") ++ " " ++ description.first_line() ++ "\n"' \
+  -n 10
 
 echo ""
 echo "=== Now attempting to check in the PROJECT branch to main (the bug) ==="
@@ -68,8 +87,15 @@ if "$TT" task checkin --repo "$REPO" --target main "$PROJECT_ID"; then
   echo "SUCCESS: project checkin to main worked"
 else
   echo "FAILURE: project checkin to main failed (exit $?)"
+  exit 1
 fi
 
 echo ""
 echo "=== Final log ==="
-jj log --no-graph -T 'change_id.short() ++ " " ++ local_bookmarks.map(|b| b.name()).join(",") ++ " " ++ description.first_line() ++ "\n"' -n 15
+jj log --no-graph \
+  -T 'change_id.short() ++ " " ++ local_bookmarks.map(|b| b.name()).join(",") ++ " " ++ description.first_line() ++ "\n"' \
+  -n 15
+
+echo ""
+echo "=== Verify .tt/task/ is absent on main after project checkin ==="
+jj file list -r main | grep '\.tt/' || echo "(no .tt/task/ files on main — correct)"
