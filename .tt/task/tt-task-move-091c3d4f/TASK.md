@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt task move` CLI command"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-15T09:29:31Z
 updated: 2026-03-22T21:09:45Z
 ---
