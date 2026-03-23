@@ -1,6 +1,6 @@
 ---
 title: "Show `jj` rollback instructions before each `tt` operation"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-23T11:18:58Z
 updated: 2026-03-23T11:18:58Z
 ---
