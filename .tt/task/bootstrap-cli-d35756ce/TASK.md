@@ -57,7 +57,7 @@ subtask: [ ] task/extract-vcs-commands-f70e3a90
 subtask: [x] task/context-add-stdin-c0a8e7b6
 subtask: [ ] task/tt-workspace-root-beb169de
 subtask: [ ] task/refactor-bootstrap-implementation-40a0bd88
-subtask: [ ] task/fix-tt-task-move-end-state-ea001288
+subtask: [x] task/fix-tt-task-move-end-state-ea001288
 ---
 Implement shell script implementations of all `tt` CLI commands
 
