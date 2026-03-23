@@ -532,6 +532,8 @@ The handoff commit is described as `Handoff: <task-title> (<task-id>)`.
 
 If there is no parent task (the task being merged is a project task), the tool requires `--target <branch>`; it merges the handoff commit into the specified target branch. Merge conflicts in the working copy or other `.tt/` files must be resolved manually; for `TASK.md`, the intended resolution is to keep the parent's version.
 
+**Project checkin handoff commit.** When the child is a project branch (checking into `--target`), the handoff commit differs from a regular task handoff: it removes the `TASK.md` root symlink and the entire `.tt/task/` directory from the working tree. Task files are development-only scaffolding; they must not land on the delivery branch (e.g. `main`). The `.tt/config.toml` workspace configuration file is not removed. The `--context` option is not supported for project checkins (there is no parent task file to attach context to). The task-file diff validation (see §6.6) is also skipped for project branches, since a project branch legitimately contains child task files accumulated from prior child checkins.
+
 ### 6.6 Checkin validation
 
 Before attempting any merge, `tt task checkin` performs validation and refuses if any check fails. The **unmerged range** is the set of commits on the child branch that are not yet in the parent's ancestry (commits since the last handoff commit, if any, or all commits on the child branch if no prior checkin has occurred). Checks include:
@@ -540,7 +542,7 @@ Before attempting any merge, `tt task checkin` performs validation and refuses i
 - Current branch is a task branch (or project branch)
 - Current task has exactly one parent, or is a project task with no parents (in which case `--target <branch>` must be specified; regular tasks cannot use `--target`)
 - No conflicts with parent (or target branch, for project checkin) once the handoff commit has been applied (unless `--force`), or after the optional pre-checkin propagate step when using `--rebase`/`--merge`
-- No modifications to non-editable task files in the unmerged range: only the current task file may be modified by the user. Any changes to any other `.tt/task` file in the unmerged range cause checkin to abort. (The parent task file is updated by the tool itself via the `Handoff:` and `Merge subtask:` commits, which are on the parent branch and are not part of the child's unmerged range.)
+- No modifications to non-editable task files in the unmerged range: only the current task file may be modified by the user. Any changes to any other `.tt/task` file in the unmerged range cause checkin to abort. (The parent task file is updated by the tool itself via the `Handoff:` and `Merge subtask:` commits, which are on the parent branch and are not part of the child's unmerged range.) **This check is skipped for project branches**, which legitimately accumulate child task files from prior child checkins.
 - The only change to `TASK.md` in the unmerged range from the child is the symlink pointing to the child's task file, then reverted by the handoff commit
 
 On failure, `tt task checkin` aborts with an error and leaves the repository unchanged. Implementations may add further checks via hooks.
