@@ -81,38 +81,12 @@ EOF
   exit "$exit_code"
 }
 
-# Validate a prefix string: non-empty, lowercase alphanumeric + hyphens + slashes,
-# no leading/trailing hyphens, no consecutive hyphens or consecutive slashes,
-# must start with a lowercase letter or digit.
+# Validate a prefix string: non-empty, lowercase alphanumeric + hyphens + slashes only.
 validate_prefix() {
   local p="$1"
   local label="$2"
-  if [[ -z "$p" ]]; then
-    log "Error: $label cannot be empty"
-    return 1
-  fi
-  if [[ "$p" =~ [A-Z] ]]; then
-    log "Error: $label must be lowercase: '$p'"
-    return 1
-  fi
-  if [[ "$p" =~ ^[^a-z0-9] ]]; then
-    log "Error: $label must start with a lowercase letter or digit: '$p'"
-    return 1
-  fi
-  if [[ "$p" =~ [^a-z0-9/-] ]]; then
+  if [[ -z "$p" ]] || [[ "$p" =~ [^a-z0-9/-] ]]; then
     log "Error: $label must contain only lowercase letters, digits, hyphens, and slashes: '$p'"
-    return 1
-  fi
-  if [[ "$p" =~ -- ]]; then
-    log "Error: $label must not contain consecutive hyphens: '$p'"
-    return 1
-  fi
-  if [[ "$p" =~ // ]]; then
-    log "Error: $label must not contain consecutive slashes: '$p'"
-    return 1
-  fi
-  if [[ "$p" =~ ^- ]] || [[ "$p" =~ -$ ]]; then
-    log "Error: $label must not start or end with a hyphen: '$p'"
     return 1
   fi
   return 0
