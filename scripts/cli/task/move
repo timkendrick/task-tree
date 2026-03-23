@@ -241,16 +241,7 @@ main() {
   local tmpfile
   tmpfile="$(mktemp)"
   # \[.\] matches any single-character checkbox glyph ([ ], [-], [x], etc.)
-  # Use awk rather than sed to avoid '/' in task IDs being misinterpreted
-  # as sed delimiters.
-  awk -v id="$task_id" '
-    /^subtask:[[:space:]]*\[.\][[:space:]]/ {
-      val = $0
-      sub(/^subtask:[[:space:]]*\[.\][[:space:]]*/, "", val)
-      if (val == id) next
-    }
-    { print }
-  ' "$repo/$old_parent_task_file" > "$tmpfile"
+  sed "\|^subtask:[[:space:]]*\[.\][[:space:]]*$task_id$|d" "$repo/$old_parent_task_file" > "$tmpfile"
   mv "$tmpfile" "$repo/$old_parent_task_file"
 
   # Remove the task's stub directory from the old parent, mirroring how
