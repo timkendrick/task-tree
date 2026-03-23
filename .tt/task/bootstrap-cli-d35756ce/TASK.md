@@ -56,7 +56,6 @@ subtask: [x] task/tt-task-list-context-82eba696
 subtask: [ ] task/extract-vcs-commands-f70e3a90
 subtask: [x] task/context-add-stdin-c0a8e7b6
 subtask: [ ] task/tt-workspace-root-beb169de
-subtask: [ ] task/standardize-metadata-editing-b5c72f5a
 subtask: [ ] task/refactor-bootstrap-implementation-40a0bd88
 ---
 Implement shell script implementations of all `tt` CLI commands
