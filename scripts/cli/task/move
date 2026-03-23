@@ -221,17 +221,37 @@ main() {
   local old_parent_commit_id
   old_parent_commit_id="$(jj -R "$repo" log -r "$old_parent" --no-graph -T 'commit_id' 2>/dev/null)"
 
-  # Capture the change_id of @- (the parent of @) to restore position after the move.
-  # We use `jj new "$original_rev"` at the end (not `jj edit`) so that @ ends up as
-  # a fresh empty commit on top of the original work, # matching the state before
-  # the move operation.
+  # Determine how to restore @ after the move.
+  #
+  # Three cases:
+  #
+  # 1. @ is on the task being moved — no restore needed; leave it wherever
+  #    the rebase lands it.
+  #
+  # 2. @ is on the old parent branch — Step 1 runs `jj new <old_parent>`,
+  #    which causes jj to ABANDON the prior empty @ commit (no description,
+  #    now orphaned).  Saving its change_id is useless: by Step 4 that ID no
+  #    longer exists.  Also, even if @ had a description and survived, its
+  #    change_id would point to a commit whose parent is the pre-Step-1 old
+  #    parent tip — one commit behind the updated bookmark.  The correct
+  #    restore is `jj new "$old_parent"` AFTER Step 1 has advanced the
+  #    bookmark, which naturally lands @ on the updated tip.
+  #
+  # 3. @ is on any other branch — save its change_id; change IDs survive
+  #    rebases (jj rewrites the change ID onto the rebased commit), so
+  #    `jj new <change_id>` will always resolve correctly after Step 3.
   local original_rev=''
   local current_branch=''
+  local restore_to_old_parent=false
   local current_resolve
   current_resolve="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
   current_branch="$(printf '%s' "$current_resolve" | sed -n '3p')"
-  if [[ "$current_branch" != "$task_id" ]]; then
-    original_rev="$(get_worktree_current_rev "$repo")"
+  if [[ "$current_branch" == "$task_id" ]]; then
+    : # case 1 — no restore
+  elif [[ "$current_branch" == "$old_parent" ]]; then
+    restore_to_old_parent=true  # case 2
+  else
+    original_rev="$(get_worktree_current_rev "$repo")"  # case 3
   fi
 
   # ----------------------------------------------------------------
@@ -309,11 +329,18 @@ main() {
   fi
 
   # ----------------------------------------------------------------
-  # Step 4: Restore @ if we were not on the moved task
+  # Step 4: Restore @ to the correct position
   # ----------------------------------------------------------------
-  if [[ -n "$original_rev" ]]; then
+  if [[ "$restore_to_old_parent" == true ]]; then
+    # Case 2: @ was on the old parent branch.  Step 1 advanced the bookmark;
+    # land @ on the new tip as a fresh empty commit.
+    jj -R "$repo" new "$old_parent"
+  elif [[ -n "$original_rev" ]]; then
+    # Case 3: @ was on some other branch.  The change_id survives rebases.
     jj -R "$repo" new "$original_rev"
   fi
+  # Case 1 (@ was on the task itself): no restore — leave @ wherever the
+  # rebase in Step 3 left it.
 
   log "Moved: $task_id"
   log "  Old parent: $old_parent"
