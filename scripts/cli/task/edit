@@ -300,6 +300,28 @@ main() {
     local original_parent_rev
     original_parent_rev="$(jj -R "$repo" log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)"
 
+    # Write the task file into a temp location first to check for changes,
+    # before beginning the transaction (avoids orphaned in-progress entries on no-op).
+    local tmpfile
+    tmpfile="$(mktemp)"
+    rewrite_task_file "$tmpfile" \
+      "$final_title" "$current_status" "$final_body" "$current_created"
+    local current_file_content
+    current_file_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || true
+    local new_file_content
+    new_file_content="$(cat "$tmpfile")"
+    rm -f "$tmpfile"
+
+    if [[ "$current_file_content" == "$new_file_content" ]]; then
+      log "No changes to task $bookmark."
+      printf '%s\n' "$bookmark"
+      unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
+      return 0
+    fi
+
+    # Begin transaction (records before-op for undo)
+    tt_begin_transaction "$repo"
+
     # Switch WC to the target bookmark, create a new empty change on top of it,
     # write the task file, commit, advance the bookmark, then return to the original parent.
     jj -R "$repo" edit "$bookmark"
@@ -308,16 +330,6 @@ main() {
     # Write updated task file now that we're on the target branch
     rewrite_task_file "$repo/$task_file" \
       "$final_title" "$current_status" "$final_body" "$current_created"
-
-    # Only commit if the task file actually changed
-    if is_wc_clean "$repo"; then
-      log "No changes to task $bookmark."
-      jj -R "$repo" abandon
-      jj -R "$repo" new -r "$original_parent_rev"
-      printf '%s\n' "$bookmark"
-      unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
-      return 0
-    fi
 
     jj -R "$repo" commit -m "Edit task: $final_title ($bookmark)"
     jj -R "$repo" bookmark set "$bookmark" -r '@-'
@@ -337,9 +349,15 @@ main() {
       return 0
     fi
 
+    # Begin transaction (records before-op for undo)
+    tt_begin_transaction "$repo"
+
     jj -R "$target_worktree" commit -m "Edit task: $final_title ($bookmark)"
     jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
   printf '%s\n' "$bookmark"

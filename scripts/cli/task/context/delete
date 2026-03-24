@@ -218,9 +218,15 @@ main() {
   # Remove the context file
   rm -f "$target_worktree/$ctx_file"
 
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
+
   # Commit the changes
   jj -R "$target_worktree" commit -m "Delete context: $ctx_title ($branch)"
   jj -R "$target_worktree" bookmark set "$branch" -r '@-'
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   log "Deleted context: $ctx_id_arg"
 }

@@ -254,6 +254,9 @@ main() {
     original_rev="$(get_worktree_current_rev "$repo")"  # case 3
   fi
 
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
+
   # ----------------------------------------------------------------
   # Step 1: Update old parent — remove subtask entry and task stub dir
   # ----------------------------------------------------------------
@@ -341,6 +344,9 @@ main() {
   fi
   # Case 1 (@ was on the task itself): no restore — leave @ wherever the
   # rebase in Step 3 left it.
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   log "Moved: $task_id"
   log "  Old parent: $old_parent"

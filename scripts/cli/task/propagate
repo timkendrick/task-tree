@@ -386,6 +386,11 @@ main() {
   log "Propagating from: $from_bookmark"
   [[ "$dry_run" == true ]] && log "(dry-run: no changes will be made)"
 
+  # Begin transaction (records before-op for undo; skip for dry-run)
+  if [[ "$dry_run" != true ]]; then
+    tt_begin_transaction "$repo"
+  fi
+
   # Capture @ to restore after merge/rebase operations move it.
   local original_rev
   original_rev="$(get_worktree_current_rev "$repo")"
@@ -393,6 +398,11 @@ main() {
 
   propagate_from "$repo" "$from_bookmark" "$task_prefix" "$project_prefix" \
     "$strategy" "$shallow" "$force" "$dry_run" "$original_rev" 0
+
+  # Commit transaction (records after-op for undo; skip for dry-run)
+  if [[ "$dry_run" != true ]]; then
+    tt_commit_transaction "$repo"
+  fi
 
   log "Propagate complete."
 }

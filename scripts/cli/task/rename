@@ -194,6 +194,9 @@ main() {
     task_title="${task_title% }"  # Remove trailing space
   fi
 
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
+
   # If parent exists, update parent's subtask entry
   if [[ -n "$parent_bookmark" && -n "$parent_task_file" ]]; then
     # Determine workspace for parent
@@ -255,6 +258,9 @@ main() {
   # Leave the working copy at the new bookmark
   log "Switching to renamed task..."
   jj "${jj_opts[@]}" new "$new_id"
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   # Success message
   printf 'Task renamed: %s > %s\n' "$old_id" "$new_id"

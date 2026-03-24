@@ -175,6 +175,9 @@ main() {
     fi
   fi
 
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
+
   # Run pre-complete hook (blocking)
   run_hook "$repo" "pre-complete" true "$target_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$bookmark" \
@@ -215,6 +218,9 @@ main() {
   if [[ "$should_restore" == true && -n "$original_rev" ]]; then
     jj -R "$target_worktree" edit "$original_rev"
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   # Run post-complete hook (non-blocking)
   run_hook "$repo" "post-complete" false "$target_worktree" "${workspace_dir:-}" \

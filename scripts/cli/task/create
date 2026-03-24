@@ -421,6 +421,9 @@ main() {
     log "Warning: Branch '$task_id' already exists; overwriting (--force)."
   fi
 
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
+
   jj "${jj_opts[@]}" new "$parent_rev"
 
   # Ensure .tt/task exists
@@ -496,6 +499,9 @@ main() {
     fi
     "$SCRIPT_DIR/checkout" "${checkout_args[@]}"
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   printf '%s\n' "$task_id"
 }

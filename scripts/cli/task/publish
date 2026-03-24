@@ -178,6 +178,9 @@ main() {
     fi
   fi
 
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
+
   log "Publishing: $child_bookmark -> $target"
 
   # --- Determine target workspace ---
@@ -240,6 +243,9 @@ main() {
   if [[ "$target_ws" != "$current_worktree" ]]; then
     jj -R "$target_ws" edit "$original_rev" 2>/dev/null || true
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   log "Published: $child_bookmark -> $target"
 }

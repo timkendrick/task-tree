@@ -246,6 +246,9 @@ main() {
     fi
   fi
 
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
+
   # Perform the checkout
   if [[ "$new_worktree" == true ]]; then
     log "Creating workspace: $target_worktree"
@@ -303,6 +306,9 @@ main() {
       "TT_TASK_ID=$task_id" \
       "TT_BRANCH=$task_id"
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   if [[ -n "$previous_task_id" ]]; then
     log "  Switched from: $previous_task_id"
