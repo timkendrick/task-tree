@@ -57,6 +57,7 @@ subtask: [ ] task/refactor-bootstrap-implementation-40a0bd88
 subtask: [x] task/fix-tt-task-move-end-state-ea001288
 subtask: [x] task/tt-workspace-init-e67edd30
 subtask: [x] task/jj-rollback-instructions-62776a15
+subtask: [ ] task/tt-task-publish-b55033e0
 ---
 Implement shell script implementations of all `tt` CLI commands
 
