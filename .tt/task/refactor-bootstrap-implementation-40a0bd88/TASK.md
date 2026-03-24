@@ -7,6 +7,7 @@ subtask: [ ] task/standardize-metadata-editing-b5c72f5a
 subtask: [ ] task/standardize-commit-messages-b542cab5
 subtask: [ ] task/standardize-stdio-9a3e669c
 subtask: [ ] task/extract-vcs-commands-f70e3a90
+subtask: [ ] task/standardize-filesystem-operations-9d33f650
 ---
 The current bootstrap CLI implementation has grown organically, prioritizing feature development over code cleanliness.
 
