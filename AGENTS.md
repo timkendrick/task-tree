@@ -58,7 +58,6 @@ jj undo                      # Undo the most recent operation
 jj oplog                     # Show the operation log history
 jj new -m "message"          # Create a new change on top of current
 jj commit -m "message"       # Finalize current change, updating message
-jj describe -m "message"     # Set/update description of current change
 jj squash                    # Squash current change into parent
 jj abandon                   # Abandon current change
 jj bookmark set <name>       # Create/move a bookmark (like a branch)
