@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-# shellcheck source=../../lib/common.sh
-. "$SCRIPT_DIR/../../lib/common.sh"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
 
 # tt history undo — revert the jj repository to the state before the last mutating tt command.
 #
@@ -183,19 +183,20 @@ main() {
   pre_undo_op="$(jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)" || pre_undo_op=""
 
   # Set safety trap: if the undo itself fails, restore back to where we were
+  # (history line is NOT removed until after successful restore)
   if [[ -n "$pre_undo_op" ]]; then
     trap 'log "Error: undo failed; restoring to pre-undo state"; jj -R "'"$repo"'" op restore "'"$pre_undo_op"'" 2>/dev/null || true' ERR
   fi
 
-  # Pop the last line from the history file
+  # Restore jj to before-op state (pop history line only after success)
+  jj -R "$repo" op restore "$before_op"
+
+  # Pop the last line from the history file (only reached on success)
   if [[ "$(uname)" == "Darwin" ]]; then
     sed -i '' '$ d' "$history_file"
   else
     sed -i '$ d' "$history_file"
   fi
-
-  # Restore jj to before-op state
-  jj -R "$repo" op restore "$before_op"
 
   trap - ERR
 
