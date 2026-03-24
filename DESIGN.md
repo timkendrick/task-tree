@@ -200,10 +200,22 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt edit` | `tt task edit` |
 | `tt prompt` | `tt task prompt` |
 | `tt move` | `tt task move` |
+| `tt undo` | `tt history undo` |
+
+### 5.0 History
+
+- **`tt history undo [--force] [--repo PATH]`** — Undo the most recent mutating `tt` command by restoring the jj repository to the operation state before that command ran. Multiple invocations go further back in history. There is no `tt history redo`; instead, the outgoing jj operation ID is logged to stderr before undoing so the user can manually restore it with `jj op restore <operation-id>`.
+
+  **Safety checks** (all bypassed by `--force`):
+  - No in-progress transaction (last history entry has a non-empty after-op-id). An in-progress entry indicates a `tt` command crashed mid-transaction; `--force` allows reverting it.
+  - Current jj operation ID matches the last recorded after-op-id. A mismatch indicates the repository was modified outside of `tt` since the last recorded command; `--force` allows undoing anyway.
+  - Working copy is clean (no uncommitted changes).
+
+  See §6.12 for the full transaction history mechanism.
 
 ### 5.1 Workspace
 
-- **`tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]`** — Initialize a task-tree project. Creates the virtual workspace directory, `.tt/config.toml` (with optional task prefix and project prefix), and a `HEAD` symlink that initially points to the repo and is later updated to the most recently checked-out task workspace (serving as a quick link to the current development context). Creates a `Create workspace` commit in the jj repository. Requires a clean working directory; aborts if `.tt` exists in the repo root as a non-directory entry (use `--force` to remove it). With `--force`, also allows overwriting files in an already-populated virtual folder. See §9 step 1 and §6.2 (HEAD symlink).
+- **`tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]`** — Initialize a task-tree project. Creates the virtual workspace directory, `.tt/config.toml` (with optional task prefix and project prefix), `.tt/.gitignore` (containing `/history` to prevent the transaction log from being tracked), an empty `.tt/history` transaction log, and a `HEAD` symlink that initially points to the repo and is later updated to the most recently checked-out task workspace (serving as a quick link to the current development context). Creates a `Create workspace` commit in the jj repository (`.tt/.gitignore` is committed; `.tt/history` is not). Requires a clean working directory; aborts if `.tt` exists in the repo root as a non-directory entry (use `--force` to remove it). With `--force`, also allows overwriting files in an already-populated virtual folder. See §9 step 1, §6.2 (HEAD symlink), and §6.12 (transaction history).
 
 - **`tt workspace switch <task-id> [--worktree=<path>] [--force]`** — Update the virtual project's `HEAD` symlink to point to an existing worktree for the given task or project. Unlike `tt task checkout --switch`, this command does not create worktrees, switch VCS branches, or update task status; it only redirects `HEAD`. Refuses if no worktree exists for the task (the user must run `tt task checkout --worktree` first). If multiple worktrees exist for the task, `--worktree=<path>` is required to disambiguate. Refuses if the workspace currently pointed to by `HEAD` has uncommitted changes, unless `--force` is provided. Runs `pre-checkout` and `post-checkout` hooks; hook env vars `TT_PREVIOUS_TASK_ID`/`TT_PREVIOUS_TASK_BRANCH` reflect the task that `HEAD` was pointing to before the switch. Output is the same confirmation as `tt task checkout`. See §6.2.
 
@@ -693,6 +705,71 @@ Concretely, for a child branch `C` and parent branch `P`:
 **Restore behavior:** When moving a task that is not currently checked out (`@` is not a descendant of the task's branch), the working copy's change ID is captured before the move and restored after the rebase completes. Because jj tracks change IDs across rebases, the restored revision always reflects the post-rebase state if it was affected.
 
 **Output:** Confirmation lines to stderr: `Moved: <task-id>`, `  Old parent: <old-parent>`, `  New parent: <new-parent>`.
+
+### 6.12 Transaction history and undo
+
+Every mutating `tt` command records a **transaction** in `.tt/history` so that `tt history undo` can restore the jj repository to the state it was in before that command ran.
+
+#### 6.12.1 History log file
+
+**Location:** `.tt/history` in the repository root.
+
+**Format:** One line per completed transaction:
+
+```
+<before-op-id>:<after-op-id>
+```
+
+- `<before-op-id>` — the jj operation ID captured immediately before the command began making changes.
+- `<after-op-id>` — the jj operation ID captured immediately after all changes completed successfully.
+- An **in-progress transaction** has an empty `<after-op-id>` (the line ends with `:`): `<before-op-id>:`
+
+**Tracking:** `.tt/.gitignore` (containing `/history`) is committed by `tt workspace init` so that the history log is never tracked by jj. The log accumulates indefinitely (unlimited retention).
+
+#### 6.12.2 Transaction lifecycle
+
+The transaction API is implemented in `scripts/cli/lib/common.sh` as three functions:
+
+- **`tt_begin_transaction REPO`** — Called at the start of a mutating command, before the first jj operation. Captures the current jj operation ID as `<before-op-id>`, appends `<before-op-id>:` (in-progress) to `.tt/history`, exports `TT_TRANSACTION_ID=<before-op-id>`, marks this process as the owner via the non-exported `_TT_TRANSACTION_OWNER=true`, and sets an `ERR` trap to call `tt_rollback_transaction` on failure.
+
+  **Nested sub-commands:** When a top-level command delegates to a sub-command (e.g. `tt task create --checkout` calling `tt task checkout` internally), the sub-command inherits `TT_TRANSACTION_ID` via the environment. `tt_begin_transaction` detects this and returns immediately (no-op). Because `_TT_TRANSACTION_OWNER` is not exported, the sub-command's `tt_commit_transaction` and `tt_rollback_transaction` calls are also no-ops — only the top-level command owns the transaction.
+
+- **`tt_commit_transaction REPO`** — Called at the successful end of a command, after all operations (including follow-on actions like `--propagate` and `--checkout`) complete. Captures the current jj operation ID as `<after-op-id>`, replaces the last line of `.tt/history` (`<before-op-id>:`) with `<before-op-id>:<after-op-id>`, and clears the `ERR` trap. No-op if not the transaction owner.
+
+- **`tt_rollback_transaction REPO`** — Called automatically by the `ERR` trap if any command in the script exits non-zero. Runs `jj op restore <before-op-id>` to restore the repository to its pre-command state, removes the in-progress line from `.tt/history`, and clears the `ERR` trap. No-op if not the transaction owner.
+
+**Failure semantics:** A failed command (including follow-on actions such as `--propagate` or `--checkout`) triggers `tt_rollback_transaction`, which restores the repository atomically. The entire command's effect — including any successful intermediate steps — is undone.
+
+**Stale transactions:** If a `tt` command is killed mid-execution (crash, `Ctrl-C`, etc.) and the `ERR` trap did not fire, the history log may be left with an in-progress entry (`<before-op-id>:`). Subsequent `tt` commands will detect this and refuse to start a new transaction, printing:
+
+```
+Error: Another tt command is in progress (incomplete transaction).
+  If this is stale (e.g. a crashed process), run: tt history undo --force
+```
+
+Running `tt history undo --force` reverts the stale in-progress transaction.
+
+#### 6.12.3 `tt history undo` command
+
+`tt history undo [--force] [--repo PATH]` (aliased to `tt undo`) reverts the jj repository to the state before the most recently recorded `tt` command.
+
+**Behavior:**
+
+1. Read the last line of `.tt/history`.
+2. Run safety checks (all bypassed by `--force`):
+   - Last line has a non-empty `<after-op-id>` (no in-progress transaction).
+   - Current jj operation ID equals `<after-op-id>` (no out-of-band modifications).
+   - Working copy is clean.
+3. Log the outgoing operation ID to stderr so the user can manually redo: `jj op restore <after-op-id>`.
+4. Set an `ERR` trap to restore back to the current state if `jj op restore` itself fails.
+5. Remove the last line from `.tt/history`.
+6. Run `jj op restore <before-op-id>`.
+
+**Multiple undos:** Each invocation pops one entry from the history, so repeated calls go progressively further back.
+
+**No redo:** There is no `tt history redo` command. The outgoing operation ID (logged in step 3) allows manual redo via `jj op restore`.
+
+**`tt history undo` is not itself transactional:** The undo command does not write to `.tt/history`. This means you cannot "undo the undo" via `tt history undo`; use `jj op restore <after-op-id>` from the logged output instead.
 
 ---
 
