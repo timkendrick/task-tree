@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task publish — Merge a project branch's work into an external target branch.
+#
+# Usage:
+#   publish [<project-id>] --target <branch> [--rebase | --merge] [--force]
+#           [--repo PATH] [--workspace-dir PATH]
+#
+# Options:
+#   <project-id>            Project branch to publish (default: current branch).
+#   --target <branch>       Target branch to publish into (required).
+#   --rebase                Rebase project onto target before publishing.
+#   --merge                 Merge target into project before publishing.
+#   --force                 Proceed even if conflicts occur.
+#   --repo PATH             Repository root (default: walk up from CWD to find .jj).
+#   --workspace-dir PATH    Virtual project dir.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} [<project-id>] --target <branch> [options...]
+
+Merge a project branch's work into an external target branch (e.g. main).
+Removes task scaffolding files (.tt/task/) from the delivery branch.
+Stays on the project branch after publishing (no workspace switch).
+
+Options:
+  <project-id>              Project branch to publish (default: current branch).
+  --target <branch>         Target branch to publish into (required).
+  --rebase                  Rebase project onto target before publishing.
+  --merge                   Merge target into project before publishing.
+  --force                   Proceed despite conflicts.
+  --repo PATH               Repository root (default: find .jj).
+  --workspace-dir PATH      Virtual project dir.
+  -h, --help                Show this help.
+
+EOF
+  exit "${1:-1}"
+}
+
+main() {
+  local strategy=''
+  local force=false
+  local target=''
+  local project_id_arg=''
+  local repo=''
+  local workspace_dir=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --rebase)
+        [[ -n "$strategy" && "$strategy" != rebase ]] && { log "Error: --rebase and --merge are mutually exclusive"; usage; }
+        strategy='rebase'; shift ;;
+      --merge)
+        [[ -n "$strategy" && "$strategy" != merge ]] && { log "Error: --rebase and --merge are mutually exclusive"; usage; }
+        strategy='merge'; shift ;;
+      --force)      force=true; shift ;;
+      --target)
+        [[ $# -lt 2 ]] && { log "Error: --target requires an argument"; usage; }
+        target="$2"; shift 2 ;;
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"; shift 2 ;;
+      --workspace-dir)
+        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
+        workspace_dir="$2"; shift 2 ;;
+      -h|--help) usage 0 ;;
+      -*)
+        log "Error: Unknown option: $1"; usage ;;
+      *)
+        if [[ -z "$project_id_arg" ]]; then
+          project_id_arg="$1"; shift
+        else
+          log "Error: Unexpected argument: $1"; usage
+        fi ;;
+    esac
+  done
+
+  # --target is required
+  if [[ -z "$target" ]]; then
+    log "Error: --target <branch> is required for publish."
+    usage
+  fi
+
+  # --- Resolve repo root ---
+  if [[ -z "$repo" ]]; then
+    if ! repo="$(find_repo_root)"; then
+      log "Error: No enclosing jj repository. Use --repo to specify."
+      exit 1
+    fi
+  fi
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  if [[ -z "$workspace_dir" ]]; then
+    workspace_dir="$(get_workspace_dir "$repo")" || true
+  fi
+
+  local current_worktree
+  current_worktree="$(resolve_current_worktree "$repo")"
+
+  # --- Resolve project branch ---
+  local child_bookmark child_slug
+
+  if [[ -n "$project_id_arg" ]]; then
+    child_bookmark="$project_id_arg"
+    if ! is_project_branch "$child_bookmark" "$project_prefix"; then
+      log "Error: '$project_id_arg' is not a project branch."
+      log "  Use 'tt task checkin' to check in task branches."
+      exit 1
+    fi
+    if ! jj -R "$repo" log -r "$child_bookmark" --no-graph -T '' 2>/dev/null; then
+      log "Error: Branch '$child_bookmark' not found in repository."
+      exit 1
+    fi
+    child_slug="${child_bookmark#"$project_prefix"}"
+  else
+    local resolve_output
+    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
+    child_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    if [[ -z "$child_bookmark" ]]; then
+      log "Error: Not on a task or project branch."
+      exit 1
+    fi
+    if ! is_project_branch "$child_bookmark" "$project_prefix"; then
+      log "Error: 'tt task publish' requires a project branch."
+      log "  Current branch '$child_bookmark' is a task branch."
+      log "  Use 'tt task checkin' to check in task branches."
+      exit 1
+    fi
+    child_slug="${child_bookmark#"$project_prefix"}"
+  fi
+
+  local task_id="$child_bookmark"
+
+  # --- Validate target branch exists ---
+  if ! jj -R "$repo" log -r "$target" --no-graph -T '' 2>/dev/null; then
+    log "Error: --target '$target' not found in repository."
+    exit 1
+  fi
+
+  # --- Check WC clean ---
+  if ! is_wc_clean "$current_worktree"; then
+    log "Error: Working copy has uncommitted changes. Commit or discard first."
+    exit 1
+  fi
+
+  # --- Read task title from project branch ---
+  local task_file task_content task_title
+  task_file="$(task_file_path "$child_slug")"
+  task_content="$(jj -R "$repo" file show -r "$child_bookmark" -- "$task_file" 2>/dev/null)" || true
+  task_title="$(parse_quoted_frontmatter_field "$task_content" "title" 2>/dev/null)" || task_title="$child_bookmark"
+
+  # --- Optional: rebase/merge propagation from target ---
+  if [[ -n "$strategy" ]]; then
+    log "Propagating target ($strategy) into project before publishing..."
+    "$SCRIPT_DIR/propagate" \
+      --from "$target" \
+      --to "$child_bookmark" \
+      --"$strategy" \
+      ${force:+--force} \
+      --repo "$repo"
+    if ! is_wc_clean "$current_worktree"; then
+      log "Error: Working copy not clean after propagation."
+      exit 1
+    fi
+  fi
+
+  log "Publishing: $child_bookmark -> $target"
+
+  # --- Determine target workspace ---
+  local target_ws
+  local worktrees
+  worktrees="$(find_worktrees_for_branch "$repo" "$target" "$task_prefix" "$project_prefix")"
+  local wt_count
+  wt_count="$(printf '%s' "$worktrees" | grep -c . 2>/dev/null || true)"
+
+  case "$wt_count" in
+    0) target_ws="$repo" ;;
+    1) target_ws="$worktrees" ;;
+    *)
+      log "Error: Multiple workspaces found for target '$target'."
+      printf '%s\n' "$worktrees" | while IFS= read -r p; do log "  $p"; done
+      exit 1
+      ;;
+  esac
+
+  # --- Save original WC revision in target workspace ---
+  local original_rev
+  original_rev="$(get_worktree_current_rev "$target_ws")"
+
+  # --- Create handoff commit ---
+  # New WC branching from project bookmark (stages files for handoff)
+  jj -R "$target_ws" new "$child_bookmark"
+
+  # Project publish: remove TASK.md symlink and .tt/task/ directory.
+  # Task files are development-only scaffolding; they must not land on the
+  # delivery branch. .tt/config.toml is kept (workspace configuration).
+  rm -f "$target_ws/TASK.md"
+  rm -rf "$target_ws/.tt/task"
+
+  # Commit the handoff (project bookmark does NOT advance)
+  jj -R "$target_ws" commit -m "Publish: $task_title ($task_id)"
+  local handoff_commit
+  handoff_commit="$(jj -R "$target_ws" log -r '@-' --no-graph -T 'commit_id')"
+
+  # --- Create merge commit and advance target bookmark ---
+  jj -R "$target_ws" new "$target" "$handoff_commit"
+
+  # Check for conflicts (unless --force)
+  if [[ "$force" != true ]] && has_conflicts "$target_ws" "@"; then
+    jj -R "$target_ws" op undo  # undo jj new (merge)
+    jj -R "$target_ws" op undo  # undo jj commit (handoff)
+    jj -R "$target_ws" edit "$original_rev"
+    log "Error: Merge conflicts detected. Resolve conflicts or use --force."
+    exit 1
+  fi
+
+  jj -R "$target_ws" describe -m "Merge subtask: $task_title ($task_id)"
+  jj -R "$target_ws" bookmark set "$target" -r '@'
+
+  # Leave a clean open WC in target_ws
+  jj -R "$target_ws" new '@'
+
+  # --- Restore target workspace to original position (no switch) ---
+  # We stay on the project branch. Restore target_ws to where it was before
+  # so the delivery branch workspace is not left stranded on the merge commit.
+  if [[ "$target_ws" != "$current_worktree" ]]; then
+    jj -R "$target_ws" edit "$original_rev" 2>/dev/null || true
+  fi
+
+  log "Published: $child_bookmark -> $target"
+}
+
+main "$@"
