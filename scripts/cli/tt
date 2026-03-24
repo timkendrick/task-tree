@@ -79,6 +79,7 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} create       →  tt task create
   ${SCRIPT_NAME} checkout     →  tt task checkout
   ${SCRIPT_NAME} checkin      →  tt task checkin
+  ${SCRIPT_NAME} publish      →  tt task publish
   ${SCRIPT_NAME} show         →  tt task show
   ${SCRIPT_NAME} parent       →  tt task parent
   ${SCRIPT_NAME} propagate    →  tt task propagate
@@ -126,6 +127,7 @@ main() {
     create)      set -- task     create       "${@:2}" ;;
     checkout)    set -- task     checkout     "${@:2}" ;;
     checkin)     set -- task     checkin      "${@:2}" ;;
+    publish)     set -- task     publish      "${@:2}" ;;
     show)        set -- task     show         "${@:2}" ;;
     parent)      set -- task     parent       "${@:2}" ;;
     propagate)   set -- task     propagate    "${@:2}" ;;
