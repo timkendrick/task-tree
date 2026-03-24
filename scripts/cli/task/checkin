@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # Usage:
 #   checkin [<task-id>] [--context <markdown>] [--complete] [--rebase | --merge]
-#           [--force] [--delete] [--target <branch>]
+#           [--force] [--delete]
 #           [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
 #           [--propagate] [--propagate-rebase | --propagate-merge]
 #           [--propagate-shallow] [--propagate-force] [--propagate-dry-run]
@@ -23,7 +23,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --merge                 Merge parent into child before checkin.
 #   --force                 Proceed even if conflicts occur.
 #   --delete                Remove child task file and subtask entry (requires DONE).
-#   --target <branch>       Parent branch (required for project tasks).
 #   --worktree=<path>       Worktree to use when task has multiple worktrees.
 #   --repo PATH             Repository root (default: walk up from CWD to find .jj).
 #   --workspace-dir PATH    Virtual project dir (for HEAD symlink and workspace paths).
@@ -42,6 +41,7 @@ usage() {
 Usage: ${SCRIPT_NAME} [<task-id>] [options...]
 
 Merge the current task branch (or <task-id>) into its parent branch.
+Only valid on task branches. For project branches, use 'tt task publish'.
 
 Options:
   <task-id>                 Task branch to check in (default: current branch).
@@ -51,7 +51,6 @@ Options:
   --merge                   Merge parent into child before checkin.
   --force                   Proceed despite conflicts.
   --delete                  Remove child task file (requires DONE status).
-  --target <branch>         Parent branch (required for project tasks).
   --worktree=<path>         Worktree to use when task has multiple worktrees.
   --repo PATH               Repository root (default: find .jj).
   --workspace-dir PATH      Virtual project dir.
@@ -74,7 +73,6 @@ main() {
   local strategy=''
   local force=false
   local delete=false
-  local target=''
   local worktree_arg=''
   local task_id_arg=''
   local repo=''
@@ -100,9 +98,6 @@ main() {
         strategy='merge'; shift ;;
       --force)      force=true; shift ;;
       --delete)     delete=true; shift ;;
-      --target)
-        [[ $# -lt 2 ]] && { log "Error: --target requires an argument"; usage; }
-        target="$2"; shift 2 ;;
       --worktree=*) worktree_arg="${1#--worktree=}"; shift ;;
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
@@ -163,18 +158,21 @@ main() {
 
   if [[ -n "$task_id_arg" ]]; then
     child_bookmark="$task_id_arg"
-    if is_task_branch "$child_bookmark" "$task_prefix"; then
-      child_slug="${child_bookmark#$task_prefix}"
-    elif is_project_branch "$child_bookmark" "$project_prefix"; then
-      child_slug="${child_bookmark#$project_prefix}"
-    else
-      log "Error: '$task_id_arg' is not a task or project branch."
+    if is_project_branch "$child_bookmark" "$project_prefix"; then
+      log "Error: 'tt task checkin' requires a task branch."
+      log "  '$child_bookmark' is a project branch."
+      log "  Use 'tt task publish --target <branch>' to publish project branches."
+      exit 1
+    fi
+    if ! is_task_branch "$child_bookmark" "$task_prefix"; then
+      log "Error: '$task_id_arg' is not a task branch."
       exit 1
     fi
     if ! jj -R "$repo" log -r "$child_bookmark" --no-graph -T '' 2>/dev/null; then
       log "Error: Branch '$child_bookmark' not found in repository."
       exit 1
     fi
+    child_slug="${child_bookmark#"$task_prefix"}"
     task_file="$(task_file_path "$child_slug")"
   else
     local resolve_output
@@ -185,32 +183,13 @@ main() {
       log "Error: Not on a task or project branch."
       exit 1
     fi
-    if is_task_branch "$child_bookmark" "$task_prefix"; then
-      child_slug="${child_bookmark#$task_prefix}"
-    else
-      child_slug="${child_bookmark#$project_prefix}"
+    if is_project_branch "$child_bookmark" "$project_prefix"; then
+      log "Error: 'tt task checkin' requires a task branch."
+      log "  Current branch '$child_bookmark' is a project branch."
+      log "  Use 'tt task publish --target <branch>' to publish project branches."
+      exit 1
     fi
-  fi
-
-  local is_project=false
-  if is_project_branch "$child_bookmark" "$project_prefix"; then
-    is_project=true
-  fi
-
-  # Validate --target usage
-  if [[ "$is_project" == true ]] && [[ -z "$target" ]]; then
-    log "Error: --target is required when on a project branch."
-    exit 1
-  fi
-  if [[ "$is_project" == false ]] && [[ -n "$target" ]]; then
-    log "Error: --target is not allowed for task branches (parent is auto-detected)."
-    exit 1
-  fi
-
-  # --context requires a parent task file; project checkins have no parent task.
-  if [[ "$is_project" == true ]] && [[ -n "$context_text" ]]; then
-    log "Error: --context is not supported for project branch checkins (no parent task file)."
-    exit 1
+    child_slug="${child_bookmark#"$task_prefix"}"
   fi
 
   local task_id="$child_bookmark"
@@ -261,26 +240,18 @@ main() {
 
   # --- Find parent branch ---
   local parent_bookmark
-  if [[ "$is_project" == true ]]; then
-    parent_bookmark="$target"
-    if ! jj -R "$repo" log -r "$parent_bookmark" --no-graph -T '' 2>/dev/null; then
-      log "Error: --target '$parent_bookmark' not found in repository."
-      exit 1
-    fi
-  else
-    parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
-      local rc=$?
-      [[ $rc -eq 1 ]] && log "Error: No parent branch found containing subtask entry for '$task_id'."
-      exit 1
-    }
-  fi
+  parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
+    local rc=$?
+    [[ $rc -eq 1 ]] && log "Error: No parent branch found containing subtask entry for '$task_id'."
+    exit 1
+  }
 
   # Derive parent slug and task file
   local parent_slug parent_task_file
   if is_task_branch "$parent_bookmark" "$task_prefix"; then
-    parent_slug="${parent_bookmark#$task_prefix}"
+    parent_slug="${parent_bookmark#"$task_prefix"}"
   else
-    parent_slug="${parent_bookmark#$project_prefix}"
+    parent_slug="${parent_bookmark#"$project_prefix"}"
   fi
   parent_task_file="$(task_file_path "$parent_slug")"
 
@@ -303,26 +274,22 @@ main() {
   fi
 
   # --- Validate unmerged range: must not touch other task files ---
-  # Skipped for project branches: they legitimately contain child task files
-  # from previously-merged child checkins, so no restriction applies.
-  if [[ "$is_project" == false ]]; then
-    local diff_output
-    diff_output="$(jj -R "$repo" diff \
-      -r "roots(::${child_bookmark} ~ ::${parent_bookmark})..${child_bookmark}" \
-      --name-only -- '.tt/task/' 2>/dev/null)" || true
-    if [[ -n "$diff_output" ]]; then
-      while IFS= read -r changed_path; do
-        [[ -z "$changed_path" ]] && continue
-        # Allow changes within the task's own directory
-        local task_dir
-        task_dir="$(task_dir_path "$child_slug")"
-        if [[ "$changed_path" != "$task_file" && "$changed_path" != "$task_dir"/* ]]; then
-          log "Error: Unmerged range touches unexpected task file: $changed_path"
-          log "  Only files under '$task_dir/' may differ from parent in the unmerged range."
-          exit 1
-        fi
-      done <<< "$diff_output"
-    fi
+  local diff_output
+  diff_output="$(jj -R "$repo" diff \
+    -r "roots(::${child_bookmark} ~ ::${parent_bookmark})..${child_bookmark}" \
+    --name-only -- '.tt/task/' 2>/dev/null)" || true
+  if [[ -n "$diff_output" ]]; then
+    while IFS= read -r changed_path; do
+      [[ -z "$changed_path" ]] && continue
+      # Allow changes within the task's own directory
+      local task_dir
+      task_dir="$(task_dir_path "$child_slug")"
+      if [[ "$changed_path" != "$task_file" && "$changed_path" != "$task_dir"/* ]]; then
+        log "Error: Unmerged range touches unexpected task file: $changed_path"
+        log "  Only files under '$task_dir/' may differ from parent in the unmerged range."
+        exit 1
+      fi
+    done <<< "$diff_output"
   fi
 
   # --- Determine target workspace (where parent branch lives) ---
@@ -358,78 +325,70 @@ main() {
   # New WC branching from child bookmark (stages files for handoff)
   jj -R "$target_ws" new "$child_bookmark"
 
-  if [[ "$is_project" == true ]]; then
-    # Project checkin: remove TASK.md symlink and .tt/task/ directory.
-    # Task files are development-only scaffolding that must not land on the
-    # target (delivery) branch. .tt/config.toml is kept (workspace config).
-    rm -f "$target_ws/TASK.md"
-    rm -rf "$target_ws/.tt/task"
-  else
-    # Rewrite TASK.md symlink to point to parent task file (directory format)
-    ln -sf ".tt/task/${parent_slug}/TASK.md" "$target_ws/TASK.md"
+  # Rewrite TASK.md symlink to point to parent task file
+  ln -sf ".tt/task/${parent_slug}/TASK.md" "$target_ws/TASK.md"
 
-    # Build updated parent task file content
-    local parent_task_content
-    parent_task_content="$(jj -R "$target_ws" file show -r "$parent_bookmark" -- "$parent_task_file" 2>/dev/null)" || {
-      log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
-      jj -R "$target_ws" op undo
-      exit 1
-    }
+  # Build updated parent task file content
+  local parent_task_content
+  parent_task_content="$(jj -R "$target_ws" file show -r "$parent_bookmark" -- "$parent_task_file" 2>/dev/null)" || {
+    log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
+    jj -R "$target_ws" op undo
+    exit 1
+  }
 
-    # Update the subtask entry in the parent task file to reflect the child's status.
-    local updated_parent_content new_cb
-    new_cb="$(status_to_checkbox "$task_status")"
-    updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" -v cb="$new_cb" '
-      /^---$/ { in_fm = !in_fm; print; next }
-      in_fm && /^subtask:[[:space:]]*\[[ \-]\]/ {
-        rest = $0
-        sub(/^subtask:[[:space:]]*\[[[:space:]\-]\][[:space:]]*/, "", rest)
-        split(rest, parts, /[[:space:]]/)
-        if (parts[1] == id) {
-          sub(/\[[ \-]\]/, cb)
-        }
-        print; next
+  # Update the subtask entry in the parent task file to reflect the child's status.
+  local updated_parent_content new_cb
+  new_cb="$(status_to_checkbox "$task_status")"
+  updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" -v cb="$new_cb" '
+    /^---$/ { in_fm = !in_fm; print; next }
+    in_fm && /^subtask:[[:space:]]*\[[ \-]\]/ {
+      rest = $0
+      sub(/^subtask:[[:space:]]*\[[[:space:]\-]\][[:space:]]*/, "", rest)
+      split(rest, parts, /[[:space:]]/)
+      if (parts[1] == id) {
+        sub(/\[[ \-]\]/, cb)
       }
+      print; next
+    }
+    { print }
+  ')"
+
+  # If --context is provided, create a context file on the parent task
+  if [[ -n "$context_text" ]]; then
+    local ctx_title="Handoff: ${task_title}"
+    local ctx_slug
+    ctx_slug="$(title_to_slug "$ctx_title")"
+    local ctx_hex
+    ctx_hex="$(generate_hex)"
+    local ctx_id="context/${ctx_slug}-${ctx_hex}"
+    local ctx_file
+    ctx_file="$(task_context_path "$parent_slug" "$ctx_id")"
+    local ctx_ts
+    ctx_ts="$(generate_timestamp)"
+
+    # Create context directory if needed
+    mkdir -p "$target_ws/$(dirname "$ctx_file")"
+
+    # Write context file
+    {
+      printf -- '---\n'
+      printf 'title: "%s"\n' "${ctx_title//\"/\\\"}"
+      printf 'created: %s\n' "$ctx_ts"
+      printf 'updated: %s\n' "$ctx_ts"
+      printf -- '---\n'
+      printf '%s\n' "$context_text"
+    } > "$target_ws/$ctx_file"
+
+    # Add context reference to parent task file frontmatter
+    updated_parent_content="$(printf '%s' "$updated_parent_content" | awk -v ctx="$ctx_id" '
+      /^---$/ { sep++; if (sep == 2) { print "context: " ctx } }
       { print }
     ')"
 
-    # If --context is provided, create a context file on the parent task
-    if [[ -n "$context_text" ]]; then
-      local ctx_title="Handoff: ${task_title}"
-      local ctx_slug
-      ctx_slug="$(title_to_slug "$ctx_title")"
-      local ctx_hex
-      ctx_hex="$(generate_hex)"
-      local ctx_id="context/${ctx_slug}-${ctx_hex}"
-      local ctx_file
-      ctx_file="$(task_context_path "$parent_slug" "$ctx_id")"
-      local ctx_ts
-      ctx_ts="$(generate_timestamp)"
-
-      # Create context directory if needed
-      mkdir -p "$target_ws/$(dirname "$ctx_file")"
-
-      # Write context file
-      {
-        printf -- '---\n'
-        printf 'title: "%s"\n' "${ctx_title//\"/\\\"}"
-        printf 'created: %s\n' "$ctx_ts"
-        printf 'updated: %s\n' "$ctx_ts"
-        printf -- '---\n'
-        printf '%s\n' "$context_text"
-      } > "$target_ws/$ctx_file"
-
-      # Add context reference to parent task file frontmatter
-      updated_parent_content="$(printf '%s' "$updated_parent_content" | awk -v ctx="$ctx_id" '
-        /^---$/ { sep++; if (sep == 2) { print "context: " ctx } }
-        { print }
-      ')"
-
-      log "Created context file: $ctx_file"
-    fi
-
-    printf '%s\n' "$updated_parent_content" > "$target_ws/$parent_task_file"
+    log "Created context file: $ctx_file"
   fi
+
+  printf '%s\n' "$updated_parent_content" > "$target_ws/$parent_task_file"
 
   # Commit the handoff (child bookmark does NOT advance)
   jj -R "$target_ws" commit -m "Handoff: $task_title ($task_id)"

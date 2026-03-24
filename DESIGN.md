@@ -184,6 +184,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt create` | `tt task create` |
 | `tt checkout` | `tt task checkout` |
 | `tt checkin` | `tt task checkin` |
+| `tt publish` | `tt task publish` |
 | `tt show` | `tt task show` |
 | `tt parent` | `tt task parent` |
 | `tt propagate` | `tt task propagate` |
@@ -270,7 +271,9 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 - **`tt task complete [<task-id>] [--worktree=<path>] [--force]`** — Mark the current task (or a given task) as done. Creates a `Complete task: <title> (<task-id>)` commit on the task branch that sets `status` to `DONE` in the task file, and advances the task bookmark to this commit. Requires a clean working copy and all child tasks to be done (every `subtask:` entry marked `[x]`) unless `--force` is specified. `--worktree=<path>` is required when the task has multiple worktrees. See §6.4. Hooks: **pre-complete** (blocking), **post-complete** (optional).
 
-- **`tt task checkin [<task-id>] [--context <markdown>] [--complete] [--rebase | --merge] [--force] [--delete] [--target <branch>] [--worktree=<path>] [--propagate [--propagate-rebase | --propagate-merge] [--propagate-shallow] [--propagate-force] [--propagate-dry-run] [--propagate-to <child-id>]]`** — Merge the current task branch (or `<task-id>`) into its parent (or, for a project task, into the branch specified by `--target`). Supports **partial checkins** (task status `IN-PROGRESS`; shares work-in-progress with the parent) and **complete checkins** (task status `DONE`; marks the task finished). Always creates a **handoff commit** (child bookmark does not advance) and merges it into the parent as `Merge subtask: <title> (<task-id>)`. The handoff always updates the corresponding `subtask:` entry in the parent's frontmatter to reflect the child's current status (`[x]` if `DONE`, `[-]` if `IN-PROGRESS`). The user is always switched to the parent worktree after the merge. With `--complete`: first runs `tt task complete` if the task is not already `DONE`, then proceeds with checkin. With `--context <markdown>`, appends a summary section to the parent task file body. With `--delete` (requires task `status: DONE`): after the normal checkin completes, delegates to `tt task delete` to remove the child task file and `subtask:` entry from the parent branch (two separate commits on the parent branch). `--worktree=<path>` disambiguates when the child task has multiple worktrees. Runs validation (see §6.6); with `--rebase`/`--merge`, first propagates from parent and bails on conflict unless `--force`. Project tasks must specify `--target`; regular tasks cannot use `--target`. With `--propagate`, after the checkin completes, runs `tt task propagate --from <parent>` to push the newly-merged parent tip down to the parent's remaining children. Accepts `--propagate-rebase | --propagate-merge` (strategy; default rebase), `--propagate-shallow` (direct children only), `--propagate-force` (proceed despite conflicts), `--propagate-dry-run` (show propagation plan without applying; the checkin itself still runs normally), and `--propagate-to <child-id>` (repeatable; limit propagation to specific children). See §6.5 and §6.6.
+- **`tt task checkin [<task-id>] [--context <markdown>] [--complete] [--rebase | --merge] [--force] [--delete] [--worktree=<path>] [--propagate [--propagate-rebase | --propagate-merge] [--propagate-shallow] [--propagate-force] [--propagate-dry-run] [--propagate-to <child-id>]]`** — Merge the current task branch (or `<task-id>`) into its parent branch. Only valid on task branches (those with a parent); use `tt task publish` for project branches. Supports **partial checkins** (task status `IN-PROGRESS`; shares work-in-progress with the parent) and **complete checkins** (task status `DONE`; marks the task finished). Always creates a **handoff commit** (child bookmark does not advance) and merges it into the parent as `Merge subtask: <title> (<task-id>)`. The handoff always updates the corresponding `subtask:` entry in the parent's frontmatter to reflect the child's current status (`[x]` if `DONE`, `[-]` if `IN-PROGRESS`). The user is always switched to the parent worktree after the merge. With `--complete`: first runs `tt task complete` if the task is not already `DONE`, then proceeds with checkin. With `--context <markdown>`, appends a summary section to the parent task file body. With `--delete` (requires task `status: DONE`): after the normal checkin completes, delegates to `tt task delete` to remove the child task file and `subtask:` entry from the parent branch (two separate commits on the parent branch). `--worktree=<path>` disambiguates when the child task has multiple worktrees. Runs validation (see §6.6); with `--rebase`/`--merge`, first propagates from parent and bails on conflict unless `--force`. With `--propagate`, after the checkin completes, runs `tt task propagate --from <parent>` to push the newly-merged parent tip down to the parent's remaining children. Accepts `--propagate-rebase | --propagate-merge` (strategy; default rebase), `--propagate-shallow` (direct children only), `--propagate-force` (proceed despite conflicts), `--propagate-dry-run` (show propagation plan without applying; the checkin itself still runs normally), and `--propagate-to <child-id>` (repeatable; limit propagation to specific children). See §6.5 and §6.6.
+
+- **`tt task publish [<project-id>] --target <branch> [--rebase | --merge] [--force] [--repo PATH] [--workspace-dir PATH]`** — Publish a project branch's work to an external delivery branch (e.g. `main`). Only valid on project branches (parentless roots); use `tt task checkin` for task branches that have a parent. Creates a **publish commit** that removes the `TASK.md` root symlink and the entire `.tt/task/` directory from the working tree (task files are development-only scaffolding that must not land on the delivery branch; `.tt/config.toml` is kept), then merges the publish commit into `--target`. The target bookmark advances to the merge commit. The user **remains on the project branch** after publishing (no workspace switch). With `--rebase` or `--merge`, first propagates from the target branch into the project branch before publishing. With `--force`, proceeds even if merge conflicts arise. See §6.5.
 
 - **`tt task context add [<task-id>] [--title <title>] [--slug <slug>] [--worktree=<path>]`** — Create a new context file associated with the current task (or `<task-id>`). Prompts for title and slug (like task creation) if not provided. Reads the context body from stdin (via pipe or redirect) if stdin is not a terminal; otherwise opens an editor for the body. Generates a context ID of the form `context/<ctx-slug>-<ctx-hex>` and writes the context file to `.tt/task/<task-slug>/context/<ctx-slug>-<ctx-hex>.md`. Adds a `context: context/<ctx-slug>-<ctx-hex>` entry to the task file's frontmatter and refreshes the task's `updated` timestamp. Creates a commit: `Add context: <context-title> (<task-id>)` and advances the task bookmark. When `<task-id>` is given, the task must have a checked-out worktree; `--worktree=<path>` disambiguates when multiple worktrees exist.
 
@@ -332,6 +335,7 @@ Each task and project branch follows a structured lifecycle of named commits. Th
 | `Checkpoint: <message> (<task-id>)` or `Checkpoint: <task-title> (<task-id>)` | `tt task checkpoint` | Advances the task bookmark to the current working state |
 | `Complete task: <title> (<task-id>)` | `tt task complete` | Sets status → `DONE` in the task file; final task bookmark advance |
 | `Handoff: <title> (<task-id>)` | `tt task checkin` | Off-mainline merge-source commit; child bookmark does **not** advance to this commit |
+| `Publish: <title> (<project-id>)` | `tt task publish` | Off-mainline merge-source commit for project branches; project bookmark does **not** advance to this commit |
 | `Merge subtask: <title> (<task-id>)` | `tt task checkin` | Empty merge commit on the parent branch; parent bookmark advances |
 | `Remove subtask: <title> (<task-id>)` | `tt task delete` | On the parent branch: removes child task file and `subtask:` entry from parent frontmatter; parent bookmark advances |
 
@@ -500,7 +504,14 @@ An optional `<task-id>` positional argument may be provided. If given, the comma
 
 **Hooks:** Runs **pre-complete** (blocking) before any VCS operation, and **post-complete** (optional) after success. Both run in the target task worktree.
 
-### 6.5 Checkin (merging task work into the parent)
+### 6.5 Checkin and publishing
+
+Two separate commands handle merging work into a target branch, depending on whether the source is a task branch (which has a parent task) or a project branch (a parentless root):
+
+- **`tt task checkin`** — for task branches only. Merges into the auto-detected parent branch. Rejects project branches with a clear error.
+- **`tt task publish`** — for project branches only. Merges into an externally specified `--target` branch (e.g. `main`). Rejects task branches with a clear error.
+
+#### `tt task checkin` (task branches)
 
 `tt task checkin` merges the current task branch's work (or the task given by `<task-id>`) into its parent branch. An optional `<task-id>` positional argument may be provided to check in a task from any workspace; if omitted, the current branch is used. `--worktree=<path>` disambiguates when the child task has multiple worktrees. If the parent branch has multiple worktrees, checkin must be run from within the task's own worktree (the parent workspace is not disambiguated by `--worktree`).
 
@@ -529,22 +540,34 @@ The handoff commit is described as `Handoff: <task-title> (<task-id>)`.
 - **Partial checkin (task status `IN-PROGRESS`):** The tool switches the worktree to the parent (updates `HEAD` symlink). The child bookmark has not moved. The parent now contains the merged handoff commit and sibling branches can be propagated.
 - **Complete checkin (task status `DONE`):** The tool switches the worktree to the parent (updates `HEAD` symlink, deletes the child worktree if it was dedicated). If the user's working directory was inside the deleted child path, the tool switches them to the equivalent path under the `HEAD` symlink.
 
-If there is no parent task (the task being merged is a project task), the tool requires `--target <branch>`; it merges the handoff commit into the specified target branch. Merge conflicts in the working copy or other `.tt/` files must be resolved manually; for `TASK.md`, the intended resolution is to keep the parent's version.
+Merge conflicts in the working copy or other `.tt/` files must be resolved manually; for `TASK.md`, the intended resolution is to keep the parent's version.
 
-**Project checkin handoff commit.** When the child is a project branch (checking into `--target`), the handoff commit differs from a regular task handoff: it removes the `TASK.md` root symlink and the entire `.tt/task/` directory from the working tree. Task files are development-only scaffolding; they must not land on the delivery branch (e.g. `main`). The `.tt/config.toml` workspace configuration file is not removed. The `--context` option is not supported for project checkins (there is no parent task file to attach context to). The task-file diff validation (see §6.6) is also skipped for project branches, since a project branch legitimately contains child task files accumulated from prior child checkins.
+#### `tt task publish` (project branches)
+
+`tt task publish` merges a project branch's work into an external delivery branch (e.g. `main`). The `--target <branch>` argument is required. The project branch bookmark does **not** advance; only the target bookmark moves. The user **remains on the project branch** after publishing (no workspace switch).
+
+**Publish commit.** Like `tt task checkin`'s handoff, `tt task publish` creates an off-mainline merge-source commit as a child of the project bookmark (the project bookmark does not advance to it). It removes the `TASK.md` root symlink and the entire `.tt/task/` directory from the working tree. Task files are development-only scaffolding; they must not land on the delivery branch. The `.tt/config.toml` workspace configuration file is not removed. The `--context` option is not supported (there is no parent task file to attach context to). The task-file diff validation (see §6.6) does not apply to `tt task publish`.
+
+The publish commit is described as `Publish: <project-title> (<project-id>)`.
+
+**Merging into the target.** After the handoff commit is created, the tool merges it into the target branch. The resulting merge commit is described as `Merge subtask: <project-title> (<project-id>)`. The target branch bookmark advances to this merge commit.
+
+With `--rebase` or `--merge`, the tool first propagates from the target into the project branch before publishing; if propagation cannot complete without conflicts, the command bails unless `--force` is used.
 
 ### 6.6 Checkin validation
 
 Before attempting any merge, `tt task checkin` performs validation and refuses if any check fails. The **unmerged range** is the set of commits on the child branch that are not yet in the parent's ancestry (commits since the last handoff commit, if any, or all commits on the child branch if no prior checkin has occurred). Checks include:
 
 - Working copy is clean
-- Current branch is a task branch (or project branch)
-- Current task has exactly one parent, or is a project task with no parents (in which case `--target <branch>` must be specified; regular tasks cannot use `--target`)
-- No conflicts with parent (or target branch, for project checkin) once the handoff commit has been applied (unless `--force`), or after the optional pre-checkin propagate step when using `--rebase`/`--merge`
-- No modifications to non-editable task files in the unmerged range: only the current task file may be modified by the user. Any changes to any other `.tt/task` file in the unmerged range cause checkin to abort. (The parent task file is updated by the tool itself via the `Handoff:` and `Merge subtask:` commits, which are on the parent branch and are not part of the child's unmerged range.) **This check is skipped for project branches**, which legitimately accumulate child task files from prior child checkins.
+- Current branch is a task branch (not a project branch — use `tt task publish` for project branches)
+- Current task has exactly one parent
+- No conflicts with parent once the handoff commit has been applied (unless `--force`), or after the optional pre-checkin propagate step when using `--rebase`/`--merge`
+- No modifications to non-editable task files in the unmerged range: only the current task file may be modified by the user. Any changes to any other `.tt/task` file in the unmerged range cause checkin to abort. (The parent task file is updated by the tool itself via the `Handoff:` and `Merge subtask:` commits, which are on the parent branch and are not part of the child's unmerged range.)
 - The only change to `TASK.md` in the unmerged range from the child is the symlink pointing to the child's task file, then reverted by the handoff commit
 
 On failure, `tt task checkin` aborts with an error and leaves the repository unchanged. Implementations may add further checks via hooks.
+
+`tt task publish` does not perform task-file diff validation (project branches legitimately accumulate child task files from prior child checkins).
 
 ### 6.7 Task reorder
 
@@ -744,7 +767,7 @@ The standard workflow:
 
 6. **Complete the task** — `tt task complete [<task-id>] [--worktree=<path>] [--force]`. When work is done, marks the task `DONE` with a `Complete task: <title> (<task-id>)` commit and advances the task bookmark. Requires all child tasks to be done unless `--force`. Can be invoked from any workspace by passing `<task-id>`. See §6.4.
 
-7. **Finish the task** — `tt task checkin [<task-id>] [--rebase | --merge] [--force] [--delete] [--target <branch>] [--worktree=<path>] [--propagate [...]]`. The tool runs checkin validation (§6.6); if using `--rebase`/`--merge`, first propagates from parent and bails on conflict unless `--force`. It runs pre-checkin, creates the checkin commit, merges into the parent (or, for project tasks, into `--target`), runs pre-receive and post-receive, then switches to the parent worktree and cleans up the child worktree. Project tasks require `--target`. Can be invoked from any workspace by passing `<task-id>`. See §6.5 and §6.6. If merge conflicts occur (e.g. in other `.tt/` files), the user resolves manually; for `TASK.md`, keep the parent's version. With `--propagate`, also runs `tt task propagate --from <parent>` after the merge completes, pushing the updated parent tip down to remaining sibling branches. See §6.5.
+7. **Finish the task** — For task branches (those with a parent): `tt task checkin [<task-id>] [--rebase | --merge] [--force] [--delete] [--worktree=<path>] [--propagate [...]]`. The tool runs checkin validation (§6.6); if using `--rebase`/`--merge`, first propagates from parent and bails on conflict unless `--force`. It creates the handoff commit, merges into the parent, then switches to the parent worktree and cleans up the child worktree. Can be invoked from any workspace by passing `<task-id>`. If merge conflicts occur (e.g. in other `.tt/` files), the user resolves manually; for `TASK.md`, keep the parent's version. With `--propagate`, also runs `tt task propagate --from <parent>` after the merge completes. For project branches (parentless roots): `tt task publish [<project-id>] --target <branch> [--rebase | --merge] [--force]`. Creates a handoff commit that strips task scaffolding files, merges into `--target`, and leaves the user on the project branch (no workspace switch). See §6.5 and §6.6.
 
 Multiple tasks can be checked out simultaneously; the symlinked HEAD worktree facilitates quick switching between ongoing tasks.
 
