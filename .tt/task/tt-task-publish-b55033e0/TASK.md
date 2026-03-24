@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt task publish` CLI command"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-24T07:39:09Z
 updated: 2026-03-24T07:39:10Z
 ---
