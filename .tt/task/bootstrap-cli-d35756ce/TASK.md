@@ -58,7 +58,7 @@ subtask: [x] task/fix-tt-task-move-end-state-ea001288
 subtask: [x] task/tt-workspace-init-e67edd30
 subtask: [x] task/jj-rollback-instructions-62776a15
 subtask: [x] task/tt-task-publish-b55033e0
-subtask: [ ] task/tt-workspace-root-bbc665ad
+subtask: [-] task/tt-workspace-root-bbc665ad
 ---
 Implement shell script implementations of all `tt` CLI commands
 
