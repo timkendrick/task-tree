@@ -13,7 +13,7 @@ set -euo pipefail
 #
 # Usage:
 #   tt task create --slug foo --title "Foo"
-#   tt task context add --title "Research" --body "..."
+#   tt task context add --title "Implementation plan" --slug "plan" < ./plan.md
 #   tt project init /path/to/repo /path/to/virtual
 #
 
@@ -72,7 +72,7 @@ the filesystem under the CLI scripts directory.
 
 Examples:
   ${SCRIPT_NAME} task create --slug phase-0 --title "Phase 0"
-  ${SCRIPT_NAME} task context add --title "Research" --body "..."
+  ${SCRIPT_NAME} task context add --title "Implementation plan" --slug "plan" < ./plan.md
   ${SCRIPT_NAME} project init /path/to/repo /path/to/virtual
 
 Aliases (shorthand for common subcommands):
