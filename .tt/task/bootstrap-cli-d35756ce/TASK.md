@@ -58,7 +58,7 @@ subtask: [x] task/tt-workspace-init-e67edd30
 subtask: [x] task/jj-rollback-instructions-62776a15
 subtask: [x] task/tt-task-publish-b55033e0
 subtask: [x] task/tt-workspace-root-bbc665ad
-subtask: [ ] task/tt-history-undo-cf1594a5
+subtask: [x] task/tt-history-undo-cf1594a5
 subtask: [ ] task/tt-task-reorder-d6909228
 ---
 Implement shell script implementations of all `tt` CLI commands
