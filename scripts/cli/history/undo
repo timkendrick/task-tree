@@ -198,6 +198,32 @@ main() {
     sed -i '$ d' "$history_file"
   fi
 
+  # Patch the now-last history entry's after-op to the current (post-restore) jj op.
+  #
+  # Why: `jj op restore` creates a NEW operation — the repo state matches the
+  # target, but the operation ID differs. Without this patch the history chain
+  # breaks (the now-last entry's after-op still points to the *original* op,
+  # not the restore op), so a subsequent `tt undo` would fail its safety check.
+  if [[ -f "$history_file" && -s "$history_file" ]]; then
+    local new_current_op
+    new_current_op="$(jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)" || true
+    if [[ -n "$new_current_op" ]]; then
+      local prev_line
+      prev_line="$(tail -n 1 "$history_file")"
+      if [[ -n "$prev_line" ]]; then
+        local prev_before="${prev_line%%:*}"
+        local prev_after="${prev_line#*:}"
+        if [[ -n "$prev_after" && "$prev_after" != "$new_current_op" ]]; then
+          if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' "$ s|^${prev_before}:${prev_after}\$|${prev_before}:${new_current_op}|" "$history_file"
+          else
+            sed -i "$ s|^${prev_before}:${prev_after}\$|${prev_before}:${new_current_op}|" "$history_file"
+          fi
+        fi
+      fi
+    fi
+  fi
+
   trap - ERR
 
   log "Undone: jj repository restored to operation ${before_op:0:12}..."

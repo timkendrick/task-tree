@@ -762,10 +762,11 @@ Running `tt history undo --force` reverts the stale in-progress transaction.
    - Working copy is clean.
 3. Log the outgoing operation ID to stderr so the user can manually redo: `jj op restore <after-op-id>`.
 4. Set an `ERR` trap to restore back to the current state if `jj op restore` itself fails.
-5. Remove the last line from `.tt/history`.
-6. Run `jj op restore <before-op-id>`.
+5. Run `jj op restore <before-op-id>`.
+6. Remove the last line from `.tt/history`.
+7. Patch the now-last history entry's `<after-op-id>` to the current (post-restore) jj operation ID. This is necessary because `jj op restore` creates a **new** jj operation — the repository state is identical to the target, but the operation ID differs. Without this patch, the history chain would break and consecutive `tt undo` invocations would fail the safety check in step 2.
 
-**Multiple undos:** Each invocation pops one entry from the history, so repeated calls go progressively further back.
+**Multiple undos:** Each invocation pops one entry from the history and patches the previous entry's after-op, so repeated calls go progressively further back with no safety-check failures.
 
 **No redo:** There is no `tt history redo` command. The outgoing operation ID (logged in step 3) allows manual redo via `jj op restore`.
 
