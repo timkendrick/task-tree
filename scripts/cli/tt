@@ -114,7 +114,6 @@ main() {
   local jj_op_id
   if jj_op_id="$(jj op log --no-graph -T id -n 1 2>/dev/null)"; then
     log "jj operation ID before command: ${jj_op_id}"
-    log "rollback: \`jj op restore ${jj_op_id}\`"
   fi
 
   # Resolve top-level aliases before dispatching
