@@ -1314,9 +1314,9 @@ test_undo_context_add() {
   local hc_before
   hc_before=$(history_line_count)
 
-  # Add context
-  cmd_log_add "tt task context add --title 'Research notes' --body 'Some research'"
-  run_tt task context add --title "Research notes" --body "Some research" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Context add failed"; cmd_log_dump; return; }
+  # Add context (body via stdin)
+  cmd_log_add "echo 'Some research' | tt task context add --title 'Research notes'"
+  echo "Some research" | run_tt task context add --title "Research notes" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Context add failed"; cmd_log_dump; return; }
   log_info "Context add done"
 
   if ! verify_history_integrity "$scenario (post-context-add)"; then
@@ -1459,10 +1459,10 @@ test_undo_context_delete() {
   local child_id
   child_id=$(create_task "child23" "Child 23" --repo "$REPO" --checkout) || { log_fail "$scenario" "Create child failed"; cmd_log_dump; return; }
 
-  # Add context
-  cmd_log_add "tt task context add --title 'Notes' --body 'Some notes'"
+  # Add context (body via stdin)
+  cmd_log_add "echo 'Some notes' | tt task context add --title 'Notes'"
   local ctx_output
-  ctx_output=$(run_tt task context add --title "Notes" --body "Some notes" --repo "$REPO" 2>&1) || { log_fail "$scenario" "Context add failed"; cmd_log_dump; return; }
+  ctx_output=$(echo "Some notes" | run_tt task context add --title "Notes" --repo "$REPO" 2>&1) || { log_fail "$scenario" "Context add failed"; cmd_log_dump; return; }
   log_info "Context add output: $ctx_output"
 
   # Get context ID from output
@@ -1811,8 +1811,8 @@ test_undo_move() {
   hc_before=$(history_line_count)
 
   # Move child from parent-a to parent-b
-  cmd_log_add "tt task move $moveable --to $parent_b"
-  run_tt task move "$moveable" --to "$parent_b" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Move failed"; cmd_log_dump; return; }
+  cmd_log_add "tt task move --task $moveable --parent $parent_b"
+  run_tt task move --task "$moveable" --parent "$parent_b" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Move failed"; cmd_log_dump; return; }
   log_info "Move done"
 
   if ! verify_history_integrity "$scenario (post-move)"; then
