@@ -2187,7 +2187,8 @@ test_undo_checkin_with_propagate() {
   local hc_before
   hc_before=$(history_line_count)
 
-  # Checkin with propagate (use --force and --propagate-force to handle potential conflicts)
+  # Checkin with propagate (--force for merge conflicts in parent task file,
+  # --propagate-force for rebase conflicts in sibling)
   cmd_log_add "tt task checkin $done_child --propagate --force --propagate-force"
   run_tt task checkin "$done_child" --propagate --force --propagate-force --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Checkin --propagate failed"; cmd_log_dump; return; }
   log_info "Checkin --propagate done"
@@ -2481,7 +2482,7 @@ test_undo_checkin_then_work_on_other() {
   local child_y
   child_y=$(create_task "child-y" "Child Y" --repo "$REPO") || { log_fail "$scenario" "Create child Y failed"; cmd_log_dump; return; }
 
-  # Checkin child X (use --force to accept merge conflicts in project task file)
+  # Checkin child X (--force needed: creating child-y diverged the parent task file)
   cmd_log_add "tt task checkin $child_x --force"
   run_tt task checkin "$child_x" --force --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Checkin X failed"; cmd_log_dump; return; }
 
