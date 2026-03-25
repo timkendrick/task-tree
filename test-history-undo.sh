@@ -157,14 +157,14 @@ verify_history_integrity() {
     return 0
   fi
 
-  # Check chain: entry[i].after == entry[i+1].before
-  local i
-  for ((i=0; i < count - 1; i++)); do
+  # Check chain: entry[j].after == entry[j+1].before
+  local j
+  for ((j=0; j < count - 1; j++)); do
     local this_after next_before
-    this_after="$(history_after_op "${HISTORY_LINES[$i]}")"
-    next_before="$(history_before_op "${HISTORY_LINES[$((i+1))]}")"
+    this_after="$(history_after_op "${HISTORY_LINES[$j]}")"
+    next_before="$(history_before_op "${HISTORY_LINES[$((j+1))]}")"
     if [[ "$this_after" != "$next_before" ]]; then
-      log_fail "$label" "History chain broken at entry $i: after-op ($this_after) != next before-op ($next_before)"
+      log_fail "$label" "History chain broken at entry $j: after-op ($this_after) != next before-op ($next_before)"
       return 1
     fi
   done
@@ -317,9 +317,9 @@ test_multiple_checkpoints_undos() {
   ops_at_step+=("$(get_jj_op)")
 
   # 3 checkpoints
-  for i in 1 2 3; do
-    cmd_log_add "tt task checkpoint -m 'Checkpoint $i'"
-    run_tt task checkpoint -m "Checkpoint $i" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Checkpoint $i failed"; cmd_log_dump; return; }
+  for _ci in 1 2 3; do
+    cmd_log_add "tt task checkpoint -m 'Checkpoint $_ci'"
+    run_tt task checkpoint -m "Checkpoint $_ci" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Checkpoint $_ci failed"; cmd_log_dump; return; }
     ops_at_step+=("$(get_jj_op)")
   done
 
@@ -329,10 +329,10 @@ test_multiple_checkpoints_undos() {
   fi
 
   # Undo all 3
-  for i in 3 2 1; do
+  for _ci in 3 2 1; do
     cmd_log_add "tt undo"
-    run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo #$i failed"; cmd_log_dump; return; }
-    log_info "Undo #$((4-i)) done"
+    run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo #$_ci failed"; cmd_log_dump; return; }
+    log_info "Undo #$((4-_ci)) done"
   done
 
   # Verify we have the right history count (should still have entries from create + checkout)
@@ -1359,9 +1359,9 @@ test_rapid_consecutive_undos() {
   task_id=$(create_task "stress" "Stress" --repo "$REPO" --checkout) || { log_fail "$scenario" "Create task failed"; cmd_log_dump; return; }
 
   # 5 checkpoints
-  for i in $(seq 1 5); do
-    cmd_log_add "tt task checkpoint -m 'CP-$i'"
-    run_tt task checkpoint -m "CP-$i" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Checkpoint $i failed"; cmd_log_dump; return; }
+  for _ci in $(seq 1 5); do
+    cmd_log_add "tt task checkpoint -m 'CP-$_ci'"
+    run_tt task checkpoint -m "CP-$_ci" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Checkpoint $_ci failed"; cmd_log_dump; return; }
   done
 
   if ! verify_history_integrity "$scenario (after 5 checkpoints)"; then
@@ -1370,10 +1370,10 @@ test_rapid_consecutive_undos() {
   fi
 
   # 5 consecutive undos
-  for i in $(seq 1 5); do
+  for _ci in $(seq 1 5); do
     cmd_log_add "tt undo"
-    run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo #$i failed"; cmd_log_dump; return; }
-    if ! verify_history_integrity "$scenario (after undo #$i)"; then
+    run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo #$_ci failed"; cmd_log_dump; return; }
+    if ! verify_history_integrity "$scenario (after undo #$_ci)"; then
       cmd_log_dump
       return
     fi
