@@ -1928,6 +1928,592 @@ test_complex_realistic_workflow() {
   log_pass "$scenario"
 }
 
+# ── Scenario 31: Undo checkin --complete --delete (triple compound) ──────────
+test_undo_checkin_complete_delete() {
+  local scenario="31: Undo checkin --complete --delete"
+  log_header "$scenario"
+  setup_workspace "s31"
+  cmd_log_reset
+
+  cmd_log_add "tt task create --project --slug proj31 --title 'Project 31'"
+  local proj_id
+  proj_id=$(create_task "proj31" "Project 31" --project --repo "$REPO") || { log_fail "$scenario" "Create project failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkout $proj_id"
+  run_tt task checkout "$proj_id" --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task create --slug child31 --title 'Child 31' --checkout"
+  local child_id
+  child_id=$(create_task "child31" "Child 31" --repo "$REPO" --checkout) || { log_fail "$scenario" "Create child failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkpoint -m 'Work'"
+  run_tt task checkpoint -m "Work" --repo "$REPO" >/dev/null 2>&1
+
+  if ! verify_history_integrity "$scenario (pre-checkin)"; then
+    cmd_log_dump
+    return
+  fi
+
+  local hc_before
+  hc_before=$(history_line_count)
+
+  # checkin --complete --delete should be a single transaction
+  cmd_log_add "tt task checkin --complete --delete $child_id"
+  run_tt task checkin --complete --delete "$child_id" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Checkin --complete --delete failed"; cmd_log_dump; return; }
+  log_info "Checkin --complete --delete done"
+
+  if ! verify_history_integrity "$scenario (post-checkin)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # Should be exactly 1 new transaction entry
+  local hc_after
+  hc_after=$(history_line_count)
+  if [[ $((hc_after - hc_before)) -ne 1 ]]; then
+    log_fail "$scenario" "checkin --complete --delete should be 1 transaction, got $((hc_after - hc_before))"
+    cmd_log_dump
+    return
+  fi
+
+  # Undo should restore everything
+  cmd_log_add "tt undo"
+  run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo failed"; cmd_log_dump; return; }
+
+  # Child bookmark should be restored
+  if ! jj -R "$REPO" log -r "$child_id" --no-graph -T '' 2>/dev/null; then
+    log_fail "$scenario" "Child bookmark not restored after undo"
+    cmd_log_dump
+    return
+  fi
+
+  log_pass "$scenario"
+}
+
+# ── Scenario 32: Cross-branch edit + undo ────────────────────────────────────
+test_undo_cross_branch_edit() {
+  local scenario="32: Cross-branch edit + undo"
+  log_header "$scenario"
+  setup_workspace "s32"
+  cmd_log_reset
+
+  cmd_log_add "tt task create --project --slug proj32 --title 'Project 32'"
+  local proj_id
+  proj_id=$(create_task "proj32" "Project 32" --project --repo "$REPO") || { log_fail "$scenario" "Create project failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkout $proj_id"
+  run_tt task checkout "$proj_id" --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task create --slug child32 --title 'Child 32'"
+  local child_id
+  child_id=$(create_task "child32" "Child 32" --repo "$REPO") || { log_fail "$scenario" "Create child failed"; cmd_log_dump; return; }
+
+  # Stay on the project branch, edit the child (cross-branch edit)
+  if ! verify_history_integrity "$scenario (pre-edit)"; then
+    cmd_log_dump
+    return
+  fi
+
+  local hc_before
+  hc_before=$(history_line_count)
+
+  cmd_log_add "tt task edit --title 'Updated Child 32' $child_id"
+  echo "Cross-branch updated body" | run_tt task edit --title "Updated Child 32" "$child_id" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Cross-branch edit failed"; cmd_log_dump; return; }
+  log_info "Cross-branch edit done"
+
+  if ! verify_history_integrity "$scenario (post-edit)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # Undo
+  cmd_log_add "tt undo"
+  run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo failed"; cmd_log_dump; return; }
+
+  if ! verify_history_integrity "$scenario (after undo)"; then
+    cmd_log_dump
+    return
+  fi
+
+  log_pass "$scenario"
+}
+
+# ── Scenario 33: Undo rename verifies bookmark restoration ──────────────────
+test_undo_rename_bookmark_restored() {
+  local scenario="33: Undo rename restores original bookmark"
+  log_header "$scenario"
+  setup_workspace "s33"
+  cmd_log_reset
+
+  cmd_log_add "tt task create --project --slug proj33 --title 'Project 33'"
+  local proj_id
+  proj_id=$(create_task "proj33" "Project 33" --project --repo "$REPO") || { log_fail "$scenario" "Create project failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkout $proj_id"
+  run_tt task checkout "$proj_id" --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task create --slug original-name --title 'Original' --checkout"
+  local child_id
+  child_id=$(create_task "original-name" "Original" --repo "$REPO" --checkout) || { log_fail "$scenario" "Create child failed"; cmd_log_dump; return; }
+  log_info "Created: $child_id"
+
+  # Rename
+  cmd_log_add "tt task rename --slug renamed-name"
+  local rename_output
+  rename_output=$(run_tt task rename --slug "renamed-name" --repo "$REPO" 2>&1) || { log_fail "$scenario" "Rename failed"; cmd_log_dump; return; }
+  log_info "Rename output: $rename_output"
+
+  # The old bookmark should be gone
+  if jj -R "$REPO" log -r "$child_id" --no-graph -T '' 2>/dev/null; then
+    log_fail "$scenario" "Old bookmark should not exist after rename"
+    cmd_log_dump
+    return
+  fi
+
+  if ! verify_history_integrity "$scenario (post-rename)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # Undo
+  cmd_log_add "tt undo"
+  run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo failed"; cmd_log_dump; return; }
+
+  # Original bookmark should be back
+  if ! jj -R "$REPO" log -r "$child_id" --no-graph -T '' 2>/dev/null; then
+    log_fail "$scenario" "Original bookmark not restored after undo"
+    cmd_log_dump
+    return
+  fi
+
+  log_pass "$scenario"
+}
+
+# ── Scenario 34: Undo after multiple different command types ─────────────────
+test_undo_mixed_command_sequence() {
+  local scenario="34: Undo through mixed command sequence"
+  log_header "$scenario"
+  setup_workspace "s34"
+  cmd_log_reset
+
+  cmd_log_add "tt task create --project --slug proj34 --title 'Project 34'"
+  local proj_id
+  proj_id=$(create_task "proj34" "Project 34" --project --repo "$REPO") || { log_fail "$scenario" "Create project failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkout $proj_id"
+  run_tt task checkout "$proj_id" --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task create --slug child34 --title 'Child 34' --checkout"
+  local child_id
+  child_id=$(create_task "child34" "Child 34" --repo "$REPO" --checkout) || { log_fail "$scenario" "Create child failed"; cmd_log_dump; return; }
+
+  # edit
+  cmd_log_add "tt task edit --title 'Edited Child 34'"
+  echo "edited body" | run_tt task edit --title "Edited Child 34" --repo "$REPO" >/dev/null 2>&1
+
+  if ! verify_history_integrity "$scenario (after edit)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # context add
+  cmd_log_add "echo 'context body' | tt task context add --title 'Notes'"
+  echo "context body" | run_tt task context add --title "Notes" --repo "$REPO" >/dev/null 2>&1
+
+  if ! verify_history_integrity "$scenario (after context add)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # checkpoint
+  cmd_log_add "tt task checkpoint -m 'Mixed work'"
+  run_tt task checkpoint -m "Mixed work" --repo "$REPO" >/dev/null 2>&1
+
+  if ! verify_history_integrity "$scenario (after checkpoint)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # Undo all 3 (checkpoint, context add, edit)
+  for i in 1 2 3; do
+    cmd_log_add "tt undo"
+    run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo #$i failed"; cmd_log_dump; return; }
+    if ! verify_history_integrity "$scenario (after undo #$i)"; then
+      cmd_log_dump
+      return
+    fi
+  done
+
+  log_pass "$scenario"
+}
+
+# ── Scenario 35: Checkin with --propagate + undo ─────────────────────────────
+test_undo_checkin_with_propagate() {
+  local scenario="35: Undo checkin --propagate"
+  log_header "$scenario"
+  setup_workspace "s35"
+  cmd_log_reset
+
+  cmd_log_add "tt task create --project --slug proj35 --title 'Project 35'"
+  local proj_id
+  proj_id=$(create_task "proj35" "Project 35" --project --repo "$REPO") || { log_fail "$scenario" "Create project failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkout $proj_id"
+  run_tt task checkout "$proj_id" --repo "$REPO" >/dev/null 2>&1
+
+  # Create two children
+  cmd_log_add "tt task create --slug done-child --title 'Done Child' --checkout"
+  local done_child
+  done_child=$(create_task "done-child" "Done Child" --repo "$REPO" --checkout) || { log_fail "$scenario" "Create done child failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkpoint -m 'Done work'"
+  run_tt task checkpoint -m "Done work" --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task complete"
+  run_tt task complete --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task checkout $proj_id"
+  run_tt task checkout "$proj_id" --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task create --slug sibling --title 'Sibling'"
+  local sibling_id
+  sibling_id=$(create_task "sibling" "Sibling" --repo "$REPO") || { log_fail "$scenario" "Create sibling failed"; cmd_log_dump; return; }
+
+  if ! verify_history_integrity "$scenario (pre-checkin)"; then
+    cmd_log_dump
+    return
+  fi
+
+  local hc_before
+  hc_before=$(history_line_count)
+
+  # Checkin with propagate (use --force and --propagate-force to handle potential conflicts)
+  cmd_log_add "tt task checkin $done_child --propagate --force --propagate-force"
+  run_tt task checkin "$done_child" --propagate --force --propagate-force --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Checkin --propagate failed"; cmd_log_dump; return; }
+  log_info "Checkin --propagate done"
+
+  if ! verify_history_integrity "$scenario (post-checkin)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # Should be 1 transaction
+  local hc_after
+  hc_after=$(history_line_count)
+  if [[ $((hc_after - hc_before)) -ne 1 ]]; then
+    log_fail "$scenario" "checkin --propagate should be 1 transaction, got $((hc_after - hc_before))"
+    cmd_log_dump
+    return
+  fi
+
+  # Undo
+  cmd_log_add "tt undo"
+  run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo failed"; cmd_log_dump; return; }
+
+  if ! verify_history_integrity "$scenario (after undo)"; then
+    cmd_log_dump
+    return
+  fi
+
+  log_pass "$scenario"
+}
+
+# ── Scenario 36: Undo after two projects with tasks ─────────────────────────
+test_undo_two_projects() {
+  local scenario="36: Undo with two projects"
+  log_header "$scenario"
+  setup_workspace "s36"
+  cmd_log_reset
+
+  # Create two projects
+  cmd_log_add "tt task create --project --slug proj-a --title 'Project A'"
+  local proj_a
+  proj_a=$(create_task "proj-a" "Project A" --project --repo "$REPO") || { log_fail "$scenario" "Create project A failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task create --project --slug proj-b --title 'Project B'"
+  local proj_b
+  proj_b=$(create_task "proj-b" "Project B" --project --repo "$REPO") || { log_fail "$scenario" "Create project B failed"; cmd_log_dump; return; }
+
+  # Work on project A
+  cmd_log_add "tt task checkout $proj_a"
+  run_tt task checkout "$proj_a" --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task create --slug task-a --title 'Task A' --checkout"
+  local task_a
+  task_a=$(create_task "task-a" "Task A" --repo "$REPO" --checkout) || { log_fail "$scenario" "Create task A failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkpoint -m 'Work on A'"
+  run_tt task checkpoint -m "Work on A" --repo "$REPO" >/dev/null 2>&1
+
+  if ! verify_history_integrity "$scenario (after work on A)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # Switch to project B
+  cmd_log_add "tt task checkout $proj_b"
+  run_tt task checkout "$proj_b" --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task create --slug task-b --title 'Task B' --checkout"
+  local task_b
+  task_b=$(create_task "task-b" "Task B" --repo "$REPO" --checkout) || { log_fail "$scenario" "Create task B failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkpoint -m 'Work on B'"
+  run_tt task checkpoint -m "Work on B" --repo "$REPO" >/dev/null 2>&1
+
+  if ! verify_history_integrity "$scenario (after work on B)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # Undo checkpoint on B, then undo create on B
+  cmd_log_add "tt undo"
+  run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo CP B failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt undo"
+  run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo create B failed"; cmd_log_dump; return; }
+
+  if ! verify_history_integrity "$scenario (after 2 undos on B)"; then
+    cmd_log_dump
+    return
+  fi
+
+  log_pass "$scenario"
+}
+
+# ── Scenario 37: Create --checkout --propagate + undo ────────────────────────
+test_undo_create_checkout_propagate() {
+  local scenario="37: Undo create --checkout --propagate"
+  log_header "$scenario"
+  setup_workspace "s37"
+  cmd_log_reset
+
+  cmd_log_add "tt task create --project --slug proj37 --title 'Project 37'"
+  local proj_id
+  proj_id=$(create_task "proj37" "Project 37" --project --repo "$REPO") || { log_fail "$scenario" "Create project failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkout $proj_id"
+  run_tt task checkout "$proj_id" --repo "$REPO" >/dev/null 2>&1
+
+  # Create first child (sibling to be propagated to)
+  cmd_log_add "tt task create --slug sib37 --title 'Sibling 37' --checkout"
+  local sib_id
+  sib_id=$(create_task "sib37" "Sibling 37" --repo "$REPO" --checkout) || { log_fail "$scenario" "Create sibling failed"; cmd_log_dump; return; }
+
+  # Go back to project
+  cmd_log_add "tt task checkout $proj_id"
+  run_tt task checkout "$proj_id" --repo "$REPO" >/dev/null 2>&1
+
+  if ! verify_history_integrity "$scenario (pre-create)"; then
+    cmd_log_dump
+    return
+  fi
+
+  local hc_before
+  hc_before=$(history_line_count)
+
+  # Create second child with BOTH --checkout and --propagate
+  cmd_log_add "tt task create --slug child37 --title 'Child 37' --checkout --propagate"
+  local child_id
+  child_id=$(create_task "child37" "Child 37" --repo "$REPO" --checkout --propagate) || { log_fail "$scenario" "Create --checkout --propagate failed"; cmd_log_dump; return; }
+  log_info "Created: $child_id"
+
+  if ! verify_history_integrity "$scenario (post-create)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # Should be exactly 1 transaction (create + checkout + propagate all nested)
+  local hc_after
+  hc_after=$(history_line_count)
+  if [[ $((hc_after - hc_before)) -ne 1 ]]; then
+    log_fail "$scenario" "create --checkout --propagate should be 1 transaction, got $((hc_after - hc_before))"
+    cmd_log_dump
+    return
+  fi
+
+  # Undo
+  cmd_log_add "tt undo"
+  run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo failed"; cmd_log_dump; return; }
+
+  if ! verify_history_integrity "$scenario (after undo)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # Child should be gone
+  if jj -R "$REPO" log -r "$child_id" --no-graph -T '' 2>/dev/null; then
+    log_fail "$scenario" "Child bookmark still exists after undo"
+    cmd_log_dump
+    return
+  fi
+
+  log_pass "$scenario"
+}
+
+# ── Scenario 38: Undo checkin with --rebase strategy ─────────────────────────
+test_undo_checkin_with_rebase() {
+  local scenario="38: Undo checkin with --rebase"
+  log_header "$scenario"
+  setup_workspace "s38"
+  cmd_log_reset
+
+  cmd_log_add "tt task create --project --slug proj38 --title 'Project 38'"
+  local proj_id
+  proj_id=$(create_task "proj38" "Project 38" --project --repo "$REPO") || { log_fail "$scenario" "Create project failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkout $proj_id"
+  run_tt task checkout "$proj_id" --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task create --slug child38 --title 'Child 38' --checkout"
+  local child_id
+  child_id=$(create_task "child38" "Child 38" --repo "$REPO" --checkout) || { log_fail "$scenario" "Create child failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkpoint -m 'Work'"
+  run_tt task checkpoint -m "Work" --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task complete"
+  run_tt task complete --repo "$REPO" >/dev/null 2>&1
+
+  if ! verify_history_integrity "$scenario (pre-checkin)"; then
+    cmd_log_dump
+    return
+  fi
+
+  local hc_before
+  hc_before=$(history_line_count)
+
+  # Checkin with --rebase strategy
+  cmd_log_add "tt task checkin $child_id --rebase"
+  run_tt task checkin "$child_id" --rebase --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Checkin --rebase failed"; cmd_log_dump; return; }
+  log_info "Checkin --rebase done"
+
+  if ! verify_history_integrity "$scenario (post-checkin)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # Undo
+  cmd_log_add "tt undo"
+  run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo failed"; cmd_log_dump; return; }
+
+  if ! verify_history_integrity "$scenario (after undo)"; then
+    cmd_log_dump
+    return
+  fi
+
+  log_pass "$scenario"
+}
+
+# ── Scenario 39: Rapid undo/redo cycle ───────────────────────────────────────
+test_rapid_undo_redo_cycle() {
+  local scenario="39: Rapid undo/redo cycle (undo + repeat x5)"
+  log_header "$scenario"
+  setup_workspace "s39"
+  cmd_log_reset
+
+  cmd_log_add "tt task create --project --slug proj39 --title 'Project 39'"
+  local proj_id
+  proj_id=$(create_task "proj39" "Project 39" --project --repo "$REPO") || { log_fail "$scenario" "Create project failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkout $proj_id"
+  run_tt task checkout "$proj_id" --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task create --slug child39 --title 'Child 39' --checkout"
+  local child_id
+  child_id=$(create_task "child39" "Child 39" --repo "$REPO" --checkout) || { log_fail "$scenario" "Create child failed"; cmd_log_dump; return; }
+
+  # Rapidly undo and redo checkpoints
+  for cycle in $(seq 1 5); do
+    cmd_log_add "tt task checkpoint -m 'Cycle $cycle'"
+    run_tt task checkpoint -m "Cycle $cycle" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Checkpoint cycle $cycle failed"; cmd_log_dump; return; }
+
+    cmd_log_add "tt undo"
+    run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo cycle $cycle failed"; cmd_log_dump; return; }
+
+    if ! verify_history_integrity "$scenario (after undo cycle $cycle)"; then
+      cmd_log_dump
+      return
+    fi
+  done
+
+  # One final checkpoint to confirm we can still work
+  cmd_log_add "tt task checkpoint -m 'Final'"
+  run_tt task checkpoint -m "Final" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Final checkpoint failed"; cmd_log_dump; return; }
+
+  if ! verify_history_integrity "$scenario (after final checkpoint)"; then
+    cmd_log_dump
+    return
+  fi
+
+  log_pass "$scenario"
+}
+
+# ── Scenario 40: Undo after checkin then continue working on another task ────
+test_undo_checkin_then_work_on_other() {
+  local scenario="40: Undo checkin then work on another task"
+  log_header "$scenario"
+  setup_workspace "s40"
+  cmd_log_reset
+
+  cmd_log_add "tt task create --project --slug proj40 --title 'Project 40'"
+  local proj_id
+  proj_id=$(create_task "proj40" "Project 40" --project --repo "$REPO") || { log_fail "$scenario" "Create project failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkout $proj_id"
+  run_tt task checkout "$proj_id" --repo "$REPO" >/dev/null 2>&1
+
+  # Create two children
+  cmd_log_add "tt task create --slug child-x --title 'Child X' --checkout"
+  local child_x
+  child_x=$(create_task "child-x" "Child X" --repo "$REPO" --checkout) || { log_fail "$scenario" "Create child X failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkpoint -m 'X work'"
+  run_tt task checkpoint -m "X work" --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task complete"
+  run_tt task complete --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task checkout $proj_id"
+  run_tt task checkout "$proj_id" --repo "$REPO" >/dev/null 2>&1
+
+  cmd_log_add "tt task create --slug child-y --title 'Child Y'"
+  local child_y
+  child_y=$(create_task "child-y" "Child Y" --repo "$REPO") || { log_fail "$scenario" "Create child Y failed"; cmd_log_dump; return; }
+
+  # Checkin child X (use --force to accept merge conflicts in project task file)
+  cmd_log_add "tt task checkin $child_x --force"
+  run_tt task checkin "$child_x" --force --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Checkin X failed"; cmd_log_dump; return; }
+
+  if ! verify_history_integrity "$scenario (after checkin X)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # Undo the checkin
+  cmd_log_add "tt undo"
+  run_tt undo --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Undo failed"; cmd_log_dump; return; }
+
+  if ! verify_history_integrity "$scenario (after undo checkin)"; then
+    cmd_log_dump
+    return
+  fi
+
+  # Now work on child Y
+  cmd_log_add "tt task checkout $child_y"
+  run_tt task checkout "$child_y" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Checkout Y failed"; cmd_log_dump; return; }
+
+  cmd_log_add "tt task checkpoint -m 'Y work'"
+  run_tt task checkpoint -m "Y work" --repo "$REPO" >/dev/null 2>&1 || { log_fail "$scenario" "Checkpoint Y failed"; cmd_log_dump; return; }
+
+  if ! verify_history_integrity "$scenario (after Y work)"; then
+    cmd_log_dump
+    return
+  fi
+
+  log_pass "$scenario"
+}
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TEST REGISTRY & RUNNER
@@ -1971,6 +2557,16 @@ register_test 27 test_undo_propagate_standalone         "Undo standalone propaga
 register_test 28 test_undo_diverge_undo                 "Undo, diverge, undo"
 register_test 29 test_undo_move                         "Undo move"
 register_test 30 test_complex_realistic_workflow        "Complex realistic workflow with undos"
+register_test 31 test_undo_checkin_complete_delete      "Undo checkin --complete --delete"
+register_test 32 test_undo_cross_branch_edit            "Cross-branch edit + undo"
+register_test 33 test_undo_rename_bookmark_restored     "Undo rename restores original bookmark"
+register_test 34 test_undo_mixed_command_sequence       "Undo through mixed command sequence"
+register_test 35 test_undo_checkin_with_propagate       "Undo checkin --propagate"
+register_test 36 test_undo_two_projects                 "Undo with two projects"
+register_test 37 test_undo_create_checkout_propagate    "Undo create --checkout --propagate"
+register_test 38 test_undo_checkin_with_rebase          "Undo checkin with --rebase"
+register_test 39 test_rapid_undo_redo_cycle             "Rapid undo/redo cycle (5x)"
+register_test 40 test_undo_checkin_then_work_on_other   "Undo checkin then work on other task"
 
 # Parse filter arguments into a set of test numbers to run.
 # Supports: bare numbers (2 12 30), ranges (5-10), or mix (1 5-8 30).
@@ -2006,9 +2602,9 @@ should_run() {
 
 list_tests() {
   printf '\nAvailable tests:\n\n'
-  local i
-  for ((i=0; i<${#TEST_NUMS[@]}; i++)); do
-    printf '  %2d  %s\n' "${TEST_NUMS[$i]}" "${TEST_DESCS[$i]}"
+  local _li
+  for ((_li=0; _li<${#TEST_NUMS[@]}; _li++)); do
+    printf '  %2d  %s\n' "${TEST_NUMS[$_li]}" "${TEST_DESCS[$_li]}"
   done
   printf '\nUsage: %s [test-number | range ...]\n' "$0"
   printf '  e.g.  %s 2 12 5-8\n\n' "$0"
@@ -2038,10 +2634,10 @@ main() {
   fi
   echo ""
 
-  local i
-  for ((i=0; i<${#TEST_NUMS[@]}; i++)); do
-    if should_run "${TEST_NUMS[$i]}"; then
-      "${TEST_FUNCS[$i]}"
+  local _test_idx
+  for ((_test_idx=0; _test_idx<${#TEST_NUMS[@]}; _test_idx++)); do
+    if should_run "${TEST_NUMS[$_test_idx]}"; then
+      "${TEST_FUNCS[$_test_idx]}"
     fi
   done
 
