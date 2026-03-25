@@ -178,6 +178,9 @@ main() {
     fi
   fi
 
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
+
   log "Publishing: $child_bookmark -> $target"
 
   # --- Determine target workspace ---
@@ -220,10 +223,9 @@ main() {
   jj -R "$target_ws" new "$target" "$handoff_commit"
 
   # Check for conflicts (unless --force)
+  # On conflict, exit 1 triggers the ERR trap → tt_rollback_transaction →
+  # jj op restore, which cleanly reverts all jj operations in this transaction.
   if [[ "$force" != true ]] && has_conflicts "$target_ws" "@"; then
-    jj -R "$target_ws" op undo  # undo jj new (merge)
-    jj -R "$target_ws" op undo  # undo jj commit (handoff)
-    jj -R "$target_ws" edit "$original_rev"
     log "Error: Merge conflicts detected. Resolve conflicts or use --force."
     exit 1
   fi
@@ -240,6 +242,9 @@ main() {
   if [[ "$target_ws" != "$current_worktree" ]]; then
     jj -R "$target_ws" edit "$original_rev" 2>/dev/null || true
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   log "Published: $child_bookmark -> $target"
 }

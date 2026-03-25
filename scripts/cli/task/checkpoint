@@ -145,6 +145,9 @@ main() {
   local full_msg="Checkpoint: ${message} (${bookmark})"
 
   # Pre-checkpoint hook (blocking)
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
+
   run_hook "$repo" "pre-checkpoint" true "$current_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$bookmark" \
     "TT_TASK_BRANCH=$bookmark" \
@@ -159,6 +162,9 @@ main() {
 
   # Advance bookmark
   jj -R "$repo" bookmark set "$bookmark" -r '@-'
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   log "Checkpoint: $bookmark → $new_commit"
 

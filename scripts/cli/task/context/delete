@@ -213,6 +213,10 @@ main() {
     { print }
   ')"
 
+  # Begin transaction (records before-op for undo) BEFORE any filesystem writes,
+  # so the before-op matches the previous command's after-op in the history chain.
+  tt_begin_transaction "$repo"
+
   printf '%s\n' "$updated_task_content" > "$target_worktree/$task_file"
 
   # Remove the context file
@@ -221,6 +225,9 @@ main() {
   # Commit the changes
   jj -R "$target_worktree" commit -m "Delete context: $ctx_title ($branch)"
   jj -R "$target_worktree" bookmark set "$branch" -r '@-'
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   log "Deleted context: $ctx_id_arg"
 }

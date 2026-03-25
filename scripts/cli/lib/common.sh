@@ -546,3 +546,136 @@ status_to_checkbox() {
     *)           printf '[?]' ;;
   esac
 }
+
+# ---------------------------------------------------------------------------
+# Transaction management
+#
+# A "transaction" records the jj operation ID before and after a mutating tt
+# command, enabling `tt history undo` to restore the repository state.
+#
+# Log file: <repo>/.tt/history
+# Format:   one line per transaction: <before-op-id>:<after-op-id>
+#           An in-progress transaction has an empty after-op-id: <before-op-id>:
+#
+# Nesting: sub-commands invoked by a top-level command inherit TT_TRANSACTION_ID
+# via the environment. tt_begin_transaction is a no-op when TT_TRANSACTION_ID is
+# already set. The internal (non-exported) _TT_TRANSACTION_OWNER flag ensures
+# only the owning process commits or rolls back the transaction.
+# ---------------------------------------------------------------------------
+
+# Usage: tt_begin_transaction REPO
+# Begins a tt transaction. No-op if TT_TRANSACTION_ID is already set (nested call).
+# Captures the current jj operation ID, checks for in-progress transactions,
+# appends "<before-op-id>:" to .tt/history, exports TT_TRANSACTION_ID, and sets
+# an ERR trap to auto-rollback on failure.
+tt_begin_transaction() {
+  local repo="$1"
+  # No-op when nested (parent command already began a transaction)
+  if [[ -n "${TT_TRANSACTION_ID:-}" ]]; then
+    return 0
+  fi
+
+  local history_file="$repo/.tt/history"
+
+  # Capture current jj operation ID
+  local before_op
+  before_op="$(jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)" || {
+    log "Error: Could not read jj operation ID to begin transaction"
+    exit 1
+  }
+
+  # Check for in-progress transaction (last line has empty after-op-id)
+  if [[ -f "$history_file" && -s "$history_file" ]]; then
+    local last_line
+    last_line="$(tail -n 1 "$history_file" 2>/dev/null)" || true
+    if [[ -n "$last_line" ]]; then
+      local last_after="${last_line#*:}"
+      if [[ -z "$last_after" ]]; then
+        log "Error: Another tt command is in progress (incomplete transaction)."
+        log "  If this is stale (e.g. a crashed process), run: tt history undo --force"
+        exit 1
+      fi
+    fi
+  fi
+
+  # Append in-progress entry to history log
+  printf '%s:\n' "$before_op" >> "$history_file"
+
+  # Export for sub-commands (nested tt_begin_transaction calls will be no-ops)
+  export TT_TRANSACTION_ID="$before_op"
+  # Mark this process as the transaction owner (not exported; sub-processes don't inherit)
+  _TT_TRANSACTION_OWNER=true
+
+  # Set ERR trap to auto-rollback on failure
+  trap 'tt_rollback_transaction "'"$repo"'"' ERR
+}
+
+# Usage: tt_commit_transaction REPO
+# Finalizes the transaction by writing the after-op-id into .tt/history.
+# No-op when called from a nested sub-command (not the transaction owner).
+tt_commit_transaction() {
+  local repo="$1"
+  # Only the owning process commits the transaction
+  if [[ "${_TT_TRANSACTION_OWNER:-}" != "true" ]]; then
+    return 0
+  fi
+
+  local history_file="$repo/.tt/history"
+  local before_op="${TT_TRANSACTION_ID}"
+
+  # Capture current jj operation ID
+  local after_op
+  after_op="$(jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)" || {
+    log "Warning: Could not read jj operation ID for transaction commit; history may be incomplete"
+    after_op="unknown"
+  }
+
+  # Replace the last line (in-progress: "<before>:") with the completed entry ("<before>:<after>")
+  if [[ "$(uname)" == "Darwin" ]]; then
+    sed -i '' "$ s|^${before_op}:\$|${before_op}:${after_op}|" "$history_file"
+  else
+    sed -i "$ s|^${before_op}:\$|${before_op}:${after_op}|" "$history_file"
+  fi
+
+  # Clear ERR trap and ownership flag
+  trap - ERR
+  unset _TT_TRANSACTION_OWNER
+}
+
+# Usage: tt_rollback_transaction REPO
+# Rolls back the transaction by restoring jj to the before-op state and
+# removing the in-progress line from .tt/history.
+# No-op when called from a nested sub-command (not the transaction owner).
+tt_rollback_transaction() {
+  local repo="$1"
+  # Only the owning process rolls back
+  if [[ "${_TT_TRANSACTION_OWNER:-}" != "true" ]]; then
+    return 0
+  fi
+
+  local before_op="${TT_TRANSACTION_ID:-}"
+  if [[ -z "$before_op" ]]; then
+    return 0
+  fi
+
+  local history_file="$repo/.tt/history"
+
+  log "Rolling back transaction (restoring jj operation: ${before_op:0:12}...)"
+
+  # Restore jj to before-op state
+  jj -R "$repo" op restore "$before_op" 2>/dev/null || \
+    log "Warning: Could not restore jj operation state; manual recovery may be needed"
+
+  # Remove the in-progress line from history
+  if [[ -f "$history_file" ]]; then
+    if [[ "$(uname)" == "Darwin" ]]; then
+      sed -i '' "/^${before_op}:\$/d" "$history_file"
+    else
+      sed -i "/^${before_op}:\$/d" "$history_file"
+    fi
+  fi
+
+  # Clear ERR trap and ownership flag
+  trap - ERR
+  unset _TT_TRANSACTION_OWNER
+}

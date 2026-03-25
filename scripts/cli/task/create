@@ -395,8 +395,8 @@ main() {
     fi
   fi
 
-  # Capture revision user had checked out; restore it on exit so we leave them where they were.
-  # Use inline trap to capture values at definition time (locals are gone when EXIT runs).
+  # Capture revision user had checked out so we can restore it on success.
+  # (On error, tt_rollback_transaction restores the entire jj state including WC position.)
   local original_rev
   original_rev="$(get_worktree_current_rev "$repo")"
   # If the working copy is currently on the parent branch (it's our closest ancestor bookmark),
@@ -404,10 +404,9 @@ main() {
   # original revision. Otherwise, restore as normal.
   local current_bookmark
   current_bookmark="$(resolve_current "$repo" "$task_prefix" "$project_prefix" | sed -n '3p')"
+  local restore_to_parent=false
   if [[ -n "$parent_bookmark" ]] && [[ "$current_bookmark" == "$parent_bookmark" ]]; then
-    trap 'jj -R "'"$repo"'" new "'"$parent_bookmark"'" 2>/dev/null || true' EXIT
-  else
-    trap '[[ -n "'"$original_rev"'" ]] && jj -R "'"$repo"'" edit "'"$original_rev"'" 2>/dev/null || true' EXIT
+    restore_to_parent=true
   fi
 
   # Check whether the target bookmark already exists; refuse unless --force
@@ -420,6 +419,9 @@ main() {
     bookmark_existed=true
     log "Warning: Branch '$task_id' already exists; overwriting (--force)."
   fi
+
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
 
   jj "${jj_opts[@]}" new "$parent_rev"
 
@@ -485,7 +487,7 @@ main() {
   fi
 
   if [[ "$checkout" == true ]]; then
-    trap - EXIT
+    # Checkout handles WC positioning; no explicit restore needed.
     local -a checkout_args=(--repo "$repo" "$task_id")
     if [[ "$checkout_worktree" == true ]]; then
       if [[ -n "$checkout_worktree_path" ]]; then
@@ -495,7 +497,19 @@ main() {
       fi
     fi
     "$SCRIPT_DIR/checkout" "${checkout_args[@]}"
+  else
+    # Explicitly restore WC to where the user was before the command.
+    # This must happen before tt_commit_transaction so the restore is
+    # captured in the transaction's after-op-id.
+    if [[ "$restore_to_parent" == true ]]; then
+      jj -R "$repo" new "$parent_bookmark" 2>/dev/null || true
+    elif [[ -n "$original_rev" ]]; then
+      jj -R "$repo" edit "$original_rev" 2>/dev/null || true
+    fi
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   printf '%s\n' "$task_id"
 }

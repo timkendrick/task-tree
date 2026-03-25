@@ -13,7 +13,7 @@ set -euo pipefail
 #
 # Usage:
 #   tt task create --slug foo --title "Foo"
-#   tt task context add --title "Research" --body "..."
+#   tt task context add --title "Implementation plan" --slug "plan" < ./plan.md
 #   tt project init /path/to/repo /path/to/virtual
 #
 
@@ -72,7 +72,7 @@ the filesystem under the CLI scripts directory.
 
 Examples:
   ${SCRIPT_NAME} task create --slug phase-0 --title "Phase 0"
-  ${SCRIPT_NAME} task context add --title "Research" --body "..."
+  ${SCRIPT_NAME} task context add --title "Implementation plan" --slug "plan" < ./plan.md
   ${SCRIPT_NAME} project init /path/to/repo /path/to/virtual
 
 Aliases (shorthand for common subcommands):
@@ -94,6 +94,7 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} list-context →  tt task context list
   ${SCRIPT_NAME} delete-context → tt task context delete
   ${SCRIPT_NAME} prompt       →  tt task prompt
+  ${SCRIPT_NAME} undo         →  tt history undo
   ${SCRIPT_NAME} init         →  tt workspace init
   ${SCRIPT_NAME} switch       →  tt workspace switch
   ${SCRIPT_NAME} branch       →  tt workspace branch
@@ -109,15 +110,9 @@ main() {
   local script_dir
   script_dir="$(cd "$(dirname "$0")" && pwd)"
 
-  # Log current jj operation ID and rollback instructions to stderr before dispatching
-  local jj_op_id
-  if jj_op_id="$(jj op log --no-graph -T id -n 1 2>/dev/null)"; then
-    log "jj operation ID before command: ${jj_op_id}"
-    log "rollback: \`jj op restore ${jj_op_id}\`"
-  fi
-
   # Resolve top-level aliases before dispatching
   case "${1:-}" in
+    undo)        set -- history  undo         "${@:2}" ;;
     init)        set -- workspace init        "${@:2}" ;;
     switch)      set -- workspace switch      "${@:2}" ;;
     branch)      set -- workspace branch      "${@:2}" ;;

@@ -300,6 +300,28 @@ main() {
     local original_parent_rev
     original_parent_rev="$(jj -R "$repo" log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)"
 
+    # Write the task file into a temp location first to check for changes,
+    # before beginning the transaction (avoids orphaned in-progress entries on no-op).
+    local tmpfile
+    tmpfile="$(mktemp)"
+    rewrite_task_file "$tmpfile" \
+      "$final_title" "$current_status" "$final_body" "$current_created"
+    local current_file_content
+    current_file_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || true
+    local new_file_content
+    new_file_content="$(cat "$tmpfile")"
+    rm -f "$tmpfile"
+
+    if [[ "$current_file_content" == "$new_file_content" ]]; then
+      log "No changes to task $bookmark."
+      printf '%s\n' "$bookmark"
+      unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
+      return 0
+    fi
+
+    # Begin transaction (records before-op for undo)
+    tt_begin_transaction "$repo"
+
     # Switch WC to the target bookmark, create a new empty change on top of it,
     # write the task file, commit, advance the bookmark, then return to the original parent.
     jj -R "$repo" edit "$bookmark"
@@ -309,16 +331,6 @@ main() {
     rewrite_task_file "$repo/$task_file" \
       "$final_title" "$current_status" "$final_body" "$current_created"
 
-    # Only commit if the task file actually changed
-    if is_wc_clean "$repo"; then
-      log "No changes to task $bookmark."
-      jj -R "$repo" abandon
-      jj -R "$repo" new -r "$original_parent_rev"
-      printf '%s\n' "$bookmark"
-      unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
-      return 0
-    fi
-
     jj -R "$repo" commit -m "Edit task: $final_title ($bookmark)"
     jj -R "$repo" bookmark set "$bookmark" -r '@-'
 
@@ -326,20 +338,38 @@ main() {
     jj -R "$repo" new -r "$original_parent_rev"
   else
     # Same-branch edit: write to the target worktree filesystem and commit normally.
-    rewrite_task_file "$target_worktree/$task_file" \
+    # Check for no-op BEFORE beginning the transaction (compare in-memory to avoid
+    # writing to disk before the transaction starts, which would cause a jj snapshot
+    # gap in the history chain).
+    local tmpfile
+    tmpfile="$(mktemp)"
+    rewrite_task_file "$tmpfile" \
       "$final_title" "$current_status" "$final_body" "$current_created"
+    local current_file_on_disk
+    current_file_on_disk="$(cat "$target_worktree/$task_file" 2>/dev/null)" || true
+    local new_file_content
+    new_file_content="$(cat "$tmpfile")"
 
-    # Only commit if the task file actually changed
-    if is_wc_clean "$target_worktree"; then
+    if [[ "$current_file_on_disk" == "$new_file_content" ]]; then
+      rm -f "$tmpfile"
       log "No changes to task $bookmark."
       printf '%s\n' "$bookmark"
       unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
       return 0
     fi
 
+    # Begin transaction (records before-op for undo) BEFORE writing to disk
+    tt_begin_transaction "$repo"
+
+    # Now write the file and commit
+    mv "$tmpfile" "$target_worktree/$task_file"
+
     jj -R "$target_worktree" commit -m "Edit task: $final_title ($bookmark)"
     jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
   printf '%s\n' "$bookmark"

@@ -206,6 +206,11 @@ main() {
     exit 1
   fi
 
+  # Begin transaction early so that --complete and --propagate sub-commands
+  # are nested within this transaction (their tt_begin_transaction calls
+  # become no-ops, keeping a single history entry for the whole checkin).
+  tt_begin_transaction "$repo"
+
   # --- Optional: run complete first ---
   if [[ "$do_complete" == true ]]; then
     local task_content_check
@@ -332,7 +337,6 @@ main() {
   local parent_task_content
   parent_task_content="$(jj -R "$target_ws" file show -r "$parent_bookmark" -- "$parent_task_file" 2>/dev/null)" || {
     log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
-    jj -R "$target_ws" op undo
     exit 1
   }
 
@@ -407,10 +411,9 @@ main() {
   jj -R "$target_ws" new "$parent_bookmark" "$handoff_commit"
 
   # Check for conflicts (unless --force)
+  # On conflict, exit 1 triggers the ERR trap → tt_rollback_transaction →
+  # jj op restore, which cleanly reverts all jj operations in this transaction.
   if [[ "$force" != true ]] && has_conflicts "$target_ws" "@"; then
-    jj -R "$target_ws" op undo  # undo jj new (merge)
-    jj -R "$target_ws" op undo  # undo jj commit (handoff)
-    jj -R "$target_ws" edit "$original_rev"
     log "Error: Merge conflicts detected. Resolve conflicts or use --force."
     exit 1
   fi
@@ -485,6 +488,9 @@ main() {
     done
     "$SCRIPT_DIR/propagate" "${propagate_args[@]}"
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 }
 
 main "$@"
