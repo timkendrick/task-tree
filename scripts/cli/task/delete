@@ -301,7 +301,6 @@ main() {
   local parent_task_content
   parent_task_content="$(jj -R "$target_ws" file show -r "$parent_bookmark" -- "$parent_task_file" 2>/dev/null)" || {
     log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
-    jj -R "$target_ws" op undo
     exit 1
   }
 
