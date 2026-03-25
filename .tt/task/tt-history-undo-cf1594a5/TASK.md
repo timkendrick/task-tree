@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt history undo` CLI command"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-24T21:51:47Z
 updated: 2026-03-24T21:51:47Z
 ---
