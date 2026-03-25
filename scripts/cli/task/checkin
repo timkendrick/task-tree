@@ -206,6 +206,11 @@ main() {
     exit 1
   fi
 
+  # Begin transaction early so that --complete and --propagate sub-commands
+  # are nested within this transaction (their tt_begin_transaction calls
+  # become no-ops, keeping a single history entry for the whole checkin).
+  tt_begin_transaction "$repo"
+
   # --- Optional: run complete first ---
   if [[ "$do_complete" == true ]]; then
     local task_content_check
@@ -308,9 +313,6 @@ main() {
       exit 1
       ;;
   esac
-
-  # Begin transaction (records before-op for undo)
-  tt_begin_transaction "$repo"
 
   # --- Run pre-checkin hook ---
   run_hook "$repo" "pre-checkin" true "$current_worktree" "${workspace_dir:-}" \

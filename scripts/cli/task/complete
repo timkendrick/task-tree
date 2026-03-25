@@ -137,9 +137,13 @@ main() {
     exit 1
   fi
 
-  # Record original @ before any modifications
-  local original_rev
+  # Record original @ before any modifications.
+  # We save the parent commit_id (not the WC change_id) because `jj new` in the
+  # switched_to_task path will abandon the current empty WC commit, making its
+  # change_id unresolvable. The parent commit_id is stable.
+  local original_rev original_parent_rev
   original_rev="$(get_worktree_current_rev "$target_worktree")" || true
+  original_parent_rev="$(jj -R "$target_worktree" log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)" || true
 
   # Read task file content from bookmark
   local task_content
@@ -215,8 +219,15 @@ main() {
     should_restore=true
   fi
 
-  if [[ "$should_restore" == true && -n "$original_rev" ]]; then
-    jj -R "$target_worktree" edit "$original_rev"
+  if [[ "$should_restore" == true ]]; then
+    if [[ "$switched_to_task" == true && -n "$original_parent_rev" ]]; then
+      # The original WC was abandoned by `jj new "$bookmark"`, so we can't
+      # `jj edit` the old change_id. Instead, create a fresh WC on top of
+      # the parent commit the user was previously on.
+      jj -R "$target_worktree" new -r "$original_parent_rev"
+    elif [[ -n "$original_rev" ]]; then
+      jj -R "$target_worktree" edit "$original_rev"
+    fi
   fi
 
   # Commit transaction (records after-op for undo)
