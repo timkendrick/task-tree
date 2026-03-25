@@ -252,6 +252,15 @@ main() {
     exit 1
   fi
 
+  # Determine if we need a cross-branch commit (must resolve BEFORE starting
+  # the transaction, since resolve_current may trigger a jj snapshot)
+  local current_bookmark
+  current_bookmark="$(resolve_current "$repo" "$task_prefix" "$project_prefix" | sed -n '3p')"
+
+  # Begin transaction (records before-op for undo) BEFORE any filesystem writes,
+  # so the before-op matches the previous command's after-op in the history chain.
+  tt_begin_transaction "$repo"
+
   # Create context directory
   local ctx_dir
   ctx_dir="$(dirname "$target_worktree/$ctx_file")"
@@ -280,14 +289,6 @@ main() {
   ')"
 
   printf '%s\n' "$updated_task_content" > "$task_file_path_on_disk"
-
-  # Commit: create a commit with both the context file and updated task file
-  # Determine if we need a cross-branch commit
-  local current_bookmark
-  current_bookmark="$(resolve_current "$repo" "$task_prefix" "$project_prefix" | sed -n '3p')"
-
-  # Begin transaction (records before-op for undo)
-  tt_begin_transaction "$repo"
 
   if [[ "$target_worktree" == "$current_worktree" && "$current_bookmark" != "$bookmark" ]]; then
     # Cross-branch: need to use jj edit + commit sequence
