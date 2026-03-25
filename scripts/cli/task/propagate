@@ -156,9 +156,8 @@ propagate_one_rebase() {
 
   if [[ "$force" != true ]] && has_conflicts "$repo" "${child}::"; then
     log "Error: Conflicts detected in $child after rebase onto $from."
-    log "  Undoing. Use --force to proceed despite conflicts."
-    jj "${jj_opts[@]}" undo
-    return 1
+    log "  Use --force to proceed despite conflicts."
+    exit 1
   fi
 }
 
@@ -179,12 +178,8 @@ propagate_one_merge() {
 
   if [[ "$force" != true ]] && has_conflicts "$repo" "$child"; then
     log "Error: Conflicts in $child after merging $from."
-    log "  Undoing. Use --force to proceed despite conflicts."
-    jj "${jj_opts[@]}" undo  # undo bookmark set
-    jj "${jj_opts[@]}" undo  # undo jj new
-    # Restore working copy (jj new moved it)
-    jj "${jj_opts[@]}" edit "$original_rev" 2>/dev/null || true
-    return 1
+    log "  Use --force to proceed despite conflicts."
+    exit 1
   fi
 
   # Restore working copy after jj new moved it
