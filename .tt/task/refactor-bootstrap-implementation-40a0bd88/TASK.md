@@ -1,6 +1,6 @@
 ---
 title: "Refactor bootstrap implementation"
-status: TODO
+status: IN-PROGRESS
 created: 2026-03-23T07:58:52Z
 updated: 2026-03-23T07:58:52Z
 subtask: [ ] task/standardize-metadata-editing-b5c72f5a
