@@ -1,6 +1,6 @@
 ---
 title: "Move task directory in `tt task move`"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-26T08:37:39Z
 updated: 2026-03-26T08:37:39Z
 ---
