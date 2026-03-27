@@ -1,1 +1,1 @@
-.tt/task/bootstrap-cli-d35756ce/TASK.md
+.tt/task/tt-task-show-completed-0db3cf3d/TASK.md
