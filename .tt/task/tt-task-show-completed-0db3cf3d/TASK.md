@@ -1,6 +1,6 @@
 ---
 title: "Fix `tt task show` for completed tasks"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-27T15:11:26Z
 updated: 2026-03-27T15:11:26Z
 ---
