@@ -62,6 +62,7 @@ subtask: [x] task/tt-history-undo-cf1594a5
 subtask: [ ] task/tt-task-reorder-d6909228
 subtask: [x] task/tt-task-checkin-bookmark-2823aba1
 subtask: [x] task/tt-task-show-completed-0db3cf3d
+subtask: [ ] task/completed-task-file-location-253f710e
 ---
 Implement shell script implementations of all `tt` CLI commands
 
