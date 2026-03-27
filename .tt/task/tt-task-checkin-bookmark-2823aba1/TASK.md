@@ -1,6 +1,6 @@
 ---
 title: "Ensure bookmark is up to date before `tt task checkin`"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-27T14:49:17Z
 updated: 2026-03-27T14:59:43Z
 context: context/implementation-plan-42dce8a1
