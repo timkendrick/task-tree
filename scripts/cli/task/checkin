@@ -206,6 +206,12 @@ main() {
     exit 1
   fi
 
+  # --- Bookmark up-to-date check (implicit current branch only) ---
+  # Skip when <task-id> was passed explicitly (user knowingly bypasses the check).
+  if [[ -z "$task_id_arg" ]]; then
+    assert_bookmark_up_to_date "$child_worktree" "$child_bookmark"
+  fi
+
   # Begin transaction early so that --complete and --propagate sub-commands
   # are nested within this transaction (their tt_begin_transaction calls
   # become no-ops, keeping a single history entry for the whole checkin).

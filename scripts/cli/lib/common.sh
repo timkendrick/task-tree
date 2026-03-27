@@ -179,6 +179,28 @@ is_wc_clean() {
   [[ "$result" == "true" ]]
 }
 
+# Usage: assert_bookmark_up_to_date REPO BOOKMARK
+# Exits 1 if there are any commits between BOOKMARK and the working-copy parent
+# (@-) that are not tracked by the bookmark. Used by commands that operate on
+# the implicit current branch to ensure all work has been checkpointed.
+#
+# Skip this check when the user passes an explicit task-id, as that constitutes
+# an intentional acknowledgement that the bookmark may be behind.
+assert_bookmark_up_to_date() {
+  local repo="$1" bookmark="$2"
+  local ahead_commits
+  ahead_commits="$(jj -R "$repo" log \
+    -r "(::@- & ~::${bookmark})" \
+    --no-graph -T 'change_id ++ "\n"' 2>/dev/null)" || return 0
+  if [[ -n "$ahead_commits" ]]; then
+    log "Error: There are commits since the last checkpoint that are not tracked by the task bookmark."
+    log "  Run 'tt task checkpoint' to record them before checking in."
+    log "  Alternatively, pass the task ID explicitly to skip this check:"
+    log "    tt task checkin ${bookmark}"
+    exit 1
+  fi
+}
+
 # Usage: run_hook REPO HOOK_NAME BLOCKING WORKTREE_DIR WORKSPACE_DIR [VAR=val ...]
 # Runs .tt/hooks/<hook-name> with TT_WORKSPACE_DIR and TT_WORKTREE_DIR set,
 # plus any additional VAR=val pairs. Blocking hooks abort on non-zero exit.
