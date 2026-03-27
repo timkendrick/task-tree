@@ -64,6 +64,7 @@ subtask: [x] task/tt-task-checkin-bookmark-2823aba1
 subtask: [x] task/tt-task-show-completed-0db3cf3d
 subtask: [ ] task/completed-task-file-location-253f710e
 subtask: [ ] task/implicit-bookmark-check-4f5404cf
+subtask: [ ] task/rollback-exit-1-1578e612
 ---
 Implement shell script implementations of all `tt` CLI commands
 
