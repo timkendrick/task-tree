@@ -2,7 +2,8 @@
 title: "Ensure bookmark is up to date before `tt task checkin`"
 status: IN-PROGRESS
 created: 2026-03-27T14:49:17Z
-updated: 2026-03-27T14:49:17Z
+updated: 2026-03-27T14:59:43Z
+context: context/implementation-plan-42dce8a1
 ---
 Currently, `tt task checkin` merges changes from the given task upstream, however it only merges the commit from the most recent `tt` operation - notably, if there have been `jj` commits since then, those commits will not be merged.
 
