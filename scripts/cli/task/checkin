@@ -283,15 +283,33 @@ main() {
   diff_output="$(jj -R "$repo" diff \
     -r "roots(::${child_bookmark} ~ ::${parent_bookmark})..${child_bookmark}" \
     --name-only -- '.tt/task/' 2>/dev/null)" || true
+
   if [[ -n "$diff_output" ]]; then
+    # Build the set of allowed task directories: own dir + all descendants.
+    local task_dir
+    task_dir="$(task_dir_path "$child_slug")"
+
+    local -a allowed_dirs=("$task_dir")
+    local descendant_dirs
+    descendant_dirs="$(collect_descendant_task_dirs \
+      "$repo" "$child_bookmark" "$child_bookmark" "$task_prefix" "$project_prefix")" || true
+    while IFS= read -r d; do
+      [[ -n "$d" ]] && allowed_dirs+=("$d")
+    done <<< "$descendant_dirs"
+
     while IFS= read -r changed_path; do
       [[ -z "$changed_path" ]] && continue
-      # Allow changes within the task's own directory
-      local task_dir
-      task_dir="$(task_dir_path "$child_slug")"
-      if [[ "$changed_path" != "$task_file" && "$changed_path" != "$task_dir"/* ]]; then
+      local allowed=false
+      local allowed_dir
+      for allowed_dir in "${allowed_dirs[@]}"; do
+        if [[ "$changed_path" == "$allowed_dir"/* || "$changed_path" == "$allowed_dir/TASK.md" ]]; then
+          allowed=true
+          break
+        fi
+      done
+      if [[ "$allowed" != true ]]; then
         log "Error: Unmerged range touches unexpected task file: $changed_path"
-        log "  Only files under '$task_dir/' may differ from parent in the unmerged range."
+        log "  Only files under descendant task directories of '$child_bookmark' may differ from parent."
         exit 1
       fi
     done <<< "$diff_output"
