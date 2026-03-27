@@ -653,12 +653,13 @@ Concretely, for a child branch `C` and parent branch `P`:
 --workspace-dir PATH  Virtual project dir
 ```
 
-**Rename operations:**
+**Rename operations (summary):**
 
-1. **Bookmark rename:** Uses `jj bookmark rename <old-id> <new-id>` to rename the bookmark in jj.
-2. **Directory rename:** Moves `.tt/task/<old-slug>-<hex>/` → `.tt/task/<new-slug>-<hex>/`.
-3. **Symlink update:** If `TASK.md` exists and points to the old directory, updates it to point to the new directory.
-4. **Parent subtask update (if parent exists):** Creates a commit on the parent branch that replaces the old ID with the new ID in the `subtask:` frontmatter entry. The commit message is "Rename task: <title> (<new-id>)" and the parent bookmark is advanced.
+1. **Parent branch update (if parent exists):** Edits the parent branch tip in place — renames `.tt/task/<old-slug>-<hex>/` → `.tt/task/<new-slug>-<hex>/` and updates the `subtask:` reference from the old ID to the new ID, then commits. This triggers jj's auto-rebase of all descendant commits. The parent bookmark is advanced.
+2. **Bookmark rename:** Uses `jj bookmark rename <old-id> <new-id>` to rename the bookmark in jj.
+3. **Conflict sweep:** Iterates the task's unmerged range oldest-to-newest. For each commit, writes the pre-saved content back to the new directory path and removes the old directory (which may carry jj conflict markers after the auto-rebase). Symlink `TASK.md` is updated if it points to the old path.
+
+The four-phase VCS algorithm is described in detail in §6.10.1.
 
 **Preconditions:**
 
@@ -671,6 +672,63 @@ Concretely, for a child branch `C` and parent branch `P`:
 **Idempotency:** If the new slug is identical to the current slug, the command succeeds silently with no changes.
 
 **Output:** "Task renamed: <old-id> > <new-id>" on success.
+
+#### 6.10.1 VCS mechanics of rename
+
+Renaming a task is more involved than it first appears because the task directory `.tt/task/<old-slug>-<hex>/` exists verbatim on **both** the parent branch tip and the task branch tip (and on every unmerged commit in the task's own range). This section explains why, and describes the algorithm the implementation uses to rename correctly across the entire commit graph.
+
+**Why the directory appears on both branches.** When `tt task create` creates a child task, it does the following (in order):
+
+1. Creates a commit on the **parent branch** that both creates `.tt/task/<old-slug>-<hex>/TASK.md` and registers the child in the parent's `subtask:` frontmatter. The parent bookmark advances to this commit.
+2. Forks the **child branch** from that same parent commit, so the child inherits the stub directory from the start.
+
+The stub directory therefore exists unchanged on both branch tips and on every commit in the child's unmerged range (commits that are ancestors of the child bookmark but not yet in the parent's ancestry). The rename must be consistent across all of these commits simultaneously.
+
+**Why a naive rename fails.** A naïve approach — rename the directory in the working copy, then rename the bookmark — fails in two ways:
+
+1. The parent branch's copy of the directory is never updated, so the parent tip still has `.tt/task/<old-slug>-<hex>/TASK.md`. Any subsequent rebase or merge between the task branch and the parent will produce path conflicts.
+2. jj manages the working copy. After performing the `mv` in the working copy, calling `jj new <task-branch>` causes jj to reset the working copy to the task branch's tree, silently discarding the rename.
+
+**Why rebasing the task branch onto the renamed parent produces conflicts.** Even if the parent branch is correctly updated first, jj's 3-way rebase produces conflicts on every commit in the task's unmerged range that modified any file under `.tt/task/<old-slug>-<hex>/`:
+
+- **base** (merge base — the parent commit before the rename): has `.tt/task/<old-slug>-<hex>/`
+- **ours** (the task branch commit): modified files under the old path
+- **theirs** (the updated parent): has `.tt/task/<new-slug>-<hex>/`, no `.tt/task/<old-slug>-<hex>/`
+
+Because "theirs" deleted the old directory relative to the base, and "ours" modified it, jj produces a `2-sided conflict including 1 deletion` on every affected file. Iterating newest-to-oldest compounds the problem: each edit triggers another auto-rebase of all descendants.
+
+**The correct algorithm.** The implementation uses the following four-phase approach:
+
+**Phase 0 — Pre-save.** Before any jj operation, capture the full content of every file under `.tt/task/<old-slug>-<hex>/` for every commit in the task's unmerged range (`::task-branch ~ ::parent-branch`), storing them keyed by change ID in a temporary directory. The `--at-operation` jj flag (pointing at the operation ID captured before any edits) is used to read file content from the pre-rename state. This is essential: once the parent rename fires and jj auto-rebases all descendants, conflict markers are injected into the affected files and `jj file show` can no longer return clean content.
+
+**Phase 1 — Edit the parent branch in place.** Use `jj edit <parent-branch>` to check out the parent branch tip directly, then:
+
+1. `mv .tt/task/<old-slug>-<hex>/ .tt/task/<new-slug>-<hex>/` — rename the entire directory tree on disk.
+2. Update the `subtask:` reference in the parent's own TASK.md from the old ID to the new ID.
+3. `jj commit` — jj auto-snapshots the `mv` before committing. Advance the parent bookmark to `@-` (the new commit).
+
+After the commit, jj's auto-rebase fires immediately: all descendant commits — including every commit in the task's unmerged range — are rebased onto the updated parent. Because "theirs" (the new parent) renamed the directory and the task-range commits modified files under the old path, every task-range commit that touched the directory acquires a conflict.
+
+**Phase 2 — Rename the bookmark.** `jj bookmark rename <old-id> <new-id>`. Change IDs are stable across rebases, so the bookmark can be renamed at any point; doing it here (before the sweep) allows Phase 3 to derive the range via `::new-id ~ ::parent`.
+
+**Phase 3 — Sweep oldest-to-newest.** Re-derive the unmerged range (using the new bookmark name; change IDs are stable). Iterate **oldest-to-newest**:
+
+1. `jj edit <change-id>` — check out this commit. (jj auto-snapshots and auto-rebases as we move through the range.)
+2. Write the pre-saved file content back to `.tt/task/<new-slug>-<hex>/` (creating directories as needed). This places the correct final content into the new path.
+3. `rm -rf .tt/task/<old-slug>-<hex>/` — remove the old directory, which may be present either as a plain directory (for commits that didn't touch the task directory) or as a conflict-marker directory (for commits that did).
+4. If a `TASK.md` root symlink exists and points into the old path, update it to point to the new path.
+
+The key insight is that the pre-saved content is the correct desired content for each commit: it is the file's state as it existed in that commit before the rename, which is exactly what the renamed commit should contain (just at the new path). Writing it back resolves the conflict without needing to parse conflict markers.
+
+The oldest-to-newest ordering is critical. When commit `C` is edited and its conflicts resolved, jj immediately auto-rebases all of `C`'s descendants. By the time we call `jj edit` on the next commit `D`, jj has already rebased `D` onto the fixed `C`. Processing in the reverse order would cause each fix to be immediately rebased away by the subsequent edit.
+
+**Why sub-task branches auto-resolve.** Sub-task branches (branches whose base is within the task's unmerged range) do not need a separate sweep. After Phase 3 fixes commit `C`, jj auto-rebases all of `C`'s descendants, including any sub-task commits. Those sub-task commits never directly modified files under `.tt/task/<old-slug>-<hex>/`, so their 3-way merge sees:
+
+- **base**: old `C` (has the old path)
+- **ours**: sub-task diff (did not touch the task directory)
+- **theirs**: new `C` (has the new path, no old path)
+
+Because "ours == base" (the sub-task commit left the task directory unchanged), jj cleanly takes "theirs" — the rename propagates to sub-task branches automatically.
 
 ### 6.11 Task move (`tt task move`)
 

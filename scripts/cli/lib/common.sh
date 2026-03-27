@@ -548,6 +548,84 @@ status_to_checkbox() {
 }
 
 # ---------------------------------------------------------------------------
+# Descendant task helpers
+# ---------------------------------------------------------------------------
+
+# Usage: collect_descendant_task_dirs REPO BRANCH TASK_ID TASK_PREFIX PROJECT_PREFIX
+#
+# Outputs one `.tt/task/<slug>` directory path per line for every task that
+# is a descendant of TASK_ID (direct children, grandchildren, etc.), read
+# from BRANCH.  Traversal follows `subtask:` frontmatter entries.
+#
+# Only task IDs whose prefix matches TASK_PREFIX or PROJECT_PREFIX are
+# followed; unknown entries are skipped silently.
+#
+# Does not output the task's own directory (the caller already handles that).
+collect_descendant_task_dirs() {
+  local repo="$1" branch="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
+
+  # BFS queue (bash array)
+  local -a queue=("$task_id")
+  local -a visited=("$task_id")
+
+  while [[ ${#queue[@]} -gt 0 ]]; do
+    local current="${queue[0]}"
+    queue=("${queue[@]:1}")      # shift
+
+    # Derive slug and read task file from branch
+    local suffix
+    if is_task_branch "$current" "$task_prefix"; then
+      suffix="${current#$task_prefix}"
+    elif is_project_branch "$current" "$project_prefix"; then
+      suffix="${current#$project_prefix}"
+    else
+      continue
+    fi
+
+    local tf
+    tf="$(task_file_path "$suffix")"
+    local content
+    content="$(jj -R "$repo" --ignore-working-copy \
+      file show -r "$branch" -- "$tf" 2>/dev/null)" || continue
+
+    # Extract all subtask IDs (any checkbox state)
+    while IFS= read -r subtask_id; do
+      [[ -z "$subtask_id" ]] && continue
+      # Skip if already visited (cycle guard)
+      local already=false
+      local v
+      for v in "${visited[@]}"; do
+        [[ "$v" == "$subtask_id" ]] && { already=true; break; }
+      done
+      "$already" && continue
+
+      visited+=("$subtask_id")
+
+      # Emit directory for this descendant
+      local sub_suffix
+      if is_task_branch "$subtask_id" "$task_prefix"; then
+        sub_suffix="${subtask_id#$task_prefix}"
+      elif is_project_branch "$subtask_id" "$project_prefix"; then
+        sub_suffix="${subtask_id#$project_prefix}"
+      else
+        continue
+      fi
+      task_dir_path "$sub_suffix"
+      printf '\n'
+
+      # Enqueue for further traversal
+      queue+=("$subtask_id")
+    done < <(printf '%s' "$content" | awk '
+      /^---$/ { n++; next }
+      n == 1 && /^subtask:/ {
+        sub(/^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]*/, "")
+        print
+      }
+    ')
+  done
+}
+
+# ---------------------------------------------------------------------------
 # Transaction management
 #
 # A "transaction" records the jj operation ID before and after a mutating tt

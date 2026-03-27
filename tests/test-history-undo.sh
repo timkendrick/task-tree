@@ -22,7 +22,7 @@
 set -euo pipefail
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-REAL_REPO="$(cd "$(dirname "$0")" && pwd)"
+REAL_REPO="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 TT="$REAL_REPO/scripts/cli/tt"
 
 # ── Temp dir for all test workspaces ─────────────────────────────────────────
