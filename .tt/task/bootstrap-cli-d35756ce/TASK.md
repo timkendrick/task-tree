@@ -60,7 +60,7 @@ subtask: [x] task/tt-task-publish-b55033e0
 subtask: [x] task/tt-workspace-root-bbc665ad
 subtask: [x] task/tt-history-undo-cf1594a5
 subtask: [ ] task/tt-task-reorder-d6909228
-subtask: [ ] task/tt-task-checkin-bookmark-2823aba1
+subtask: [x] task/tt-task-checkin-bookmark-2823aba1
 ---
 Implement shell script implementations of all `tt` CLI commands
 
