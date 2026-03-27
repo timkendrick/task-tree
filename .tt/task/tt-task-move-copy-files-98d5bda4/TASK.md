@@ -1,6 +1,6 @@
 ---
 title: "Move task directory in `tt task move`"
-status: TODO
+status: IN-PROGRESS
 created: 2026-03-26T08:37:39Z
 updated: 2026-03-26T08:37:39Z
 subtask: [ ] task/fix-incorrectly-moved-tasks-8ebb5f4f
