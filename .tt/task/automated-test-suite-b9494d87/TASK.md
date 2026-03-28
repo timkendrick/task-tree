@@ -1,6 +1,6 @@
 ---
 title: "Automated test suite"
-status: TODO
+status: IN-PROGRESS
 created: 2026-03-28T09:13:00Z
 updated: 2026-03-28T09:13:01Z
 ---
