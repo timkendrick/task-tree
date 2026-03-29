@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Options:
 #   --slug SLUG            New slug (required)
 #   --task TASK-ID         Task to rename (default: current task)
-#   --repo PATH            Repository root (default: walk up to find .jj)
+#   --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
 #   --workspace-dir PATH   Virtual project dir (for hooks)
 #
 
@@ -34,7 +34,7 @@ current slug. Errors if the new ID would conflict with an existing bookmark.
 Options:
   --slug SLUG            New slug (required)
   --task TASK-ID         Task to rename (default: current task)
-  --repo PATH            Repository root (default: walk up to find .jj)
+  --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
   --workspace-dir PATH   Virtual project dir
 
 Examples:
@@ -94,18 +94,7 @@ main() {
     exit 1
   fi
 
-  # Resolve repo root: walk up from current directory to find .jj
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository (no .jj directory found). Use --repo to specify."
-      exit 1
-    fi
-  fi
-
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local -a jj_opts=(-R "$repo")
 

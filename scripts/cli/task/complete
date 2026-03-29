@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   <task-id>            Task ID to complete. Default: current task.
 #   --worktree=<path>    Worktree to use when task has multiple worktrees.
 #   --force              Proceed even if not all subtasks are checked off.
-#   --repo PATH          Repository root (default: walk up from CWD to find .jj).
+#   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   --workspace-dir PATH Virtual project dir (for hooks).
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -29,7 +29,7 @@ Options:
   <task-id>             Task ID to complete (default: current task).
   --worktree=<path>     Worktree to use when task has multiple worktrees.
   --force               Proceed even if subtasks are not all complete.
-  --repo PATH           Repository root (default: walk up from CWD to find .jj).
+  --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
   --workspace-dir PATH  Virtual project dir (for hooks).
 
 EOF
@@ -65,17 +65,7 @@ main() {
     esac
   done
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"

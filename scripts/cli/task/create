@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --project              Create a parentless project task; mutually exclusive with --parent
 #   --target COMMIT-REV    (with --project) Fork project branch from this revision (default: current @)
 #   --label LABEL          Add a label (repeatable)
-#   --repo PATH            Repository root (default: walk up to find .jj)
+#   --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
 #   --dry-run              Show what would be done without making changes
 #   --force                Overwrite child branch if it already exists
 #   --propagate            After creation, propagate parent's new commit to sibling branches
@@ -48,7 +48,7 @@ Options:
   --project             Create a parentless project task; mutually exclusive with --parent
   --target COMMIT-REV   (with --project) Fork project branch from this revision (default: current @)
   --label LABEL         Add a label (repeatable)
-  --repo PATH           Repository root (default: walk up to find .jj)
+  --repo PATH           Repository root (overrides TT_REPO; default: walk up to find .jj)
   --dry-run             Show what would be done, do not execute
   --force               Overwrite child/project branch if it already exists
   --propagate           After creation, propagate parent's new commit to sibling branches
@@ -315,18 +315,7 @@ main() {
     exit 1
   fi
 
-  # Resolve repo root: walk up from current directory to find .jj
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository (no .jj directory found). Use --repo to specify."
-      exit 1
-    fi
-  fi
-
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local -a jj_opts=(-R "$repo")
 

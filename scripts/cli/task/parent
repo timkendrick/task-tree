@@ -22,7 +22,7 @@ Exits non-zero if no parent is found or if multiple parents are found.
 Options:
   <task-id>    Task branch name (default: current task).
   --project    Find the nearest ancestor project instead of immediate parent.
-  --repo PATH  Repository root (default: find .jj).
+  --repo PATH  Repository root (overrides TT_REPO; default: find .jj).
   -h, --help   Show this help.
 
 EOF
@@ -52,16 +52,7 @@ main() {
     esac
   done
 
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"

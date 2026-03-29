@@ -117,6 +117,40 @@ find_repo_root() {
   return 1
 }
 
+# Usage: repo=$(resolve_repo "$repo_flag_value")
+#
+# Resolves the repository root using the following priority order:
+#   1. $repo_flag_value — the value passed to --repo (if non-empty)
+#   2. $TT_REPO        — the TT_REPO environment variable (if set and non-empty)
+#   3. find_repo_root  — walk up from CWD to find a .jj directory
+#
+# Prints the resolved repo path to stdout.
+# Exits 1 with an error message if the path cannot be resolved or is not a jj repo.
+resolve_repo() {
+  local repo="${1:-}"
+
+  # Priority 1: explicit --repo flag (already in $repo if set)
+  if [[ -z "$repo" ]]; then
+    # Priority 2: TT_REPO environment variable
+    if [[ -n "${TT_REPO:-}" ]]; then
+      repo="$TT_REPO"
+    else
+      # Priority 3: walk up from CWD
+      if ! repo="$(find_repo_root)"; then
+        log "Error: No enclosing jj repository. Use --repo or set TT_REPO."
+        exit 1
+      fi
+    fi
+  fi
+
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  printf '%s' "$repo"
+}
+
 # Read task_prefix from .tt/config.toml; default "task/" if missing or unreadable.
 get_task_prefix() {
   local repo="$1"

@@ -202,7 +202,17 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt move` | `tt task move` |
 | `tt undo` | `tt history undo` |
 
-### 5.0 History
+### 5.0 Repository root resolution
+
+All `tt` commands that accept a `--repo PATH` option resolve the repository root using the following priority order:
+
+1. **`--repo PATH`** — the explicit flag value, if provided.
+2. **`TT_REPO`** — the value of the `TT_REPO` environment variable, if set and non-empty.
+3. **CWD walk** — walk up from the current working directory until a `.jj` directory is found.
+
+The command exits with an error if none of these resolves to a valid jj repository. `tt workspace init` is exempt — it always takes the repository path as a required positional argument.
+
+### 5.2 History
 
 - **`tt history undo [--force] [--repo PATH]`** — Undo the most recent mutating `tt` command by restoring the jj repository to the operation state before that command ran. Multiple invocations go further back in history. There is no `tt history redo`; instead, the outgoing jj operation ID is logged to stderr before undoing so the user can manually restore it with `jj op restore <operation-id>`.
 
@@ -213,7 +223,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
   See §6.12 for the full transaction history mechanism.
 
-### 5.1 Workspace
+### 5.3 Workspace
 
 - **`tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]`** — Initialize a task-tree project. Creates the virtual workspace directory, `.tt/config.toml` (with optional task prefix and project prefix), `.tt/.gitignore` (containing `/history` to prevent the transaction log from being tracked), an empty `.tt/history` transaction log, and a `HEAD` symlink that initially points to the repo and is later updated to the most recently checked-out task workspace (serving as a quick link to the current development context). Creates a `Create workspace` commit in the jj repository (`.tt/.gitignore` is committed; `.tt/history` is not). Requires a clean working directory; aborts if `.tt` exists in the repo root as a non-directory entry (use `--force` to remove it). With `--force`, also allows overwriting files in an already-populated virtual folder. See §9 step 1, §6.2 (HEAD symlink), and §6.12 (transaction history).
 
@@ -223,7 +233,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 
 - **`tt workspace worktree <task-id> [--repo PATH]`** — Output the worktree path for the given task or project ID to stdout. Accepts a full task or project ID. Falls back to the repository root if no dedicated worktree exists for the task. Exits with an error if the task ID is not found in the repository. Intended for use in shell command substitution.
 
-### 5.2 Task
+### 5.4 Task
 
 - **`tt task create [--parent <parent-task-id> | --project [--target <commit-rev>]] [--slug <slug>] [--title <title>] [--label <label> ...] [--propagate [--rebase | --merge] [--shallow] [--force]] [--checkout [--worktree[=<path>]]] [--force]`** — Create a new task or project. With `--parent` (default: current branch): creates a commit on the parent's branch that both creates the new task stub directory (with `status: TODO`, `created`, and `updated` timestamps in `TASK.md`) and registers `subtask: [ ] <task-id>` in the parent's task file; the child branch is forked as an empty commit from this updated parent tip. The `TASK.md` symlink is created at first checkout. With `--project` (mutually exclusive with `--parent`): creates a parentless project using the project prefix; the project branch forks from `--target` if specified, else the current revision. Prompts for title if not provided. Reads the task body/description from stdin (via pipe or redirect) if stdin is not a terminal; otherwise opens an editor for body input. **`--slug` is required when stdin is not a terminal (non-interactive mode); in interactive mode the user is prompted with a suggested default derived from the title.** With `--propagate`, propagates the parent's new commit to its existing descendant branches after creation (equivalent to running `tt task propagate --from <parent>` with any given flags); supports `--rebase | --merge` (strategy; default rebase), `--shallow` (direct children only), and `--force` (proceed despite conflicts). With `--checkout`, runs `tt task checkout` on the newly created task before exiting; `--worktree[=<path>]` (only valid with `--checkout`) passes through to checkout to use or create a dedicated jj workspace. With `--force` (outside of `--propagate`), overwrites if the child branch already exists. See §6.1.
 
