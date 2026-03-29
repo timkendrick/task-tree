@@ -2,7 +2,8 @@
 title: "Automated test suite"
 status: IN-PROGRESS
 created: 2026-03-28T09:13:00Z
-updated: 2026-03-28T09:13:01Z
+updated: 2026-03-29T16:12:46Z
+context: context/implementation-plan-11870fb4
 ---
 The bootstrap implementation is currently largely untested. Various ad-hoc test suites have been created for one-off commands (see @scripts/test/) and to investigate individual bugs (see @.agents/plans/scripts/) but there is no unified approach to automated testing.
 
