@@ -67,6 +67,7 @@ subtask: [ ] task/implicit-bookmark-check-4f5404cf
 subtask: [ ] task/rollback-exit-1-1578e612
 subtask: [ ] task/rename-anonymous-task-id-arguments-2509eae4
 subtask: [ ] task/automated-test-suite-b9494d87
+subtask: [ ] task/tt-repo-env-var-6546574d
 ---
 Implement shell script implementations of all `tt` CLI commands
 
