@@ -1,6 +1,6 @@
 ---
 title: "Support `TT_REPO` environment variable"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-29T08:01:10Z
 updated: 2026-03-29T08:31:39Z
 context: context/implementation-plan-36423ecf
