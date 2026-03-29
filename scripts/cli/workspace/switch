@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   <task-id>            Task or project ID (required)
 #   --worktree=<path>    Specify exact worktree path when multiple exist for the task.
 #   --force              Proceed even if the outgoing workspace has local changes.
-#   --repo PATH          Repository root (default: walk up from CWD to find .jj).
+#   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   --workspace-dir PATH Virtual project dir containing HEAD symlink.
 #                        Overrides workspace_dir in .tt/config.toml.
 
@@ -33,7 +33,7 @@ Arguments:
 Options:
   --worktree=<path>     Specify exact worktree path (required when multiple exist).
   --force               Proceed even if the outgoing workspace has local changes.
-  --repo PATH           Repository root (default: walk up from CWD to find .jj).
+  --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
   --workspace-dir PATH  Virtual project dir containing HEAD symlink.
                         Overrides workspace_dir in .tt/config.toml.
 
@@ -97,17 +97,7 @@ main() {
     usage
   fi
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"

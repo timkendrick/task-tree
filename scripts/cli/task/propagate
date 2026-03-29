@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --shallow         Update direct children only (do not recurse into grandchildren)
 #   --force           Proceed even if conflicts occur after rebase/merge
 #   --dry-run         Show what would be done without making changes
-#   --repo PATH       Repository root (default: walk up to find .jj)
+#   --repo PATH       Repository root (overrides TT_REPO; default: walk up to find .jj)
 
 readonly SCRIPT_NAME="${0##*/}"
 
@@ -42,7 +42,7 @@ Options:
   --shallow         Update direct children only (no recursive propagation)
   --force           Proceed even if conflicts occur
   --dry-run         Show planned changes without applying them
-  --repo PATH       Repository root (default: find .jj)
+  --repo PATH       Repository root (overrides TT_REPO; default: find .jj)
 
 Examples:
   ${SCRIPT_NAME}                                          # rebase all descendants of current task
@@ -343,17 +343,7 @@ main() {
     esac
   done
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"

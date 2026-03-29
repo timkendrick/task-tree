@@ -26,7 +26,7 @@ Options:
   <task-id>           Task to list context from (alternative to --task).
   --task TASK_ID      Task to list context from (default: current task).
                       --task takes precedence over the positional argument.
-  --repo PATH         Repository root (default: find .jj).
+  --repo PATH         Repository root (overrides TT_REPO; default: find .jj).
   -h, --help          Show this help.
 
 Examples:
@@ -66,17 +66,7 @@ main() {
   # --task takes precedence over positional argument
   local task_id="${task_id_arg:-$positional_task_id}"
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"

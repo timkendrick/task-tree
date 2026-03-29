@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Options:
 #   --force   Bypass safety checks (in-progress transactions, op ID mismatch,
 #             dirty working copy).
-#   --repo    Repository root (default: walk up from CWD to find .jj).
+#   --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #
 # The transaction history is stored in .tt/history as lines of:
 #   <before-op-id>:<after-op-id>
@@ -42,7 +42,7 @@ Options:
               - in-progress (stale) transaction lock
               - jj operation ID mismatch (repo modified outside tt)
               - dirty working copy
-  --repo    Repository root (default: walk up from CWD to find .jj).
+  --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
   tt history undo           # undo last tt command
@@ -59,7 +59,7 @@ to the operation state before that command ran.
 
 Options:
   --force   Bypass safety checks (stale lock, op ID mismatch, dirty WC).
-  --repo    Repository root (default: walk up from CWD to find .jj).
+  --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 EOF
   fi
@@ -95,17 +95,7 @@ main() {
     esac
   done
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local history_file="$repo/.tt/history"
 

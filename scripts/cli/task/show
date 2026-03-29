@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # Options:
 #   <task-id>          Task ID (branch name) to show. Default: current task.
-#   --repo PATH        Repository root (default: walk up from CWD to find .jj).
+#   --repo PATH        Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   --expand-context   Expand and show full content of context files.
 #   -h, --help         Show this help.
 
@@ -30,7 +30,7 @@ read from their own branch.
 
 Options:
   <task-id>          Task branch name to show (default: current task).
-  --repo PATH        Repository root (default: find .jj).
+  --repo PATH        Repository root (overrides TT_REPO; default: find .jj).
   --expand-context   Expand and show full content of context files.
   -h, --help         Show this help.
 
@@ -62,17 +62,7 @@ main() {
     esac
   done
 
-  # --- Resolve repo root ---
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"

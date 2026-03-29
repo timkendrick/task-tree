@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Options:
 #   --task TASK-ID         Task to move (default: current task)
 #   --parent TASK-ID       New parent task (required)
-#   --repo PATH            Repository root (default: walk up to find .jj)
+#   --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
 #   --workspace-dir PATH   Virtual project dir (for hooks/context)
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -32,7 +32,7 @@ new parent's bookmark tip.
 Options:
   --task TASK-ID         Task to move (default: current task)
   --parent TASK-ID       New parent task (required)
-  --repo PATH            Repository root (default: walk up to find .jj)
+  --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
   --workspace-dir PATH   Virtual project dir
   -h, --help             Show this help
 
@@ -88,17 +88,7 @@ main() {
     usage
   fi
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"

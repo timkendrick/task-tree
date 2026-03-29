@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # Options:
 #   -m, --message <msg>  Commit message (skips editor prompt).
-#   --repo PATH          Repository root (default: walk up from CWD to find .jj).
+#   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   --workspace-dir PATH Virtual project dir. Overrides workspace_dir in .tt/config.toml.
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -25,7 +25,7 @@ Record the current state of work by creating a named commit and advancing the ta
 
 Options:
   -m, --message <msg>   Commit message (skips editor prompt).
-  --repo PATH           Repository root (default: walk up from CWD to find .jj).
+  --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
   --workspace-dir PATH  Virtual project dir. Overrides workspace_dir in .tt/config.toml.
 
 Examples:
@@ -77,17 +77,7 @@ main() {
     esac
   done
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"
