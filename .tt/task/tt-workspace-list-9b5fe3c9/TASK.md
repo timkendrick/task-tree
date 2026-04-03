@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt workspace list` CLI command"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-03T20:10:17Z
 updated: 2026-04-03T20:10:17Z
 ---
