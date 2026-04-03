@@ -2,7 +2,8 @@
 title: "Implement `tt workspace list` CLI command"
 status: IN-PROGRESS
 created: 2026-04-03T20:10:17Z
-updated: 2026-04-03T20:10:17Z
+updated: 2026-04-03T20:54:46Z
+context: context/plan-cfa11814
 ---
 `tt` worktrees (`jj` workspaces) can be created using the `tt checkout --worktree` command.
 
