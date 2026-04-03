@@ -247,6 +247,14 @@ is_diff_empty() {
   [[ -z "$diff_output" ]]
 }
 
+# Create a plain jj commit in the current repo (does not advance any bookmarks).
+# Usage: jj_commit MESSAGE [REPO]
+jj_commit() {
+  local msg="$1"
+  local repo="${2:-$REPO}"
+  jj -R "$repo" commit -m "$msg" >/dev/null 2>&1
+}
+
 # Read a file from a specific revision.
 # Usage: read_file_at_rev REV PATH
 read_file_at_rev() {
