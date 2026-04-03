@@ -95,6 +95,17 @@ rewrite_task_file() {
   } > "$file"
 }
 
+# task_file_changed CURRENT_CONTENT PROPOSED_FILE
+# Returns 0 (true) if the proposed file differs from the current content
+# in any field other than 'updated:', 1 (false) if the edit would be a no-op.
+task_file_changed() {
+  local current_content="$1" proposed_file="$2"
+  local current_stripped proposed_stripped
+  current_stripped="$(printf '%s' "$current_content" | grep -v '^updated:')"
+  proposed_stripped="$(grep -v '^updated:' "$proposed_file")"
+  [[ "$current_stripped" != "$proposed_stripped" ]]
+}
+
 main() {
   local task_id_arg=''
   local new_title=''
@@ -298,16 +309,15 @@ main() {
       "$final_title" "$current_status" "$final_body" "$current_created"
     local current_file_content
     current_file_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || true
-    local new_file_content
-    new_file_content="$(cat "$tmpfile")"
-    rm -f "$tmpfile"
 
-    if [[ "$current_file_content" == "$new_file_content" ]]; then
+    if ! task_file_changed "$current_file_content" "$tmpfile"; then
+      rm -f "$tmpfile"
       log "No changes to task $bookmark."
       printf '%s\n' "$bookmark"
       unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
       return 0
     fi
+    rm -f "$tmpfile"
 
     # Begin transaction (records before-op for undo)
     tt_begin_transaction "$repo"
@@ -337,10 +347,8 @@ main() {
       "$final_title" "$current_status" "$final_body" "$current_created"
     local current_file_on_disk
     current_file_on_disk="$(cat "$target_worktree/$task_file" 2>/dev/null)" || true
-    local new_file_content
-    new_file_content="$(cat "$tmpfile")"
 
-    if [[ "$current_file_on_disk" == "$new_file_content" ]]; then
+    if ! task_file_changed "$current_file_on_disk" "$tmpfile"; then
       rm -f "$tmpfile"
       log "No changes to task $bookmark."
       printf '%s\n' "$bookmark"

@@ -999,3 +999,62 @@ Multiple tasks can be checked out simultaneously; the symlinked HEAD worktree fa
 4. **Order and emit:** Order and emit markdown in the same format as the full list, but only for this subset of tasks. Indentation and hierarchy are preserved for the focused slice.
 
 **Output:** Same markdown format as the full todo list. Useful for establishing context without pulling in the entire project tree.
+
+---
+
+## 10. Testing
+
+### 10.1 Test harness
+
+The test harness (`scripts/harness/harness.sh`) is a sourceable bash library providing:
+
+- **Workspace setup:** `setup_workspace` creates a fresh jj repository with `tt workspace init` in a temporary directory, providing an isolated environment for each test. The workspace includes `workspace_dir` in `.tt/config.toml` for worktree-related tests.
+- **Workflow helpers:** `create_project`, `create_task`, `create_task_under`, `checkout_task`, `checkpoint_task`, `complete_task`, `checkin_task`, `edit_file`, `append_file` — convenience wrappers for common workflow steps.
+- **VCS introspection:** `get_jj_op`, `get_wc_commit`, `get_bookmark_commit`, `get_commit_message`, `get_modified_files`, `is_wc_clean`, `bookmark_exists`, `is_vcs_ancestor`, `file_exists_at_rev`, and more.
+- **Generic assertions:** `assert_eq`, `assert_neq`, `assert_contains`, `assert_not_contains`, `assert_matches`, `assert_file_exists`, `assert_success`, `assert_failure`, `assert_output_empty`, `assert_line_count`, and more.
+- **VCS assertions:** `assert_bookmark_exists`, `assert_wc_clean`, `assert_commit_message`, `assert_file_on_branch`, `assert_no_conflicts`, `assert_is_ancestor`, and more.
+- **tt-specific assertions:** `assert_task_status`, `assert_task_title`, `assert_task_label`, `assert_subtask_entry`, `assert_context_entry`, `assert_current_task`, and more.
+- **Transaction assertions:** `assert_history_count`, `assert_history_integrity`, `assert_no_pending_transaction`.
+- **Integrity:** `assert_tt_workspace_integrity` — comprehensive structural check of all task files, subtask references, context references, and transaction state.
+- **Summary:** `suite_summary` prints pass/fail/skip counts and exits non-zero on failures.
+
+### 10.2 Test structure
+
+Test suites are co-located with their command implementations as `*.test.sh` files:
+
+```
+scripts/
+├── harness/
+│   └── harness.sh                    # Reusable test harness (sourced by each test file)
+├── test                              # Top-level runner
+└── cli/                              # Test suites for individual tt commands
+    └── task/
+        └── **/
+            └── *.test.sh
+```
+
+Each test file is a standalone bash script that sources the harness, defines `test_*` functions, and calls `run_tests "SUITE TITLE"` at the end to run them.
+
+When invoked via the top-level runner, test declarations are first collected by the runner and then invoked individually.
+
+### 10.3 Running tests
+
+```bash
+scripts/test                                         # run all test suites serially
+scripts/test    --parallel                           # run all suites and tests in parallel
+scripts/test    checkpoint                           # suite filter: suites matching "checkpoint"
+scripts/test    "context/"                           # suite filter: all context command suites
+scripts/test    --filter basic                       # test filter: tests whose label matches "basic"
+scripts/test    --filter 'partial|complete'          # test filter: ERE — matches either word
+scripts/test    --filter basic --filter force        # test filter: OR across multiple patterns
+scripts/test    task/checkout --filter non.existent  # combine suite and test filters
+bash scripts/cli/task/checkpoint.test.sh             # run a single suite directly
+```
+
+**Suite filters** (positional arguments) are substring-matched against the suite file path relative to `scripts/cli/`.
+
+**Test filters** (`--filter`) are ERE patterns matched against the full test label `"SUITE TITLE: test_function_name"`. Multiple `--filter` flags are OR-ed. Filtered-out tests are excluded from `[n/N]` numbering and summary totals.
+
+### 10.4 Test coverage
+
+Every command in the CLI has a dedicated test suite. Edge cases requiring interactive input (editor prompts) cannot be tested non-interactively but all commands accept `--message`/`--title`/`--slug` flags or stdin pipes as alternatives.
