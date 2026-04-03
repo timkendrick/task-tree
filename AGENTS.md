@@ -28,6 +28,8 @@ Use the `rapid-workflow` skill for all non-trivial changes.
 
 Use the `tt` skill for task management.
 
+Make sure to add test scenarios for all features and bugfixes, and to run any relevant test suites when making changes. See test harness instructions in `./DEVELOPER.md`.
+
 ## Version Control
 
 ### Self-hosted task management
