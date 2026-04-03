@@ -69,7 +69,7 @@ subtask: [ ] task/rename-anonymous-task-id-arguments-2509eae4
 subtask: [ ] task/automated-test-suite-b9494d87
 subtask: [x] task/tt-repo-env-var-6546574d
 subtask: [x] task/tt-task-create-parent-191ea092
-subtask: [ ] task/tt-task-checkpoint-squash-53d418c9
+subtask: [x] task/tt-task-checkpoint-squash-53d418c9
 ---
 Implement shell script implementations of all `tt` CLI commands
 

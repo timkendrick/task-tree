@@ -1,1 +1,1 @@
-.tt/task/tt-task-checkpoint-squash-53d418c9/TASK.md
+.tt/task/bootstrap-cli-d35756ce/TASK.md
