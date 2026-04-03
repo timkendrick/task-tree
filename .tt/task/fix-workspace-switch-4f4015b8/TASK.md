@@ -2,7 +2,8 @@
 title: "Fix `tt workspace switch` worktree detection"
 status: IN-PROGRESS
 created: 2026-04-03T18:10:51Z
-updated: 2026-04-03T18:10:53Z
+updated: 2026-04-03T18:14:19Z
+context: context/implementation-plan-28439bca
 ---
 `tt workspace switch <task-id>` fails with "No worktree found" even when a dedicated worktree exists for the task.
 
