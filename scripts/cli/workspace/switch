@@ -123,13 +123,15 @@ main() {
     workspace_dir="$(get_workspace_dir "$repo")" || true
   fi
 
-  # Find worktrees for this task via `jj workspace list`
-  # Output format: "<workspace-name>: <path> (at @)"  or similar; we look for paths
-  # whose working-copy bookmark matches task_id.
+  # Find worktrees for this task via `jj workspace list`.
+  # Use a template to emit "<name>: <root-path>" lines; the default output format
+  # contains commit metadata, not paths. Workspaces without a recorded path emit
+  # "<Error: Workspace has no recorded path: ...>" for the root — those are skipped.
   local workspace_list
-  workspace_list="$(jj "${jj_opts[@]}" workspace list --no-graph 2>/dev/null)" || true
+  workspace_list="$(jj "${jj_opts[@]}" workspace list \
+    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || true
 
-  # Parse workspace list: each line is "<name>: <path>"
+  # Parse workspace list: each line is "<name>: <absolute-path>"
   # Then check if that workspace's WC is on the task bookmark.
   local -a matching_worktrees=()
   while IFS= read -r line; do
@@ -137,6 +139,8 @@ main() {
     local wt_path
     wt_path="$(printf '%s' "$line" | sed 's/^[^:]*: //')"
     [[ -z "$wt_path" ]] && continue
+    # Skip workspaces without a recorded path (jj emits "<Error: ...>" for these)
+    [[ "$wt_path" == '<Error:'* ]] && continue
     # Check if this worktree's current bookmark matches task_id
     local wt_branch
     wt_branch="$(jj -R "$wt_path" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
