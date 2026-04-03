@@ -141,9 +141,11 @@ main() {
     [[ -z "$wt_path" ]] && continue
     # Skip workspaces without a recorded path (jj emits "<Error: ...>" for these)
     [[ "$wt_path" == '<Error:'* ]] && continue
-    # Check if this worktree's current bookmark matches task_id
+    # Check if this worktree's current bookmark matches task_id.
+    # --ignore-working-copy avoids snapshotting (and lock contention) since we
+    # only need to read the bookmark name.
     local wt_branch
-    wt_branch="$(jj -R "$wt_path" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
+    wt_branch="$(jj -R "$wt_path" --ignore-working-copy log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
       -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || continue
     wt_branch="${wt_branch%%,*}"
     if [[ "$wt_branch" == "$task_id" ]]; then
