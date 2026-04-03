@@ -1,1 +1,1 @@
-.tt/task/bootstrap-cli-d35756ce/TASK.md
+.tt/task/workspace-dir-symlink-791c24a9/TASK.md
