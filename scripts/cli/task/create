@@ -255,51 +255,6 @@ main() {
     esac
   done
 
-  if [[ -z "$title" ]]; then
-    if [[ -t 0 ]]; then
-      read -e -p "Enter a title: " title
-    fi
-    if [[ -z "$title" ]]; then
-      log "Error: Title is required (use --title or enter when prompted)"
-      usage
-    fi
-  fi
-
-  if [[ "$slug_explicit" == false ]]; then
-    local default_slug
-    default_slug="$(title_to_slug "$title")"
-    if [[ -z "$default_slug" ]]; then
-      log "Error: Could not generate slug from title: $title"
-      exit 1
-    fi
-    if [[ -t 0 ]]; then
-      local prompted_slug
-      read -e -p "Enter a task identifier (defaults to $default_slug): " prompted_slug
-      slug="${prompted_slug:-$default_slug}"
-    else
-      log "Error: --slug is required in non-interactive mode"
-      usage
-    fi
-  fi
-  if ! validate_slug "$slug"; then
-    exit 1
-  fi
-
-  # Acquire body text
-  local body
-  if [[ -t 0 ]]; then
-    # Interactive: open editor for body
-    local raw
-    raw="$(prompt_raw </dev/null)" || {
-      log "Error: Editor exited with non-zero status."
-      exit 1
-    }
-    body="$raw"
-  else
-    # Read from stdin (pipe or redirect)
-    body="$(cat)"
-  fi
-
   if [[ "$is_project" == true && -n "$parent" ]]; then
     log "Error: --project and --parent are mutually exclusive"
     exit 1
@@ -352,6 +307,55 @@ main() {
     else
       parent_rev="$(jj "${jj_opts[@]}" log -r '@' -n 1 --no-graph -T 'commit_id')"
     fi
+  fi
+
+  if [[ -n "$parent_bookmark" ]]; then
+    log "Creating task under parent: $parent_bookmark"
+  fi
+
+  if [[ -z "$title" ]]; then
+    if [[ -t 0 ]]; then
+      read -e -p "Enter a title: " title
+    fi
+    if [[ -z "$title" ]]; then
+      log "Error: Title is required (use --title or enter when prompted)"
+      usage
+    fi
+  fi
+
+  if [[ "$slug_explicit" == false ]]; then
+    local default_slug
+    default_slug="$(title_to_slug "$title")"
+    if [[ -z "$default_slug" ]]; then
+      log "Error: Could not generate slug from title: $title"
+      exit 1
+    fi
+    if [[ -t 0 ]]; then
+      local prompted_slug
+      read -e -p "Enter a task identifier (defaults to $default_slug): " prompted_slug
+      slug="${prompted_slug:-$default_slug}"
+    else
+      log "Error: --slug is required in non-interactive mode"
+      usage
+    fi
+  fi
+  if ! validate_slug "$slug"; then
+    exit 1
+  fi
+
+  # Acquire body text
+  local body
+  if [[ -t 0 ]]; then
+    # Interactive: open editor for body
+    local raw
+    raw="$(prompt_raw </dev/null)" || {
+      log "Error: Editor exited with non-zero status."
+      exit 1
+    }
+    body="$raw"
+  else
+    # Read from stdin (pipe or redirect)
+    body="$(cat)"
   fi
 
   # Generate task ID
