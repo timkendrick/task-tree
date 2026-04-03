@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task checkout — switch to a task or project branch.
 #
 # Usage:
-#   checkout <task-id> [--worktree[=<path>] [--switch]] [--force] [--repo PATH] [--workspace-dir PATH]
+#   checkout <task-id> [--worktree[=<path>] [--switch]] [--force] [--repo PATH]
 #
 # Options:
 #   <task-id>            Task or project ID (required)
@@ -19,14 +19,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #                        is used.
 #   --force              Proceed even if the target workspace has local changes.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
-#   --workspace-dir PATH Virtual project dir (for HEAD symlink and default worktree paths).
-#                        Overrides workspace_dir in .tt/config.toml.
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} <task-id> [--worktree[=<path>] [--switch]] [--force] [--repo PATH] [--workspace-dir PATH]
+Usage: ${SCRIPT_NAME} <task-id> [--worktree[=<path>] [--switch]] [--force] [--repo PATH]
 
 Switch to the given task or project branch.
 
@@ -35,14 +33,13 @@ Arguments:
 
 Options:
   --worktree[=<path>]  Use or create a dedicated jj workspace for this task.
-                        If no path given, defaults to <workspace-dir>/<task-id>.
+                        If no path given, defaults to <workspace-dir>/<task-id>
+                        (resolved from the .tt/workspace symlink).
   --switch              (only with --worktree) Also update the HEAD symlink to the
                         new worktree. Without this flag, HEAD is not updated when
                         --worktree is used.
   --force               Proceed even if the target workspace has local changes.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
-  --workspace-dir PATH  Virtual project dir (for HEAD symlink and default worktree paths).
-                        Overrides workspace_dir in .tt/config.toml.
 
 Examples:
   ${SCRIPT_NAME} task/foo-abc12345
@@ -62,7 +59,6 @@ main() {
   local switch_flag=false
   local force=false
   local repo=''
-  local workspace_dir=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -86,11 +82,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"
-        shift 2
-        ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"
         shift 2
         ;;
       -h|--help)
@@ -166,10 +157,9 @@ main() {
     needs_begin=true
   fi
 
-  # Resolve workspace_dir from flag, then config/convention
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   # Resolve current worktree and bookmark for hook env vars
   local current_worktree previous_task_id previous_task_branch
@@ -199,8 +189,8 @@ main() {
       else
         # No existing workspace found; derive conventional path
         if [[ -z "$workspace_dir" ]]; then
-          log "Error: --worktree requires either --workspace-dir or an explicit path (--worktree=<path>)"
-          log "  Set workspace_dir in .tt/config.toml or pass --workspace-dir."
+          log "Error: --worktree requires a workspace dir or an explicit path (--worktree=<path>)"
+          log "  Run 'tt workspace init' to create the .tt/workspace symlink."
           exit 1
         fi
         worktree_path="${workspace_dir}/${task_id}"
@@ -242,7 +232,14 @@ main() {
   # Perform the checkout
   if [[ "$new_worktree" == true ]]; then
     log "Creating workspace: $target_worktree"
-    jj "${jj_opts[@]}" workspace add -r "$task_id" "$target_worktree"
+    jj "${jj_opts[@]}" workspace add --name "$task_id" -r "$task_id" "$target_worktree"
+    # Plant .tt/workspace symlink in the new worktree (copied from repo's symlink)
+    local src_workspace="$repo/.tt/workspace"
+    if [[ -L "$src_workspace" ]]; then
+      local wt_tt_dir="$target_worktree/.tt"
+      mkdir -p "$wt_tt_dir"
+      ln -snf "$(readlink "$src_workspace")" "$wt_tt_dir/workspace"
+    fi
   elif [[ "$worktree_flag" == true ]]; then
     # Existing workspace: move its WC to a new commit on top of the task bookmark
     jj -R "$target_worktree" new "$task_id"

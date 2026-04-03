@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Usage:
 #   checkin [<task-id>] [--context <markdown>] [--complete] [--rebase | --merge]
 #           [--force] [--delete]
-#           [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
+#           [--worktree=<path>] [--repo PATH]
 #           [--propagate] [--propagate-rebase | --propagate-merge]
 #           [--propagate-shallow] [--propagate-force] [--propagate-dry-run]
 #           [--propagate-to <child-id>]
@@ -25,7 +25,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --delete                Remove child task file and subtask entry (requires DONE).
 #   --worktree=<path>       Worktree to use when task has multiple worktrees.
 #   --repo PATH             Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
-#   --workspace-dir PATH    Virtual project dir (for HEAD symlink and workspace paths).
 #   --propagate             Run `tt task propagate --from <parent>` after checkin.
 #   --propagate-rebase      Propagate strategy: rebase (default).
 #   --propagate-merge       Propagate strategy: merge.
@@ -53,7 +52,6 @@ Options:
   --delete                  Remove child task file (requires DONE status).
   --worktree=<path>         Worktree to use when task has multiple worktrees.
   --repo PATH               Repository root (overrides TT_REPO; default: find .jj).
-  --workspace-dir PATH      Virtual project dir.
   --propagate               Propagate parent tip to siblings after checkin.
   --propagate-rebase        Propagate strategy: rebase (default).
   --propagate-merge         Propagate strategy: merge.
@@ -76,7 +74,6 @@ main() {
   local worktree_arg=''
   local task_id_arg=''
   local repo=''
-  local workspace_dir=''
   local do_propagate=false
   local propagate_strategy=''
   local propagate_shallow=false
@@ -102,9 +99,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"; shift 2 ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"; shift 2 ;;
       --propagate)       do_propagate=true; shift ;;
       --propagate-rebase)
         [[ -n "$propagate_strategy" && "$propagate_strategy" != rebase ]] && \
@@ -136,9 +130,9 @@ main() {
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   local current_worktree
   current_worktree="$(resolve_current_worktree "$repo")"
@@ -216,7 +210,6 @@ main() {
     if [[ "$status_check" != "DONE" ]]; then
       log "Running complete for $child_bookmark..."
       "$SCRIPT_DIR/complete" --repo "$repo" \
-        ${workspace_dir:+--workspace-dir "$workspace_dir"} \
         ${task_id_arg:+"$task_id_arg"} \
         ${worktree_arg:+--worktree="$worktree_arg"} \
         ${force:+--force}
@@ -482,7 +475,6 @@ main() {
     log "Running delete for $task_id..."
     "$SCRIPT_DIR/delete" "$task_id" --force \
       --repo "$repo" \
-      ${workspace_dir:+--workspace-dir "$workspace_dir"} \
       ${worktree_arg:+--worktree="$worktree_arg"}
   fi
 

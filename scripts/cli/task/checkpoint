@@ -8,19 +8,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task checkpoint — record current state and advance the task bookmark.
 #
 # Usage:
-#   checkpoint [-m <message>] [--squash] [--repo PATH] [--workspace-dir PATH]
+#   checkpoint [-m <message>] [--squash] [--repo PATH]
 #
 # Options:
 #   -m, --message <msg>  Commit message (skips editor prompt).
 #   --squash             Squash all commits since the last bookmark into a single checkpoint commit.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
-#   --workspace-dir PATH Virtual project dir. Overrides workspace_dir in .tt/config.toml.
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [-m <message>] [--squash] [--repo PATH] [--workspace-dir PATH]
+Usage: ${SCRIPT_NAME} [-m <message>] [--squash] [--repo PATH]
 
 Record the current state of work by creating a named commit and advancing the task bookmark.
 
@@ -28,7 +27,6 @@ Options:
   -m, --message <msg>   Commit message (skips editor prompt).
   --squash              Squash all commits since the last bookmark into a single checkpoint commit.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
-  --workspace-dir PATH  Virtual project dir. Overrides workspace_dir in .tt/config.toml.
 
 Examples:
   ${SCRIPT_NAME} -m "add foo"
@@ -44,7 +42,6 @@ main() {
   local message=''
   local squash=false
   local repo=''
-  local workspace_dir=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -66,11 +63,6 @@ main() {
         squash=true
         shift
         ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"
-        shift 2
-        ;;
       -h|--help)
         usage
         ;;
@@ -91,10 +83,9 @@ main() {
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  # Resolve workspace_dir from flag, then config
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   # Resolve current branch
   local resolve_output current_rev task_file bookmark

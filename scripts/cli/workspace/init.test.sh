@@ -29,6 +29,9 @@ test_workspace_init__basic_initialization() {
 
   gitignore="$(cat "$repo/.tt/.gitignore")"
   assert_contains "gitignore has /history" "$gitignore" "/history"
+  assert_contains "gitignore has /workspace" "$gitignore" "/workspace"
+
+  assert_symlink ".tt/workspace symlink" "$repo/.tt/workspace" "$virtual"
 
   assert_file_exists "virtual dir exists" "$virtual"
   assert_symlink "HEAD symlink" "$virtual/HEAD" "$repo"

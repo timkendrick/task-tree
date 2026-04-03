@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # Usage:
 #   delete [<task-id>] [--force]
-#          [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
+#          [--worktree=<path>] [--repo PATH]
 #
 # Removes the subtask: entry from the parent task file and removes the child
 # task file (and all descendant task files) from the parent branch, creating
@@ -20,13 +20,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --force              Skip DONE status check and clean WC check.
 #   --worktree=<path>    Explicit parent workspace path (for disambiguation).
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
-#   --workspace-dir PATH Virtual project dir (for hooks and workspace paths).
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [--force] [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
+Usage: ${SCRIPT_NAME} [<task-id>] [--force] [--worktree=<path>] [--repo PATH]
 
 Remove a task from its parent branch.
 
@@ -37,7 +36,6 @@ Options:
   --force               Skip DONE and clean WC checks.
   --worktree=<path>     Explicit parent workspace path.
   --repo PATH           Repository root (overrides TT_REPO; default: find .jj).
-  --workspace-dir PATH  Virtual project dir.
   -h, --help            Show this help.
 
 EOF
@@ -135,7 +133,6 @@ main() {
   local force=false
   local worktree_arg=''
   local repo=''
-  local workspace_dir=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -144,9 +141,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"; shift 2 ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"; shift 2 ;;
       -h|--help) usage ;;
       -*)
         log "Error: Unknown option: $1"; usage ;;
@@ -166,9 +160,9 @@ main() {
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   # Resolve task_id: explicit arg or current branch
   local task_id task_file task_slug

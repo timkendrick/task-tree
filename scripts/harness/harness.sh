@@ -85,14 +85,7 @@ setup_workspace() {
   jj -R "$REPO" bookmark set main >/dev/null 2>&1
 
   "$TT" workspace init "$REPO" "$VIRTUAL" >/dev/null 2>&1
-
-  # Append workspace_dir to config.toml so get_workspace_dir() works.
-  printf '\n# Virtual project directory\nworkspace_dir = "%s"\n' "$VIRTUAL" \
-    >> "$REPO/.tt/config.toml"
-
-  # Commit the config update so it's tracked
-  jj -R "$REPO" commit -m "Configure workspace_dir" >/dev/null 2>&1
-  jj -R "$REPO" bookmark set main >/dev/null 2>&1
+  # workspace init creates .tt/workspace symlink automatically; no further setup needed.
 
   # Export so run_tt forwards it as --repo to all tt commands
   export TT_REPO="$REPO"

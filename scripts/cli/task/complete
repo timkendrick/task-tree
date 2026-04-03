@@ -8,20 +8,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task complete — Mark the current task (or a given task) as DONE.
 #
 # Usage:
-#   complete [<task-id>] [--worktree=<path>] [--force] [--repo PATH] [--workspace-dir PATH]
+#   complete [<task-id>] [--worktree=<path>] [--force] [--repo PATH]
 #
 # Options:
 #   <task-id>            Task ID to complete. Default: current task.
 #   --worktree=<path>    Worktree to use when task has multiple worktrees.
 #   --force              Proceed even if not all subtasks are checked off.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
-#   --workspace-dir PATH Virtual project dir (for hooks).
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [--worktree=<path>] [--force] [--repo PATH] [--workspace-dir PATH]
+Usage: ${SCRIPT_NAME} [<task-id>] [--worktree=<path>] [--force] [--repo PATH]
 
 Mark the current task (or a given task) as DONE.
 
@@ -30,7 +29,6 @@ Options:
   --worktree=<path>     Worktree to use when task has multiple worktrees.
   --force               Proceed even if subtasks are not all complete.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
-  --workspace-dir PATH  Virtual project dir (for hooks).
 
 EOF
   exit 1
@@ -39,7 +37,6 @@ EOF
 main() {
   local force=false
   local repo=''
-  local workspace_dir=''
   local task_id_arg=''
   local worktree_arg=''
 
@@ -50,9 +47,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"; shift 2 ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"; shift 2 ;;
       -h|--help) usage ;;
       -*)
         log "Error: Unknown option: $1"; usage ;;
@@ -71,9 +65,9 @@ main() {
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   local bookmark task_file
 

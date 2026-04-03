@@ -8,20 +8,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Rename a task's slug (human-readable part) while preserving the hex suffix.
 #
 # Usage:
-#   rename --slug <new-slug> [--task <task-id>] [--repo PATH] [--workspace-dir PATH]
+#   rename --slug <new-slug> [--task <task-id>] [--repo PATH]
 #
 # Options:
 #   --slug SLUG            New slug (required)
 #   --task TASK-ID         Task to rename (default: current task)
 #   --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
-#   --workspace-dir PATH   Virtual project dir (for hooks)
 #
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} --slug <new-slug> [--task <task-id>] [--repo PATH] [--workspace-dir PATH]
+Usage: ${SCRIPT_NAME} --slug <new-slug> [--task <task-id>] [--repo PATH]
 
 Rename a task's slug (the human-readable part of the task ID), preserving the hex suffix.
 For example: task/old-name-abc123 → task/new-name-abc123.
@@ -35,7 +34,6 @@ Options:
   --slug SLUG            New slug (required)
   --task TASK-ID         Task to rename (default: current task)
   --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
-  --workspace-dir PATH   Virtual project dir
 
 Examples:
   ${SCRIPT_NAME} --slug new-name
@@ -49,7 +47,6 @@ main() {
   local slug=''
   local task_id=''
   local repo=''
-  local workspace_dir=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -66,11 +63,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"
-        shift 2
-        ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"
         shift 2
         ;;
       -h|--help)
