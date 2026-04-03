@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Usage:
 #   checkin [<task-id>] [--context <markdown>] [--complete] [--rebase | --merge]
 #           [--force] [--delete]
-#           [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
+#           [--worktree=<path>] [--repo PATH]
 #           [--propagate] [--propagate-rebase | --propagate-merge]
 #           [--propagate-shallow] [--propagate-force] [--propagate-dry-run]
 #           [--propagate-to <child-id>]
@@ -24,8 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --force                 Proceed even if conflicts occur.
 #   --delete                Remove child task file and subtask entry (requires DONE).
 #   --worktree=<path>       Worktree to use when task has multiple worktrees.
-#   --repo PATH             Repository root (default: walk up from CWD to find .jj).
-#   --workspace-dir PATH    Virtual project dir (for HEAD symlink and workspace paths).
+#   --repo PATH             Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   --propagate             Run `tt task propagate --from <parent>` after checkin.
 #   --propagate-rebase      Propagate strategy: rebase (default).
 #   --propagate-merge       Propagate strategy: merge.
@@ -52,8 +51,7 @@ Options:
   --force                   Proceed despite conflicts.
   --delete                  Remove child task file (requires DONE status).
   --worktree=<path>         Worktree to use when task has multiple worktrees.
-  --repo PATH               Repository root (default: find .jj).
-  --workspace-dir PATH      Virtual project dir.
+  --repo PATH               Repository root (overrides TT_REPO; default: find .jj).
   --propagate               Propagate parent tip to siblings after checkin.
   --propagate-rebase        Propagate strategy: rebase (default).
   --propagate-merge         Propagate strategy: merge.
@@ -76,7 +74,6 @@ main() {
   local worktree_arg=''
   local task_id_arg=''
   local repo=''
-  local workspace_dir=''
   local do_propagate=false
   local propagate_strategy=''
   local propagate_shallow=false
@@ -102,9 +99,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"; shift 2 ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"; shift 2 ;;
       --propagate)       do_propagate=true; shift ;;
       --propagate-rebase)
         [[ -n "$propagate_strategy" && "$propagate_strategy" != rebase ]] && \
@@ -130,25 +124,15 @@ main() {
     esac
   done
 
-  # --- Resolve repo root ---
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   local current_worktree
   current_worktree="$(resolve_current_worktree "$repo")"
@@ -206,6 +190,17 @@ main() {
     exit 1
   fi
 
+  # --- Bookmark up-to-date check (implicit current branch only) ---
+  # Skip when <task-id> was passed explicitly (user knowingly bypasses the check).
+  if [[ -z "$task_id_arg" ]]; then
+    assert_bookmark_up_to_date "$child_worktree" "$child_bookmark"
+  fi
+
+  # Begin transaction early so that --complete and --propagate sub-commands
+  # are nested within this transaction (their tt_begin_transaction calls
+  # become no-ops, keeping a single history entry for the whole checkin).
+  tt_begin_transaction "$repo"
+
   # --- Optional: run complete first ---
   if [[ "$do_complete" == true ]]; then
     local task_content_check
@@ -215,7 +210,6 @@ main() {
     if [[ "$status_check" != "DONE" ]]; then
       log "Running complete for $child_bookmark..."
       "$SCRIPT_DIR/complete" --repo "$repo" \
-        ${workspace_dir:+--workspace-dir "$workspace_dir"} \
         ${task_id_arg:+"$task_id_arg"} \
         ${worktree_arg:+--worktree="$worktree_arg"} \
         ${force:+--force}
@@ -278,15 +272,33 @@ main() {
   diff_output="$(jj -R "$repo" diff \
     -r "roots(::${child_bookmark} ~ ::${parent_bookmark})..${child_bookmark}" \
     --name-only -- '.tt/task/' 2>/dev/null)" || true
+
   if [[ -n "$diff_output" ]]; then
+    # Build the set of allowed task directories: own dir + all descendants.
+    local task_dir
+    task_dir="$(task_dir_path "$child_slug")"
+
+    local -a allowed_dirs=("$task_dir")
+    local descendant_dirs
+    descendant_dirs="$(collect_descendant_task_dirs \
+      "$repo" "$child_bookmark" "$child_bookmark" "$task_prefix" "$project_prefix")" || true
+    while IFS= read -r d; do
+      [[ -n "$d" ]] && allowed_dirs+=("$d")
+    done <<< "$descendant_dirs"
+
     while IFS= read -r changed_path; do
       [[ -z "$changed_path" ]] && continue
-      # Allow changes within the task's own directory
-      local task_dir
-      task_dir="$(task_dir_path "$child_slug")"
-      if [[ "$changed_path" != "$task_file" && "$changed_path" != "$task_dir"/* ]]; then
+      local allowed=false
+      local allowed_dir
+      for allowed_dir in "${allowed_dirs[@]}"; do
+        if [[ "$changed_path" == "$allowed_dir"/* || "$changed_path" == "$allowed_dir/TASK.md" ]]; then
+          allowed=true
+          break
+        fi
+      done
+      if [[ "$allowed" != true ]]; then
         log "Error: Unmerged range touches unexpected task file: $changed_path"
-        log "  Only files under '$task_dir/' may differ from parent in the unmerged range."
+        log "  Only files under descendant task directories of '$child_bookmark' may differ from parent."
         exit 1
       fi
     done <<< "$diff_output"
@@ -332,7 +344,6 @@ main() {
   local parent_task_content
   parent_task_content="$(jj -R "$target_ws" file show -r "$parent_bookmark" -- "$parent_task_file" 2>/dev/null)" || {
     log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
-    jj -R "$target_ws" op undo
     exit 1
   }
 
@@ -407,10 +418,9 @@ main() {
   jj -R "$target_ws" new "$parent_bookmark" "$handoff_commit"
 
   # Check for conflicts (unless --force)
+  # On conflict, exit 1 triggers the ERR trap → tt_rollback_transaction →
+  # jj op restore, which cleanly reverts all jj operations in this transaction.
   if [[ "$force" != true ]] && has_conflicts "$target_ws" "@"; then
-    jj -R "$target_ws" op undo  # undo jj new (merge)
-    jj -R "$target_ws" op undo  # undo jj commit (handoff)
-    jj -R "$target_ws" edit "$original_rev"
     log "Error: Merge conflicts detected. Resolve conflicts or use --force."
     exit 1
   fi
@@ -465,7 +475,6 @@ main() {
     log "Running delete for $task_id..."
     "$SCRIPT_DIR/delete" "$task_id" --force \
       --repo "$repo" \
-      ${workspace_dir:+--workspace-dir "$workspace_dir"} \
       ${worktree_arg:+--worktree="$worktree_arg"}
   fi
 
@@ -485,6 +494,9 @@ main() {
     done
     "$SCRIPT_DIR/propagate" "${propagate_args[@]}"
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 }
 
 main "$@"

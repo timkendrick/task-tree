@@ -1,0 +1,372 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# scripts/test — Run all tt test suites
+#
+# Discovers all *.test.sh files under scripts/cli/ and runs each one.
+# With --parallel, all tests across all suites are fed into a flat worker pool
+# capped at TT_TEST_CONCURRENCY (default 4) concurrent processes;
+# a single summary is printed at the end.
+# Exits with non-zero if any test fails.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+log() { printf '%s\n' "$*" >&2; }
+
+if [[ -z "${NO_COLOR:-}" && -t 2 ]]; then
+  _BOLD='\033[1m'
+  _RESET='\033[0m'
+else
+  _BOLD=''
+  _RESET=''
+fi
+
+usage() {
+  cat <<EOF
+Usage: ${0##*/} [--help] [--parallel] [--filter <pattern>]... [suite-filter...]
+
+Run tt test suites.
+
+Arguments:
+  suite-filter  Optional substring matched against the test file path
+                (relative to scripts/cli/) to select which suites to run.
+                Multiple values are OR-ed; omit to run all suites.
+                Examples: "task/checkpoint" "workspace/"
+
+Options:
+  --filter <pattern>
+                ERE pattern matched against the full test label
+                ("SUITE TITLE: test_function_name"). A test runs if it
+                matches ANY supplied --filter pattern. Repeatable.
+                When omitted all tests in the selected suites are run.
+                Examples: --filter checkin --filter 'partial|complete'
+  --parallel    Run suites and their individual tests concurrently.
+  --help        Show this help message.
+
+EOF
+  exit 0
+}
+
+main() {
+  local -a suite_filters=()
+  local -a test_filters=()
+  local mode="series"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)   usage ;;
+      --parallel)  mode="parallel"; shift ;;
+      --filter)    [[ $# -lt 2 ]] && { log "--filter requires an argument"; exit 1; };
+                   test_filters+=("$2"); shift 2 ;;
+      *)           suite_filters+=("$1"); shift ;;
+    esac
+  done
+
+  local -a test_files=()
+  while IFS= read -r f; do
+    if [[ ${#suite_filters[@]} -eq 0 ]]; then
+      test_files+=("$f")
+    else
+      local rel="${f#"$SCRIPT_DIR"/cli/}"
+      for pattern in "${suite_filters[@]}"; do
+        if [[ "$rel" == *"$pattern"* ]]; then
+          test_files+=("$f")
+          break
+        fi
+      done
+    fi
+  done < <(find "$SCRIPT_DIR/cli" -name '*.test.sh' -type f | sort)
+
+  if [[ ${#test_files[@]} -eq 0 ]]; then
+    log "No test files found."
+    exit 1
+  fi
+
+  local suite_count=${#test_files[@]}
+  log "Running $suite_count test suite(s) in $mode..."
+
+  # Export filters so both the register pass and real run inherit them.
+  if [[ ${#test_filters[@]} -gt 0 ]]; then
+    _export_filters "${test_filters[@]}"
+  else
+    _export_filters
+  fi
+
+  if [[ "$mode" == "parallel" ]]; then
+    _run_parallel "${test_files[@]}"
+  else
+    _run_series "${test_files[@]}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+# _export_filters FILTER...
+# Export _TT_TEST_FILTER_0, _TT_TEST_FILTER_1, ... into the current shell so
+# they are inherited by child processes. Unsets any previously exported indices
+# beyond the current list length.
+_export_filters() {
+  local i=0
+  for pattern in "$@"; do
+    export "_TT_TEST_FILTER_${i}=${pattern}"
+    (( i++ )) || true
+  done
+  # Unset any stale higher-indexed vars from a previous call.
+  while true; do
+    local var="_TT_TEST_FILTER_${i}"
+    [[ -z "${!var+set}" ]] && break
+    unset "$var"
+    (( i++ )) || true
+  done
+}
+
+# Print the final summary from a shared results dir and exit with appropriate
+# status. Delegates to the harness helper via a minimal inline sourcing trick.
+_print_summary() {
+  local results_dir="$1"
+  local start_ms="$2"
+  local pass=0 fail=0 skip=0
+  local elapsed
+
+  if [[ -f "$results_dir/results" ]]; then
+    while IFS= read -r rec; do
+      case "$rec" in
+        p) ((pass++)) || true ;;
+        f) ((fail++)) || true ;;
+        s) ((skip++)) || true ;;
+      esac
+    done < "$results_dir/results"
+  fi
+
+  local now
+  if command -v python3 >/dev/null 2>&1; then
+    now="$(python3 -c 'import time; print(int(time.time()*1000))')"
+  else
+    now="$(( $(date +%s) * 1000 ))"
+  fi
+  elapsed=$(( now - start_ms ))
+
+  printf '\n%b══════════════════════════════════════════════════════════════%b\n' "$_BOLD" "$_RESET" >&2
+  printf '%b  Results: %d passed, %d failed, %d skipped  (%d.%03ds)%b\n' \
+    "$_BOLD" "$pass" "$fail" "$skip" \
+    "$(( elapsed / 1000 ))" "$(( elapsed % 1000 ))" "$_RESET" >&2
+  if [[ -f "$results_dir/failures" && -s "$results_dir/failures" ]]; then
+    printf '\n\033[0;31m  Failures:\033[0m\n' >&2
+    while IFS= read -r f; do
+      printf '\033[0;31m    • %s\033[0m\n' "$f" >&2
+    done < "$results_dir/failures"
+  fi
+  printf '%b══════════════════════════════════════════════════════════════%b\n' "$_BOLD" "$_RESET" >&2
+
+  [[ $fail -eq 0 ]]
+}
+
+# ---------------------------------------------------------------------------
+# Series runner
+# ---------------------------------------------------------------------------
+
+_run_series() {
+  local -a test_files=("$@")
+  local results_dir
+  results_dir="$(mktemp -d)"
+  trap "rm -rf '$results_dir'" RETURN
+
+  local start_ms
+  if command -v python3 >/dev/null 2>&1; then
+    start_ms="$(python3 -c 'import time; print(int(time.time()*1000))')"
+  else
+    start_ms="$(( $(date +%s) * 1000 ))"
+  fi
+
+  # Registration pass: get filtered test names per suite for global [n/N].
+  local -a suite_counts=()
+  local global_total=0
+  local i=0
+  for test_file in "${test_files[@]}"; do
+    _TT_TEST_REGISTER=1 \
+    _TT_TEST_SUITE_INDEX="$i" \
+    _TT_TEST_RESULTS_DIR="$results_dir" \
+    bash "$test_file" 2>/dev/null
+    local count=0
+    [[ -f "$results_dir/tests/$i" ]] && count="$(grep -c . "$results_dir/tests/$i" 2>/dev/null || true)"
+    suite_counts+=("$count")
+    (( global_total += count )) || true
+    (( i++ )) || true
+  done
+
+  log "Running $global_total test(s)..." >&2
+
+  local failed=0 offset=0
+  i=0
+  for test_file in "${test_files[@]}"; do
+    if ! _TT_TEST_RESULTS_DIR="$results_dir" \
+       _TT_TEST_OFFSET="$offset" \
+       _TT_TEST_TOTAL="$global_total" \
+       bash "$test_file"; then
+      ((failed++)) || true
+    fi
+    (( offset += suite_counts[i] )) || true
+    (( i++ )) || true
+  done
+
+  _print_summary "$results_dir" "$start_ms" || failed=1
+
+  if [[ $failed -gt 0 ]]; then
+    exit 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Parallel runner
+# ---------------------------------------------------------------------------
+
+_run_parallel() {
+  local -a test_files=("$@")
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  trap "rm -rf '$tmp_dir'" RETURN
+
+  local results_dir="$tmp_dir/results"
+  mkdir -p "$results_dir"
+
+  local start_ms
+  if command -v python3 >/dev/null 2>&1; then
+    start_ms="$(python3 -c 'import time; print(int(time.time()*1000))')"
+  else
+    start_ms="$(( $(date +%s) * 1000 ))"
+  fi
+
+  # ---------------------------------------------------------------------------
+  # Registration pass: collect per-suite test names.
+  # Run registrations in parallel to keep startup cost low.
+  # ---------------------------------------------------------------------------
+  local -a reg_pids=()
+  local i=0
+  for test_file in "${test_files[@]}"; do
+    (
+      _TT_TEST_REGISTER=1 \
+      _TT_TEST_SUITE_INDEX="$i" \
+      _TT_TEST_RESULTS_DIR="$results_dir" \
+      bash "$test_file" 2>/dev/null
+    ) &
+    reg_pids+=("$!")
+    (( i++ )) || true
+  done
+  for pid in "${reg_pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+
+  # ---------------------------------------------------------------------------
+  # Build flat list of (suite_file, fn_name, 1-based global index) triples.
+  # ---------------------------------------------------------------------------
+  local -a flat_suite_files=()
+  local -a flat_fns=()
+  local -a flat_idxs=()
+  local global_total=0
+
+  i=0
+  for test_file in "${test_files[@]}"; do
+    local names_file="$results_dir/tests/$i"
+    if [[ -f "$names_file" ]]; then
+      while IFS= read -r fn; do
+        [[ -z "$fn" ]] && continue
+        flat_suite_files+=("$test_file")
+        flat_fns+=("$fn")
+        (( global_total++ )) || true
+        flat_idxs+=("$global_total")
+      done < "$names_file"
+    fi
+    (( i++ )) || true
+  done
+
+  local total="${#flat_fns[@]}"
+
+  if [[ $total -eq 0 ]]; then
+    _print_summary "$results_dir" "$start_ms" || true
+    return 0
+  fi
+
+  local concurrency="${TT_TEST_CONCURRENCY:-4}"
+  log "Running $total test(s) across $concurrency workers..."
+
+  # Pass color intent to subprocesses: their stderr is redirected to a file so
+  # -t 2 is false inside them; this flag tells harness.sh to enable colors
+  # anyway (the buffered output will be replayed on the real TTY by the runner).
+  local force_color=""
+  [[ -z "${NO_COLOR:-}" && -t 2 ]] && force_color="1"
+
+  # ---------------------------------------------------------------------------
+  # Flat worker pool: keep at most $concurrency test processes running at once.
+  # Each job runs one test function via _TT_TEST_RUN_ONLY, buffers its output,
+  # and writes a done-marker on completion. Output is flushed in completion
+  # order (first finished, first printed).
+  # ---------------------------------------------------------------------------
+  local -a pids=()
+  local -a out_files=()
+  local -a done_files=()
+  local -a exit_files=()
+
+  local submitted=0 completed=0 active=0
+
+  while (( completed < total )); do
+    # Fill pool up to concurrency limit.
+    while (( submitted < total && active < concurrency )); do
+      local j="$submitted"
+      local out="$tmp_dir/test-$j.out"
+      local done_file="$tmp_dir/test-$j.done"
+      local exit_file="$tmp_dir/test-$j.exit"
+      out_files+=("$out")
+      done_files+=("$done_file")
+      exit_files+=("$exit_file")
+      (
+        _TT_TEST_RESULTS_DIR="$results_dir" \
+        _TT_TEST_RUN_ONLY="${flat_fns[$j]}" \
+        _TT_TEST_FORCE_COLOR="$force_color" \
+        _TT_TEST_OFFSET="$(( flat_idxs[$j] - 1 ))" \
+        _TT_TEST_TOTAL="$global_total" \
+        bash "${flat_suite_files[$j]}" >"$out" 2>&1
+        printf '%d' $? > "$exit_file"
+        touch "$done_file"
+      ) &
+      pids+=("$!")
+      (( submitted++ )) || true
+      (( active++ )) || true
+    done
+
+    # Flush completed tests in completion order.
+    local flushed=0
+    for (( k=0; k<submitted; k++ )); do
+      local printed_file="$tmp_dir/test-$k.printed"
+      if [[ -f "${done_files[$k]}" && ! -f "$printed_file" ]]; then
+        cat "${out_files[$k]}" >&2
+        touch "$printed_file"
+        (( completed++ )) || true
+        (( active-- )) || true
+        (( flushed++ )) || true
+      fi
+    done
+    (( flushed == 0 && completed < total )) && sleep 0.05
+  done
+
+  # Reap all background jobs.
+  for pid in "${pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+
+  # ---------------------------------------------------------------------------
+  # Check for failures and print summary.
+  # ---------------------------------------------------------------------------
+  local failed=0
+  for (( k=0; k<total; k++ )); do
+    local exit_code=0
+    [[ -f "${exit_files[$k]}" ]] && exit_code="$(cat "${exit_files[$k]}")"
+    if [[ "$exit_code" != "0" ]]; then
+      (( failed++ )) || true
+    fi
+  done
+
+  _print_summary "$results_dir" "$start_ms" || (( failed++ )) || true
+
+  if [[ $failed -gt 0 ]]; then
+    exit 1
+  fi
+}
+
+main "$@"

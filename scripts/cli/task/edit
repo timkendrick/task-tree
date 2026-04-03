@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --label LABEL         Append a label (repeatable)
 #   --delete-label LABEL  Remove a label if present (repeatable, silent no-op if absent)
 #   --worktree PATH       Specify worktree when multiple exist for the task
-#   --repo PATH           Repository root (default: walk up to .jj)
+#   --repo PATH           Repository root (overrides TT_REPO; default: walk up to .jj)
 #
 # Body is read from stdin (via pipe or redirect) if stdin is not a terminal.
 # With no flags and stdin is a terminal, opens editor pre-populated with current body.
@@ -35,7 +35,7 @@ Options:
   --label LABEL          Append a label (repeatable).
   --delete-label LABEL   Remove a label if present (repeatable, silent no-op if absent).
   --worktree PATH        Worktree path when multiple exist for the task.
-  --repo PATH            Repository root (default: walk up from CWD to find .jj).
+  --repo PATH            Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Body is read from stdin (via pipe or redirect) if stdin is not a terminal;
 otherwise if none of --title, --label, or --delete-label are given, opens
@@ -95,6 +95,17 @@ rewrite_task_file() {
   } > "$file"
 }
 
+# task_file_changed CURRENT_CONTENT PROPOSED_FILE
+# Returns 0 (true) if the proposed file differs from the current content
+# in any field other than 'updated:', 1 (false) if the edit would be a no-op.
+task_file_changed() {
+  local current_content="$1" proposed_file="$2"
+  local current_stripped proposed_stripped
+  current_stripped="$(printf '%s' "$current_content" | grep -v '^updated:')"
+  proposed_stripped="$(grep -v '^updated:' "$proposed_file")"
+  [[ "$current_stripped" != "$proposed_stripped" ]]
+}
+
 main() {
   local task_id_arg=''
   local new_title=''
@@ -133,17 +144,7 @@ main() {
     esac
   done
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"
@@ -300,6 +301,27 @@ main() {
     local original_parent_rev
     original_parent_rev="$(jj -R "$repo" log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)"
 
+    # Write the task file into a temp location first to check for changes,
+    # before beginning the transaction (avoids orphaned in-progress entries on no-op).
+    local tmpfile
+    tmpfile="$(mktemp)"
+    rewrite_task_file "$tmpfile" \
+      "$final_title" "$current_status" "$final_body" "$current_created"
+    local current_file_content
+    current_file_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || true
+
+    if ! task_file_changed "$current_file_content" "$tmpfile"; then
+      rm -f "$tmpfile"
+      log "No changes to task $bookmark."
+      printf '%s\n' "$bookmark"
+      unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
+      return 0
+    fi
+    rm -f "$tmpfile"
+
+    # Begin transaction (records before-op for undo)
+    tt_begin_transaction "$repo"
+
     # Switch WC to the target bookmark, create a new empty change on top of it,
     # write the task file, commit, advance the bookmark, then return to the original parent.
     jj -R "$repo" edit "$bookmark"
@@ -309,16 +331,6 @@ main() {
     rewrite_task_file "$repo/$task_file" \
       "$final_title" "$current_status" "$final_body" "$current_created"
 
-    # Only commit if the task file actually changed
-    if is_wc_clean "$repo"; then
-      log "No changes to task $bookmark."
-      jj -R "$repo" abandon
-      jj -R "$repo" new -r "$original_parent_rev"
-      printf '%s\n' "$bookmark"
-      unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
-      return 0
-    fi
-
     jj -R "$repo" commit -m "Edit task: $final_title ($bookmark)"
     jj -R "$repo" bookmark set "$bookmark" -r '@-'
 
@@ -326,20 +338,36 @@ main() {
     jj -R "$repo" new -r "$original_parent_rev"
   else
     # Same-branch edit: write to the target worktree filesystem and commit normally.
-    rewrite_task_file "$target_worktree/$task_file" \
+    # Check for no-op BEFORE beginning the transaction (compare in-memory to avoid
+    # writing to disk before the transaction starts, which would cause a jj snapshot
+    # gap in the history chain).
+    local tmpfile
+    tmpfile="$(mktemp)"
+    rewrite_task_file "$tmpfile" \
       "$final_title" "$current_status" "$final_body" "$current_created"
+    local current_file_on_disk
+    current_file_on_disk="$(cat "$target_worktree/$task_file" 2>/dev/null)" || true
 
-    # Only commit if the task file actually changed
-    if is_wc_clean "$target_worktree"; then
+    if ! task_file_changed "$current_file_on_disk" "$tmpfile"; then
+      rm -f "$tmpfile"
       log "No changes to task $bookmark."
       printf '%s\n' "$bookmark"
       unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
       return 0
     fi
 
+    # Begin transaction (records before-op for undo) BEFORE writing to disk
+    tt_begin_transaction "$repo"
+
+    # Now write the file and commit
+    mv "$tmpfile" "$target_worktree/$task_file"
+
     jj -R "$target_worktree" commit -m "Edit task: $final_title ($bookmark)"
     jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
   printf '%s\n' "$bookmark"

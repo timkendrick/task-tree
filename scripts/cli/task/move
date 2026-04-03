@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Options:
 #   --task TASK-ID         Task to move (default: current task)
 #   --parent TASK-ID       New parent task (required)
-#   --repo PATH            Repository root (default: walk up to find .jj)
+#   --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
 #   --workspace-dir PATH   Virtual project dir (for hooks/context)
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -32,7 +32,7 @@ new parent's bookmark tip.
 Options:
   --task TASK-ID         Task to move (default: current task)
   --parent TASK-ID       New parent task (required)
-  --repo PATH            Repository root (default: walk up to find .jj)
+  --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
   --workspace-dir PATH   Virtual project dir
   -h, --help             Show this help
 
@@ -48,7 +48,6 @@ main() {
   local task_id_arg=''
   local new_parent_id=''
   local repo=''
-  local workspace_dir=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -67,11 +66,6 @@ main() {
         repo="$2"
         shift 2
         ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"
-        shift 2
-        ;;
       -h|--help)
         usage 0
         ;;
@@ -88,26 +82,15 @@ main() {
     usage
   fi
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  # Resolve workspace_dir
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   # Resolve task to move
   local task_id
@@ -254,6 +237,9 @@ main() {
     original_rev="$(get_worktree_current_rev "$repo")"  # case 3
   fi
 
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
+
   # ----------------------------------------------------------------
   # Step 1: Update old parent — remove subtask entry and task stub dir
   # ----------------------------------------------------------------
@@ -341,6 +327,9 @@ main() {
   fi
   # Case 1 (@ was on the task itself): no restore — leave @ wherever the
   # rebase in Step 3 left it.
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   log "Moved: $task_id"
   log "  Old parent: $old_parent"

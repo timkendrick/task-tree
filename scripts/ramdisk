@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# scripts/ramdisk — Create, list, and destroy macOS RAM disks for use as test roots.
+#
+# Usage:
+#   scripts/ramdisk create [--size <bytes>]
+#   scripts/ramdisk list
+#   scripts/ramdisk destroy <device-or-mountpoint>
+
+DEFAULT_SIZE=$(( 512 * 1024 * 1024 ))
+
+log() { printf '%s\n' "$*" >&2; }
+
+usage() {
+  cat <<EOF
+Usage: ${0##*/} <subcommand> [options]
+
+Subcommands:
+  create [--size <bytes>]   Create a RAM disk and print its mount path to stdout.
+                            Defaults to $DEFAULT_SIZE bytes (512 MiB).
+                            Logs "Created <path>" to stderr as confirmation.
+
+  list                      List all active RAM disks (device path and mount point).
+
+  destroy <device|path>     Detach the RAM disk. Accepts a device path (e.g.
+                            /dev/disk4) or a mount path (e.g. /Volumes/tt-abcd1234).
+
+Options:
+  --help                    Show this help message.
+
+Examples:
+  RAMDISK=\$(scripts/ramdisk create)
+  scripts/ramdisk list
+  scripts/ramdisk destroy \$RAMDISK
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+cmd_create() {
+  local size="$DEFAULT_SIZE"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --size)
+        [[ $# -ge 2 ]] || { log "Error: --size requires an argument."; usage >&2; exit 1; }
+        size="$2"; shift 2 ;;
+      --help|-h) usage; exit 0 ;;
+      *) log "Error: Unknown argument: $1"; usage >&2; exit 1 ;;
+    esac
+  done
+
+  # hdiutil uses 512-byte sectors
+  local sectors=$(( size / 512 ))
+
+  local device
+  device=$(hdiutil attach -nomount "ram://$sectors" 2>/dev/null | tr -d '[:space:]')
+
+  local volume_name
+  volume_name="tt-$(openssl rand -hex 4)"
+
+  diskutil erasevolume HFS+ "$volume_name" "$device" >/dev/null 2>&1
+
+  local mountpoint="/Volumes/$volume_name"
+  log "Created $mountpoint"
+  printf '%s\n' "$mountpoint"
+}
+
+cmd_destroy() {
+  local mountpoint=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --help|-h) usage; exit 0 ;;
+      -*)        log "Error: Unknown argument: $1"; usage >&2; exit 1 ;;
+      *)
+        [[ -z "$mountpoint" ]] || { log "Error: Unexpected argument: $1"; usage >&2; exit 1; }
+        mountpoint="$1"; shift ;;
+    esac
+  done
+
+  [[ -n "$mountpoint" ]] || { log "Error: destroy requires a mountpoint argument."; usage >&2; exit 1; }
+
+  hdiutil detach "$mountpoint" >/dev/null 2>&1
+  log "Destroyed $mountpoint"
+}
+
+cmd_list() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --help|-h) usage; exit 0 ;;
+      *) log "Error: Unknown argument: $1"; usage >&2; exit 1 ;;
+    esac
+  done
+
+  local found=0
+
+  # Extract image-path and /dev/ lines, then pair each ram:// image with its device.
+  # hdiutil info uses <TAB><TAB> between device and mount point.
+  while IFS= read -r line; do
+    if [[ "$line" == "image-path"*": ram://"* ]]; then
+      # Start of a new image entry — read lines until we hit the device line.
+      local dev="" mp=""
+      while IFS= read -r devline; do
+        if [[ "$devline" == /dev/* ]]; then
+          dev="$(printf '%s' "$devline" | cut -f1)"
+          mp="$(printf '%s' "$devline" | cut -f3)"
+          break
+        fi
+        # Non-device lines before /dev/ are other metadata; skip them.
+      done
+      found=1
+      if [[ -n "$mp" ]]; then
+        printf '%s\t%s\n' "$dev" "$mp"
+      else
+        printf '%s\t(unmounted)\n' "$dev"
+      fi
+    fi
+  done < <(hdiutil info 2>/dev/null)
+
+  if [[ "$found" -eq 0 ]]; then
+    log "No RAM disks found."
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+main() {
+  local subcommand=""
+
+  [[ $# -gt 0 ]] || { usage >&2; exit 1; }
+
+  case "$1" in
+    create)   shift; cmd_create "$@" ;;
+    list)     shift; cmd_list "$@" ;;
+    destroy)  shift; cmd_destroy "$@" ;;
+    --help|-h) usage; exit 0 ;;
+    *) log "Error: Unknown subcommand: $1"; usage >&2; exit 1 ;;
+  esac
+}
+
+main "$@"

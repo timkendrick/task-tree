@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --project              Create a parentless project task; mutually exclusive with --parent
 #   --target COMMIT-REV    (with --project) Fork project branch from this revision (default: current @)
 #   --label LABEL          Add a label (repeatable)
-#   --repo PATH            Repository root (default: walk up to find .jj)
+#   --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
 #   --dry-run              Show what would be done without making changes
 #   --force                Overwrite child branch if it already exists
 #   --propagate            After creation, propagate parent's new commit to sibling branches
@@ -48,7 +48,7 @@ Options:
   --project             Create a parentless project task; mutually exclusive with --parent
   --target COMMIT-REV   (with --project) Fork project branch from this revision (default: current @)
   --label LABEL         Add a label (repeatable)
-  --repo PATH           Repository root (default: walk up to find .jj)
+  --repo PATH           Repository root (overrides TT_REPO; default: walk up to find .jj)
   --dry-run             Show what would be done, do not execute
   --force               Overwrite child/project branch if it already exists
   --propagate           After creation, propagate parent's new commit to sibling branches
@@ -255,6 +255,64 @@ main() {
     esac
   done
 
+  if [[ "$is_project" == true && -n "$parent" ]]; then
+    log "Error: --project and --parent are mutually exclusive"
+    exit 1
+  fi
+
+  if [[ -n "$target" && "$is_project" == false ]]; then
+    log "Error: --target is only valid with --project"
+    exit 1
+  fi
+
+  if [[ "$checkout_worktree" == true && "$checkout" == false ]]; then
+    log "Error: --worktree is only valid with --checkout"
+    exit 1
+  fi
+
+  repo="$(resolve_repo "$repo")"
+
+  local -a jj_opts=(-R "$repo")
+
+  # Resolve task prefix and project prefix from config
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # Choose the active prefix based on mode
+  local active_prefix
+  if [[ "$is_project" == true ]]; then
+    active_prefix="$project_prefix"
+  else
+    active_prefix="$task_prefix"
+  fi
+
+  # Resolve parent: from --parent or default (current branch); not used for --project
+  local resolve_output
+  local parent_rev=''
+  local parent_task_file=''
+  local parent_bookmark=''
+  if [[ "$is_project" == false ]]; then
+    resolve_output="$(resolve_parent "$parent" "$repo" "$task_prefix" "$project_prefix")"
+    parent_rev="$(printf '%s' "$resolve_output" | head -n 1)"
+    parent_task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
+    parent_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+  else
+    # --project mode: fork from --target if given, else current @
+    if [[ -n "$target" ]]; then
+      if ! parent_rev="$(jj "${jj_opts[@]}" log -r "$target" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"; then
+        log "Error: --target revision not found: $target"
+        exit 1
+      fi
+    else
+      parent_rev="$(jj "${jj_opts[@]}" log -r '@' -n 1 --no-graph -T 'commit_id')"
+    fi
+  fi
+
+  if [[ -n "$parent_bookmark" ]]; then
+    log "Creating task under parent: $parent_bookmark"
+  fi
+
   if [[ -z "$title" ]]; then
     if [[ -t 0 ]]; then
       read -e -p "Enter a title: " title
@@ -300,71 +358,6 @@ main() {
     body="$(cat)"
   fi
 
-  if [[ "$is_project" == true && -n "$parent" ]]; then
-    log "Error: --project and --parent are mutually exclusive"
-    exit 1
-  fi
-
-  if [[ -n "$target" && "$is_project" == false ]]; then
-    log "Error: --target is only valid with --project"
-    exit 1
-  fi
-
-  if [[ "$checkout_worktree" == true && "$checkout" == false ]]; then
-    log "Error: --worktree is only valid with --checkout"
-    exit 1
-  fi
-
-  # Resolve repo root: walk up from current directory to find .jj
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository (no .jj directory found). Use --repo to specify."
-      exit 1
-    fi
-  fi
-
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
-
-  local -a jj_opts=(-R "$repo")
-
-  # Resolve task prefix and project prefix from config
-  local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
-
-  # Choose the active prefix based on mode
-  local active_prefix
-  if [[ "$is_project" == true ]]; then
-    active_prefix="$project_prefix"
-  else
-    active_prefix="$task_prefix"
-  fi
-
-  # Resolve parent: from --parent or default (current branch); not used for --project
-  local resolve_output
-  local parent_rev=''
-  local parent_task_file=''
-  local parent_bookmark=''
-  if [[ "$is_project" == false ]]; then
-    resolve_output="$(resolve_parent "$parent" "$repo" "$task_prefix" "$project_prefix")"
-    parent_rev="$(printf '%s' "$resolve_output" | head -n 1)"
-    parent_task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
-    parent_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
-  else
-    # --project mode: fork from --target if given, else current @
-    if [[ -n "$target" ]]; then
-      if ! parent_rev="$(jj "${jj_opts[@]}" log -r "$target" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"; then
-        log "Error: --target revision not found: $target"
-        exit 1
-      fi
-    else
-      parent_rev="$(jj "${jj_opts[@]}" log -r '@' -n 1 --no-graph -T 'commit_id')"
-    fi
-  fi
-
   # Generate task ID
   local task_hex
   task_hex="$(generate_hex)"
@@ -395,8 +388,8 @@ main() {
     fi
   fi
 
-  # Capture revision user had checked out; restore it on exit so we leave them where they were.
-  # Use inline trap to capture values at definition time (locals are gone when EXIT runs).
+  # Capture revision user had checked out so we can restore it on success.
+  # (On error, tt_rollback_transaction restores the entire jj state including WC position.)
   local original_rev
   original_rev="$(get_worktree_current_rev "$repo")"
   # If the working copy is currently on the parent branch (it's our closest ancestor bookmark),
@@ -404,10 +397,9 @@ main() {
   # original revision. Otherwise, restore as normal.
   local current_bookmark
   current_bookmark="$(resolve_current "$repo" "$task_prefix" "$project_prefix" | sed -n '3p')"
+  local restore_to_parent=false
   if [[ -n "$parent_bookmark" ]] && [[ "$current_bookmark" == "$parent_bookmark" ]]; then
-    trap 'jj -R "'"$repo"'" new "'"$parent_bookmark"'" 2>/dev/null || true' EXIT
-  else
-    trap '[[ -n "'"$original_rev"'" ]] && jj -R "'"$repo"'" edit "'"$original_rev"'" 2>/dev/null || true' EXIT
+    restore_to_parent=true
   fi
 
   # Check whether the target bookmark already exists; refuse unless --force
@@ -420,6 +412,9 @@ main() {
     bookmark_existed=true
     log "Warning: Branch '$task_id' already exists; overwriting (--force)."
   fi
+
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
 
   jj "${jj_opts[@]}" new "$parent_rev"
 
@@ -485,7 +480,7 @@ main() {
   fi
 
   if [[ "$checkout" == true ]]; then
-    trap - EXIT
+    # Checkout handles WC positioning; no explicit restore needed.
     local -a checkout_args=(--repo "$repo" "$task_id")
     if [[ "$checkout_worktree" == true ]]; then
       if [[ -n "$checkout_worktree_path" ]]; then
@@ -495,7 +490,19 @@ main() {
       fi
     fi
     "$SCRIPT_DIR/checkout" "${checkout_args[@]}"
+  else
+    # Explicitly restore WC to where the user was before the command.
+    # This must happen before tt_commit_transaction so the restore is
+    # captured in the transaction's after-op-id.
+    if [[ "$restore_to_parent" == true ]]; then
+      jj -R "$repo" new "$parent_bookmark" 2>/dev/null || true
+    elif [[ -n "$original_rev" ]]; then
+      jj -R "$repo" edit "$original_rev" 2>/dev/null || true
+    fi
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   printf '%s\n' "$task_id"
 }

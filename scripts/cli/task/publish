@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --rebase                Rebase project onto target before publishing.
 #   --merge                 Merge target into project before publishing.
 #   --force                 Proceed even if conflicts occur.
-#   --repo PATH             Repository root (default: walk up from CWD to find .jj).
+#   --repo PATH             Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   --workspace-dir PATH    Virtual project dir.
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -36,7 +36,7 @@ Options:
   --rebase                  Rebase project onto target before publishing.
   --merge                   Merge target into project before publishing.
   --force                   Proceed despite conflicts.
-  --repo PATH               Repository root (default: find .jj).
+  --repo PATH               Repository root (overrides TT_REPO; default: find .jj).
   --workspace-dir PATH      Virtual project dir.
   -h, --help                Show this help.
 
@@ -50,7 +50,6 @@ main() {
   local target=''
   local project_id_arg=''
   local repo=''
-  local workspace_dir=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -67,9 +66,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"; shift 2 ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"; shift 2 ;;
       -h|--help) usage 0 ;;
       -*)
         log "Error: Unknown option: $1"; usage ;;
@@ -88,25 +84,15 @@ main() {
     usage
   fi
 
-  # --- Resolve repo root ---
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   local current_worktree
   current_worktree="$(resolve_current_worktree "$repo")"
@@ -178,6 +164,9 @@ main() {
     fi
   fi
 
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
+
   log "Publishing: $child_bookmark -> $target"
 
   # --- Determine target workspace ---
@@ -220,10 +209,9 @@ main() {
   jj -R "$target_ws" new "$target" "$handoff_commit"
 
   # Check for conflicts (unless --force)
+  # On conflict, exit 1 triggers the ERR trap → tt_rollback_transaction →
+  # jj op restore, which cleanly reverts all jj operations in this transaction.
   if [[ "$force" != true ]] && has_conflicts "$target_ws" "@"; then
-    jj -R "$target_ws" op undo  # undo jj new (merge)
-    jj -R "$target_ws" op undo  # undo jj commit (handoff)
-    jj -R "$target_ws" edit "$original_rev"
     log "Error: Merge conflicts detected. Resolve conflicts or use --force."
     exit 1
   fi
@@ -240,6 +228,9 @@ main() {
   if [[ "$target_ws" != "$current_worktree" ]]; then
     jj -R "$target_ws" edit "$original_rev" 2>/dev/null || true
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   log "Published: $child_bookmark -> $target"
 }

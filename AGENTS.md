@@ -28,6 +28,8 @@ Use the `rapid-workflow` skill for all non-trivial changes.
 
 Use the `tt` skill for task management.
 
+Make sure to add test scenarios for all features and bugfixes, and to run any relevant test suites when making changes. See test harness instructions in `./DEVELOPER.md`.
+
 ## Version Control
 
 ### Self-hosted task management
@@ -58,7 +60,6 @@ jj undo                      # Undo the most recent operation
 jj oplog                     # Show the operation log history
 jj new -m "message"          # Create a new change on top of current
 jj commit -m "message"       # Finalize current change, updating message
-jj describe -m "message"     # Set/update description of current change
 jj squash                    # Squash current change into parent
 jj abandon                   # Abandon current change
 jj bookmark set <name>       # Create/move a bookmark (like a branch)

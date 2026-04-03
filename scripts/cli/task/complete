@@ -8,20 +8,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task complete — Mark the current task (or a given task) as DONE.
 #
 # Usage:
-#   complete [<task-id>] [--worktree=<path>] [--force] [--repo PATH] [--workspace-dir PATH]
+#   complete [<task-id>] [--worktree=<path>] [--force] [--repo PATH]
 #
 # Options:
 #   <task-id>            Task ID to complete. Default: current task.
 #   --worktree=<path>    Worktree to use when task has multiple worktrees.
 #   --force              Proceed even if not all subtasks are checked off.
-#   --repo PATH          Repository root (default: walk up from CWD to find .jj).
-#   --workspace-dir PATH Virtual project dir (for hooks).
+#   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [--worktree=<path>] [--force] [--repo PATH] [--workspace-dir PATH]
+Usage: ${SCRIPT_NAME} [<task-id>] [--worktree=<path>] [--force] [--repo PATH]
 
 Mark the current task (or a given task) as DONE.
 
@@ -29,8 +28,7 @@ Options:
   <task-id>             Task ID to complete (default: current task).
   --worktree=<path>     Worktree to use when task has multiple worktrees.
   --force               Proceed even if subtasks are not all complete.
-  --repo PATH           Repository root (default: walk up from CWD to find .jj).
-  --workspace-dir PATH  Virtual project dir (for hooks).
+  --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 EOF
   exit 1
@@ -39,7 +37,6 @@ EOF
 main() {
   local force=false
   local repo=''
-  local workspace_dir=''
   local task_id_arg=''
   local worktree_arg=''
 
@@ -50,9 +47,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"; shift 2 ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"; shift 2 ;;
       -h|--help) usage ;;
       -*)
         log "Error: Unknown option: $1"; usage ;;
@@ -65,25 +59,15 @@ main() {
     esac
   done
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   local bookmark task_file
 
@@ -137,9 +121,13 @@ main() {
     exit 1
   fi
 
-  # Record original @ before any modifications
-  local original_rev
+  # Record original @ before any modifications.
+  # We save the parent commit_id (not the WC change_id) because `jj new` in the
+  # switched_to_task path will abandon the current empty WC commit, making its
+  # change_id unresolvable. The parent commit_id is stable.
+  local original_rev original_parent_rev
   original_rev="$(get_worktree_current_rev "$target_worktree")" || true
+  original_parent_rev="$(jj -R "$target_worktree" log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)" || true
 
   # Read task file content from bookmark
   local task_content
@@ -174,6 +162,9 @@ main() {
       exit 1
     fi
   fi
+
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
 
   # Run pre-complete hook (blocking)
   run_hook "$repo" "pre-complete" true "$target_worktree" "${workspace_dir:-}" \
@@ -212,9 +203,19 @@ main() {
     should_restore=true
   fi
 
-  if [[ "$should_restore" == true && -n "$original_rev" ]]; then
-    jj -R "$target_worktree" edit "$original_rev"
+  if [[ "$should_restore" == true ]]; then
+    if [[ "$switched_to_task" == true && -n "$original_parent_rev" ]]; then
+      # The original WC was abandoned by `jj new "$bookmark"`, so we can't
+      # `jj edit` the old change_id. Instead, create a fresh WC on top of
+      # the parent commit the user was previously on.
+      jj -R "$target_worktree" new -r "$original_parent_rev"
+    elif [[ -n "$original_rev" ]]; then
+      jj -R "$target_worktree" edit "$original_rev"
+    fi
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   # Run post-complete hook (non-blocking)
   run_hook "$repo" "post-complete" false "$target_worktree" "${workspace_dir:-}" \

@@ -8,21 +8,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt workspace switch — redirect the virtual project's HEAD symlink to an existing task worktree.
 #
 # Usage:
-#   switch <task-id> [--worktree=<path>] [--force] [--repo PATH] [--workspace-dir PATH]
+#   switch <task-id> [--worktree=<path>] [--force] [--repo PATH]
 #
 # Options:
 #   <task-id>            Task or project ID (required)
 #   --worktree=<path>    Specify exact worktree path when multiple exist for the task.
 #   --force              Proceed even if the outgoing workspace has local changes.
-#   --repo PATH          Repository root (default: walk up from CWD to find .jj).
-#   --workspace-dir PATH Virtual project dir containing HEAD symlink.
-#                        Overrides workspace_dir in .tt/config.toml.
+#   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} <task-id> [--worktree=<path>] [--force] [--repo PATH] [--workspace-dir PATH]
+Usage: ${SCRIPT_NAME} <task-id> [--worktree=<path>] [--force] [--repo PATH]
 
 Redirect the virtual project's HEAD symlink to an existing task worktree.
 The worktree must already exist (run \`tt task checkout --worktree\` first).
@@ -33,9 +31,7 @@ Arguments:
 Options:
   --worktree=<path>     Specify exact worktree path (required when multiple exist).
   --force               Proceed even if the outgoing workspace has local changes.
-  --repo PATH           Repository root (default: walk up from CWD to find .jj).
-  --workspace-dir PATH  Virtual project dir containing HEAD symlink.
-                        Overrides workspace_dir in .tt/config.toml.
+  --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
   ${SCRIPT_NAME} task/foo-abc12345
@@ -51,7 +47,6 @@ main() {
   local worktree_path=''
   local force=false
   local repo=''
-  local workspace_dir=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -66,11 +61,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"
-        shift 2
-        ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"
         shift 2
         ;;
       -h|--help)
@@ -97,17 +87,7 @@ main() {
     usage
   fi
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"
@@ -128,18 +108,19 @@ main() {
     exit 1
   fi
 
-  # Resolve workspace_dir from flag, then config/convention
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
-  # Find worktrees for this task via `jj workspace list`
-  # Output format: "<workspace-name>: <path> (at @)"  or similar; we look for paths
-  # whose working-copy bookmark matches task_id.
+  # Find worktrees for this task via `jj workspace list`.
+  # Use a template to emit "<name>: <root-path>" lines; the default output format
+  # contains commit metadata, not paths. Workspaces without a recorded path emit
+  # "<Error: Workspace has no recorded path: ...>" for the root — those are skipped.
   local workspace_list
-  workspace_list="$(jj "${jj_opts[@]}" workspace list --no-graph 2>/dev/null)" || true
+  workspace_list="$(jj "${jj_opts[@]}" workspace list \
+    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || true
 
-  # Parse workspace list: each line is "<name>: <path>"
+  # Parse workspace list: each line is "<name>: <absolute-path>"
   # Then check if that workspace's WC is on the task bookmark.
   local -a matching_worktrees=()
   while IFS= read -r line; do
@@ -147,9 +128,13 @@ main() {
     local wt_path
     wt_path="$(printf '%s' "$line" | sed 's/^[^:]*: //')"
     [[ -z "$wt_path" ]] && continue
-    # Check if this worktree's current bookmark matches task_id
+    # Skip workspaces without a recorded path (jj emits "<Error: ...>" for these)
+    [[ "$wt_path" == '<Error:'* ]] && continue
+    # Check if this worktree's current bookmark matches task_id.
+    # --ignore-working-copy avoids snapshotting (and lock contention) since we
+    # only need to read the bookmark name.
     local wt_branch
-    wt_branch="$(jj -R "$wt_path" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
+    wt_branch="$(jj -R "$wt_path" --ignore-working-copy log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
       -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || continue
     wt_branch="${wt_branch%%,*}"
     if [[ "$wt_branch" == "$task_id" ]]; then

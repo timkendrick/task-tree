@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # Options:
 #   <task-id>          Task ID (branch name) to show. Default: current task.
-#   --repo PATH        Repository root (default: walk up from CWD to find .jj).
+#   --repo PATH        Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   --expand-context   Expand and show full content of context files.
 #   -h, --help         Show this help.
 
@@ -30,7 +30,7 @@ read from their own branch.
 
 Options:
   <task-id>          Task branch name to show (default: current task).
-  --repo PATH        Repository root (default: find .jj).
+  --repo PATH        Repository root (overrides TT_REPO; default: find .jj).
   --expand-context   Expand and show full content of context files.
   -h, --help         Show this help.
 
@@ -62,24 +62,23 @@ main() {
     esac
   done
 
-  # --- Resolve repo root ---
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
   # --- Resolve branch and task file ---
-  local branch task_file task_suffix
+  #
+  # Two distinct concepts:
+  #   task_id  — the logical ID of the task being shown (used in headers and
+  #               parent-lookup).  For an explicit arg this is task_id_arg;
+  #               for the implicit case it is the current branch.
+  #   branch   — the canonical branch to *read from* ("where to read" rule).
+  #               For an ongoing task branch == task_id.  For a completed
+  #               (checked-in) task, find_branch_for_task returns the parent
+  #               branch that received the checkin, so branch != task_id.
+  local branch task_file task_suffix task_id
 
   if [[ -z "$task_id_arg" ]]; then
     # No task-id: use current branch
@@ -92,34 +91,30 @@ main() {
       log "Error: Not on a task or project branch."
       exit 1
     fi
+    task_id="$branch"
     if is_task_branch "$branch" "$task_prefix"; then
       task_suffix="${branch#$task_prefix}"
     else
       task_suffix="${branch#$project_prefix}"
     fi
   else
-    # Explicit task-id: find its canonical branch via "where to read" rule
+    task_id="$task_id_arg"
+    # Explicit task-id: find its canonical branch via "where to read" rule.
+    # For a merged/completed task find_branch_for_task returns the parent
+    # branch (the one that received the checkin).  The task *file path* is
+    # always derived from task_id_arg, not from the canonical branch.
     if ! branch="$(find_branch_for_task "$repo" "$task_id_arg" "$task_prefix" "$project_prefix")"; then
       log "Error: Could not locate branch for task '$task_id_arg'."
       exit 1
     fi
-    # Derive task file from branch
     local suffix
-    if is_task_branch "$branch" "$task_prefix"; then
-      suffix="${branch#$task_prefix}"
-    elif is_project_branch "$branch" "$project_prefix"; then
-      suffix="${branch#$project_prefix}"
+    if is_task_branch "$task_id_arg" "$task_prefix"; then
+      suffix="${task_id_arg#$task_prefix}"
+    elif is_project_branch "$task_id_arg" "$project_prefix"; then
+      suffix="${task_id_arg#$project_prefix}"
     else
-      # branch is the task's own branch but might not match prefixes if unusual
-      # Try using task_id_arg directly for suffix extraction
-      if is_task_branch "$task_id_arg" "$task_prefix"; then
-        suffix="${task_id_arg#$task_prefix}"
-      elif is_project_branch "$task_id_arg" "$project_prefix"; then
-        suffix="${task_id_arg#$project_prefix}"
-      else
-        log "Error: Cannot derive task file path for '$task_id_arg'."
-        exit 1
-      fi
+      log "Error: Cannot derive task file path for '$task_id_arg'."
+      exit 1
     fi
     task_suffix="$suffix"
     task_file="$(task_file_path "$suffix")"
@@ -182,12 +177,16 @@ main() {
   ' | paste -sd ',' -)"
 
   # --- Find parent (optional; omitted for parentless/project tasks) ---
+  # Use task_id (the logical task ID), not branch (the canonical read branch),
+  # so that for completed tasks we find the task's own parent, not the
+  # grandparent (which is what we'd get if we searched for the parent of the
+  # already-merged parent branch).
   local parent_branch
-  parent_branch="$(find_parent_branch "$repo" "$branch" "$task_prefix" "$project_prefix" 2>/dev/null)" || parent_branch=""
+  parent_branch="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix" 2>/dev/null)" || parent_branch=""
 
   # --- Print header block ---
   printf -- '---\n'
-  printf 'task:     %s\n' "$branch"
+  printf 'task:     %s\n' "$task_id"
   [[ -n "$parent_branch" ]] && printf 'parent:   %s\n' "$parent_branch"
   printf 'status:   %s\n' "$status"
   printf 'title:    %s\n' "$title"

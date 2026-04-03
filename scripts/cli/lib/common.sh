@@ -117,6 +117,40 @@ find_repo_root() {
   return 1
 }
 
+# Usage: repo=$(resolve_repo "$repo_flag_value")
+#
+# Resolves the repository root using the following priority order:
+#   1. $repo_flag_value — the value passed to --repo (if non-empty)
+#   2. $TT_REPO        — the TT_REPO environment variable (if set and non-empty)
+#   3. find_repo_root  — walk up from CWD to find a .jj directory
+#
+# Prints the resolved repo path to stdout.
+# Exits 1 with an error message if the path cannot be resolved or is not a jj repo.
+resolve_repo() {
+  local repo="${1:-}"
+
+  # Priority 1: explicit --repo flag (already in $repo if set)
+  if [[ -z "$repo" ]]; then
+    # Priority 2: TT_REPO environment variable
+    if [[ -n "${TT_REPO:-}" ]]; then
+      repo="$TT_REPO"
+    else
+      # Priority 3: walk up from CWD
+      if ! repo="$(find_repo_root)"; then
+        log "Error: No enclosing jj repository. Use --repo or set TT_REPO."
+        exit 1
+      fi
+    fi
+  fi
+
+  if [[ ! -d "$repo/.jj" ]]; then
+    log "Error: Not a jj repository: $repo"
+    exit 1
+  fi
+
+  printf '%s' "$repo"
+}
+
 # Read task_prefix from .tt/config.toml; default "task/" if missing or unreadable.
 get_task_prefix() {
   local repo="$1"
@@ -148,13 +182,13 @@ is_task_branch() {
   [[ "$bookmark" == "$prefix"* ]] && [[ "$bookmark" =~ -[0-9a-fA-F]{8}$ ]]
 }
 
-# Read workspace_dir from .tt/config.toml; returns 1 if not configured.
+# Read workspace dir from .tt/workspace symlink; returns 1 if not configured.
 get_workspace_dir() {
   local repo="$1"
-  local config="$repo/.tt/config.toml"
-  if [[ -r "$config" ]]; then
+  local symlink="$repo/.tt/workspace"
+  if [[ -L "$symlink" ]]; then
     local ws_dir
-    ws_dir="$(convfmt --from toml --to json < "$config" | jq -r '.workspace_dir // ""')" || true
+    ws_dir="$(readlink "$symlink")"
     if [[ -n "$ws_dir" ]]; then
       printf '%s' "$ws_dir"
       return 0
@@ -177,6 +211,28 @@ is_wc_clean() {
   local result
   result="$(jj -R "$r" log -r '@' --no-graph -T 'empty' 2>/dev/null)" || return 1
   [[ "$result" == "true" ]]
+}
+
+# Usage: assert_bookmark_up_to_date REPO BOOKMARK
+# Exits 1 if there are any commits between BOOKMARK and the working-copy parent
+# (@-) that are not tracked by the bookmark. Used by commands that operate on
+# the implicit current branch to ensure all work has been checkpointed.
+#
+# Skip this check when the user passes an explicit task-id, as that constitutes
+# an intentional acknowledgement that the bookmark may be behind.
+assert_bookmark_up_to_date() {
+  local repo="$1" bookmark="$2"
+  local ahead_commits
+  ahead_commits="$(jj -R "$repo" log \
+    -r "(::@- & ~::${bookmark})" \
+    --no-graph -T 'change_id ++ "\n"' 2>/dev/null)" || return 0
+  if [[ -n "$ahead_commits" ]]; then
+    log "Error: There are commits since the last checkpoint that are not tracked by the task bookmark."
+    log "  Run 'tt task checkpoint' to record them before checking in."
+    log "  Alternatively, pass the task ID explicitly to skip this check:"
+    log "    tt task checkin ${bookmark}"
+    exit 1
+  fi
 }
 
 # Usage: run_hook REPO HOOK_NAME BLOCKING WORKTREE_DIR WORKSPACE_DIR [VAR=val ...]
@@ -545,4 +601,215 @@ status_to_checkbox() {
     DONE|Done)   printf '[x]' ;;
     *)           printf '[?]' ;;
   esac
+}
+
+# ---------------------------------------------------------------------------
+# Descendant task helpers
+# ---------------------------------------------------------------------------
+
+# Usage: collect_descendant_task_dirs REPO BRANCH TASK_ID TASK_PREFIX PROJECT_PREFIX
+#
+# Outputs one `.tt/task/<slug>` directory path per line for every task that
+# is a descendant of TASK_ID (direct children, grandchildren, etc.), read
+# from BRANCH.  Traversal follows `subtask:` frontmatter entries.
+#
+# Only task IDs whose prefix matches TASK_PREFIX or PROJECT_PREFIX are
+# followed; unknown entries are skipped silently.
+#
+# Does not output the task's own directory (the caller already handles that).
+collect_descendant_task_dirs() {
+  local repo="$1" branch="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
+
+  # BFS queue (bash array)
+  local -a queue=("$task_id")
+  local -a visited=("$task_id")
+
+  while [[ ${#queue[@]} -gt 0 ]]; do
+    local current="${queue[0]}"
+    queue=("${queue[@]:1}")      # shift
+
+    # Derive slug and read task file from branch
+    local suffix
+    if is_task_branch "$current" "$task_prefix"; then
+      suffix="${current#$task_prefix}"
+    elif is_project_branch "$current" "$project_prefix"; then
+      suffix="${current#$project_prefix}"
+    else
+      continue
+    fi
+
+    local tf
+    tf="$(task_file_path "$suffix")"
+    local content
+    content="$(jj -R "$repo" --ignore-working-copy \
+      file show -r "$branch" -- "$tf" 2>/dev/null)" || continue
+
+    # Extract all subtask IDs (any checkbox state)
+    while IFS= read -r subtask_id; do
+      [[ -z "$subtask_id" ]] && continue
+      # Skip if already visited (cycle guard)
+      local already=false
+      local v
+      for v in "${visited[@]}"; do
+        [[ "$v" == "$subtask_id" ]] && { already=true; break; }
+      done
+      "$already" && continue
+
+      visited+=("$subtask_id")
+
+      # Emit directory for this descendant
+      local sub_suffix
+      if is_task_branch "$subtask_id" "$task_prefix"; then
+        sub_suffix="${subtask_id#$task_prefix}"
+      elif is_project_branch "$subtask_id" "$project_prefix"; then
+        sub_suffix="${subtask_id#$project_prefix}"
+      else
+        continue
+      fi
+      task_dir_path "$sub_suffix"
+      printf '\n'
+
+      # Enqueue for further traversal
+      queue+=("$subtask_id")
+    done < <(printf '%s' "$content" | awk '
+      /^---$/ { n++; next }
+      n == 1 && /^subtask:/ {
+        sub(/^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]*/, "")
+        print
+      }
+    ')
+  done
+}
+
+# ---------------------------------------------------------------------------
+# Transaction management
+#
+# A "transaction" records the jj operation ID before and after a mutating tt
+# command, enabling `tt history undo` to restore the repository state.
+#
+# Log file: <repo>/.tt/history
+# Format:   one line per transaction: <before-op-id>:<after-op-id>
+#           An in-progress transaction has an empty after-op-id: <before-op-id>:
+#
+# Nesting: sub-commands invoked by a top-level command inherit TT_TRANSACTION_ID
+# via the environment. tt_begin_transaction is a no-op when TT_TRANSACTION_ID is
+# already set. The internal (non-exported) _TT_TRANSACTION_OWNER flag ensures
+# only the owning process commits or rolls back the transaction.
+# ---------------------------------------------------------------------------
+
+# Usage: tt_begin_transaction REPO
+# Begins a tt transaction. No-op if TT_TRANSACTION_ID is already set (nested call).
+# Captures the current jj operation ID, checks for in-progress transactions,
+# appends "<before-op-id>:" to .tt/history, exports TT_TRANSACTION_ID, and sets
+# an ERR trap to auto-rollback on failure.
+tt_begin_transaction() {
+  local repo="$1"
+  # No-op when nested (parent command already began a transaction)
+  if [[ -n "${TT_TRANSACTION_ID:-}" ]]; then
+    return 0
+  fi
+
+  local history_file="$repo/.tt/history"
+
+  # Capture current jj operation ID
+  local before_op
+  before_op="$(jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)" || {
+    log "Error: Could not read jj operation ID to begin transaction"
+    exit 1
+  }
+
+  # Check for in-progress transaction (last line has empty after-op-id)
+  if [[ -f "$history_file" && -s "$history_file" ]]; then
+    local last_line
+    last_line="$(tail -n 1 "$history_file" 2>/dev/null)" || true
+    if [[ -n "$last_line" ]]; then
+      local last_after="${last_line#*:}"
+      if [[ -z "$last_after" ]]; then
+        log "Error: Another tt command is in progress (incomplete transaction)."
+        log "  If this is stale (e.g. a crashed process), run: tt history undo --force"
+        exit 1
+      fi
+    fi
+  fi
+
+  # Append in-progress entry to history log
+  printf '%s:\n' "$before_op" >> "$history_file"
+
+  # Export for sub-commands (nested tt_begin_transaction calls will be no-ops)
+  export TT_TRANSACTION_ID="$before_op"
+  # Mark this process as the transaction owner (not exported; sub-processes don't inherit)
+  _TT_TRANSACTION_OWNER=true
+
+  # Set ERR trap to auto-rollback on failure
+  trap 'tt_rollback_transaction "'"$repo"'"' ERR
+}
+
+# Usage: tt_commit_transaction REPO
+# Finalizes the transaction by writing the after-op-id into .tt/history.
+# No-op when called from a nested sub-command (not the transaction owner).
+tt_commit_transaction() {
+  local repo="$1"
+  # Only the owning process commits the transaction
+  if [[ "${_TT_TRANSACTION_OWNER:-}" != "true" ]]; then
+    return 0
+  fi
+
+  local history_file="$repo/.tt/history"
+  local before_op="${TT_TRANSACTION_ID}"
+
+  # Capture current jj operation ID
+  local after_op
+  after_op="$(jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)" || {
+    log "Warning: Could not read jj operation ID for transaction commit; history may be incomplete"
+    after_op="unknown"
+  }
+
+  # Replace the last line (in-progress: "<before>:") with the completed entry ("<before>:<after>")
+  if [[ "$(uname)" == "Darwin" ]]; then
+    sed -i '' "$ s|^${before_op}:\$|${before_op}:${after_op}|" "$history_file"
+  else
+    sed -i "$ s|^${before_op}:\$|${before_op}:${after_op}|" "$history_file"
+  fi
+
+  # Clear ERR trap and ownership flag
+  trap - ERR
+  unset _TT_TRANSACTION_OWNER
+}
+
+# Usage: tt_rollback_transaction REPO
+# Rolls back the transaction by restoring jj to the before-op state and
+# removing the in-progress line from .tt/history.
+# No-op when called from a nested sub-command (not the transaction owner).
+tt_rollback_transaction() {
+  local repo="$1"
+  # Only the owning process rolls back
+  if [[ "${_TT_TRANSACTION_OWNER:-}" != "true" ]]; then
+    return 0
+  fi
+
+  local before_op="${TT_TRANSACTION_ID:-}"
+  if [[ -z "$before_op" ]]; then
+    return 0
+  fi
+
+  local history_file="$repo/.tt/history"
+
+  log "Rolling back transaction (restoring jj operation: ${before_op:0:12}...)"
+
+  # Restore jj to before-op state
+  jj -R "$repo" op restore "$before_op" 2>/dev/null || \
+    log "Warning: Could not restore jj operation state; manual recovery may be needed"
+
+  # Remove the in-progress line from history
+  if [[ -f "$history_file" ]]; then
+    if [[ "$(uname)" == "Darwin" ]]; then
+      sed -i '' "/^${before_op}:\$/d" "$history_file"
+    else
+      sed -i "/^${before_op}:\$/d" "$history_file"
+    fi
+  fi
+
+  # Clear ERR trap and ownership flag
+  trap - ERR
+  unset _TT_TRANSACTION_OWNER
 }

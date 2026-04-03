@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Options:
 #   <context-id>         Context ID to delete (e.g. context/foo-abc12345).
 #   --task TASK_ID       Task to delete context from (default: current task).
-#   --repo PATH          Repository root (default: walk up from CWD to find .jj).
+#   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   -h, --help           Show this help.
 #
 # Environment variables:
@@ -35,7 +35,7 @@ Arguments:
 
 Options:
   --task TASK_ID       Task to delete context from (default: current task).
-  --repo PATH          Repository root (default: find .jj).
+  --repo PATH          Repository root (overrides TT_REPO; default: find .jj).
   -h, --help           Show this help.
 
 Examples:
@@ -83,17 +83,7 @@ main() {
     exit 1
   fi
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"
@@ -213,6 +203,10 @@ main() {
     { print }
   ')"
 
+  # Begin transaction (records before-op for undo) BEFORE any filesystem writes,
+  # so the before-op matches the previous command's after-op in the history chain.
+  tt_begin_transaction "$repo"
+
   printf '%s\n' "$updated_task_content" > "$target_worktree/$task_file"
 
   # Remove the context file
@@ -221,6 +215,9 @@ main() {
   # Commit the changes
   jj -R "$target_worktree" commit -m "Delete context: $ctx_title ($branch)"
   jj -R "$target_worktree" bookmark set "$branch" -r '@-'
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   log "Deleted context: $ctx_id_arg"
 }

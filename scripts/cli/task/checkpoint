@@ -8,29 +8,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task checkpoint — record current state and advance the task bookmark.
 #
 # Usage:
-#   checkpoint [-m <message>] [--repo PATH] [--workspace-dir PATH]
+#   checkpoint [-m <message>] [--squash] [--repo PATH]
 #
 # Options:
 #   -m, --message <msg>  Commit message (skips editor prompt).
-#   --repo PATH          Repository root (default: walk up from CWD to find .jj).
-#   --workspace-dir PATH Virtual project dir. Overrides workspace_dir in .tt/config.toml.
+#   --squash             Squash all commits since the last bookmark into a single checkpoint commit.
+#   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [-m <message>] [--repo PATH] [--workspace-dir PATH]
+Usage: ${SCRIPT_NAME} [-m <message>] [--squash] [--repo PATH]
 
 Record the current state of work by creating a named commit and advancing the task bookmark.
 
 Options:
   -m, --message <msg>   Commit message (skips editor prompt).
-  --repo PATH           Repository root (default: walk up from CWD to find .jj).
-  --workspace-dir PATH  Virtual project dir. Overrides workspace_dir in .tt/config.toml.
+  --squash              Squash all commits since the last bookmark into a single checkpoint commit.
+  --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
   ${SCRIPT_NAME} -m "add foo"
   ${SCRIPT_NAME} --message "refactor bar"
+  ${SCRIPT_NAME} --squash -m "collapse and checkpoint"
   ${SCRIPT_NAME}           # opens editor
 
 EOF
@@ -39,8 +40,8 @@ EOF
 
 main() {
   local message=''
+  local squash=false
   local repo=''
-  local workspace_dir=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -58,10 +59,9 @@ main() {
         repo="$2"
         shift 2
         ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"
-        shift 2
+      --squash)
+        squash=true
+        shift
         ;;
       -h|--help)
         usage
@@ -77,26 +77,15 @@ main() {
     esac
   done
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  # Resolve workspace_dir from flag, then config
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   # Resolve current branch
   local resolve_output current_rev task_file bookmark
@@ -145,13 +134,37 @@ main() {
   local full_msg="Checkpoint: ${message} (${bookmark})"
 
   # Pre-checkpoint hook (blocking)
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
+
   run_hook "$repo" "pre-checkpoint" true "$current_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$bookmark" \
     "TT_TASK_BRANCH=$bookmark" \
     "TT_MESSAGE=${message}"
 
   # Create commit (works for empty or non-empty WC)
-  jj -R "$repo" commit -m "$full_msg"
+  if [[ "$squash" == true ]]; then
+    # Count commits strictly between bookmark and @- (exclusive of bookmark, exclusive of @)
+    local intermediate_count
+    intermediate_count="$(jj -R "$repo" log \
+      -r "${bookmark}::@- ~ ${bookmark}" \
+      --no-graph -T 'commit_id ++ "\n"' 2>/dev/null | wc -l | tr -d ' ')"
+
+    if [[ "$intermediate_count" -gt 0 ]]; then
+      # Squash all intermediate commits into @, setting the checkpoint message
+      jj -R "$repo" squash \
+        --from "${bookmark}::@- ~ ${bookmark}" \
+        --into @ \
+        -m "$full_msg"
+      # @ now has the right content and description; just open a new WC
+      jj -R "$repo" new
+    else
+      # Nothing to squash — behave like normal checkpoint
+      jj -R "$repo" commit -m "$full_msg"
+    fi
+  else
+    jj -R "$repo" commit -m "$full_msg"
+  fi
 
   # Get new commit ID
   local new_commit
@@ -159,6 +172,9 @@ main() {
 
   # Advance bookmark
   jj -R "$repo" bookmark set "$bookmark" -r '@-'
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   log "Checkpoint: $bookmark → $new_commit"
 

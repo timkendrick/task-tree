@@ -231,17 +231,29 @@ task_prefix = "${task_prefix}"
 project_prefix = "${project_prefix}"
 TOML
 
+  # Write .tt/.gitignore to ignore the transaction history log and workspace symlink
+  local gitignore_file="$repo_abs/.tt/.gitignore"
+  printf '/history\n/workspace\n' > "$gitignore_file"
+
+  # Create empty transaction history log (ignored by jj via .tt/.gitignore)
+  touch "$repo_abs/.tt/history"
+
+  # Create .tt/workspace symlink pointing to the virtual project directory
+  ln -snf "$virtual_dir" "$repo_abs/.tt/workspace"
+  log "Created .tt/workspace -> $virtual_dir"
+
   # Create HEAD symlink in virtual folder pointing to repo (absolute path)
   ln -snf "$repo_abs" "$virtual_dir/HEAD"
   log "Created HEAD -> $repo_abs"
 
-  # Commit to jj
+  # Commit to jj (config.toml and .gitignore are tracked; history and workspace are ignored)
   jj -R "$repo_abs" commit -m "Create workspace"
 
   log "Initialized workspace:"
   log "  repo:           $repo_abs"
   log "  config:         $config_file"
   log "  virtual folder: $virtual_dir"
+  log "  .tt/workspace -> $virtual_dir"
   log "  HEAD ->         $repo_abs"
 }
 

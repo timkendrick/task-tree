@@ -8,20 +8,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Rename a task's slug (human-readable part) while preserving the hex suffix.
 #
 # Usage:
-#   rename --slug <new-slug> [--task <task-id>] [--repo PATH] [--workspace-dir PATH]
+#   rename --slug <new-slug> [--task <task-id>] [--repo PATH]
 #
 # Options:
 #   --slug SLUG            New slug (required)
 #   --task TASK-ID         Task to rename (default: current task)
-#   --repo PATH            Repository root (default: walk up to find .jj)
-#   --workspace-dir PATH   Virtual project dir (for hooks)
+#   --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
 #
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} --slug <new-slug> [--task <task-id>] [--repo PATH] [--workspace-dir PATH]
+Usage: ${SCRIPT_NAME} --slug <new-slug> [--task <task-id>] [--repo PATH]
 
 Rename a task's slug (the human-readable part of the task ID), preserving the hex suffix.
 For example: task/old-name-abc123 → task/new-name-abc123.
@@ -34,8 +33,7 @@ current slug. Errors if the new ID would conflict with an existing bookmark.
 Options:
   --slug SLUG            New slug (required)
   --task TASK-ID         Task to rename (default: current task)
-  --repo PATH            Repository root (default: walk up to find .jj)
-  --workspace-dir PATH   Virtual project dir
+  --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
 
 Examples:
   ${SCRIPT_NAME} --slug new-name
@@ -49,7 +47,6 @@ main() {
   local slug=''
   local task_id=''
   local repo=''
-  local workspace_dir=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -66,11 +63,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"
-        shift 2
-        ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"
         shift 2
         ;;
       -h|--help)
@@ -94,18 +86,7 @@ main() {
     exit 1
   fi
 
-  # Resolve repo root: walk up from current directory to find .jj
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository (no .jj directory found). Use --repo to specify."
-      exit 1
-    fi
-  fi
-
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local -a jj_opts=(-R "$repo")
 
@@ -194,67 +175,150 @@ main() {
     task_title="${task_title% }"  # Remove trailing space
   fi
 
-  # If parent exists, update parent's subtask entry
+  local old_dir="${repo}/$(task_dir_path "$suffix")"
+  local new_dir="${repo}/$(task_dir_path "${slug}-${old_hex}")"
+  local old_rel="$(task_dir_path "$suffix")"
+
+  # Begin transaction (records before-op for undo)
+  tt_begin_transaction "$repo"
+
+  # ---------------------------------------------------------------------------
+  # Step 0: Pre-save all file content under <old-dir>/ for every commit in the
+  # task's unmerged range, before any jj operations modify the tree.
+  #
+  # Use --at-operation to read pre-rename content even after auto-rebase
+  # introduces conflict markers. Use `{ head -1; cat >/dev/null; }` to drain
+  # the pipe without triggering SIGPIPE / pipefail.
+  # ---------------------------------------------------------------------------
+  local pre_op saved_dir range
+  pre_op=$(jj "${jj_opts[@]}" op log --no-graph -T 'id ++ "\n"' | { head -1; cat > /dev/null; })
+  saved_dir=$(mktemp -d)
+
+  if [[ -n "$parent_bookmark" ]]; then
+    range=$(jj "${jj_opts[@]}" log -r "::${old_id} ~ ::${parent_bookmark}" \
+        --no-graph -T 'change_id ++ "\n"' | tail -r)
+  else
+    # No parent: range is the full ancestry of the task branch
+    range=$(jj "${jj_opts[@]}" log -r "::${old_id}" \
+        --no-graph -T 'change_id ++ "\n"' | tail -r)
+  fi
+
+  local change_id
+  while IFS= read -r change_id; do
+    local file_list
+    file_list=$(jj "${jj_opts[@]}" --at-operation "$pre_op" file list -r "$change_id" 2>/dev/null \
+        | grep "^${old_rel}/" || true)
+    if [[ -n "$file_list" ]]; then
+      while IFS= read -r fpath; do
+        local rel="${fpath#${old_rel}/}"
+        mkdir -p "$saved_dir/$change_id/$(dirname "$rel")"
+        jj "${jj_opts[@]}" --at-operation "$pre_op" file show -r "$change_id" "$fpath" \
+            > "$saved_dir/$change_id/$rel"
+      done <<< "$file_list"
+    fi
+  done <<< "$range"
+
+  # ---------------------------------------------------------------------------
+  # Step 1: Edit the parent branch commit in place — rename <old-dir> to
+  # <new-dir>, update the subtask: reference, commit. jj's auto-rebase fires
+  # immediately after, producing conflicts on task-range commits that modified
+  # files under <old-dir>/.
+  # ---------------------------------------------------------------------------
   if [[ -n "$parent_bookmark" && -n "$parent_task_file" ]]; then
-    # Determine workspace for parent
-    local parent_worktree
-    parent_worktree="$(resolve_current_worktree "$repo")"
+    log "Updating parent branch..."
+    jj "${jj_opts[@]}" edit "${parent_bookmark}"
 
-    # Switch to parent bookmark tip
-    log "Updating parent subtask reference..."
-    jj -R "$parent_worktree" new "$parent_bookmark"
-
-    local parent_path="$repo/$parent_task_file"
-    if [[ ! -f "$parent_path" ]]; then
-      log "Error: Parent task file not found: $parent_path"
-      jj -R "$parent_worktree" abandon
+    if [[ ! -d "$old_dir" ]]; then
+      log "Error: Task directory not found on parent branch: $old_dir"
       exit 1
     fi
 
-    # Update subtask entry: replace old_id with new_id
-    local tmpfile
-    tmpfile="$(mktemp)"
-    sed "s|^\(subtask:[[:space:]]*\[.\][[:space:]]*\)${old_id}$|\1${new_id}|" "$parent_path" > "$tmpfile"
-    mv "$tmpfile" "$parent_path"
+    # Rename the entire task directory tree
+    mv "$old_dir" "$new_dir"
 
-    # Commit parent update
-    jj -R "$parent_worktree" describe -m "Rename task: $task_title ($new_id)"
-    jj -R "$parent_worktree" bookmark set "$parent_bookmark"
-    jj -R "$parent_worktree" new "@"
+    # Update subtask: reference in the parent's own TASK.md
+    local parent_path="$repo/$parent_task_file"
+    if [[ -f "$parent_path" ]]; then
+      local tmpfile
+      tmpfile="$(mktemp)"
+      sed "s|^\(subtask:[[:space:]]*\[.\][[:space:]]*\)${old_id}$|\1${new_id}|" "$parent_path" > "$tmpfile"
+      mv "$tmpfile" "$parent_path"
+    fi
+
+    # Commit: jj snapshots the mv automatically; re-use existing message
+    local parent_msg
+    parent_msg=$(jj "${jj_opts[@]}" log -r @ --no-graph -T 'description.first_line()')
+    jj "${jj_opts[@]}" commit -m "$parent_msg"
+    jj "${jj_opts[@]}" bookmark set "${parent_bookmark}" -r @-
+    jj "${jj_opts[@]}" new "${parent_bookmark}"
   fi
 
-  # Rename the bookmark
+  # ---------------------------------------------------------------------------
+  # Step 2: Rename the jj bookmark.
+  # ---------------------------------------------------------------------------
   log "Renaming bookmark..."
   jj "${jj_opts[@]}" bookmark rename "$old_id" "$new_id"
 
-  # Rename the task directory
-  local old_dir="${repo}/$(task_dir_path "$suffix")"
-  local new_dir="${repo}/$(task_dir_path "${slug}-${old_hex}")"
+  # ---------------------------------------------------------------------------
+  # Step 3: Sweep the task range oldest-to-newest, writing pre-saved content
+  # back to <new-dir>/ and removing <old-dir>/. Each `jj edit` call snapshots
+  # the previous commit's changes and triggers auto-rebase of descendants.
+  # ---------------------------------------------------------------------------
+  log "Rewriting task branch range..."
 
-  if [[ -d "$old_dir" ]]; then
-    log "Renaming task directory..."
-    mv "$old_dir" "$new_dir"
+  if [[ -n "$parent_bookmark" ]]; then
+    range=$(jj "${jj_opts[@]}" log -r "::${new_id} ~ ::${parent_bookmark}" \
+        --no-graph -T 'change_id ++ "\n"' | tail -r)
   else
-    log "Warning: Task directory not found: $old_dir"
+    range=$(jj "${jj_opts[@]}" log -r "::${new_id}" \
+        --no-graph -T 'change_id ++ "\n"' | tail -r)
   fi
 
-  # Update TASK.md symlink if it exists and points to old directory
-  local task_md_link="${repo}/TASK.md"
-  if [[ -L "$task_md_link" ]]; then
-    local link_target
-    link_target="$(readlink "$task_md_link")"
-    # Check if the symlink points to the old relative path
-    local old_rel=".tt/task/${suffix}/TASK.md"
-    local new_rel=".tt/task/${slug}-${old_hex}/TASK.md"
-    if [[ "$link_target" == "$old_rel" ]]; then
-      log "Updating TASK.md symlink..."
-      ln -snf "$new_rel" "$task_md_link"
+  while IFS= read -r change_id; do
+    jj "${jj_opts[@]}" edit "$change_id"
+
+    # Write pre-saved file content to the new directory location
+    if [[ -d "$saved_dir/$change_id" ]]; then
+      local saved_file
+      while IFS= read -r saved_file; do
+        local rel="${saved_file#$saved_dir/$change_id/}"
+        local dest="$new_dir/$rel"
+        mkdir -p "$(dirname "$dest")"
+        cp "$saved_file" "$dest"
+      done < <(find "$saved_dir/$change_id" -type f)
     fi
-  fi
 
-  # Leave the working copy at the new bookmark
+    # Remove <old-dir> (which may exist as a conflict-marker directory after
+    # auto-rebase, or as a plain directory if this commit introduced it)
+    rm -rf "$old_dir"
+
+    # Update root TASK.md symlink if it points to the old path
+    local task_md_link="${repo}/TASK.md"
+    if [[ -L "$task_md_link" ]]; then
+      local link_target
+      link_target="$(readlink "$task_md_link")"
+      if [[ "$link_target" == *"$suffix"* ]]; then
+        local new_target
+        new_target="${link_target//$suffix/${slug}-${old_hex}}"
+        rm "$task_md_link"
+        ln -s "$new_target" "$task_md_link"
+      fi
+    fi
+
+    # jj snapshots the above changes when the next jj command (next `jj edit`)
+    # runs, which also triggers auto-rebase of all descendants.
+  done <<< "$range"
+
+  rm -rf "$saved_dir"
+
+  # ---------------------------------------------------------------------------
+  # Step 4: Leave the working copy as an empty child of the renamed task tip.
+  # ---------------------------------------------------------------------------
   log "Switching to renamed task..."
-  jj "${jj_opts[@]}" new "$new_id"
+  jj "${jj_opts[@]}" new "${new_id}"
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   # Success message
   printf 'Task renamed: %s > %s\n' "$old_id" "$new_id"

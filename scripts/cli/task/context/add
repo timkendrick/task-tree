@@ -9,15 +9,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # Usage:
 #   add [<task-id>] [--title <title>] [--slug <slug>]
-#       [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
+#       [--worktree=<path>] [--repo PATH]
 #
 # Options:
 #   <task-id>            Task branch to add context to (default: current branch).
 #   --title TITLE        Context file title (prompted if missing and interactive).
 #   --slug SLUG          Context slug (derived from title if not given).
 #   --worktree=<path>    Worktree to use when task has multiple worktrees.
-#   --repo PATH          Repository root (default: walk up from CWD to find .jj).
-#   --workspace-dir PATH Virtual project dir. Overrides workspace_dir in .tt/config.toml.
+#   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #
 # Environment variables:
 #   COMMAND_NAME - Command prefix (e.g., "task context") set by parent dispatcher
@@ -43,7 +42,7 @@ Options:
   --title TITLE         Context file title (prompted if missing and interactive).
   --slug SLUG           Context file slug (derived from title if not given).
   --worktree=<path>     Worktree to use when task has multiple worktrees.
-  --repo PATH           Repository root (default: walk up from CWD to find .jj).
+  --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
   --workspace-dir PATH  Virtual project dir. Overrides workspace_dir in .tt/config.toml.
 
 Examples:
@@ -66,7 +65,6 @@ main() {
   local task_id_arg=''
   local worktree_arg=''
   local repo=''
-  local workspace_dir=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -80,9 +78,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"; shift 2 ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"; shift 2 ;;
       -h|--help)
         usage ;;
       -*)
@@ -96,25 +91,15 @@ main() {
     esac
   done
 
-  # Resolve repo root
-  if [[ -z "$repo" ]]; then
-    if ! repo="$(find_repo_root)"; then
-      log "Error: No enclosing jj repository. Use --repo to specify."
-      exit 1
-    fi
-  fi
-  if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
+  repo="$(resolve_repo "$repo")"
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   # Resolve current branch and task file
   local task_file task_suffix bookmark
@@ -252,6 +237,15 @@ main() {
     exit 1
   fi
 
+  # Determine if we need a cross-branch commit (must resolve BEFORE starting
+  # the transaction, since resolve_current may trigger a jj snapshot)
+  local current_bookmark
+  current_bookmark="$(resolve_current "$repo" "$task_prefix" "$project_prefix" | sed -n '3p')"
+
+  # Begin transaction (records before-op for undo) BEFORE any filesystem writes,
+  # so the before-op matches the previous command's after-op in the history chain.
+  tt_begin_transaction "$repo"
+
   # Create context directory
   local ctx_dir
   ctx_dir="$(dirname "$target_worktree/$ctx_file")"
@@ -281,11 +275,6 @@ main() {
 
   printf '%s\n' "$updated_task_content" > "$task_file_path_on_disk"
 
-  # Commit: create a commit with both the context file and updated task file
-  # Determine if we need a cross-branch commit
-  local current_bookmark
-  current_bookmark="$(resolve_current "$repo" "$task_prefix" "$project_prefix" | sed -n '3p')"
-
   if [[ "$target_worktree" == "$current_worktree" && "$current_bookmark" != "$bookmark" ]]; then
     # Cross-branch: need to use jj edit + commit sequence
     local original_parent_rev
@@ -301,6 +290,9 @@ main() {
     jj -R "$target_worktree" commit -m "Add context: $ctx_title ($bookmark)"
     jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
   fi
+
+  # Commit transaction (records after-op for undo)
+  tt_commit_transaction "$repo"
 
   log "Added context: $ctx_id ($bookmark)"
   printf '%s\n' "$ctx_id"
