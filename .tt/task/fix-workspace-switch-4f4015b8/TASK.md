@@ -1,6 +1,6 @@
 ---
 title: "Fix `tt workspace switch` worktree detection"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-03T18:10:51Z
 updated: 2026-04-03T18:10:53Z
 ---
