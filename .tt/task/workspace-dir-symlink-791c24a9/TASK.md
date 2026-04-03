@@ -1,6 +1,6 @@
 ---
 title: "Replace `workspace_dir` config with `.tt/workspace` symlink"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-03T18:46:44Z
 updated: 2026-04-03T18:59:44Z
 context: context/implementation-plan-625a2ded
