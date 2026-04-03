@@ -75,6 +75,7 @@ subtask: [x] task/workspace-dir-symlink-791c24a9
 subtask: [x] task/tt-workspace-list-9b5fe3c9
 subtask: [ ] task/tt-worktree-list-fe6a579a
 subtask: [ ] task/tt-worktree-delete-461a5159
+subtask: [ ] task/tt-worktree-show-81644e0f
 ---
 Implement shell script implementations of all `tt` CLI commands
 
