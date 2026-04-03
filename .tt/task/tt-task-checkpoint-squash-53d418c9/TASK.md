@@ -1,6 +1,6 @@
 ---
 title: "Add `--squash` argument to `tt task checkpoint` CLI command"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-03T08:42:21Z
 updated: 2026-04-03T08:42:21Z
 ---
