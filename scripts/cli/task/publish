@@ -50,7 +50,6 @@ main() {
   local target=''
   local project_id_arg=''
   local repo=''
-  local workspace_dir=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -67,9 +66,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"; shift 2 ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"; shift 2 ;;
       -h|--help) usage 0 ;;
       -*)
         log "Error: Unknown option: $1"; usage ;;
@@ -94,9 +90,9 @@ main() {
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   local current_worktree
   current_worktree="$(resolve_current_worktree "$repo")"

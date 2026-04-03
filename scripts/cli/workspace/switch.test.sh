@@ -43,7 +43,7 @@ test_workspace_switch__switches_to_existing_worktree() {
 
   # HEAD symlink should now resolve to the task worktree
   local virtual_dir
-  virtual_dir="$(sed -n 's/^workspace_dir *= *//p' "$REPO/.tt/config.toml" | tr -d '"')"
+  virtual_dir="$(readlink "$REPO/.tt/workspace")"
   local head_target resolved_head
   head_target="$(readlink "$virtual_dir/HEAD" 2>/dev/null || true)"
   if [[ "$head_target" != /* ]]; then

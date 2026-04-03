@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # Usage:
 #   add [<task-id>] [--title <title>] [--slug <slug>]
-#       [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
+#       [--worktree=<path>] [--repo PATH]
 #
 # Options:
 #   <task-id>            Task branch to add context to (default: current branch).
@@ -17,7 +17,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --slug SLUG          Context slug (derived from title if not given).
 #   --worktree=<path>    Worktree to use when task has multiple worktrees.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
-#   --workspace-dir PATH Virtual project dir. Overrides workspace_dir in .tt/config.toml.
 #
 # Environment variables:
 #   COMMAND_NAME - Command prefix (e.g., "task context") set by parent dispatcher
@@ -66,7 +65,6 @@ main() {
   local task_id_arg=''
   local worktree_arg=''
   local repo=''
-  local workspace_dir=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -80,9 +78,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"; shift 2 ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"; shift 2 ;;
       -h|--help)
         usage ;;
       -*)
@@ -102,9 +97,9 @@ main() {
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   # Resolve current branch and task file
   local task_file task_suffix bookmark

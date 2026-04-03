@@ -8,21 +8,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt workspace switch — redirect the virtual project's HEAD symlink to an existing task worktree.
 #
 # Usage:
-#   switch <task-id> [--worktree=<path>] [--force] [--repo PATH] [--workspace-dir PATH]
+#   switch <task-id> [--worktree=<path>] [--force] [--repo PATH]
 #
 # Options:
 #   <task-id>            Task or project ID (required)
 #   --worktree=<path>    Specify exact worktree path when multiple exist for the task.
 #   --force              Proceed even if the outgoing workspace has local changes.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
-#   --workspace-dir PATH Virtual project dir containing HEAD symlink.
-#                        Overrides workspace_dir in .tt/config.toml.
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} <task-id> [--worktree=<path>] [--force] [--repo PATH] [--workspace-dir PATH]
+Usage: ${SCRIPT_NAME} <task-id> [--worktree=<path>] [--force] [--repo PATH]
 
 Redirect the virtual project's HEAD symlink to an existing task worktree.
 The worktree must already exist (run \`tt task checkout --worktree\` first).
@@ -34,8 +32,6 @@ Options:
   --worktree=<path>     Specify exact worktree path (required when multiple exist).
   --force               Proceed even if the outgoing workspace has local changes.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
-  --workspace-dir PATH  Virtual project dir containing HEAD symlink.
-                        Overrides workspace_dir in .tt/config.toml.
 
 Examples:
   ${SCRIPT_NAME} task/foo-abc12345
@@ -51,7 +47,6 @@ main() {
   local worktree_path=''
   local force=false
   local repo=''
-  local workspace_dir=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -66,11 +61,6 @@ main() {
       --repo)
         [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
         repo="$2"
-        shift 2
-        ;;
-      --workspace-dir)
-        [[ $# -lt 2 ]] && { log "Error: --workspace-dir requires an argument"; usage; }
-        workspace_dir="$2"
         shift 2
         ;;
       -h|--help)
@@ -118,10 +108,9 @@ main() {
     exit 1
   fi
 
-  # Resolve workspace_dir from flag, then config/convention
-  if [[ -z "$workspace_dir" ]]; then
-    workspace_dir="$(get_workspace_dir "$repo")" || true
-  fi
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
 
   # Find worktrees for this task via `jj workspace list`.
   # Use a template to emit "<name>: <root-path>" lines; the default output format
