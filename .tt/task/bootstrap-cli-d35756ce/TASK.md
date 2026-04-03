@@ -70,6 +70,7 @@ subtask: [x] task/automated-test-suite-b9494d87
 subtask: [x] task/tt-repo-env-var-6546574d
 subtask: [x] task/tt-task-create-parent-191ea092
 subtask: [x] task/tt-task-checkpoint-squash-53d418c9
+subtask: [ ] task/fix-workspace-switch-4f4015b8
 ---
 Implement shell script implementations of all `tt` CLI commands
 
