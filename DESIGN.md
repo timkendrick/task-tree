@@ -289,7 +289,7 @@ The command exits with an error if none of these resolves to a valid jj reposito
 
 - **`tt task checkout <task-id> [--worktree [=<path>] [--switch]] [--force]`** — Switch to the given task branch. With `--worktree`, uses or creates a dedicated jj workspace for that task; otherwise uses the closest ancestor task workspace or the current workspace. Refuses if the target workspace has local changes unless `--force`. Updates task status to IN-PROGRESS if TODO, runs `setup` hook when creating a new worktree. Without `--worktree`, always updates the virtual project's `HEAD` symlink; with `--worktree`, only updates `HEAD` if `--switch` is also provided (`--switch` is only valid with `--worktree`). See §6.2.
 
-- **`tt task checkpoint [--message <msg>]`** — Record the current state and advance the task bookmark. If the working copy is empty, moves the bookmark to the working copy's parent commit (and updates that commit's description if `--message` is given). If the working copy has pending changes, creates a new commit from those changes (`jj commit`, using `--message` as the description) and moves the bookmark to it. The target commit must be a strict descendant of the current bookmark tip, unless `--force` is specified. Prints a short confirmation on success. See §6.3. Hooks: **pre-checkpoint**, **post-checkpoint**.
+- **`tt task checkpoint [--message <msg>] [--squash]`** — Record the current state and advance the task bookmark. If the working copy is empty, moves the bookmark to the working copy's parent commit (and updates that commit's description if `--message` is given). If the working copy has pending changes, creates a new commit from those changes (`jj commit`, using `--message` as the description) and moves the bookmark to it. The target commit must be a strict descendant of the current bookmark tip, unless `--force` is specified. With `--squash`, squashes all commits between the last bookmark and the current working copy into a single checkpoint commit (see §6.3.2). Prints a short confirmation on success. See §6.3. Hooks: **pre-checkpoint**, **post-checkpoint**.
 
 - **`tt task complete [<task-id>] [--worktree=<path>] [--force]`** — Mark the current task (or a given task) as done. Creates a `Complete task: <title> (<task-id>)` commit on the task branch that sets `status` to `DONE` in the task file, and advances the task bookmark to this commit. Requires a clean working copy and all child tasks to be done (every `subtask:` entry marked `[x]`) unless `--force` is specified. `--worktree=<path>` is required when the task has multiple worktrees. See §6.4. Hooks: **pre-complete** (blocking), **post-complete** (optional).
 
@@ -507,6 +507,34 @@ Checkpoint: task/foo-abc12345 → <commit-id>
 ```
 
 **Hooks:** Runs **pre-checkpoint** (blocking) before any VCS operation, and **post-checkpoint** (optional) after success. Both run in the current task worktree. See §8.
+
+#### 6.3.2 Squashing intermediate commits (`--squash`)
+
+When `--squash` is passed, `tt task checkpoint` collapses all commits between the most recent bookmark state and the current working copy into a single checkpoint commit stacked directly after the bookmark. Intermediate commits are automatically abandoned by jj.
+
+**Commit flow with `--squash`:**
+
+1. Count commits in the range `<bookmark>::@- ~ <bookmark>` (commits strictly between the bookmark and the working copy's parent). If none exist, fall back to the normal commit flow.
+2. Run `jj squash --from "<bookmark>::@- ~ <bookmark>" --into @ -m "<full-message>"` to merge all intermediate commits into `@` and set its description.
+3. Run `jj new` to close `@` and open a fresh working copy.
+4. Advance the bookmark to `@-` as normal.
+
+**When there is nothing to squash** (the working copy parent is already the bookmark), `--squash` behaves identically to a normal checkpoint: a single `jj commit -m "<full-message>"` is issued.
+
+**Before `--squash`:**
+
+```
+bookmark → A → B → C → @ (open WC, may have pending changes)
+```
+
+**After `--squash`:**
+
+```
+bookmark → Checkpoint → @ (new open WC)
+                ↑
+           bookmark now here
+           (A, B, C abandoned automatically by jj)
+```
 
 ### 6.4 Complete (`tt task complete`)
 
