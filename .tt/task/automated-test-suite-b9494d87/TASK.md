@@ -1,6 +1,6 @@
 ---
 title: "Automated test suite"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-28T09:13:00Z
 updated: 2026-03-29T16:12:46Z
 context: context/implementation-plan-11870fb4
