@@ -79,6 +79,7 @@ subtask: [ ] task/tt-worktree-show-81644e0f
 subtask: [ ] task/absolute-workspace-symlink-path-46b9b1e4
 subtask: [ ] task/tt-history-unlock-397521a9
 subtask: [ ] task/tt-history-truncate-b37bc2e3
+subtask: [ ] task/ignore-subcommand-test-files-b794132f
 ---
 Implement shell script implementations of all `tt` CLI commands
 
