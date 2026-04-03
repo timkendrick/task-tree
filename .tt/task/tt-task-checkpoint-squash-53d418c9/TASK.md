@@ -2,7 +2,8 @@
 title: "Add `--squash` argument to `tt task checkpoint` CLI command"
 status: IN-PROGRESS
 created: 2026-04-03T08:42:21Z
-updated: 2026-04-03T08:42:21Z
+updated: 2026-04-03T09:08:03Z
+context: context/implementation-plan-10c8ab0d
 ---
 `tt task checkpoint` can be used to register an atomic checkpoint in the VCS history, and is the primary mechanism of 'locking in' changes that have been made to a task branch's working copy by updating the task bookmark.
 
