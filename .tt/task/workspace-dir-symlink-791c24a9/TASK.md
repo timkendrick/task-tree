@@ -2,7 +2,8 @@
 title: "Replace `workspace_dir` config with `.tt/workspace` symlink"
 status: IN-PROGRESS
 created: 2026-04-03T18:46:44Z
-updated: 2026-04-03T18:55:04Z
+updated: 2026-04-03T18:59:44Z
+context: context/implementation-plan-625a2ded
 ---
 Replace the `workspace_dir` key in `.tt/config.toml` with a machine-local `.tt/workspace`
 symlink. `.tt/config.toml` is committed to the repo, making `workspace_dir` unsuitable for
