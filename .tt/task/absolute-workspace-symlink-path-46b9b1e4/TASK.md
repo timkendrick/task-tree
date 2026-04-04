@@ -1,6 +1,6 @@
 ---
 title: "Ensure absolute path when updating `.tt/workspace` symlink"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-03T21:25:00Z
 updated: 2026-04-03T21:25:01Z
 ---
