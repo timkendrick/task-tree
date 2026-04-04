@@ -81,6 +81,7 @@ subtask: [ ] task/tt-history-unlock-397521a9
 subtask: [ ] task/tt-history-truncate-b37bc2e3
 subtask: [ ] task/ignore-subcommand-test-files-b794132f
 subtask: [ ] task/delete-tt-workspace-branch-623e7bf7
+subtask: [ ] task/worktree-history-file-e66a2487
 ---
 Implement shell script implementations of all `tt` CLI commands
 
