@@ -1,6 +1,6 @@
 ---
 title: "Ensure `.tt/history` creation upon worktree checkout"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-04T09:20:22Z
 updated: 2026-04-04T09:20:22Z
 ---
