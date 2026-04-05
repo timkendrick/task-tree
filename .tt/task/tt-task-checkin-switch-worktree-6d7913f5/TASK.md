@@ -2,7 +2,8 @@
 title: "`tt task checkin` not switching HEAD worktree alias"
 status: IN-PROGRESS
 created: 2026-04-05T10:07:45Z
-updated: 2026-04-05T20:50:02Z
+updated: 2026-04-05T20:50:35Z
+context: context/root-cause-and-research-findings-b0929e5c
 ---
 When running `tt task checkin --complete` from inside a task's dedicated jj worktree (without `TT_REPO` set), the `HEAD` virtual worktree alias symlink is not updated to point to the parent task's workspace after checkin completes.
 
