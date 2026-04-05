@@ -91,6 +91,30 @@ test_task_checkout__records_transaction() {
 }
 
 
+test_task_checkout__worktree_creates_history_file() {
+  setup_workspace "co-worktree-history"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+
+  # Checkout into a new dedicated worktree
+  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
+
+  # Derive the worktree path (conventional: <workspace_dir>/<task_id>)
+  local worktree_path="$VIRTUAL/$task_id"
+
+  # The new worktree must have a .tt/history file so that tt commands
+  # run from within the worktree can record transactions.
+  assert_file_exists ".tt/history exists in worktree" "$worktree_path/.tt/history"
+
+  # Running a tt command from within the worktree should not error on
+  # a missing history file (the sed "No such file or directory" failure).
+  local wt_output wt_exit=0
+  wt_output=$(TT_REPO="$worktree_path" run_tt task checkpoint -m "checkpoint from worktree" 2>&1) || wt_exit=$?
+  assert_success "tt command in worktree succeeds" "$wt_exit"
+}
+
+
 test_task_checkout__head_symlink_is_absolute() {
   setup_workspace "co-head-abs"
   proj_id=$(create_project "proj" "Project") || true

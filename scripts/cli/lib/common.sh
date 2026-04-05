@@ -193,6 +193,18 @@ set_workspace_dir() {
   make_absolute_symlink "$virtual_dir" "$repo/.tt/workspace"
 }
 
+# Usage: init_tt_history REPO
+# Creates an empty .tt/history file in REPO if it does not already exist.
+# The history file is gitignored (via .tt/.gitignore) and used by the
+# transaction system to record before/after jj operation IDs for `tt history undo`.
+init_tt_history() {
+  local repo="$1"
+  local history_file="$repo/.tt/history"
+  if [[ ! -f "$history_file" ]]; then
+    touch "$history_file"
+  fi
+}
+
 # Read workspace dir from .tt/workspace symlink; returns 1 if not configured.
 # Always resolves to an absolute path to prevent symlink loops.
 get_workspace_dir() {

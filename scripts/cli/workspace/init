@@ -236,7 +236,7 @@ TOML
   printf '/history\n/workspace\n' > "$gitignore_file"
 
   # Create empty transaction history log (ignored by jj via .tt/.gitignore)
-  touch "$repo_abs/.tt/history"
+  init_tt_history "$repo_abs"
 
   # Create .tt/workspace symlink pointing to the virtual project directory
   set_workspace_dir "$repo_abs" "$virtual_dir"
