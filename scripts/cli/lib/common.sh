@@ -182,7 +182,17 @@ is_task_branch() {
   [[ "$bookmark" == "$prefix"* ]] && [[ "$bookmark" =~ -[0-9a-fA-F]{8}$ ]]
 }
 
+# Usage: set_workspace_dir REPO VIRTUAL_DIR
+# Creates or replaces the <repo>/.tt/workspace symlink pointing at VIRTUAL_DIR.
+# Always uses an absolute target path; the absolute-path guarantee is an
+# implementation detail enforced here so callers never need to think about it.
+set_workspace_dir() {
+  local repo="$1" virtual_dir="$2"
+  make_absolute_symlink "$virtual_dir" "$repo/.tt/workspace"
+}
+
 # Read workspace dir from .tt/workspace symlink; returns 1 if not configured.
+# Always resolves to an absolute path to prevent symlink loops.
 get_workspace_dir() {
   local repo="$1"
   local symlink="$repo/.tt/workspace"
@@ -190,6 +200,10 @@ get_workspace_dir() {
     local ws_dir
     ws_dir="$(readlink "$symlink")"
     if [[ -n "$ws_dir" ]]; then
+      # Resolve relative targets against the symlink's parent directory
+      if [[ "$ws_dir" != /* ]]; then
+        ws_dir="$(cd "$(dirname "$symlink")" && cd "$ws_dir" && pwd)"
+      fi
       printf '%s' "$ws_dir"
       return 0
     fi
@@ -256,21 +270,28 @@ run_hook() {
   fi
 }
 
+# Usage: make_absolute_symlink TARGET_PATH SYMLINK_PATH
+# Creates or replaces SYMLINK_PATH pointing at TARGET_PATH, always using an
+# absolute path for the target to prevent symlink loops (e.g. HEAD -> ./HEAD).
+# TARGET_PATH must be an existing directory or file; exits 1 otherwise.
+make_absolute_symlink() {
+  local target_path="$1" symlink_path="$2"
+  if [[ "$target_path" != /* ]]; then
+    target_path="$(cd "$target_path" && pwd)"
+  fi
+  ln -snf "$target_path" "$symlink_path"
+}
+
 # Usage: update_head_symlink WORKSPACE_DIR TARGET_PATH
-# Updates <workspace-dir>/HEAD to point at TARGET_PATH (relative if possible).
+# Updates <workspace-dir>/HEAD to point at TARGET_PATH using an absolute path
+# to prevent symlink loops.
 update_head_symlink() {
   local workspace_dir="$1" target_path="$2"
   [[ -z "$workspace_dir" ]] && return 0
   [[ ! -d "$workspace_dir" ]] && return 0
   local head_path="$workspace_dir/HEAD"
-  local rel_target
-  if [[ "$target_path" == "$workspace_dir"/* ]]; then
-    rel_target="./${target_path#"$workspace_dir"/}"
-  else
-    rel_target="$target_path"
-  fi
-  ln -snf "$rel_target" "$head_path"
-  log "Updated HEAD -> $rel_target"
+  make_absolute_symlink "$target_path" "$head_path"
+  log "Updated HEAD -> $target_path"
 }
 
 # Usage: perform_workspace_switch REPO WORKSPACE_DIR TASK_ID TARGET_WORKTREE OUTGOING_WORKTREE PREVIOUS_TASK_ID

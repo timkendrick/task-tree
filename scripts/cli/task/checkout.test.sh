@@ -91,4 +91,17 @@ test_task_checkout__records_transaction() {
 }
 
 
+test_task_checkout__head_symlink_is_absolute() {
+  setup_workspace "co-head-abs"
+  proj_id=$(create_project "proj" "Project") || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" >/dev/null 2>&1 || true
+
+  local head_target
+  head_target="$(readlink "$VIRTUAL/HEAD")"
+  assert_eq "HEAD is absolute" "${head_target:0:1}" "/"
+}
+
+
 run_tests "tt task checkout"

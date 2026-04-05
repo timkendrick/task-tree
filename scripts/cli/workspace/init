@@ -239,11 +239,11 @@ TOML
   touch "$repo_abs/.tt/history"
 
   # Create .tt/workspace symlink pointing to the virtual project directory
-  ln -snf "$virtual_dir" "$repo_abs/.tt/workspace"
+  set_workspace_dir "$repo_abs" "$virtual_dir"
   log "Created .tt/workspace -> $virtual_dir"
 
   # Create HEAD symlink in virtual folder pointing to repo (absolute path)
-  ln -snf "$repo_abs" "$virtual_dir/HEAD"
+  make_absolute_symlink "$repo_abs" "$virtual_dir/HEAD"
   log "Created HEAD -> $repo_abs"
 
   # Commit to jj (config.toml and .gitignore are tracked; history and workspace are ignored)

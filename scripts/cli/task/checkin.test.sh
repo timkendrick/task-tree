@@ -105,4 +105,21 @@ test_task_checkin__single_transaction() {
 }
 
 
+test_task_checkin__head_symlink_is_absolute() {
+  setup_workspace "ci-head-abs"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+  complete_task >/dev/null || true
+
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true
+
+  local head_target
+  head_target="$(readlink "$VIRTUAL/HEAD")"
+  assert_eq "HEAD is absolute" "${head_target:0:1}" "/"
+}
+
+
 run_tests "tt task checkin"

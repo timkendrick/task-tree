@@ -233,12 +233,10 @@ main() {
   if [[ "$new_worktree" == true ]]; then
     log "Creating workspace: $target_worktree"
     jj "${jj_opts[@]}" workspace add --name "$task_id" -r "$task_id" "$target_worktree"
-    # Plant .tt/workspace symlink in the new worktree (copied from repo's symlink)
-    local src_workspace="$repo/.tt/workspace"
-    if [[ -L "$src_workspace" ]]; then
-      local wt_tt_dir="$target_worktree/.tt"
-      mkdir -p "$wt_tt_dir"
-      ln -snf "$(readlink "$src_workspace")" "$wt_tt_dir/workspace"
+    # Plant .tt/workspace symlink in the new worktree (copied from repo's symlink).
+    if [[ -L "$repo/.tt/workspace" ]]; then
+      mkdir -p "$target_worktree/.tt"
+      set_workspace_dir "$target_worktree" "$(get_workspace_dir "$repo")"
     fi
   elif [[ "$worktree_flag" == true ]]; then
     # Existing workspace: move its WC to a new commit on top of the task bookmark
