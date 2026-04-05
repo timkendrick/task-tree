@@ -1,1 +1,1 @@
-.tt/task/bootstrap-cli-d35756ce/TASK.md
+.tt/task/jj-file-show-cwd-sensitivity-8b319182/TASK.md
