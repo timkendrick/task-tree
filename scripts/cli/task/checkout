@@ -233,9 +233,10 @@ main() {
   if [[ "$new_worktree" == true ]]; then
     log "Creating workspace: $target_worktree"
     jj "${jj_opts[@]}" workspace add --name "$task_id" -r "$task_id" "$target_worktree"
-    # Plant .tt/workspace symlink in the new worktree (copied from repo's symlink).
+    # Plant .tt/workspace symlink and history file in the new worktree.
+    mkdir -p "$target_worktree/.tt"
+    init_tt_history "$target_worktree"
     if [[ -L "$repo/.tt/workspace" ]]; then
-      mkdir -p "$target_worktree/.tt"
       set_workspace_dir "$target_worktree" "$(get_workspace_dir "$repo")"
     fi
   elif [[ "$worktree_flag" == true ]]; then
