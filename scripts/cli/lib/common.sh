@@ -103,9 +103,11 @@ log() {
 }
 
 # Find repo root by walking up from current directory to find .jj; return 1 if not found.
+# Uses pwd -P to resolve symlinks so that working from inside a symlinked directory
+# (e.g. /virtual/HEAD) does not produce a symlink path as the repo root.
 find_repo_root() {
   local dir
-  dir="$(pwd)"
+  dir="$(pwd -P)"
   while [[ -n "$dir" ]]; do
     if [[ -d "$dir/.jj" ]]; then
       printf '%s' "$dir"

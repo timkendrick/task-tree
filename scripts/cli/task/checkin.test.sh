@@ -105,6 +105,40 @@ test_task_checkin__single_transaction() {
 }
 
 
+test_task_checkin__head_no_symlink_loop_when_working_from_head_directory() {
+  # Regression: when the user works from inside the HEAD-linked directory
+  # (e.g. their editor opens /virtual/HEAD which symlinks to a real worktree),
+  # find_repo_root resolves $repo to the symlink path /virtual/HEAD via `pwd`
+  # rather than the real worktree path. This causes find_worktrees_for_branch
+  # to fall back to $repo (= /virtual/HEAD) as target_ws, and
+  # perform_workspace_switch then sets HEAD -> /virtual/HEAD, a self-referential
+  # loop that breaks all subsequent tt commands.
+  setup_workspace "ci-symlink-loop"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  # Create a sibling task so --propagate has work to do after checkin
+  create_task "sibling" "Sibling" >/dev/null || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  # Create the task under test
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+
+  # Run checkin from inside the HEAD symlink directory, without TT_REPO set,
+  # so find_repo_root resolves $repo via `pwd` to the symlink path.
+  local head_path="$VIRTUAL/HEAD"
+  output="" exit_code=0
+  output=$(cd "$head_path" && unset TT_REPO && "$TT" task checkin --complete --propagate "$task_id" 2>&1) || exit_code=$?
+  assert_success "checkin --complete --propagate succeeds" "$exit_code"
+
+  local head_target
+  head_target="$(readlink "$VIRTUAL/HEAD")"
+  assert_neq "HEAD does not point to itself" "$head_target" "$head_path"
+}
+
+
 test_task_checkin__head_symlink_is_absolute() {
   setup_workspace "ci-head-abs"
   proj_id=$(create_project "proj" "Project") || true
