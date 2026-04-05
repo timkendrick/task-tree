@@ -2,7 +2,7 @@
 title: "Clean up task worktree after `tt task checkin` completes"
 status: TODO
 created: 2026-04-05T20:49:45Z
-updated: 2026-04-05T20:56:53Z
+updated: 2026-04-05T21:04:29Z
 ---
 After a successful `tt task checkin --complete`, if the checked-in task had a dedicated jj worktree, the worktree should be cleaned up automatically: the jj workspace should be forgotten (`jj workspace forget`) and the working copy files deleted from disk. A `--retain-worktree` flag should suppress both operations.
 
@@ -18,7 +18,10 @@ This was originally part of task/tt-task-checkin-switch-worktree-6d7913f5, split
 
 The existing checkin code already has a broken attempt at cleanup (`scripts/cli/task/checkin`, post-checkin cleanup block) — it uses a broken workspace-name lookup pipeline that pipes path into `jj workspace list` via `xargs`, which doesn't work. Replace it with the correct implementation using `jj workspace list -T 'name ++ ": " ++ root ++ "\n"'` and `canonical_path` path comparison.
 
-**Depends on**: `task/jj-file-show-cwd-sensitivity-8b319182` (the `root:` prefix fix must land first) and `task/tt-task-checkin-switch-worktree-6d7913f5` (the `find_worktrees_for_branch` fix provides `canonical_path` and the correct workspace listing).
+**Depends on**:
+
+- `task/tt-worktree-delete-54937e0a` (worktree deletion)
+- `task/jj-file-show-cwd-sensitivity-8b319182` (the `root:` prefix fix must land first) and `task/tt-task-checkin-switch-worktree-6d7913f5` (the `find_worktrees_for_branch` fix provides `canonical_path` and the correct workspace listing).
 
 
 - Worktree deleted after complete checkin (default)
