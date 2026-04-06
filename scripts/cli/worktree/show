@@ -5,10 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt workspace worktree — Output the worktree path for a given task/project ID.
+# tt worktree show — Output the worktree path for a given task/project ID.
+#
+# This is a subcommand in the worktree namespace, so the usage examples
+# should show the full command path (tt worktree show), not just show.
 #
 # Usage:
-#   worktree <task-id> [--repo PATH]
+#   tt worktree show <task-id> [--repo PATH]
 #
 # Options:
 #   <task-id>          Task or project branch name (e.g., task/foo-abc12345, project/bar-def12345)

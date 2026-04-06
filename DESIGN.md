@@ -180,7 +180,6 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt init` | `tt workspace init` |
 | `tt switch` | `tt workspace switch` |
 | `tt branch` | `tt workspace branch` |
-| `tt worktree` | `tt workspace worktree` |
 | `tt create` | `tt task create` |
 | `tt checkout` | `tt task checkout` |
 | `tt checkin` | `tt task checkin` |
@@ -231,7 +230,7 @@ The command exits with an error if none of these resolves to a valid jj reposito
 
 - **`tt workspace branch <task-id> [--repo PATH]`** — Output the branch name for the given task or project ID to stdout. Accepts a full task or project ID (e.g., `task/foo-abc12345`, `project/bar-def12345`). Exits with an error if the task is not found in the repository. Intended for use in shell command substitution.
 
-- **`tt workspace worktree <task-id> [--repo PATH]`** — Output the worktree path for the given task or project ID to stdout. Accepts a full task or project ID. Falls back to the repository root if no dedicated worktree exists for the task. Exits with an error if the task ID is not found in the repository. Intended for use in shell command substitution.
+- **`tt worktree show <task-id> [--repo PATH]`** — Output the worktree path for the given task or project ID to stdout. Accepts a full task or project ID. Falls back to the repository root if no dedicated worktree exists for the task. Exits with an error if the task ID is not found in the repository. Intended for use in shell command substitution.
 
 - **`tt workspace list [--task <task-id>] [--quiet] [--repo PATH]`** — List all jj workspaces for the current repository. For each workspace, shows: a `*` marker on the current workspace, the jj workspace name, the tt task or project ID (nearest ancestor tt bookmark in the working copy ancestry, or `(none)` if none), and the filesystem path (with `$HOME` abbreviated as `~`, or `(none)` if no path is recorded). Output is a columnar table with a header row. With `--task <task-id>`, filters to only workspaces whose resolved TASK ID matches the given task or project ID (exit 1 if the ID is not a valid task/project ID format). With `--quiet`, prints only the jj workspace names (one per line), with no header or table; compatible with `--task` for machine-readable lookups. Intended for quick overview of all active task workspaces and for scripting. See §5.3.
 
