@@ -56,6 +56,7 @@ main() {
   local task_id=''
   local worktree_flag=false
   local worktree_path=''
+  local explicit_path=false
   local switch_flag=false
   local force=false
   local repo=''
@@ -69,6 +70,7 @@ main() {
       --worktree=*)
         worktree_flag=true
         worktree_path="${1#--worktree=}"
+        explicit_path=true
         shift
         ;;
       --switch)
@@ -196,6 +198,34 @@ main() {
         worktree_path="${workspace_dir}/${task_id}"
       fi
     fi
+
+    # When --worktree=<path> was explicitly given, verify it doesn't
+    # conflict with an existing workspace at a different path.
+    if [[ "$explicit_path" == true ]]; then
+      local existing_wts
+      existing_wts="$(find_worktrees_for_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")"
+      if [[ -n "$existing_wts" ]]; then
+        local normalized_worktree match_found=false
+        normalized_worktree="$(realpath "$worktree_path" 2>/dev/null || echo "$worktree_path")"
+        while IFS= read -r existing_path; do
+          [[ -z "$existing_path" ]] && continue
+          local normalized_existing
+          normalized_existing="$(realpath "$existing_path")"
+          if [[ "$normalized_worktree" == "$normalized_existing" ]]; then
+            match_found=true
+            break
+          fi
+        done <<< "$existing_wts"
+        if [[ "$match_found" != true ]]; then
+          local first_existing
+          first_existing="$(printf '%s' "$existing_wts" | head -1)"
+          log "Error: Task '$task_id' already has a workspace at '$first_existing'."
+          log "  Multiple worktrees per task are not supported."
+          exit 1
+        fi
+      fi
+    fi
+
     target_worktree="$worktree_path"
 
     if [[ -d "$target_worktree" && ( -d "$target_worktree/.jj" || -L "$target_worktree/.jj" ) ]]; then

@@ -128,4 +128,41 @@ test_task_checkout__head_symlink_is_absolute() {
 }
 
 
+test_task_checkout__worktree_refuses_second_different_path() {
+  setup_workspace "co-worktree-refuse-diff"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+
+  # Checkout into a new worktree (conventional path)
+  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
+  local first_worktree="$VIRTUAL/$task_id"
+
+  # Try to checkout into a DIFFERENT path
+  local second_path="$VIRTUAL/other-worktree"
+  output="" exit_code=0
+  output=$(run_tt task checkout "$task_id" --worktree="$second_path" 2>&1) || exit_code=$?
+  assert_failure "refuse second worktree with different path" "$exit_code"
+  assert_contains "error mentions existing workspace" "$output" "$first_worktree"
+  assert_contains "error mentions task" "$output" "$task_id"
+}
+
+
+test_task_checkout__worktree_same_path_succeeds() {
+  setup_workspace "co-worktree-same-path"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+
+  # Checkout into a new worktree with explicit path
+  local worktree_path="$VIRTUAL/$task_id"
+  run_tt task checkout "$task_id" --worktree="$worktree_path" --switch >/dev/null 2>&1 || true
+
+  # Checkout again with the same explicit path — should succeed silently
+  output="" exit_code=0
+  output=$(run_tt task checkout "$task_id" --worktree="$worktree_path" 2>&1) || exit_code=$?
+  assert_success "same path succeeds" "$exit_code"
+}
+
+
 run_tests "tt task checkout"
