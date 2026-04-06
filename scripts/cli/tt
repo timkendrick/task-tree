@@ -97,7 +97,6 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} undo         →  tt history undo
   ${SCRIPT_NAME} init         →  tt workspace init
   ${SCRIPT_NAME} switch       →  tt workspace switch
-  ${SCRIPT_NAME} branch       →  tt workspace branch
   ${SCRIPT_NAME} current      →  tt task current
   ${SCRIPT_NAME} edit         →  tt task edit
 
@@ -114,7 +113,6 @@ main() {
     undo)        set -- history  undo         "${@:2}" ;;
     init)        set -- workspace init        "${@:2}" ;;
     switch)      set -- workspace switch      "${@:2}" ;;
-    branch)      set -- workspace branch      "${@:2}" ;;
     current)     set -- task     current      "${@:2}" ;;
     edit)        set -- task     edit         "${@:2}" ;;
     create)      set -- task     create       "${@:2}" ;;
