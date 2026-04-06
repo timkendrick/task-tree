@@ -1,6 +1,6 @@
 ---
 title: "Delete `tt workspace branch` command"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-03T21:54:14Z
 updated: 2026-04-03T21:54:15Z
 ---
