@@ -166,7 +166,7 @@ main() {
 
   # Get task title for commit message
   local task_title
-  task_title="$(jj "${jj_opts[@]}" --ignore-working-copy file show -r "$old_id" -- "$(task_file_path "$suffix")" 2>/dev/null \
+  task_title="$(jj_show_at_revision "$repo" "$old_id" "$(task_file_path "$suffix")" \
     | awk '/^title:/ { for(i=2;i<=NF;i++) printf "%s ", $i; print ""; exit }')"
 
   if [[ -z "$task_title" ]]; then
@@ -212,7 +212,7 @@ main() {
       while IFS= read -r fpath; do
         local rel="${fpath#${old_rel}/}"
         mkdir -p "$saved_dir/$change_id/$(dirname "$rel")"
-        jj "${jj_opts[@]}" --at-operation "$pre_op" file show -r "$change_id" "$fpath" \
+        jj_show_at_op "$repo" "$pre_op" "$change_id" "$fpath" \
             > "$saved_dir/$change_id/$rel"
       done <<< "$file_list"
     fi

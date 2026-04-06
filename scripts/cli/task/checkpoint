@@ -112,7 +112,7 @@ main() {
 
   # Read task title from task file frontmatter
   local task_file_content task_title
-  task_file_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || true
+  task_file_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
   task_title="$(parse_quoted_frontmatter_field "$task_file_content" "title")"
 
   # Derive task ID (bookmark name without prefix) for display

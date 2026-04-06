@@ -192,7 +192,7 @@ main() {
 
   # Read task title for commit messages
   local task_content task_title
-  task_content="$(jj -R "$repo" file show -r "$task_id" -- "$task_file" 2>/dev/null)" || {
+  task_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file")" || {
     log "Error: Could not read task file '$task_file' from '$task_id'."
     exit 1
   }
@@ -284,8 +284,8 @@ main() {
   local task_dir_new
   task_dir_new="$(task_dir_path "$task_slug")"
   mkdir -p "$repo/$task_dir_new"
-  if jj -R "$repo" file show -r "$old_parent_commit_id" -- "$task_file" \
-       > "$repo/$task_file" 2>/dev/null; then
+  if jj_show_at_revision "$repo" "$old_parent_commit_id" "$task_file" \
+       > "$repo/$task_file"; then
     log "Copied task stub from old parent to new parent: $task_file"
   else
     log "Warning: Could not copy task stub '$task_file' from old parent; skipping."

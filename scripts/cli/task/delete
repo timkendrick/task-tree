@@ -80,7 +80,7 @@ collect_subtree() {
     # Collect subtask IDs from the task's own branch
     local own_subs=""
     local own_content
-    own_content="$(jj -R "$repo" file show -r "$current" -- "$own_file" 2>/dev/null)" || true
+    own_content="$(jj_show_at_revision "$repo" "$current" "$own_file")" || true
     if [[ -n "$own_content" ]]; then
       own_subs="$(printf '%s' "$own_content" | awk '
         /^---$/ { in_fm = !in_fm; next }
@@ -94,7 +94,7 @@ collect_subtree() {
     # Collect subtask IDs from the parent branch's copy of this task's file
     local parent_subs=""
     local parent_content
-    parent_content="$(jj -R "$repo" file show -r "$parent_branch" -- "$own_file" 2>/dev/null)" || true
+    parent_content="$(jj_show_at_revision "$repo" "$parent_branch" "$own_file")" || true
     if [[ -n "$parent_content" ]]; then
       parent_subs="$(printf '%s' "$parent_content" | awk '
         /^---$/ { in_fm = !in_fm; next }
@@ -209,7 +209,7 @@ main() {
 
   # Read task content and check status
   local task_content task_title task_status
-  task_content="$(jj -R "$repo" file show -r "$task_id" -- "$task_file" 2>/dev/null)" || {
+  task_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file")" || {
     log "Error: Could not read task file '$task_file' from bookmark '$task_id'."
     exit 1
   }
@@ -283,7 +283,7 @@ main() {
 
   # Read parent task file content
   local parent_task_content
-  parent_task_content="$(jj -R "$target_ws" file show -r "$parent_bookmark" -- "$parent_task_file" 2>/dev/null)" || {
+  parent_task_content="$(jj_show_at_revision "$target_ws" "$parent_bookmark" "$parent_task_file")" || {
     log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
     exit 1
   }

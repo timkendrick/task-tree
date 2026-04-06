@@ -146,7 +146,7 @@ main() {
   # --- Read task title from project branch ---
   local task_file task_content task_title
   task_file="$(task_file_path "$child_slug")"
-  task_content="$(jj -R "$repo" file show -r "$child_bookmark" -- "$task_file" 2>/dev/null)" || true
+  task_content="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || true
   task_title="$(parse_quoted_frontmatter_field "$task_content" "title" 2>/dev/null)" || task_title="$child_bookmark"
 
   # --- Optional: rebase/merge propagation from target ---
