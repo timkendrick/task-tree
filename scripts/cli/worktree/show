@@ -21,8 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} <task-id> [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <task-id> [--repo PATH]
 
 Output the worktree path for the given task or project ID.
 Falls back to the repository root if no dedicated worktree exists for the task.
@@ -39,7 +39,6 @@ Examples:
   ${SCRIPT_NAME} project/bar-def12345
 
 EOF
-  exit 1
 }
 
 main() {
@@ -49,23 +48,22 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
-      -h|--help) usage ;;
+      -h|--help) usage; exit 0 ;;
       -*)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
       *)
         if [[ -z "$task_id" ]]; then
           task_id="$1"; shift
         else
-          log "Error: Unexpected argument: $1"; usage
+          usage >&2; exit 1
         fi ;;
     esac
   done
 
   if [[ -z "$task_id" ]]; then
-    log "Error: <task-id> is required"
-    usage
+    usage >&2; exit 1
   fi
 
   repo="$(resolve_repo "$repo")"

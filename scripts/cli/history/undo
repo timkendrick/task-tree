@@ -25,9 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  local exit_code="${1:-1}"
-  if [[ "$exit_code" -eq 0 ]]; then
-    cat <<EOF
+  cat <<EOF
 Usage: tt history undo [--force] [--repo PATH]
 
 Undo the most recent mutating tt command by restoring the jj repository
@@ -50,20 +48,6 @@ Examples:
   tt history undo --force   # force-undo even if op ID mismatches or WC is dirty
 
 EOF
-  else
-    cat >&2 <<EOF
-Usage: tt history undo [--force] [--repo PATH]
-
-Undo the most recent mutating tt command by restoring the jj repository
-to the operation state before that command ran.
-
-Options:
-  --force   Bypass safety checks (stale lock, op ID mismatch, dirty WC).
-  --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
-
-EOF
-  fi
-  exit "$exit_code"
 }
 
 main() {
@@ -77,20 +61,19 @@ main() {
         shift
         ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
         shift 2
         ;;
       -h|--help)
-        usage 0
+        usage
+        exit 0
         ;;
       -*)
-        log "Error: Unknown option: $1"
-        usage
+        usage >&2; exit 1
         ;;
       *)
-        log "Error: Unexpected argument: $1"
-        usage
+        usage >&2; exit 1
         ;;
     esac
   done

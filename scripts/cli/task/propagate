@@ -29,8 +29,8 @@ readonly SCRIPT_NAME="${0##*/}"
 TO_FILTER=()
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [options...]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [options...]
 
 Rebase or merge descendant task branches onto their parent's current tip.
 
@@ -52,7 +52,6 @@ Examples:
   ${SCRIPT_NAME} --merge --shallow                        # merge parent into direct children
 
 EOF
-  exit 1
 }
 
 # Usage: is_up_to_date REPO CHILD_BOOKMARK PARENT_BOOKMARK
@@ -324,10 +323,10 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --from)
-        [[ $# -lt 2 ]] && { log "Error: --from requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         from="$2"; shift 2 ;;
       --to)
-        [[ $# -lt 2 ]] && { log "Error: --to requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         TO_FILTER+=("$2"); shift 2 ;;
       --rebase) strategy='rebase'; shift ;;
       --merge)  strategy='merge';  shift ;;
@@ -335,11 +334,11 @@ main() {
       --force)   force=true;   shift ;;
       --dry-run) dry_run=true; shift ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
-      -h|--help) usage ;;
+      -h|--help) usage; exit 0 ;;
       *)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
     esac
   done
 

@@ -19,8 +19,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [--task <task-id>] [--quiet] [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--quiet] [--repo PATH]
 
 List all jj workspaces for the current repository and their corresponding
 tt task or project IDs.
@@ -44,7 +44,6 @@ Examples:
   ${SCRIPT_NAME} --repo /path/to/repo
 
 EOF
-  exit 1
 }
 
 main() {
@@ -55,18 +54,18 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
       --task)
-        [[ $# -lt 2 ]] && { log "Error: --task requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         task_filter="$2"; shift 2 ;;
       --quiet)
         quiet=true; shift ;;
-      -h|--help) usage 0 ;;
+      -h|--help) usage; exit 0 ;;
       -*)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
       *)
-        log "Error: Unexpected argument: $1"; usage ;;
+        usage >&2; exit 1 ;;
     esac
   done
 

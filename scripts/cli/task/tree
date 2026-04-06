@@ -26,8 +26,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [options...]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [options...]
 
 Generate and print the project todo list.
 
@@ -47,7 +47,6 @@ Examples:
   ${SCRIPT_NAME} --focus                            # current task chain
 
 EOF
-  exit 1
 }
 
 # Usage: get_suffix_from_id FULL_ID PREFIX
@@ -318,7 +317,7 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project)
-        [[ $# -lt 2 ]] && { log "Error: --project requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         filter_projects+=("$2")
         shift 2
         ;;
@@ -335,16 +334,16 @@ main() {
         shift
         ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
         shift 2
         ;;
       -h|--help)
         usage
+        exit 0
         ;;
       *)
-        log "Error: Unknown option: $1"
-        usage
+        usage >&2; exit 1
         ;;
     esac
   done

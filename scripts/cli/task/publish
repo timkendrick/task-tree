@@ -23,8 +23,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<project-id>] --target <branch> [options...]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<project-id>] --target <branch> [options...]
 
 Merge a project branch's work into an external target branch (e.g. main).
 Removes task scaffolding files (.tt/task/) from the delivery branch.
@@ -41,7 +41,6 @@ Options:
   -h, --help                Show this help.
 
 EOF
-  exit "${1:-1}"
 }
 
 main() {
@@ -54,34 +53,33 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --rebase)
-        [[ -n "$strategy" && "$strategy" != rebase ]] && { log "Error: --rebase and --merge are mutually exclusive"; usage; }
+        [[ -n "$strategy" && "$strategy" != rebase ]] && { usage >&2; exit 1; }
         strategy='rebase'; shift ;;
       --merge)
-        [[ -n "$strategy" && "$strategy" != merge ]] && { log "Error: --rebase and --merge are mutually exclusive"; usage; }
+        [[ -n "$strategy" && "$strategy" != merge ]] && { usage >&2; exit 1; }
         strategy='merge'; shift ;;
       --force)      force=true; shift ;;
       --target)
-        [[ $# -lt 2 ]] && { log "Error: --target requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         target="$2"; shift 2 ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
-      -h|--help) usage 0 ;;
+      -h|--help) usage; exit 0 ;;
       -*)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
       *)
         if [[ -z "$project_id_arg" ]]; then
           project_id_arg="$1"; shift
         else
-          log "Error: Unexpected argument: $1"; usage
+          usage >&2; exit 1
         fi ;;
     esac
   done
 
   # --target is required
   if [[ -z "$target" ]]; then
-    log "Error: --target <branch> is required for publish."
-    usage
+    usage >&2; exit 1
   fi
 
   repo="$(resolve_repo "$repo")"

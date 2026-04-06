@@ -18,8 +18,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [-m <message>] [--squash] [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [-m <message>] [--squash] [--repo PATH]
 
 Record the current state of work by creating a named commit and advancing the task bookmark.
 
@@ -35,7 +35,6 @@ Examples:
   ${SCRIPT_NAME}           # opens editor
 
 EOF
-  exit 1
 }
 
 main() {
@@ -46,7 +45,7 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -m|--message)
-        [[ $# -lt 2 ]] && { log "Error: $1 requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         message="$2"
         shift 2
         ;;
@@ -55,7 +54,7 @@ main() {
         shift
         ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
         shift 2
         ;;
@@ -65,14 +64,13 @@ main() {
         ;;
       -h|--help)
         usage
+        exit 0
         ;;
       -*)
-        log "Error: Unknown option: $1"
-        usage
+        usage >&2; exit 1
         ;;
       *)
-        log "Error: Unexpected argument: $1"
-        usage
+        usage >&2; exit 1
         ;;
     esac
   done

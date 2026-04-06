@@ -20,7 +20,7 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [--repo PATH] [--message TEXT]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [--repo PATH] [--message TEXT]
 
 Write a self-contained implementation prompt for a task to stdout.
 Defaults to the current task if no task ID is given.
@@ -32,7 +32,6 @@ Options:
   -h, --help      Show this help.
 
 EOF
-  exit 0
 }
 
 main() {
@@ -43,19 +42,19 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
       --message)
-        [[ $# -lt 2 ]] && { log "Error: --message requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         message="$2"; shift 2 ;;
-      -h|--help) usage ;;
+      -h|--help) usage; exit 0 ;;
       -*)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
       *)
         if [[ -z "$task_id_arg" ]]; then
           task_id_arg="$1"; shift
         else
-          log "Error: Unexpected argument: $1"; usage
+          usage >&2; exit 1
         fi ;;
     esac
   done

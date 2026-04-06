@@ -30,7 +30,7 @@ show_namespace_help() {
   local show_directories="${3:-true}"
 
   if [[ -z "$name" ]]; then
-    cat >&2 <<EOF
+    cat <<EOF
 Usage: ${SCRIPT_NAME} <command> [args...]
 
 Dispatch to a tt subcommand. Commands are discovered from
@@ -39,7 +39,7 @@ the filesystem under the CLI scripts directory.
 Available commands:
 EOF
   else
-    cat >&2 <<EOF
+    cat <<EOF
 Usage: tt $name <subcommand> [args...]
 
 Available subcommands:
@@ -50,20 +50,19 @@ EOF
   for f in "$dir"/*; do
     local item="${f##*/}"
     if [[ "$show_directories" == true && -d "$f" ]]; then
-      log "  $item/"  # Directory (namespace)
+      printf '  %s/\n' "$item"  # Directory (namespace)
       found=true
     elif [[ -f "$f" && -x "$f" ]]; then
-      log "  $item"   # Executable command
+      printf '  %s\n' "$item"   # Executable command
       found=true
     fi
   done
-  [[ "$found" == false ]] && log "  (none)"
+  [[ "$found" == false ]] && printf '  (none)\n'
   exit 0
 }
 
 usage() {
-  local exit_code="${1:-1}"
-  cat >&2 <<EOF
+  cat <<EOF
 Usage: ${SCRIPT_NAME} <command> [args...]
    or: ${SCRIPT_NAME} <alias> [args...]
 
@@ -101,7 +100,6 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} edit         →  tt task edit
 
 EOF
-  exit "$exit_code"
 }
 
 main() {
@@ -136,12 +134,13 @@ main() {
   esac
 
   if [[ $# -ge 1 && ( "$1" == "--help" || "$1" == "-h" ) ]]; then
-    usage 0
+    usage
+    exit 0
   fi
 
   if [[ $# -eq 0 ]]; then
-    log "Error: ${SCRIPT_NAME} requires at least <command>"
-    usage
+    usage >&2
+    exit 1
   fi
 
   # Dynamic dispatch: walk the command hierarchy

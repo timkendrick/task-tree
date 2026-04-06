@@ -24,8 +24,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [options...]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [options...]
 
 Edit title, body, and/or labels of a task.
 
@@ -50,7 +50,6 @@ Examples:
   ${SCRIPT_NAME} --title "Updated" < ./description.md  # stdin + explicit title
 
 EOF
-  exit 1
 }
 
 # Usage: rewrite_task_file FILE TITLE STATUS BODY CREATED LABELS... SUBTASKS... CONTEXTS...
@@ -118,28 +117,28 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --title)
-        [[ $# -lt 2 ]] && { log "Error: --title requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         new_title="$2"; has_title=true; shift 2 ;;
       --label)
-        [[ $# -lt 2 ]] && { log "Error: --label requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         add_labels+=("$2"); shift 2 ;;
       --delete-label)
-        [[ $# -lt 2 ]] && { log "Error: --delete-label requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         delete_labels+=("$2"); shift 2 ;;
       --worktree)
-        [[ $# -lt 2 ]] && { log "Error: --worktree requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         worktree_arg="$2"; shift 2 ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
-      -h|--help) usage ;;
+      -h|--help) usage; exit 0 ;;
       -*)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
       *)
         if [[ -z "$task_id_arg" ]]; then
           task_id_arg="$1"; shift
         else
-          log "Error: Unexpected argument: $1"; usage
+          usage >&2; exit 1
         fi ;;
     esac
   done
