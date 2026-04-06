@@ -1,6 +1,6 @@
 ---
 title: "Clean up task worktree after `tt task checkin` completes"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-05T20:49:45Z
 updated: 2026-04-06T20:08:16Z
 context: context/implementation-plan-bf8e904d
