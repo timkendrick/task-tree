@@ -1,6 +1,6 @@
 ---
 title: "Update `SKILL.md` for `tt` CLI commands"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-06T12:16:07Z
 updated: 2026-04-06T12:16:08Z
 ---
