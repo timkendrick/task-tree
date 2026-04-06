@@ -86,6 +86,7 @@ subtask: [ ] task/tt-task-checkin-switch-worktree-6d7913f5
 subtask: [x] task/jj-file-show-cwd-sensitivity-8b319182
 subtask: [ ] task/tt-task-checkin-worktree-cleanup-bf8d7100
 subtask: [ ] task/tt-worktree-delete-54937e0a
+subtask: [ ] task/standardize-help-flag-53aa289f
 ---
 Implement shell script implementations of all `tt` CLI commands
 
