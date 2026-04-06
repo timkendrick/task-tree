@@ -592,7 +592,7 @@ The handoff commit is described as `Handoff: <task-title> (<task-id>)`.
 
 **After checkin:**
 - **Partial checkin (task status `IN-PROGRESS`):** The tool switches the worktree to the parent (updates `HEAD` symlink). The child bookmark has not moved. The parent now contains the merged handoff commit and sibling branches can be propagated.
-- **Complete checkin (task status `DONE`):** The tool switches the worktree to the parent (updates `HEAD` symlink, deletes the child worktree if it was dedicated). If the user's working directory was inside the deleted child path, the tool switches them to the equivalent path under the `HEAD` symlink.
+- **Complete checkin (task status `DONE`):** The tool switches the worktree to the parent (updates `HEAD` symlink, deletes the child worktree if it was dedicated).
 
 Merge conflicts in the working copy or other `.tt/` files must be resolved manually; for `TASK.md`, the intended resolution is to keep the parent's version.
 

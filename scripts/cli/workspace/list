@@ -104,12 +104,13 @@ main() {
 
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    local ws_name ws_path
-    ws_name="$(printf '%s' "$line" | sed 's/: .*//')"
-    ws_path="$(printf '%s' "$line" | sed 's/^[^:]*: //')"
+    local ws_name ws_path parsed
+    parsed="$(parse_workspace_list_line "$line")"
+    ws_name="$(printf '%s' "$parsed" | sed -n '1p')"
+    ws_path="$(printf '%s' "$parsed" | sed -n '2p')"
 
-    # Normalize path: if error, use (none)
-    if [[ "$ws_path" == '<Error:'* ]]; then
+    # Normalize path: if error (empty from helper), use (none)
+    if [[ -z "$ws_path" ]]; then
       ws_path='(none)'
     fi
 

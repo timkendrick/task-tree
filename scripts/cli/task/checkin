@@ -440,25 +440,11 @@ main() {
 
   # --- Post-checkin cleanup ---
   # Always switch to the parent branch after checkin, regardless of task status.
-  if [[ "$target_ws" != "$current_worktree" ]] && [[ "$target_ws" != "$repo" || "$repo" != "$current_worktree" ]]; then
-    # target_ws is a dedicated parent worktree different from current
+  if [[ "$target_ws" != "$current_worktree" ]]; then
+    # target_ws is a different worktree from the current one; switch HEAD to parent
     perform_workspace_switch "$repo" "${workspace_dir:-}" "$parent_bookmark" \
       "$target_ws" "$current_worktree" "$task_id"
 
-    if [[ "$task_status" == "DONE" ]]; then
-      # Clean up child worktree if it's at the conventional path
-      local child_ws_path="${workspace_dir:+${workspace_dir}/${task_id}}"
-      if [[ -n "$child_ws_path" ]] && [[ -d "$child_ws_path" ]] && \
-         [[ -d "$child_ws_path/.jj" || -L "$child_ws_path/.jj" ]]; then
-        # Get workspace name for this path
-        local child_ws_name
-        child_ws_name="$(jj -R "$child_ws_path" workspace root 2>/dev/null | xargs -I{} jj -R "$repo" workspace list --no-pager 2>/dev/null | grep "{}" | awk '{print $1}' | tr -d ':' || true)"
-        if [[ -n "$child_ws_name" ]]; then
-          jj -R "$repo" workspace forget "$child_ws_name" 2>/dev/null || true
-        fi
-        rm -rf "$child_ws_path"
-      fi
-    fi
   else
     # target_ws is same as current workspace — WC is already on parent branch
     log "Now on parent branch: $parent_bookmark"
@@ -468,6 +454,27 @@ main() {
     log "Partial checkin complete: $task_id -> $parent_bookmark"
   else
     log "Checkin complete: $task_id -> $parent_bookmark"
+  fi
+
+  # Commit transaction now — before any worktree deletion — because the
+  # history file lives in $repo, which may be the child worktree that is
+  # about to be removed.  All jj operations that should be recorded are
+  # already complete at this point.
+  tt_commit_transaction "$repo"
+
+  # --- Post-checkin worktree cleanup ---
+  # Delete the dedicated child worktree if a complete checkin was done.
+  if [[ "$task_status" == "DONE" ]]; then
+    local child_ws_path="${workspace_dir:+${workspace_dir}/${task_id}}"
+    if [[ -n "$child_ws_path" ]] && [[ -d "$child_ws_path" ]] && \
+       [[ -d "$child_ws_path/.jj" || -L "$child_ws_path/.jj" ]]; then
+      local child_ws_name
+      child_ws_name="$(jj -R "$child_ws_path" workspace root 2>/dev/null | xargs -I{} jj -R "$target_ws" workspace list --no-pager 2>/dev/null | grep "{}" | awk '{print $1}' | tr -d ':' || true)"
+      if [[ -n "$child_ws_name" ]]; then
+        jj -R "$target_ws" workspace forget "$child_ws_name" 2>/dev/null || true
+      fi
+      rm -rf "$child_ws_path"
+    fi
   fi
 
   # --- Delegate --delete to tt task delete (second commit on parent branch) ---
@@ -495,8 +502,6 @@ main() {
     "$SCRIPT_DIR/propagate" "${propagate_args[@]}"
   fi
 
-  # Commit transaction (records after-op for undo)
-  tt_commit_transaction "$repo"
 }
 
 main "$@"

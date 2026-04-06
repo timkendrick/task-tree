@@ -172,6 +172,8 @@ resolve_repo() {
     exit 1
   fi
 
+  # Canonicalize to match jj's own path representation (e.g. /var → /private/var on macOS)
+  repo="$(cd "$repo" && pwd -P)"
   printf '%s' "$repo"
 }
 
@@ -582,20 +584,41 @@ resolve_task_worktree() {
   esac
 }
 
+# Usage: parse_workspace_list_line LINE
+# Parses one line from `jj workspace list -T 'name ++ ": " ++ root ++ "\n"'`.
+# Outputs two lines to stdout:
+#   line 1: workspace name
+#   line 2: absolute filesystem path, or empty string if the path is an error
+#            (i.e. the workspace has no recorded or resolvable path)
+# Lines with error paths look like: "name: <Error: Workspace has no recorded path: name>"
+parse_workspace_list_line() {
+  local line="$1"
+  local ws_name ws_path
+  ws_name="$(printf '%s' "$line" | sed 's/: .*//')"
+  ws_path="$(printf '%s' "$line" | sed 's/^[^:]*: //')"
+  if [[ "$ws_path" == '<Error:'* ]]; then
+    ws_path=''
+  fi
+  printf '%s\n%s\n' "$ws_name" "$ws_path"
+}
+
 # Usage: find_worktrees_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
 # Outputs one workspace root path per line for each jj workspace where
 # BOOKMARK is the current branch (resolved via resolve_current).
+# Uses jj template 'name ++ ": " ++ root ++ "\n"' to get workspace paths.
 find_worktrees_for_branch() {
   local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
-  # Get all workspace names + root paths
+  # Get all workspace names + root paths using explicit template.
+  # Format per line: "name: /absolute/path" or "name: <Error: ...>" for missing paths.
   local ws_list
-  ws_list="$(jj -R "$repo" --ignore-working-copy workspace list --no-pager 2>/dev/null)" || return 0
+  ws_list="$(jj -R "$repo" --ignore-working-copy workspace list --no-pager \
+    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || return 0
   while IFS= read -r ws_line; do
     [[ -z "$ws_line" ]] && continue
-    # Format: "name: /path/to/root (@ rev)"
-    local ws_name ws_root
-    ws_name="$(printf '%s' "$ws_line" | awk '{print $1}' | tr -d ':')"
-    ws_root="$(printf '%s' "$ws_line" | awk '{print $2}')"
+    local parsed ws_name ws_root
+    parsed="$(parse_workspace_list_line "$ws_line")"
+    ws_name="$(printf '%s' "$parsed" | sed -n '1p')"
+    ws_root="$(printf '%s' "$parsed" | sed -n '2p')"
     [[ -z "$ws_root" ]] && continue
     [[ ! -d "$ws_root" ]] && continue
     # Resolve current bookmark in this workspace
