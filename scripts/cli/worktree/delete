@@ -134,13 +134,46 @@ main() {
     fi
   fi
 
-  # Safety checks (skip with --force)
+  # All pre-mutation safety checks — all skippable with --force
   if [[ "$force" != true ]]; then
+    # Refuse to delete the current working copy worktree
+    local current_wc_root
+    current_wc_root="$(jj workspace root 2>/dev/null)" || current_wc_root=""
+    if [[ -n "$current_wc_root" ]]; then
+      local canon_current canon_target
+      canon_current="$(realpath "$current_wc_root" 2>/dev/null)" || canon_current="$current_wc_root"
+      canon_target="$(realpath "$target_worktree" 2>/dev/null)" || canon_target="$target_worktree"
+      if [[ "$canon_current" == "$canon_target" ]]; then
+        log "Error: Cannot delete the current working copy worktree '$target_worktree'."
+        log "  Switch to a different worktree first, or use --force."
+        exit 1
+      fi
+    fi
+
+    # Status check: task must be DONE
+    local task_suffix task_file task_content task_status
+    if is_task_branch "$task_id" "$task_prefix"; then
+      task_suffix="${task_id#$task_prefix}"
+    else
+      task_suffix="${task_id#$project_prefix}"
+    fi
+    task_file="$(task_file_path "$task_suffix")"
+    task_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file" 2>/dev/null)" || task_content=""
+    task_status="$(parse_frontmatter_field "$task_content" "status")"
+    if [[ "$task_status" != "DONE" ]]; then
+      log "Error: Task '$task_id' status is '${task_status:-unknown}' (not DONE)."
+      log "  Complete the task first, or use --force to delete the worktree anyway."
+      exit 1
+    fi
+
+    # Worktree must be clean (no uncommitted changes)
     if ! is_wc_clean "$target_worktree"; then
       log "Error: Worktree '$target_worktree' has uncommitted changes."
       log "  Commit or discard changes first, or use --force."
       exit 1
     fi
+
+    # Bookmark must be up to date (no commits after bookmark)
     if ! check_bookmark_up_to_date "$target_worktree" "$task_id"; then
       log "Error: Worktree has commits after the task bookmark '$task_id'."
       log "  Checkpoint or discard these commits first, or use --force."
