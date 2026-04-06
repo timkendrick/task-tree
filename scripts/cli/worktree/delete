@@ -155,19 +155,33 @@ main() {
     exit 1
   }
 
+  # Capture HEAD symlink target BEFORE deletion, since the worktree path
+  # will no longer be resolvable after forget_worktree removes the files.
+  local head_needs_reset=false
+  if [[ -n "$workspace_dir" && -L "${workspace_dir}/HEAD" ]]; then
+    local head_target
+    head_target="$(readlink "${workspace_dir}/HEAD")" || true
+    if [[ -n "$head_target" ]]; then
+      # Resolve relative symlink against workspace_dir
+      if [[ "$head_target" != /* ]]; then
+        head_target="${workspace_dir}/${head_target}"
+      fi
+      # Canonicalize both paths so /var vs /private/var on macOS compare equal
+      if [[ "$(realpath "$head_target")" == "$(realpath "$target_worktree")" ]]; then
+        head_needs_reset=true
+      fi
+    fi
+  fi
+
   # Begin transaction
   tt_begin_transaction "$repo"
 
   # Forget workspace and remove files
   forget_worktree "$repo" "$ws_name" "$target_worktree"
 
-  # If HEAD points to the deleted worktree, reset it to repo root
-  if [[ -n "$workspace_dir" ]]; then
-    local head_worktree
-    head_worktree="$(resolve_head_worktree "$workspace_dir" "$repo")"
-    if [[ "$head_worktree" == "$target_worktree" ]]; then
-      update_head_symlink "$workspace_dir" "$repo"
-    fi
+  # If HEAD pointed to the deleted worktree, reset it to repo root
+  if [[ "$head_needs_reset" == true ]]; then
+    update_head_symlink "$workspace_dir" "$repo"
   fi
 
   # Commit transaction

@@ -144,7 +144,7 @@ test_worktree_delete__head_symlink_reset() {
 
   # Verify HEAD now points to repo
   head_target=$(readlink "$VIRTUAL/HEAD") || true
-  assert_eq "HEAD reset to repo" "$head_target" "$REPO"
+  assert_eq "HEAD reset to repo" "$(realpath "$head_target")" "$(realpath "$REPO")"
 }
 
 
@@ -206,9 +206,16 @@ test_worktree_delete__multiple_worktrees_requires_disambiguation() {
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
 
-  # Create two worktrees for the same task
-  run_tt task checkout "$task_id" --worktree="$VIRTUAL/${task_id}-a" >/dev/null 2>&1 || true
-  run_tt task checkout "$task_id" --worktree="$VIRTUAL/${task_id}-b" >/dev/null 2>&1 || true
+  # Create worktree via task checkout
+  run_tt task checkout "$task_id" --worktree="$VIRTUAL/${task_id}-a" --switch >/dev/null 2>&1 || true
+
+  # Manually create a second jj workspace with a different name but same bookmark,
+  # simulating a user who created an additional workspace by hand.
+  local second_ws_path="$VIRTUAL/${task_id}-b"
+  jj -R "$REPO" workspace add \
+    --name "alt-${task_id}" \
+    -r "$task_id" \
+    "$second_ws_path" >/dev/null 2>&1 || true
 
   output="" exit_code=0
   output=$(run_tt worktree delete --task "$task_id" 2>&1) || exit_code=$?
