@@ -156,4 +156,26 @@ test_task_checkin__head_symlink_is_absolute() {
 }
 
 
+test_task_checkin__cwd_outside_repo() {
+  # Regression: jj file show resolves paths relative to CWD, not the repo root.
+  # tt commands must use root: prefix so checkin works when CWD is outside the repo
+  # (e.g. when -R receives the canonical path but CWD is a symlinked or parent path).
+  setup_workspace "ci-cwd"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+  complete_task >/dev/null || true
+
+  # Run checkin from /tmp (completely outside the repo) using the canonical repo path.
+  local canonical_repo
+  canonical_repo="$(cd "$REPO" && pwd -P)"
+
+  output="" exit_code=0
+  output=$(cd /tmp && TT_REPO="$canonical_repo" "$TT" task checkin "$task_id" 2>&1) || exit_code=$?
+  assert_success "checkin from outside repo (canonical path) succeeds" "$exit_code"
+}
+
+
 run_tests "tt task checkin"

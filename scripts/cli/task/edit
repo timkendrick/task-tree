@@ -198,7 +198,7 @@ main() {
 
   # Read current task file content from bookmark
   local task_content
-  task_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || {
+  task_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || {
     log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
     exit 1
   }
@@ -308,7 +308,7 @@ main() {
     rewrite_task_file "$tmpfile" \
       "$final_title" "$current_status" "$final_body" "$current_created"
     local current_file_content
-    current_file_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || true
+    current_file_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
 
     if ! task_file_changed "$current_file_content" "$tmpfile"; then
       rm -f "$tmpfile"

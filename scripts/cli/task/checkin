@@ -204,7 +204,7 @@ main() {
   # --- Optional: run complete first ---
   if [[ "$do_complete" == true ]]; then
     local task_content_check
-    task_content_check="$(jj -R "$repo" file show -r "$child_bookmark" -- "$task_file" 2>/dev/null)" || true
+    task_content_check="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || true
     local status_check
     status_check="$(parse_frontmatter_field "$task_content_check" "status")"
     if [[ "$status_check" != "DONE" ]]; then
@@ -218,7 +218,7 @@ main() {
 
   # --- Read current task state from bookmark ---
   local task_content task_title task_status
-  task_content="$(jj -R "$repo" file show -r "$child_bookmark" -- "$task_file" 2>/dev/null)" || {
+  task_content="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || {
     log "Error: Could not read task file '$task_file' from '$child_bookmark'."
     exit 1
   }
@@ -342,7 +342,7 @@ main() {
 
   # Build updated parent task file content
   local parent_task_content
-  parent_task_content="$(jj -R "$target_ws" file show -r "$parent_bookmark" -- "$parent_task_file" 2>/dev/null)" || {
+  parent_task_content="$(jj_show_at_revision "$target_ws" "$parent_bookmark" "$parent_task_file")" || {
     log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
     exit 1
   }

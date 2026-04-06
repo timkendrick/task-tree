@@ -131,7 +131,7 @@ main() {
 
   # Read task file content from bookmark
   local task_content
-  task_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || {
+  task_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || {
     log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
     exit 1
   }

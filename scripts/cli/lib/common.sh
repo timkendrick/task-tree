@@ -2,6 +2,28 @@
 # Source this file; do not execute directly.
 
 # ---------------------------------------------------------------------------
+# VCS file-read helpers
+# ---------------------------------------------------------------------------
+
+# Usage: jj_show_at_revision REPO REV PATH
+# Reads a file at a named revision from a jj repo using a root:-relative path.
+# Always passes --ignore-working-copy since these calls never read from @.
+# Outputs file content to stdout. Returns jj's exit code (non-zero = file absent).
+jj_show_at_revision() {
+  local repo="$1" rev="$2" path="$3"
+  jj -R "$repo" --ignore-working-copy file show -r "$rev" -- "root:$path" 2>/dev/null
+}
+
+# Usage: jj_show_at_op REPO OP REV PATH
+# Reads a file at a specific jj operation ID and revision, using a root:-relative path.
+# Used for historical rescue (e.g. recovering pre-rename file content).
+# Outputs file content to stdout. Returns jj's exit code (non-zero = file absent).
+jj_show_at_op() {
+  local repo="$1" op="$2" rev="$3" path="$4"
+  jj -R "$repo" --at-operation "$op" file show -r "$rev" -- "root:$path" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
 # Shared slug / ID / timestamp helpers (used by create, edit, add-context)
 # ---------------------------------------------------------------------------
 
@@ -428,7 +450,7 @@ find_parent_branch() {
     local path
     path="$(task_file_path "$suffix")"
     local content
-    content="$(jj "${jj_opts[@]}" --ignore-working-copy file show -r "$branch" -- "$path" 2>/dev/null)" || continue
+    content="$(jj_show_at_revision "$repo" "$branch" "$path")" || continue
     if printf '%s' "$content" | grep -qE "^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]+${task_id}([[:space:]]|$)"; then
       if [[ -n "$found" ]]; then
         log "Error: Multiple parent branches found for '$task_id': '$found' and '$branch'."
@@ -489,7 +511,7 @@ find_branch_for_task() {
     local path
     path="$(task_file_path "$suffix")"
     local c
-    c="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$path" 2>/dev/null)" || continue
+    c="$(jj_show_at_revision "$repo" "$branch" "$path")" || continue
     if printf '%s' "$c" | grep -qE "^subtask:[[:space:]]*\[x\][[:space:]]+${task_id}([[:space:]]|$)"; then
       printf '%s' "$branch"
       return 0
@@ -676,8 +698,7 @@ collect_descendant_task_dirs() {
     local tf
     tf="$(task_file_path "$suffix")"
     local content
-    content="$(jj -R "$repo" --ignore-working-copy \
-      file show -r "$branch" -- "$tf" 2>/dev/null)" || continue
+    content="$(jj_show_at_revision "$repo" "$branch" "$tf")" || continue
 
     # Extract all subtask IDs (any checkbox state)
     while IFS= read -r subtask_id; do

@@ -58,15 +58,6 @@ get_suffix_from_id() {
   printf '%s' "${id#$prefix}"
 }
 
-# Usage: read_task_file_at_rev REPO REV TASK_FILE_PATH
-# Outputs file contents to stdout. Returns 1 if file missing.
-read_task_file_at_rev() {
-  local repo="$1"
-  local rev="$2"
-  local path="$3"
-  jj -R "$repo" file show -r "$rev" -- "$path" 2>/dev/null
-}
-
 # Parse YAML-like frontmatter: extract title, status, and subtask lines.
 # Usage: parse_frontmatter CONTENT
 # Outputs to stdout, one line per extracted value:
@@ -202,7 +193,7 @@ emit_tree() {
   fi
 
   local content
-  content="$(read_task_file_at_rev "$repo" "$source_branch" "$path" 2>/dev/null)" || true
+  content="$(jj_show_at_revision "$repo" "$source_branch" "$path")" || true
 
   local checkbox title
   local meta
@@ -261,7 +252,7 @@ build_merged_map() {
       local path
       path="$(task_file_path "$suffix")"
       local content
-      content="$(read_task_file_at_rev "$repo" "$branch" "$path" 2>/dev/null)" || true
+      content="$(jj_show_at_revision "$repo" "$branch" "$path")" || true
       if printf '%s' "$content" | grep -qE "subtask:\s*\[x\]\s+${task_id}(\s|$)"; then
         result="${result}${task_id}:${branch}"$'\n'
         break
@@ -306,7 +297,7 @@ collect_task_ids() {
     local path
     path="$(task_file_path "$suffix")"
     local content
-    content="$(read_task_file_at_rev "$repo" "$source_branch" "$path" 2>/dev/null)" || true
+    content="$(jj_show_at_revision "$repo" "$source_branch" "$path")" || true
     local subs
     subs="$(get_subtask_entries "$content" | cut -d'|' -f2)"
     for sub in $subs; do
@@ -418,7 +409,7 @@ main() {
         local path
         path="$(task_file_path "$suffix")"
         local content
-        content="$(read_task_file_at_rev "$repo" "$branch" "$path" 2>/dev/null)" || true
+        content="$(jj_show_at_revision "$repo" "$branch" "$path")" || true
         if printf '%s' "$content" | grep -qE "subtask:\s*\[[ x\-]\]\s+${current}(\s|$)"; then
           parent="$branch"
           break

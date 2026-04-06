@@ -83,7 +83,7 @@ subtask: [ ] task/ignore-subcommand-test-files-b794132f
 subtask: [ ] task/delete-tt-workspace-branch-623e7bf7
 subtask: [x] task/worktree-history-file-e66a2487
 subtask: [ ] task/tt-task-checkin-switch-worktree-6d7913f5
-subtask: [ ] task/jj-file-show-cwd-sensitivity-8b319182
+subtask: [x] task/jj-file-show-cwd-sensitivity-8b319182
 subtask: [ ] task/tt-task-checkin-worktree-cleanup-bf8d7100
 subtask: [ ] task/tt-worktree-delete-54937e0a
 ---

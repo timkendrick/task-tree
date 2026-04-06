@@ -107,7 +107,7 @@ main() {
 
   # --- Read task file ---
   local content
-  if ! content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$task_file" 2>/dev/null)"; then
+  if ! content="$(jj_show_at_revision "$repo" "$branch" "$task_file")"; then
     log "Error: Could not read task file '$task_file' from '$branch'."
     exit 1
   fi
@@ -152,7 +152,7 @@ main() {
       [[ -z "$ctx_id" ]] && continue
       local ctx_file ctx_content ctx_title ctx_body
       ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
-      ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$ctx_file" 2>/dev/null || true)"
+      ctx_content="$(jj_show_at_revision "$repo" "$branch" "$ctx_file" || true)"
       ctx_title="$(parse_quoted_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
       ctx_body="$(parse_body "$ctx_content")"
       printf -- '---\n'

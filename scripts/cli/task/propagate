@@ -105,7 +105,7 @@ is_partially_checked_in() {
   local task_file
   task_file="$(task_file_path "$suffix")"
   local content status
-  content="$(jj -R "$repo" --ignore-working-copy file show -r "$child" -- "$task_file" 2>/dev/null)" || true
+  content="$(jj_show_at_revision "$repo" "$child" "$task_file")" || true
   status="$(parse_frontmatter_field "$content" "status")"
   [[ "$status" != "DONE" ]]
 }
@@ -117,7 +117,7 @@ is_partially_checked_in() {
 get_subtask_ids() {
   local repo="$1" bookmark="$2" task_file="$3"
   local content
-  content="$(jj -R "$repo" --ignore-working-copy file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || true
+  content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
   [[ -z "$content" ]] && return 0
   printf '%s' "$content" | awk '
     /^---$/ { in_fm = !in_fm; next }
