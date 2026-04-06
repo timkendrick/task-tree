@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # Usage:
 #   checkin [<task-id>] [--context <markdown>] [--complete] [--rebase | --merge]
-#           [--force] [--delete]
+#           [--force] [--delete] [--retain-worktree]
 #           [--worktree=<path>] [--repo PATH]
 #           [--propagate] [--propagate-rebase | --propagate-merge]
 #           [--propagate-shallow] [--propagate-force] [--propagate-dry-run]
@@ -59,6 +59,7 @@ Options:
   --propagate-force         Propagate despite conflicts.
   --propagate-dry-run       Show propagation plan without applying.
   --propagate-to CHILD_ID   Limit propagation to specific child (repeatable).
+  --retain-worktree         Skip worktree deletion after complete checkin.
   -h, --help                Show this help.
 
 EOF
@@ -80,6 +81,7 @@ main() {
   local propagate_force=false
   local propagate_dry_run=false
   local -a propagate_to=()
+  local retain_worktree=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -114,6 +116,7 @@ main() {
       --propagate-to)
         [[ $# -lt 2 ]] && { log "Error: --propagate-to requires an argument"; usage; }
         propagate_to+=("$2"); shift 2 ;;
+      --retain-worktree) retain_worktree=true; shift ;;
       -h|--help) usage ;;
       *)
         if [[ -z "$task_id_arg" ]]; then
@@ -488,17 +491,25 @@ main() {
   fi
 
   # --- Post-checkin worktree cleanup ---
-  # Delete the dedicated child worktree if a complete checkin was done.
-  if [[ "$task_status" == "DONE" ]]; then
-    local child_ws_path="${workspace_dir:+${workspace_dir}/${task_id}}"
-    if [[ -n "$child_ws_path" ]] && [[ -d "$child_ws_path" ]] && \
-       [[ -d "$child_ws_path/.jj" || -L "$child_ws_path/.jj" ]]; then
-      local child_ws_name
-      child_ws_name="$(jj -R "$child_ws_path" workspace root 2>/dev/null | xargs -I{} jj -R "$target_ws" workspace list --no-pager 2>/dev/null | grep "{}" | awk '{print $1}' | tr -d ':' || true)"
-      if [[ -n "$child_ws_name" ]]; then
-        jj -R "$target_ws" workspace forget "$child_ws_name" 2>/dev/null || true
+  # On a complete checkin (DONE), if the child task had a dedicated worktree,
+  # forget the jj workspace and delete the files from disk.
+  # Suppressed by --retain-worktree or if status is not DONE.
+  # IMPORTANT: This MUST be the last thing main() does. After forget_worktree,
+  # the script's own files may have been deleted from disk (if the checkin
+  # was run from within the child worktree), so no further commands should run.
+  if [[ "$task_status" == "DONE" ]] && [[ "$retain_worktree" != true ]]; then
+    # child_worktree is the dedicated worktree if one existed, otherwise $repo.
+    # Only clean up if the child was checked out in a dedicated worktree (not $repo).
+    local canon_child canon_repo
+    canon_child="$(realpath "$child_worktree" 2>/dev/null)" || canon_child="$child_worktree"
+    canon_repo="$(realpath "$repo" 2>/dev/null)"            || canon_repo="$repo"
+    if [[ "$canon_child" != "$canon_repo" ]]; then
+      local ws_name
+      if ws_name="$(resolve_workspace_name "$repo" "$child_worktree")"; then
+        forget_worktree "$repo" "$ws_name" "$child_worktree"
+        # Do NOT execute any further commands after forget_worktree.
+        # The script's own files may have been deleted from disk.
       fi
-      rm -rf "$child_ws_path"
     fi
   fi
 }
