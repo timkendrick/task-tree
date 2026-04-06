@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt worktree delete` CLI command"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-05T21:03:09Z
 updated: 2026-04-05T21:03:10Z
 ---
