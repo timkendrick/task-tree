@@ -38,10 +38,10 @@ Options:
   -h, --help        Show this help
 
 Examples:
-  ${SCRIPT_NAME}
-  ${SCRIPT_NAME} --task task/foo-abc12345
-  ${SCRIPT_NAME} --task task/foo-abc12345 --quiet
-  ${SCRIPT_NAME} --repo /path/to/repo
+  ${COMMAND_NAME:-$SCRIPT_NAME}
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345 --quiet
+  ${COMMAND_NAME:-$SCRIPT_NAME} --repo /path/to/repo
 
 EOF
 }

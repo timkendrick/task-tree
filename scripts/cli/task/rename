@@ -36,8 +36,8 @@ Options:
   --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
 
 Examples:
-  ${SCRIPT_NAME} --slug new-name
-  ${SCRIPT_NAME} --slug new-name --task task/old-name-abc123
+  ${COMMAND_NAME:-$SCRIPT_NAME} --slug new-name
+  ${COMMAND_NAME:-$SCRIPT_NAME} --slug new-name --task task/old-name-abc123
 
 EOF
 }

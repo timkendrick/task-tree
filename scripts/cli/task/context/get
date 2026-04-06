@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task context get — Print the raw contents of context file(s) for a task.
 #
 # Usage:
-#   get [<context-id> [...]] [--task <task-id>] [--repo PATH] [-h|--help]
+#   get [<context-id>...] [--task <task-id>] [--repo PATH] [-h|--help]
 #
 # Options:
 #   <context-id>...      Context IDs to retrieve (default: all context files).
@@ -23,7 +23,7 @@ readonly SCRIPT_NAME="${COMMAND_NAME:+$COMMAND_NAME }${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<context-id> [...]] [--task <task-id>] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<context-id>...] [--task <task-id>] [--repo PATH]
 
 Print the raw contents of context file(s) for a task to stdout.
 
@@ -41,10 +41,10 @@ Options:
   -h, --help           Show this help.
 
 Examples:
-  ${SCRIPT_NAME}
-  ${SCRIPT_NAME} context/oauth-notes-abc12345
-  ${SCRIPT_NAME} context/oauth-notes-abc12345 context/api-design-deadbeef
-  ${SCRIPT_NAME} --task task/foo-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME}
+  ${COMMAND_NAME:-$SCRIPT_NAME} context/oauth-notes-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} context/oauth-notes-abc12345 context/api-design-deadbeef
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345
 
 EOF
 }

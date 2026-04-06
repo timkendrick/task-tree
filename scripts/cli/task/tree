@@ -40,11 +40,11 @@ Options:
   -h, --help      Show this help
 
 Examples:
-  ${SCRIPT_NAME}                                    # all projects
-  ${SCRIPT_NAME} --project project/main-abc12345    # one project
-  ${SCRIPT_NAME} --detached                         # all projects + detached
-  ${SCRIPT_NAME} --all                              # all projects + detached
-  ${SCRIPT_NAME} --focus                            # current task chain
+  ${COMMAND_NAME:-$SCRIPT_NAME}                                    # all projects
+  ${COMMAND_NAME:-$SCRIPT_NAME} --project project/main-abc12345    # one project
+  ${COMMAND_NAME:-$SCRIPT_NAME} --detached                         # all projects + detached
+  ${COMMAND_NAME:-$SCRIPT_NAME} --all                              # all projects + detached
+  ${COMMAND_NAME:-$SCRIPT_NAME} --focus                            # current task chain
 
 EOF
 }

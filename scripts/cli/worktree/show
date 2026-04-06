@@ -35,8 +35,8 @@ Options:
   -h, --help    Show this help
 
 Examples:
-  ${SCRIPT_NAME} task/foo-abc12345
-  ${SCRIPT_NAME} project/bar-def12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} project/bar-def12345
 
 EOF
 }

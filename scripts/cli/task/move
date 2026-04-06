@@ -37,8 +37,8 @@ Options:
   -h, --help             Show this help
 
 Examples:
-  ${SCRIPT_NAME} --parent project/main-app-abc12345
-  ${SCRIPT_NAME} --task task/foo-abc12345 --parent task/bar-def67890
+  ${COMMAND_NAME:-$SCRIPT_NAME} --parent project/main-app-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345 --parent task/bar-def67890
 
 EOF
 }

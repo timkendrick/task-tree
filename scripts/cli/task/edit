@@ -42,12 +42,12 @@ otherwise if none of --title, --label, or --delete-label are given, opens
 an editor pre-populated with the current body text (interactive mode).
 
 Examples:
-  ${SCRIPT_NAME}                                       # interactive: opens editor with current body
-  ${SCRIPT_NAME} --title "New title"                   # preserve body (terminal stdin)
-  echo "New description" | ${SCRIPT_NAME}              # stdin pipe, edit current task
-  ${SCRIPT_NAME} < ./description.md                    # stdin redirect, edit current task
-  echo "New description" | ${SCRIPT_NAME} task/abc-123 # stdin pipe, edit specific task
-  ${SCRIPT_NAME} --title "Updated" < ./description.md  # stdin + explicit title
+  ${COMMAND_NAME:-$SCRIPT_NAME}                                       # interactive: opens editor with current body
+  ${COMMAND_NAME:-$SCRIPT_NAME} --title "New title"                   # preserve body (terminal stdin)
+  echo "New description" | ${COMMAND_NAME:-$SCRIPT_NAME}              # stdin pipe, edit current task
+  ${COMMAND_NAME:-$SCRIPT_NAME} < ./description.md                    # stdin redirect, edit current task
+  echo "New description" | ${COMMAND_NAME:-$SCRIPT_NAME} task/abc-123 # stdin pipe, edit specific task
+  ${COMMAND_NAME:-$SCRIPT_NAME} --title "Updated" < ./description.md  # stdin + explicit title
 
 EOF
 }

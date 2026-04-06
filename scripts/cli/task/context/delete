@@ -39,8 +39,8 @@ Options:
   -h, --help           Show this help.
 
 Examples:
-  ${SCRIPT_NAME} context/oauth-notes-abc12345
-  ${SCRIPT_NAME} context/oauth-notes-abc12345 --task task/foo-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} context/oauth-notes-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} context/oauth-notes-abc12345 --task task/foo-abc12345
 
 EOF
 }

@@ -307,7 +307,7 @@ The command exits with an error if none of these resolves to a valid jj reposito
   tt task context add --title "Implementation plan"
   ```
 
-- **`tt task context get [<context-id> [...]] [--task <task-id>] [--repo PATH]`** — Print the raw contents of one or more context files for a task to stdout. If one or more `<context-id>` positional arguments are given, only those context files are printed (in the order specified); otherwise all context files for the task are printed in declaration order. Output is the raw file contents including frontmatter; multiple files are concatenated with no separator. `--task` specifies which task to read from (default: current task). Applies the "where to read" rule (§7.1 / Appendix A step 3). Exits non-zero if the task has no context files or a specified context ID is not registered on the task. No hooks.
+- **`tt task context get [<context-id>...] [--task <task-id>] [--repo PATH]`** — Print the raw contents of one or more context files for a task to stdout. If one or more `<context-id>` positional arguments are given, only those context files are printed (in the order specified); otherwise all context files for the task are printed in declaration order. Output is the raw file contents including frontmatter; multiple files are concatenated with no separator. `--task` specifies which task to read from (default: current task). Applies the "where to read" rule (§7.1 / Appendix A step 3). Exits non-zero if the task has no context files or a specified context ID is not registered on the task. No hooks.
 
 - **`tt task context list [<task-id>] [--task <task-id>] [--repo PATH]`** — List the context IDs for a task to stdout. If `<task-id>` is provided, lists context for that task; otherwise lists context for the current task. The `--task` flag is an alternative way to specify the task (takes precedence over the positional argument). Context IDs are output one per line in declaration order (as they appear in the task file's frontmatter). Exits with code 0 even if the task has no context files (produces no output in that case). Exits with code 1 if the task is not found or is not a valid task/project branch. Applies the "where to read" rule (§7.1 / Appendix A step 3). No hooks.
 
@@ -943,7 +943,7 @@ The standard workflow:
 
 5. **Work on the task** — User commits changes on the branch and accumulates context in `./TASK.md`.
    - **Add context** — Run `tt task context add [--title <title>]` and provide context body via stdin (e.g., `cat ./notes.md | tt task context add --title "Research notes"`). If stdin is a terminal, an editor is opened for body input. Creates a commit. See §5.2.
-   - **Read context** — Run `tt task context get [<context-id> [...]]` to print the raw contents of one or more context files for the current task to stdout. See §5.2.
+   - **Read context** — Run `tt task context get [<context-id>...]` to print the raw contents of one or more context files for the current task to stdout. See §5.2.
    - **Checkpoint** — Run `tt task checkpoint [--message <message>]` to create a named `Checkpoint: <message>` commit and advance the task bookmark. See §6.3.
 
 6. **Complete the task** — `tt task complete [<task-id>] [--worktree=<path>] [--force]`. When work is done, marks the task `DONE` with a `Complete task: <title> (<task-id>)` commit and advances the task bookmark. Requires all child tasks to be done unless `--force`. Can be invoked from any workspace by passing `<task-id>`. See §6.4.

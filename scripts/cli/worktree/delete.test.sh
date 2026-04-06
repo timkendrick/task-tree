@@ -319,4 +319,17 @@ test_worktree_delete__current_wc_force() {
 }
 
 
+test_worktree_delete__help() {
+  setup_workspace "wt-delete-help"
+  output="" exit_code=0
+  output=$(run_tt worktree delete --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt worktree delete"
+  assert_required_usage_argument "argument: --task" "$output" "--task"
+  assert_required_usage_argument "argument: --worktree=<path>" "$output" "--worktree=<path>"
+  assert_required_usage_argument "argument: --force" "$output" "--force"
+  assert_required_usage_argument "argument: --repo" "$output" "--repo"
+}
+
+
 run_tests "tt worktree delete"

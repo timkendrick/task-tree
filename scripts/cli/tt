@@ -4,7 +4,7 @@ set -euo pipefail
 # tt — task-tree bootstrap CLI dispatcher
 #
 # Dynamically dispatches to nested subcommands based on filesystem structure:
-#   tt <command> [<subcommand> [...]] [args...]
+#   tt <command> [<subcommand>...] [args...]
 #
 # Commands are located via the filesystem:
 #   scripts/cli/<command>/<subcommand>/<...>/<executable>
@@ -171,15 +171,8 @@ main() {
         accumulated_name="$arg"
       fi
 
-      # Check if next argument is help flag for this command
-      if [[ $# -ge 1 && ( "$1" == "--help" || "$1" == "-h" ) ]]; then
-        shift
-        export COMMAND_NAME="$accumulated_name"
-        exec "$next_path" "$@"
-      fi
-
-      # Dispatch to the final command
-      export COMMAND_NAME="$accumulated_name"
+      # Dispatch to the final command (passing all remaining args including --help)
+      export COMMAND_NAME="tt $accumulated_name"
       exec "$next_path" "$@"
     else
       # Check if this is a help request for a namespace

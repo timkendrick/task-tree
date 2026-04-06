@@ -276,4 +276,17 @@ test_task_checkin__cwd_outside_repo() {
 }
 
 
+test_task_checkin__help() {
+  setup_workspace "checkin-help"
+  output="" exit_code=0
+  output=$(run_tt task checkin --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt task checkin"
+  assert_required_usage_argument "argument: <task-id>" "$output" "<task-id>"
+  assert_optional_usage_argument "argument: --repo" "$output" "--repo"
+  assert_optional_usage_argument "argument: --force" "$output" "--force"
+  assert_optional_usage_argument "argument: --delete" "$output" "--delete"
+}
+
+
 run_tests "tt task checkin"

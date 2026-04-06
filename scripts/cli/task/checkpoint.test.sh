@@ -70,4 +70,16 @@ test_task_checkpoint__multiple_sequential() {
 }
 
 
+test_task_checkpoint__help() {
+  setup_workspace "checkpoint-help"
+  output="" exit_code=0
+  output=$(run_tt task checkpoint --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt task checkpoint"
+  assert_required_usage_argument "argument: --message" "$output" "--message" "-m"
+  assert_required_usage_argument "argument: --squash" "$output" "--squash"
+  assert_required_usage_argument "argument: --repo" "$output" "--repo"
+}
+
+
 run_tests "tt task checkpoint"

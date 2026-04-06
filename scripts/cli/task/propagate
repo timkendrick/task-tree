@@ -45,11 +45,11 @@ Options:
   --repo PATH       Repository root (overrides TT_REPO; default: find .jj)
 
 Examples:
-  ${SCRIPT_NAME}                                          # rebase all descendants of current task
-  ${SCRIPT_NAME} --from project/bootstrap-cli-d35756ce   # propagate from a specific project
-  ${SCRIPT_NAME} --shallow                                # direct children only
-  ${SCRIPT_NAME} --to task/tt-task-create-5841c217        # one specific child
-  ${SCRIPT_NAME} --merge --shallow                        # merge parent into direct children
+  ${COMMAND_NAME:-$SCRIPT_NAME}                                          # rebase all descendants of current task
+  ${COMMAND_NAME:-$SCRIPT_NAME} --from project/bootstrap-cli-d35756ce   # propagate from a specific project
+  ${COMMAND_NAME:-$SCRIPT_NAME} --shallow                                # direct children only
+  ${COMMAND_NAME:-$SCRIPT_NAME} --to task/tt-task-create-5841c217        # one specific child
+  ${COMMAND_NAME:-$SCRIPT_NAME} --merge --shallow                        # merge parent into direct children
 
 EOF
 }

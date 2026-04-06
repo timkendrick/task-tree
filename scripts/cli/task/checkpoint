@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task checkpoint — record current state and advance the task bookmark.
 #
 # Usage:
-#   checkpoint [-m <message>] [--squash] [--repo PATH]
+#   checkpoint [--message <message>] [--squash] [--repo PATH]
 #
 # Options:
 #   -m, --message <msg>  Commit message (skips editor prompt).
@@ -19,7 +19,7 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [-m <message>] [--squash] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--message <message>] [--squash] [--repo PATH]
 
 Record the current state of work by creating a named commit and advancing the task bookmark.
 
@@ -29,10 +29,10 @@ Options:
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
-  ${SCRIPT_NAME} -m "add foo"
-  ${SCRIPT_NAME} --message "refactor bar"
-  ${SCRIPT_NAME} --squash -m "collapse and checkpoint"
-  ${SCRIPT_NAME}           # opens editor
+  ${COMMAND_NAME:-$SCRIPT_NAME} -m "add foo"
+  ${COMMAND_NAME:-$SCRIPT_NAME} --message "refactor bar"
+  ${COMMAND_NAME:-$SCRIPT_NAME} --squash -m "collapse and checkpoint"
+  ${COMMAND_NAME:-$SCRIPT_NAME}           # opens editor
 
 EOF
 }

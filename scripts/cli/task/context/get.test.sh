@@ -103,4 +103,16 @@ test_context_get__output_includes_frontmatter() {
 }
 
 
+test_task_context_get__help() {
+  setup_workspace "ctx-get-help"
+  output="" exit_code=0
+  output=$(run_tt task context get --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt task context get"
+  assert_required_usage_argument "argument: <context-id>..." "$output" "<context-id>..."
+  assert_required_usage_argument "argument: --task" "$output" "--task"
+  assert_required_usage_argument "argument: --repo" "$output" "--repo"
+}
+
+
 run_tests "tt task context get"

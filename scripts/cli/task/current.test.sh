@@ -38,4 +38,14 @@ test_task_current__not_on_a_task_branch() {
 }
 
 
+test_task_current__help() {
+  setup_workspace "current-help"
+  output="" exit_code=0
+  output=$(run_tt task current --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt task current"
+  assert_required_usage_argument "argument: --repo" "$output" "--repo"
+}
+
+
 run_tests "tt task current"
