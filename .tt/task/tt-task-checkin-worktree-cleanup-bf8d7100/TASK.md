@@ -2,7 +2,8 @@
 title: "Clean up task worktree after `tt task checkin` completes"
 status: IN-PROGRESS
 created: 2026-04-05T20:49:45Z
-updated: 2026-04-05T21:04:29Z
+updated: 2026-04-06T20:08:16Z
+context: context/implementation-plan-bf8e904d
 ---
 After a successful `tt task checkin --complete`, if the checked-in task had a dedicated jj worktree, the worktree should be cleaned up automatically: the jj workspace should be forgotten (`jj workspace forget`) and the working copy files deleted from disk. A `--retain-worktree` flag should suppress both operations.
 
