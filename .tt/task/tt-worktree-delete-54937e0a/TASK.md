@@ -2,8 +2,9 @@
 title: "Implement `tt worktree delete` CLI command"
 status: IN-PROGRESS
 created: 2026-04-05T21:03:09Z
-updated: 2026-04-06T14:18:20Z
+updated: 2026-04-06T14:23:48Z
 context: context/implementation-plan-7a3f1ffe
+context: context/implementation-status-13d69393
 ---
 Allow deleting previously-checked-out task worktrees via `tt worktree delete --task <task-id> [--worktree=<worktree-path>] [--force]`.
 
