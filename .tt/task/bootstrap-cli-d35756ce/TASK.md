@@ -74,7 +74,7 @@ subtask: [x] task/fix-workspace-switch-4f4015b8
 subtask: [x] task/workspace-dir-symlink-791c24a9
 subtask: [x] task/tt-workspace-list-9b5fe3c9
 subtask: [ ] task/tt-worktree-list-fe6a579a
-subtask: [ ] task/tt-worktree-delete-461a5159
+subtask: [x] task/tt-worktree-delete-461a5159
 subtask: [x] task/tt-worktree-show-81644e0f
 subtask: [x] task/absolute-workspace-symlink-path-46b9b1e4
 subtask: [ ] task/tt-history-unlock-397521a9
