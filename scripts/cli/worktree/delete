@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt worktree delete — Delete a task's worktree.
+#
+# Usage:
+#   delete --task <task-id> [--worktree=<path>] [--force] [--repo PATH]
+#
+# Forgets the jj workspace and removes all files from the worktree path.
+# The task bookmark is NOT deleted.
+#
+# Options:
+#   --task <task-id>       Required. Task or project ID.
+#   --worktree=<path>      Disambiguate when task has multiple worktrees.
+#   --force                Skip safety checks (dirty WC, commits after bookmark).
+#   --repo PATH            Repository root.
+#   -h, --help             Show this help.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${SCRIPT_NAME} --task <task-id> [--worktree=<path>] [--force] [--repo PATH]
+
+Delete a task's worktree. Forgets the jj workspace and removes all files.
+The task bookmark is NOT deleted.
+
+Arguments:
+  --task <task-id>       Task or project ID (required)
+
+Options:
+  --worktree=<path>      Disambiguate when task has multiple worktrees.
+  --force                Skip safety checks (dirty WC, commits after bookmark).
+  --repo PATH            Repository root (overrides TT_REPO; default: find .jj).
+  -h, --help             Show this help.
+
+Examples:
+  ${SCRIPT_NAME} --task task/foo-abc12345
+  ${SCRIPT_NAME} --task task/foo-abc12345 --worktree=/path/to/worktree
+  ${SCRIPT_NAME} --task task/foo-abc12345 --force
+
+EOF
+  exit 1
+}
+
+main() {
+  local task_id=''
+  local worktree_arg=''
+  local force=false
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task)
+        [[ $# -lt 2 ]] && { log "Error: --task requires an argument"; usage; }
+        task_id="$2"; shift 2 ;;
+      --worktree=*)
+        worktree_arg="${1#--worktree=}"; shift ;;
+      --force)
+        force=true; shift ;;
+      --repo)
+        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage ;;
+      *)
+        log "Error: Unknown option: $1"; usage ;;
+    esac
+  done
+
+  if [[ -z "$task_id" ]]; then
+    log "Error: --task <task-id> is required"
+    usage
+  fi
+
+  repo="$(resolve_repo "$repo")"
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # Validate task_id format
+  if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
+    log "Error: '$task_id' is not a recognized task or project ID"
+    log "  Expected prefix '$task_prefix' or '$project_prefix' with 8-hex suffix"
+    exit 1
+  fi
+
+  # Verify the bookmark exists
+  if ! jj -R "$repo" log -r "$task_id" --no-graph -T '' 2>/dev/null; then
+    log "Error: Task '$task_id' not found in repository"
+    exit 1
+  fi
+
+  # Resolve workspace dir via .tt/workspace symlink
+  local workspace_dir
+  workspace_dir="$(get_workspace_dir "$repo")" || true
+
+  # Find worktrees for this task
+  local found_worktrees wt_count
+  found_worktrees="$(find_worktrees_for_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")"
+  wt_count="$(printf '%s' "$found_worktrees" | grep -c . 2>/dev/null || true)"
+
+  local target_worktree
+
+  if [[ "$wt_count" -eq 0 ]]; then
+    log "Error: No worktree found for '$task_id'"
+    exit 1
+  fi
+
+  # Disambiguation
+  if [[ "$wt_count" -gt 1 ]]; then
+    if [[ -z "$worktree_arg" ]]; then
+      log "Error: Multiple worktrees found for '$task_id'; use --worktree=<path>:"
+      printf '%s\n' "$found_worktrees" | while IFS= read -r p; do log "  $p"; done
+      exit 1
+    fi
+    if ! printf '%s\n' "$found_worktrees" | grep -qxF "$worktree_arg"; then
+      log "Error: --worktree=$worktree_arg is not a worktree for '$task_id'"
+      log "  Available worktrees:"
+      printf '%s\n' "$found_worktrees" | while IFS= read -r p; do log "    $p"; done
+      exit 1
+    fi
+    target_worktree="$worktree_arg"
+  else
+    target_worktree="$(printf '%s' "$found_worktrees" | head -1)"
+    if [[ -n "$worktree_arg" && "$worktree_arg" != "$target_worktree" ]]; then
+      log "Error: --worktree=$worktree_arg does not match the worktree for '$task_id'"
+      log "  Found worktree: $target_worktree"
+      exit 1
+    fi
+  fi
+
+  # Safety checks (skip with --force)
+  if [[ "$force" != true ]]; then
+    if ! is_wc_clean "$target_worktree"; then
+      log "Error: Worktree '$target_worktree' has uncommitted changes."
+      log "  Commit or discard changes first, or use --force."
+      exit 1
+    fi
+    if ! check_bookmark_up_to_date "$target_worktree" "$task_id"; then
+      log "Error: Worktree has commits after the task bookmark '$task_id'."
+      log "  Checkpoint or discard these commits first, or use --force."
+      exit 1
+    fi
+  fi
+
+  # Resolve jj workspace name
+  local ws_name
+  ws_name="$(resolve_workspace_name "$repo" "$target_worktree")" || {
+    log "Error: Could not resolve jj workspace name for '$target_worktree'"
+    exit 1
+  }
+
+  # Capture HEAD symlink target BEFORE deletion, since the worktree path
+  # will no longer be resolvable after forget_worktree removes the files.
+  local head_needs_reset=false
+  if [[ -n "$workspace_dir" && -L "${workspace_dir}/HEAD" ]]; then
+    local head_target
+    head_target="$(readlink "${workspace_dir}/HEAD")" || true
+    if [[ -n "$head_target" ]]; then
+      # Resolve relative symlink against workspace_dir
+      if [[ "$head_target" != /* ]]; then
+        head_target="${workspace_dir}/${head_target}"
+      fi
+      # Canonicalize both paths so /var vs /private/var on macOS compare equal
+      if [[ "$(realpath "$head_target")" == "$(realpath "$target_worktree")" ]]; then
+        head_needs_reset=true
+      fi
+    fi
+  fi
+
+  # Begin transaction
+  tt_begin_transaction "$repo"
+
+  # Forget workspace and remove files
+  forget_worktree "$repo" "$ws_name" "$target_worktree"
+
+  # If HEAD pointed to the deleted worktree, reset it to repo root
+  if [[ "$head_needs_reset" == true ]]; then
+    update_head_symlink "$workspace_dir" "$repo"
+  fi
+
+  # Commit transaction
+  tt_commit_transaction "$repo"
+
+  log "Deleted worktree: $target_worktree"
+  log "  Task: $task_id"
+  log "  Workspace '$ws_name' forgotten from jj"
+}
+
+main "$@"
