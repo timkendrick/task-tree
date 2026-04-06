@@ -1,6 +1,6 @@
 ---
 title: "`tt task checkin` not switching HEAD worktree alias"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-05T10:07:45Z
 updated: 2026-04-06T12:03:49Z
 context: context/root-cause-and-research-findings-b0929e5c
