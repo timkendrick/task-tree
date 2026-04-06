@@ -274,11 +274,7 @@ is_wc_clean() {
 # an intentional acknowledgement that the bookmark may be behind.
 assert_bookmark_up_to_date() {
   local repo="$1" bookmark="$2"
-  local ahead_commits
-  ahead_commits="$(jj -R "$repo" log \
-    -r "(::@- & ~::${bookmark})" \
-    --no-graph -T 'change_id ++ "\n"' 2>/dev/null)" || return 0
-  if [[ -n "$ahead_commits" ]]; then
+  if ! check_bookmark_up_to_date "$repo" "$bookmark"; then
     log "Error: There are commits since the last checkpoint that are not tracked by the task bookmark."
     log "  Run 'tt task checkpoint' to record them before checking in."
     log "  Alternatively, pass the task ID explicitly to skip this check:"
@@ -669,6 +665,76 @@ resolve_current() {
       printf '%s\n\n\n' "$parent_rev"
     fi
   fi
+}
+
+# Usage: resolve_workspace_name REPO WORKTREE_PATH
+# Prints the jj workspace name for the workspace at WORKTREE_PATH.
+# Returns 0 and prints name if found, returns 1 if not found.
+resolve_workspace_name() {
+  local repo="$1" worktree_path="$2"
+  local ws_list
+  ws_list="$(jj -R "$repo" --ignore-working-copy workspace list \
+    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || return 1
+  while IFS= read -r ws_line; do
+    [[ -z "$ws_line" ]] && continue
+    local parsed ws_name ws_root
+    parsed="$(parse_workspace_list_line "$ws_line")"
+    ws_name="$(printf '%s' "$parsed" | sed -n '1p')"
+    ws_root="$(printf '%s' "$parsed" | sed -n '2p')"
+    if [[ "$ws_root" == "$worktree_path" ]]; then
+      printf '%s' "$ws_name"
+      return 0
+    fi
+  done <<< "$ws_list"
+  return 1
+}
+
+# Usage: forget_worktree REPO WORKSPACE_NAME [WORKTREE_PATH]
+# Forgets the jj workspace from the repository model.
+# If WORKTREE_PATH is provided, also removes all files from disk.
+forget_worktree() {
+  local repo="$1" ws_name="$2" worktree_path="${3:-}"
+  jj -R "$repo" workspace forget "$ws_name"
+  if [[ -n "$worktree_path" && -d "$worktree_path" ]]; then
+    rm -rf "$worktree_path"
+  fi
+}
+
+# Usage: check_bookmark_up_to_date REPO BOOKMARK
+# Returns 0 if there are no commits between BOOKMARK and the working-copy parent
+# (@-) that are not tracked by the bookmark. Returns 1 if commits exist.
+check_bookmark_up_to_date() {
+  local repo="$1" bookmark="$2"
+  local ahead_commits
+  ahead_commits="$(jj -R "$repo" log \
+    -r "(::@- & ~::${bookmark})" \
+    --no-graph -T 'change_id ++ "\n"' 2>/dev/null)" || return 0
+  [[ -z "$ahead_commits" ]]
+}
+
+# Usage: resolve_head_worktree WORKSPACE_DIR REPO
+# Resolves the worktree path that HEAD currently points to.
+# Falls back to REPO if HEAD is not a symlink or doesn't exist.
+# Always returns an absolute path.
+resolve_head_worktree() {
+  local workspace_dir="$1" repo="$2"
+  local head_path="${workspace_dir}/HEAD"
+  if [[ -n "$workspace_dir" && -L "$head_path" ]]; then
+    local head_target
+    head_target="$(readlink "$head_path")" || true
+    if [[ -n "$head_target" ]]; then
+      # Resolve relative symlink
+      if [[ "$head_target" != /* ]]; then
+        head_target="${workspace_dir}/${head_target}"
+      fi
+      # Canonicalize (returns repo if target doesn't exist)
+      local resolved
+      resolved="$(cd "$head_target" 2>/dev/null && pwd)" || resolved="$repo"
+      printf '%s' "$resolved"
+      return 0
+    fi
+  fi
+  printf '%s' "$repo"
 }
 
 # Map a task status field to a GFM checkbox string.
