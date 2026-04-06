@@ -1,6 +1,6 @@
 ---
 title: "Refuse to checkout multiple worktrees via `tt task checkout`"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-06T15:28:10Z
 updated: 2026-04-06T15:28:11Z
 ---
