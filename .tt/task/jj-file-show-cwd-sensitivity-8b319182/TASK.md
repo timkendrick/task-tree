@@ -1,6 +1,6 @@
 ---
 title: "`jj file show` fails when CWD is outside the -R repo directory tree"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-05T20:38:26Z
 updated: 2026-04-05T20:38:26Z
 ---
