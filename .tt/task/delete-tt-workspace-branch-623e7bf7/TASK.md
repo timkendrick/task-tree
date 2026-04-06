@@ -2,7 +2,8 @@
 title: "Delete `tt workspace branch` command"
 status: IN-PROGRESS
 created: 2026-04-03T21:54:14Z
-updated: 2026-04-03T21:54:15Z
+updated: 2026-04-06T16:49:22Z
+context: context/implementation-plan-8341d0b1
 ---
 The `tt workspace branch <task-id>` effectively just echoes back the provided `<task-id>` (having validated it).
 
