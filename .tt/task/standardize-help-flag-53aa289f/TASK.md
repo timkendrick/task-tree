@@ -2,7 +2,8 @@
 title: "Standardize `--help` flag across commands"
 status: IN-PROGRESS
 created: 2026-04-06T12:13:12Z
-updated: 2026-04-06T12:13:13Z
+updated: 2026-04-06T20:47:21Z
+context: context/implementation-plan-43571f2b
 ---
 All CLI commands (should) support a `--help` flag to show usage instructions for the command.
 
