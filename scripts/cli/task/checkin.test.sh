@@ -156,6 +156,104 @@ test_task_checkin__head_symlink_is_absolute() {
 }
 
 
+test_task_checkin__head_symlink_updated_from_worktree() {
+  # Regression: when running `tt task checkin` from inside a task's dedicated
+  # worktree, HEAD should be updated to point to the parent's workspace, not
+  # left pointing at the task worktree.
+  setup_workspace "ci-head-wt-switch"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  # Checkout with a dedicated worktree and switch HEAD to it
+  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+
+  # Checkpoint from within the worktree
+  TT_REPO="$worktree_path" run_tt task checkpoint -m "work" >/dev/null 2>&1 || true
+
+  # HEAD currently points to the task worktree
+  local head_before
+  head_before="$(readlink "$VIRTUAL/HEAD")"
+  assert_contains "HEAD points to task worktree before checkin" "$head_before" "$task_id"
+
+  # Run checkin FROM WITHIN the worktree (no TT_REPO set)
+  local exit_code=0
+  (cd "$worktree_path" && unset TT_REPO && "$TT" task checkin --complete 2>&1) || exit_code=$?
+
+  assert_success "checkin from worktree succeeds" "$exit_code"
+
+  local head_after
+  head_after="$(readlink "$VIRTUAL/HEAD")"
+  assert_not_contains "HEAD no longer points to task worktree" "$head_after" "$task_id"
+  assert_neq "HEAD was updated from task worktree" "$head_after" "$head_before"
+}
+
+
+test_task_checkin__worktree_deleted_after_complete_checkin() {
+  # After a complete (DONE) checkin the task's dedicated worktree should be
+  # forgotten from jj and its files deleted from disk.
+  setup_workspace "ci-wt-cleanup"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  # Create a dedicated worktree (no --switch; HEAD stays on proj)
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  assert_file_exists "worktree exists before checkin" "$worktree_path"
+
+  # Checkpoint from the worktree
+  TT_REPO="$worktree_path" run_tt task checkpoint -m "work" >/dev/null 2>&1 || true
+
+  # Complete checkin (from main repo, with explicit task_id)
+  run_tt task checkin --complete "$task_id" >/dev/null 2>&1 || true
+
+  # Worktree should be deleted
+  assert_file_not_exists "worktree deleted after complete checkin" "$worktree_path"
+}
+
+
+test_task_checkin__retain_worktree_flag() {
+  # With --retain-worktree, the worktree should NOT be deleted after checkin.
+  setup_workspace "ci-retain-wt"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  assert_file_exists "worktree exists before checkin" "$worktree_path"
+
+  TT_REPO="$worktree_path" run_tt task checkpoint -m "work" >/dev/null 2>&1 || true
+
+  # Checkin with --retain-worktree
+  run_tt task checkin --complete --retain-worktree "$task_id" >/dev/null 2>&1 || true
+
+  # Worktree should still exist
+  assert_file_exists "worktree retained with --retain-worktree" "$worktree_path"
+}
+
+
+test_task_checkin__worktree_not_deleted_after_partial_checkin() {
+  # A partial (IN-PROGRESS) checkin should NOT delete the worktree.
+  setup_workspace "ci-partial-wt"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+
+  TT_REPO="$worktree_path" run_tt task checkpoint -m "work" >/dev/null 2>&1 || true
+
+  # Partial checkin (IN-PROGRESS, not complete)
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true
+
+  assert_file_exists "worktree retained after partial checkin" "$worktree_path"
+}
+
+
 test_task_checkin__cwd_outside_repo() {
   # Regression: jj file show resolves paths relative to CWD, not the repo root.
   # tt commands must use root: prefix so checkin works when CWD is outside the repo
