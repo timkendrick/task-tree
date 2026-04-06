@@ -1,1 +1,1 @@
-.tt/task/tt-task-checkin-worktree-cleanup-bf8d7100/TASK.md
+.tt/task/bootstrap-cli-d35756ce/TASK.md
