@@ -36,8 +36,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [options...]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [options...]
 
 Merge the current task branch (or <task-id>) into its parent branch.
 Only valid on task branches. For project branches, use 'tt task publish'.
@@ -63,7 +63,6 @@ Options:
   -h, --help                Show this help.
 
 EOF
-  exit 1
 }
 
 main() {
@@ -86,43 +85,43 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --context)
-        [[ $# -lt 2 ]] && { log "Error: --context requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         context_text="$2"; shift 2 ;;
       --complete)   do_complete=true; shift ;;
       --rebase)
-        [[ -n "$strategy" && "$strategy" != rebase ]] && { log "Error: --rebase and --merge are mutually exclusive"; usage; }
+        [[ -n "$strategy" && "$strategy" != rebase ]] && { usage >&2; exit 1; }
         strategy='rebase'; shift ;;
       --merge)
-        [[ -n "$strategy" && "$strategy" != merge ]] && { log "Error: --rebase and --merge are mutually exclusive"; usage; }
+        [[ -n "$strategy" && "$strategy" != merge ]] && { usage >&2; exit 1; }
         strategy='merge'; shift ;;
       --force)      force=true; shift ;;
       --delete)     delete=true; shift ;;
       --worktree=*) worktree_arg="${1#--worktree=}"; shift ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
       --propagate)       do_propagate=true; shift ;;
       --propagate-rebase)
         [[ -n "$propagate_strategy" && "$propagate_strategy" != rebase ]] && \
-          { log "Error: --propagate-rebase and --propagate-merge are mutually exclusive"; usage; }
+          { usage >&2; exit 1; }
         propagate_strategy='rebase'; shift ;;
       --propagate-merge)
         [[ -n "$propagate_strategy" && "$propagate_strategy" != merge ]] && \
-          { log "Error: --propagate-rebase and --propagate-merge are mutually exclusive"; usage; }
+          { usage >&2; exit 1; }
         propagate_strategy='merge'; shift ;;
       --propagate-shallow) propagate_shallow=true; shift ;;
       --propagate-force)   propagate_force=true; shift ;;
       --propagate-dry-run) propagate_dry_run=true; shift ;;
       --propagate-to)
-        [[ $# -lt 2 ]] && { log "Error: --propagate-to requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         propagate_to+=("$2"); shift 2 ;;
       --retain-worktree) retain_worktree=true; shift ;;
-      -h|--help) usage ;;
+      -h|--help) usage; exit 0 ;;
       *)
         if [[ -z "$task_id_arg" ]]; then
           task_id_arg="$1"; shift
         else
-          log "Error: Unexpected argument: $1"; usage
+          usage >&2; exit 1
         fi ;;
     esac
   done

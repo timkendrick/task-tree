@@ -169,4 +169,16 @@ test_task_show__shows_labels() {
 }
 
 
+test_task_show__help() {
+  setup_workspace "show-help"
+  output="" exit_code=0
+  output=$(run_tt task show --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt task show"
+  assert_required_usage_argument "argument: <task-id>" "$output" "<task-id>"
+  assert_required_usage_argument "argument: --repo" "$output" "--repo"
+  assert_required_usage_argument "argument: --expand-context" "$output" "--expand-context"
+}
+
+
 run_tests "tt task show"

@@ -25,10 +25,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  local exit_code="${1:-1}"
-  if [[ "$exit_code" -eq 0 ]]; then
-    cat <<EOF
-Usage: ${SCRIPT_NAME} <path-to-repo> <path-to-virtual-project-folder> [options]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <path-to-repo> <path-to-virtual-project-folder> [options]
 
 Initialize a new task-tree (tt) workspace.
 
@@ -52,33 +50,11 @@ What this command does:
   4. Creates a "Create workspace" commit in the jj repo.
 
 Examples:
-  ${SCRIPT_NAME} /path/to/repo /path/to/virtual-workspace
-  ${SCRIPT_NAME} . ~/workspaces/my-project --task-prefix "t/" --project-prefix "p/"
-  ${SCRIPT_NAME} /path/to/repo /path/to/virtual --force
+  ${COMMAND_NAME:-$SCRIPT_NAME} /path/to/repo /path/to/virtual-workspace
+  ${COMMAND_NAME:-$SCRIPT_NAME} . ~/workspaces/my-project --task-prefix "t/" --project-prefix "p/"
+  ${COMMAND_NAME:-$SCRIPT_NAME} /path/to/repo /path/to/virtual --force
 
 EOF
-  else
-    cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} <path-to-repo> <path-to-virtual-project-folder> [options]
-
-Initialize a new task-tree (tt) workspace.
-
-Arguments:
-  <path-to-repo>                   Path to a jj repository root.
-  <path-to-virtual-project-folder>
-                                   Directory to create as the virtual workspace.
-                                   Must not exist (or must be empty) unless --force.
-
-Options:
-  --task-prefix <prefix>     Task ID prefix written to .tt/config.toml (default: "task/").
-  --project-prefix <prefix>  Project ID prefix written to .tt/config.toml (default: "project/").
-  --force                    Remove a non-directory .tt entry if one exists in the repo;
-                             overwrite files in the virtual folder if it already exists.
-  -h, --help                 Show this help and exit.
-
-EOF
-  fi
-  exit "$exit_code"
 }
 
 # Validate a prefix string: non-empty, lowercase alphanumeric + hyphens + slashes only.
@@ -102,12 +78,12 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --task-prefix)
-        [[ $# -lt 2 ]] && { log "Error: --task-prefix requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         task_prefix="$2"
         shift 2
         ;;
       --project-prefix)
-        [[ $# -lt 2 ]] && { log "Error: --project-prefix requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         project_prefix="$2"
         shift 2
         ;;
@@ -116,11 +92,11 @@ main() {
         shift
         ;;
       -h|--help)
-        usage 0
+        usage
+        exit 0
         ;;
       -*)
-        log "Error: Unknown option: $1"
-        usage
+        usage >&2; exit 1
         ;;
       *)
         if [[ -z "$repo_arg" ]]; then
@@ -128,8 +104,7 @@ main() {
         elif [[ -z "$virtual_arg" ]]; then
           virtual_arg="$1"
         else
-          log "Error: Unexpected argument: $1"
-          usage
+          usage >&2; exit 1
         fi
         shift
         ;;
@@ -137,12 +112,10 @@ main() {
   done
 
   if [[ -z "$repo_arg" ]]; then
-    log "Error: <path-to-repo> is required"
-    usage
+    usage >&2; exit 1
   fi
   if [[ -z "$virtual_arg" ]]; then
-    log "Error: <path-to-virtual-project-folder> is required"
-    usage
+    usage >&2; exit 1
   fi
 
   # Resolve repo to absolute path

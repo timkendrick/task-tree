@@ -23,8 +23,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} <task-id> [--worktree[=<path>] [--switch]] [--force] [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <task-id> [--worktree[=<path>] [--switch]] [--force] [--repo PATH]
 
 Switch to the given task or project branch.
 
@@ -42,14 +42,13 @@ Options:
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
-  ${SCRIPT_NAME} task/foo-abc12345
-  ${SCRIPT_NAME} task/foo-abc12345 --worktree
-  ${SCRIPT_NAME} task/foo-abc12345 --worktree --switch
-  ${SCRIPT_NAME} task/foo-abc12345 --worktree=/path/to/workspace
-  ${SCRIPT_NAME} task/foo-abc12345 --force
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --worktree
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --worktree --switch
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --worktree=/path/to/workspace
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --force
 
 EOF
-  exit 1
 }
 
 main() {
@@ -82,37 +81,34 @@ main() {
         shift
         ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
         shift 2
         ;;
       -h|--help)
         usage
+        exit 0
         ;;
       -*)
-        log "Error: Unknown option: $1"
-        usage
+        usage >&2; exit 1
         ;;
       *)
         if [[ -z "$task_id" ]]; then
           task_id="$1"
           shift
         else
-          log "Error: Unexpected argument: $1"
-          usage
+          usage >&2; exit 1
         fi
         ;;
     esac
   done
 
   if [[ -z "$task_id" ]]; then
-    log "Error: <task-id> is required"
-    usage
+    usage >&2; exit 1
   fi
 
   if [[ "$switch_flag" == true && "$worktree_flag" != true ]]; then
-    log "Error: --switch requires --worktree"
-    usage
+    usage >&2; exit 1
   fi
 
   repo="$(resolve_repo "$repo")"

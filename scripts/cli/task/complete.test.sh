@@ -88,4 +88,16 @@ test_task_complete__records_transaction() {
 }
 
 
+test_task_complete__help() {
+  setup_workspace "complete-help"
+  output="" exit_code=0
+  output=$(run_tt task complete --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt task complete"
+  assert_required_usage_argument "argument: <task-id>" "$output" "<task-id>"
+  assert_required_usage_argument "argument: --force" "$output" "--force"
+  assert_required_usage_argument "argument: --repo" "$output" "--repo"
+}
+
+
 run_tests "tt task complete"

@@ -15,8 +15,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${COMMAND_NAME:+$COMMAND_NAME }${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [--task <task-id>] [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [--task <task-id>] [--repo PATH]
 
 List the context IDs for the provided task (defaulting to current task) to stdout.
 
@@ -30,12 +30,11 @@ Options:
   -h, --help          Show this help.
 
 Examples:
-  ${SCRIPT_NAME}
-  ${SCRIPT_NAME} task/foo-abc12345
-  ${SCRIPT_NAME} --task task/foo-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME}
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345
 
 EOF
-  exit 1
 }
 
 main() {
@@ -46,18 +45,17 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --task)
-        [[ $# -lt 2 ]] && { log "Error: --task requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         task_id_arg="$2"; shift 2 ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
-      -h|--help) usage ;;
+      -h|--help) usage; exit 0 ;;
       -*)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
       *)
         if [[ -n "$positional_task_id" ]]; then
-          log "Error: Unexpected argument: $1"
-          usage
+          usage >&2; exit 1
         fi
         positional_task_id="$1"; shift ;;
     esac

@@ -20,8 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [--task <task-id>] --parent <parent-task-id> [--repo PATH] [--workspace-dir PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] --parent <parent-task-id> [--repo PATH] [--workspace-dir PATH]
 
 Reparent a task by moving it to a different parent.
 
@@ -37,11 +37,10 @@ Options:
   -h, --help             Show this help
 
 Examples:
-  ${SCRIPT_NAME} --parent project/main-app-abc12345
-  ${SCRIPT_NAME} --task task/foo-abc12345 --parent task/bar-def67890
+  ${COMMAND_NAME:-$SCRIPT_NAME} --parent project/main-app-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345 --parent task/bar-def67890
 
 EOF
-  exit "${1:-1}"
 }
 
 main() {
@@ -52,34 +51,33 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --task)
-        [[ $# -lt 2 ]] && { log "Error: --task requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         task_id_arg="$2"
         shift 2
         ;;
       --parent)
-        [[ $# -lt 2 ]] && { log "Error: --parent requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         new_parent_id="$2"
         shift 2
         ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
         shift 2
         ;;
       -h|--help)
-        usage 0
+        usage
+        exit 0
         ;;
       *)
-        log "Error: Unknown option: $1"
-        usage
+        usage >&2; exit 1
         ;;
     esac
   done
 
   # --parent is required
   if [[ -z "$new_parent_id" ]]; then
-    log "Error: --parent is required"
-    usage
+    usage >&2; exit 1
   fi
 
   repo="$(resolve_repo "$repo")"

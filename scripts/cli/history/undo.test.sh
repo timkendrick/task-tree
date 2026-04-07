@@ -89,4 +89,15 @@ test_history_undo__undo_with_force_bypasses_dirty_wc() {
 }
 
 
+test_history_undo__help() {
+  setup_workspace "undo-help"
+  output="" exit_code=0
+  output=$(run_tt history undo --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt history undo"
+  assert_required_usage_argument "argument: --force" "$output" "--force"
+  assert_required_usage_argument "argument: --repo" "$output" "--repo"
+}
+
+
 run_tests "tt history undo"

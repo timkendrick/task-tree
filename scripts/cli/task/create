@@ -36,8 +36,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [options...]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [options...]
 
 Create a task file and jj bookmark for task-tree bootstrap.
 
@@ -62,19 +62,18 @@ Body is read from stdin (via pipe or redirect) if stdin is not a terminal;
 otherwise opens an editor for body input.
 
 Examples:
-  ${SCRIPT_NAME}                                    # prompts for title, slug, body (editor)
-  ${SCRIPT_NAME} --title "Phase 0: Test harness"   # prompts for body (editor)
-  echo "Set up the test harness" | ${SCRIPT_NAME} --title "Phase 0: Test harness"
-  ${SCRIPT_NAME} --title "Phase 0: Test harness" < ./description.md
-  ${SCRIPT_NAME} --slug tt-task-list --parent task/phase-0-abc123de --label tdd < ./description.md
-  ${SCRIPT_NAME} --project --title "Main app" < ./description.md
-  ${SCRIPT_NAME} --project --title "Main app" --target abc123 < ./description.md
-  ${SCRIPT_NAME} --title "New feature" --propagate --shallow < ./description.md
-  ${SCRIPT_NAME} --slug my-task --title "My task" --checkout
-  ${SCRIPT_NAME} --slug my-task --title "My task" --checkout --worktree
+  ${COMMAND_NAME:-$SCRIPT_NAME}                                    # prompts for title, slug, body (editor)
+  ${COMMAND_NAME:-$SCRIPT_NAME} --title "Phase 0: Test harness"   # prompts for body (editor)
+  echo "Set up the test harness" | ${COMMAND_NAME:-$SCRIPT_NAME} --title "Phase 0: Test harness"
+  ${COMMAND_NAME:-$SCRIPT_NAME} --title "Phase 0: Test harness" < ./description.md
+  ${COMMAND_NAME:-$SCRIPT_NAME} --slug tt-task-list --parent task/phase-0-abc123de --label tdd < ./description.md
+  ${COMMAND_NAME:-$SCRIPT_NAME} --project --title "Main app" < ./description.md
+  ${COMMAND_NAME:-$SCRIPT_NAME} --project --title "Main app" --target abc123 < ./description.md
+  ${COMMAND_NAME:-$SCRIPT_NAME} --title "New feature" --propagate --shallow < ./description.md
+  ${COMMAND_NAME:-$SCRIPT_NAME} --slug my-task --title "My task" --checkout
+  ${COMMAND_NAME:-$SCRIPT_NAME} --slug my-task --title "My task" --checkout --worktree
 
 EOF
-  exit 1
 }
 
 # Usage: resolve_parent PARENT_ARG REPO TASK_PREFIX PROJECT_PREFIX
@@ -174,18 +173,18 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --slug)
-        [[ $# -lt 2 ]] && { log "Error: --slug requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         slug="$2"
         slug_explicit=true
         shift 2
         ;;
       --title)
-        [[ $# -lt 2 ]] && { log "Error: --title requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         title="$2"
         shift 2
         ;;
       --label)
-        [[ $# -lt 2 ]] && { log "Error: --label requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         labels+=("$2")
         shift 2
         ;;
@@ -194,17 +193,17 @@ main() {
         shift
         ;;
       --target)
-        [[ $# -lt 2 ]] && { log "Error: --target requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         target="$2"
         shift 2
         ;;
       --parent)
-        [[ $# -lt 2 ]] && { log "Error: --parent requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         parent="$2"
         shift 2
         ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
         shift 2
         ;;
@@ -247,27 +246,24 @@ main() {
         ;;
       -h|--help)
         usage
+        exit 0
         ;;
       *)
-        log "Error: Unknown option: $1"
-        usage
+        usage >&2; exit 1
         ;;
     esac
   done
 
   if [[ "$is_project" == true && -n "$parent" ]]; then
-    log "Error: --project and --parent are mutually exclusive"
-    exit 1
+    usage >&2; exit 1
   fi
 
   if [[ -n "$target" && "$is_project" == false ]]; then
-    log "Error: --target is only valid with --project"
-    exit 1
+    usage >&2; exit 1
   fi
 
   if [[ "$checkout_worktree" == true && "$checkout" == false ]]; then
-    log "Error: --worktree is only valid with --checkout"
-    exit 1
+    usage >&2; exit 1
   fi
 
   repo="$(resolve_repo "$repo")"
@@ -318,8 +314,7 @@ main() {
       read -e -p "Enter a title: " title
     fi
     if [[ -z "$title" ]]; then
-      log "Error: Title is required (use --title or enter when prompted)"
-      usage
+      usage >&2; exit 1
     fi
   fi
 
@@ -335,8 +330,7 @@ main() {
       read -e -p "Enter a task identifier (defaults to $default_slug): " prompted_slug
       slug="${prompted_slug:-$default_slug}"
     else
-      log "Error: --slug is required in non-interactive mode"
-      usage
+      usage >&2; exit 1
     fi
   fi
   if ! validate_slug "$slug"; then

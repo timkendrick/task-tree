@@ -22,8 +22,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${COMMAND_NAME:+$COMMAND_NAME }${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} <context-id> [--task <task-id>] [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <context-id> [--task <task-id>] [--repo PATH]
 
 Delete a context file from the specified task (default: current task).
 
@@ -39,11 +39,10 @@ Options:
   -h, --help           Show this help.
 
 Examples:
-  ${SCRIPT_NAME} context/oauth-notes-abc12345
-  ${SCRIPT_NAME} context/oauth-notes-abc12345 --task task/foo-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} context/oauth-notes-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} context/oauth-notes-abc12345 --task task/foo-abc12345
 
 EOF
-  exit 1
 }
 
 main() {
@@ -54,18 +53,17 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --task)
-        [[ $# -lt 2 ]] && { log "Error: --task requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         task_id_arg="$2"; shift 2 ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
-      -h|--help) usage ;;
+      -h|--help) usage; exit 0 ;;
       -*)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
       *)
         if [[ -n "$ctx_id_arg" ]]; then
-          log "Error: Unexpected argument: $1"
-          usage
+          usage >&2; exit 1
         fi
         ctx_id_arg="$1"; shift ;;
     esac
@@ -73,8 +71,7 @@ main() {
 
   # Require context ID argument
   if [[ -z "$ctx_id_arg" ]]; then
-    log "Error: <context-id> is required"
-    usage
+    usage >&2; exit 1
   fi
 
   # Validate context ID format (must start with "context/")

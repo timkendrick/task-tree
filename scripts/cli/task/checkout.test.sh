@@ -165,4 +165,17 @@ test_task_checkout__worktree_same_path_succeeds() {
 }
 
 
+test_task_checkout__help() {
+  setup_workspace "checkout-help"
+  output="" exit_code=0
+  output=$(run_tt task checkout --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt task checkout"
+  assert_required_usage_argument "argument: <task-id>" "$output" "<task-id>"
+  assert_required_usage_argument "argument: --worktree[=<path>]" "$output" "--worktree[=<path>]"
+  assert_required_usage_argument "argument: --force" "$output" "--force"
+  assert_required_usage_argument "argument: --repo" "$output" "--repo"
+}
+
+
 run_tests "tt task checkout"

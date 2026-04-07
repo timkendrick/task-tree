@@ -19,8 +19,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} --slug <new-slug> [--task <task-id>] [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} --slug <new-slug> [--task <task-id>] [--repo PATH]
 
 Rename a task's slug (the human-readable part of the task ID), preserving the hex suffix.
 For example: task/old-name-abc123 → task/new-name-abc123.
@@ -36,11 +36,10 @@ Options:
   --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
 
 Examples:
-  ${SCRIPT_NAME} --slug new-name
-  ${SCRIPT_NAME} --slug new-name --task task/old-name-abc123
+  ${COMMAND_NAME:-$SCRIPT_NAME} --slug new-name
+  ${COMMAND_NAME:-$SCRIPT_NAME} --slug new-name --task task/old-name-abc123
 
 EOF
-  exit 1
 }
 
 main() {
@@ -51,34 +50,33 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --slug)
-        [[ $# -lt 2 ]] && { log "Error: --slug requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         slug="$2"
         shift 2
         ;;
       --task)
-        [[ $# -lt 2 ]] && { log "Error: --task requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         task_id="$2"
         shift 2
         ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
         shift 2
         ;;
       -h|--help)
         usage
+        exit 0
         ;;
       *)
-        log "Error: Unknown option: $1"
-        usage
+        usage >&2; exit 1
         ;;
     esac
   done
 
   # --slug is required
   if [[ -z "$slug" ]]; then
-    log "Error: --slug is required"
-    usage
+    usage >&2; exit 1
   fi
 
   # Validate slug format
