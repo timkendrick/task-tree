@@ -1,6 +1,6 @@
 ---
 title: "Standardize `--help` flag across commands"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-06T12:13:12Z
 updated: 2026-04-06T20:47:21Z
 context: context/implementation-plan-43571f2b
