@@ -1,6 +1,6 @@
 ---
 title: "Rename `tt workspace list` to `tt worktree list`"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-07T07:50:33Z
 updated: 2026-04-07T07:50:34Z
 ---
