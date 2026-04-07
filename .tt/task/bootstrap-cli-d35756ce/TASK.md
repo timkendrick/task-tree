@@ -95,6 +95,7 @@ subtask: [ ] task/standardize-filesystem-operations-efdeb08e
 subtask: [ ] task/standardize-vcs-operations-d5419005
 subtask: [ ] task/standardize-metadata-operations-cc4f8cab
 subtask: [ ] task/standardize-command-output-a1c39913
+subtask: [ ] task/standardize-commit-messages-3f6a9763
 ---
 Implement shell script implementations of all `tt` CLI commands
 
