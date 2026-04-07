@@ -1,6 +1,6 @@
 ---
 title: "Add `tt history unlock` CLI command"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-03T21:28:40Z
 updated: 2026-04-07T10:17:23Z
 context: context/implementation-plan-2a233a0b
