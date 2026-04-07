@@ -123,7 +123,7 @@ main() {
   # Check current jj op matches expected after-op (only for completed transactions)
   if [[ "$in_progress" != true && "$force" != true ]]; then
     local current_op
-    current_op="$(jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)" || {
+    current_op="$(get_jj_op_id "$repo")" || {
       log "Error: Could not read current jj operation ID."
       exit 1
     }
@@ -153,7 +153,7 @@ main() {
 
   # Capture current op ID for safety trap (in case jj op restore itself fails)
   local pre_undo_op
-  pre_undo_op="$(jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)" || pre_undo_op=""
+  pre_undo_op="$(get_jj_op_id "$repo")" || pre_undo_op=""
 
   # Set safety trap: if the undo itself fails, restore back to where we were
   # (history line is NOT removed until after successful restore)
@@ -179,7 +179,7 @@ main() {
   # not the restore op), so a subsequent `tt undo` would fail its safety check.
   if [[ -f "$history_file" && -s "$history_file" ]]; then
     local new_current_op
-    new_current_op="$(jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)" || true
+    new_current_op="$(get_jj_op_id "$repo")" || true
     if [[ -n "$new_current_op" ]]; then
       local prev_line
       prev_line="$(tail -n 1 "$history_file")"

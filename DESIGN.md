@@ -221,6 +221,18 @@ The command exits with an error if none of these resolves to a valid jj reposito
 
   See §6.12 for the full transaction history mechanism.
 
+- **`tt history unlock [--force] [--repo PATH]`** — Clear a stale in-progress transaction from `.tt/history` without reverting the jj repository state. Use this when a `tt` process crashed mid-transaction and the jj repository is already in an acceptable state.
+
+  - If there is no in-progress transaction: exits 0 silently (no-op).
+  - If the history file is empty: exits 0 silently (no-op).
+  - If the history file does not exist: exits 1 with an error message.
+  - If there is an in-progress transaction and `--force` is not given: exits 1 with a message.
+  - With `--force`: completes the transaction entry by writing `<before-op-id>:<current-op-id>` (where `<current-op-id>` is the current jj operation ID) — this marks the history as clean without changing the jj repository state.
+
+  **Contrast with `tt history undo --force`:** `undo --force` reverts the jj repository to the state before the crashed command ran. Use `unlock --force` when you want to keep the current jj state and just unblock future `tt` commands.
+
+  See §6.12 for the full transaction history mechanism.
+
 ### 5.3 Workspace
 
 - **`tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]`** — Initialize a task-tree project. Creates the virtual workspace directory, `.tt/config.toml` (with optional task prefix and project prefix), `.tt/.gitignore` (containing `/history` and `/workspace`), an empty `.tt/history` transaction log, a `.tt/workspace` symlink pointing to the virtual project directory, and a `HEAD` symlink in the virtual directory that initially points to the repo and is later updated to the most recently checked-out task workspace (serving as a quick link to the current development context). Creates a `Create workspace` commit in the jj repository (`.tt/config.toml` and `.tt/.gitignore` are committed; `.tt/history` and `.tt/workspace` are gitignored). Requires a clean working directory; aborts if `.tt` exists in the repo root as a non-directory entry (use `--force` to remove it). With `--force`, also allows overwriting files in an already-populated virtual folder. See §9 step 1, §6.2 (HEAD symlink and `.tt/workspace`), and §6.12 (transaction history).
@@ -847,10 +859,11 @@ The transaction API is implemented in `scripts/cli/lib/common.sh` as three funct
 
 ```
 Error: Another tt command is in progress (incomplete transaction).
-  If this is stale (e.g. a crashed process), run: tt history undo --force
+  To revert a crashed process, run: tt history undo --force
+  Or to keep the current state: tt history unlock --force
 ```
 
-Running `tt history undo --force` reverts the stale in-progress transaction.
+Running `tt history undo --force` reverts the stale in-progress transaction. Alternatively, `tt history unlock --force` clears the lock without reverting the repository state — use this when the jj repository is already in an acceptable state and you simply want to unblock future `tt` commands.
 
 #### 6.12.3 `tt history undo` command
 
@@ -874,6 +887,21 @@ Running `tt history undo --force` reverts the stale in-progress transaction.
 **No redo:** There is no `tt history redo` command. The outgoing operation ID (logged in step 3) allows manual redo via `jj op restore`.
 
 **`tt history undo` is not itself transactional:** The undo command does not write to `.tt/history`. This means you cannot "undo the undo" via `tt history undo`; use `jj op restore <after-op-id>` from the logged output instead.
+
+#### 6.12.4 `tt history unlock` command
+
+`tt history unlock [--force] [--repo PATH]` clears a stale in-progress transaction from `.tt/history` without reverting the jj repository state.
+
+**Behavior:**
+
+1. If the history file does not exist: exit 1 with an error message.
+2. If the history file is empty or the last entry has a non-empty `<after-op-id>`: exit 0 silently (no-op).
+3. If the last entry has an empty `<after-op-id>` (in-progress) and `--force` is not given: exit 1 with a message directing the user to use `--force` or `tt history undo --force`.
+4. With `--force` and an in-progress entry: capture the current jj operation ID and replace the last line `<before-op-id>:` with `<before-op-id>:<current-op-id>`. The jj repository state is **not** modified.
+
+**Result:** The transaction entry's `<after-op-id>` reflects the actual current jj operation, accurately representing the state of the repository at the time the lock was cleared. Future `tt_begin_transaction` calls will no longer see an in-progress entry and will start normally.
+
+**`tt history unlock` is not itself transactional:** The unlock command does not write a new transaction entry to `.tt/history`. It only modifies the existing in-progress entry.
 
 ---
 
