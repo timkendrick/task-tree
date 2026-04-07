@@ -1,6 +1,6 @@
 ---
 title: "Filter out test files in subcommand listing"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-03T21:51:25Z
 updated: 2026-04-03T21:51:25Z
 ---
