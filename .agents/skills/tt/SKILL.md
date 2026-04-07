@@ -198,23 +198,23 @@ tt workspace switch <task-id> [--worktree=<path>] [--force]
 ```
 Redirect the virtual project's HEAD symlink to an existing task worktree. The worktree must already exist (run `tt task checkout --worktree` first).
 
-#### `tt workspace worktree`  (alias: `tt worktree`)
+#### `tt worktree list`
 ```
-tt workspace worktree <task-id>
+tt worktree list [--task <task-id>] [--quiet]
+```
+List all jj workspaces and their corresponding tt task/project IDs. `--quiet` prints names only.
+
+#### `tt worktree show`
+```
+tt worktree show <task-id>
 ```
 Output the worktree path for a task or project ID. Falls back to the repo root if no dedicated worktree exists.
 
-#### `tt workspace branch`  (alias: `tt branch`)
+#### `tt worktree delete`
 ```
-tt workspace branch <task-id>
+tt worktree delete --task <task-id>
 ```
-Output the branch name for a task or project ID.
-
-#### `tt workspace list`
-```
-tt workspace list [--task <task-id>] [--quiet]
-```
-List all jj workspaces and their corresponding tt task/project IDs. `--quiet` prints names only.
+Delete the worktree for the given task or project and remove its working directory. The task still exists and can be checked out again to recreate the worktree.
 
 ### History commands
 
