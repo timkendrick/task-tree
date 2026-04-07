@@ -92,6 +92,7 @@ subtask: [ ] task/tt-worktree-prune-2c7055f6
 subtask: [x] task/prevent-tt-task-checkout-multiple-worktrees-76626af4
 subtask: [ ] task/tt-task-checkin-delete-worktree-bb7f3e3f
 subtask: [x] task/rename-tt-worktree-list-bb3d0083
+subtask: [ ] task/standardize-filesystem-operations-efdeb08e
 ---
 Implement shell script implementations of all `tt` CLI commands
 
