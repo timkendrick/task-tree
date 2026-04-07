@@ -50,7 +50,7 @@ EOF
   for f in "$dir"/*; do
     local item="${f##*/}"
     if [[ "$show_directories" == true && -d "$f" ]]; then
-      printf '  %s/\n' "$item"  # Directory (namespace)
+      printf '  %s\n' "$item"  # Directory (namespace)
       found=true
     elif [[ -f "$f" && -x "$f" ]]; then
       printf '  %s\n' "$item"   # Executable command
