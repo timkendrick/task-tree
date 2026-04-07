@@ -14,6 +14,14 @@ jj_show_at_revision() {
   jj -R "$repo" --ignore-working-copy file show -r "$rev" -- "root:$path" 2>/dev/null
 }
 
+# Usage: get_jj_op_id REPO
+# Prints the current jj operation ID to stdout.
+# Returns 1 if the operation ID cannot be read.
+get_jj_op_id() {
+  local repo="$1"
+  jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null
+}
+
 # Usage: jj_show_at_op REPO OP REV PATH
 # Reads a file at a specific jj operation ID and revision, using a root:-relative path.
 # Used for historical rescue (e.g. recovering pre-rename file content).
@@ -858,7 +866,7 @@ tt_begin_transaction() {
 
   # Capture current jj operation ID
   local before_op
-  before_op="$(jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)" || {
+  before_op="$(get_jj_op_id "$repo")" || {
     log "Error: Could not read jj operation ID to begin transaction"
     exit 1
   }
@@ -871,7 +879,8 @@ tt_begin_transaction() {
       local last_after="${last_line#*:}"
       if [[ -z "$last_after" ]]; then
         log "Error: Another tt command is in progress (incomplete transaction)."
-        log "  If this is stale (e.g. a crashed process), run: tt history undo --force"
+        log "  To revert a crashed process: tt history undo --force"
+        log "  Or to keep the current state: tt history unlock --force"
         exit 1
       fi
     fi
@@ -904,7 +913,7 @@ tt_commit_transaction() {
 
   # Capture current jj operation ID
   local after_op
-  after_op="$(jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)" || {
+  after_op="$(get_jj_op_id "$repo")" || {
     log "Warning: Could not read jj operation ID for transaction commit; history may be incomplete"
     after_op="unknown"
   }

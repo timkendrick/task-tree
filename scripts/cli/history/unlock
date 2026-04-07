@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt history unlock — clear a stale in-progress transaction from .tt/history
+#                     WITHOUT reverting the jj repository state.
+#
+# Usage:
+#   tt history unlock [--force] [--repo PATH]
+#
+# Options:
+#   --force   Required if the history is mid-transaction. Without it, exits 1.
+#   --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
+#
+# If there is no in-progress transaction, exits silently with code 0 (no-op).
+# If the history file does not exist, exits 1 with an error message.
+# If the history file is empty, exits silently with code 0 (no-op).
+#
+# When --force is given and there is an in-progress transaction, the last history
+# line is completed by writing the current jj operation ID as the after-op-id, producing:
+#   <before-op-id>:<current-op-id>
+# This leaves the jj repository state unchanged.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat <<EOF
+Usage: tt history unlock [--force] [--repo PATH]
+
+Clear a stale in-progress transaction from .tt/history without reverting
+the jj repository. Use this when a tt process crashed mid-transaction and
+the repository is already in an acceptable state.
+
+If there is no in-progress transaction, this command exits 0 silently (no-op).
+
+To revert the repository to the state before the crashed command instead,
+use: tt history undo --force
+
+Options:
+  --force   Required to clear an in-progress transaction. Without it,
+            exits 1 if the history is mid-transaction.
+  --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
+
+Examples:
+  tt history unlock           # check for stale lock (no-op if clean)
+  tt history unlock --force   # clear stale in-progress transaction
+
+EOF
+}
+
+main() {
+  local force=false
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force)
+        force=true
+        shift
+        ;;
+      --repo)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        repo="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -*)
+        usage >&2; exit 1
+        ;;
+      *)
+        usage >&2; exit 1
+        ;;
+    esac
+  done
+
+  repo="$(resolve_repo "$repo")"
+
+  local history_file="$repo/.tt/history"
+
+  # History file must exist (workspace must be initialized)
+  if [[ ! -f "$history_file" ]]; then
+    log "Error: History file not found: $history_file"
+    log "  Has the workspace been initialized? Run: tt workspace init"
+    exit 1
+  fi
+
+  # Empty history → nothing to unlock
+  if [[ ! -s "$history_file" ]]; then
+    exit 0
+  fi
+
+  # Read last line
+  local last_line
+  last_line="$(tail -n 1 "$history_file")"
+  if [[ -z "$last_line" ]]; then
+    exit 0
+  fi
+
+  local before_op after_op
+  before_op="${last_line%%:*}"
+  after_op="${last_line#*:}"
+
+  # No in-progress transaction → silent no-op
+  if [[ -n "$after_op" ]]; then
+    exit 0
+  fi
+
+  # In-progress transaction detected
+  if [[ "$force" != true ]]; then
+    log "Error: In-progress transaction detected."
+    log "  before-op: ${before_op:0:12}..."
+    log "  This may indicate a crashed or killed tt process."
+    log "  Use --force to clear the lock (keeps current jj state)."
+    log "  Use 'tt history undo --force' to revert to the pre-transaction state."
+    exit 1
+  fi
+
+  # --force: complete the transaction entry by writing the current jj op as after-op
+  local current_op
+  current_op="$(get_jj_op_id "$repo")" || {
+    log "Error: Could not read current jj operation ID."
+    exit 1
+  }
+
+  if [[ "$(uname)" == "Darwin" ]]; then
+    sed -i '' "$ s|^${before_op}:\$|${before_op}:${current_op}|" "$history_file"
+  else
+    sed -i "$ s|^${before_op}:\$|${before_op}:${current_op}|" "$history_file"
+  fi
+
+  log "Unlocked: in-progress transaction cleared (history marked complete)."
+  log "  jj repository state is unchanged."
+  log "  Transaction entry: ${before_op:0:12}:${current_op:0:12}..."
+}
+
+main "$@"

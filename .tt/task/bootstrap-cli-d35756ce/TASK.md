@@ -76,7 +76,7 @@ subtask: [x] task/tt-worktree-list-fe6a579a
 subtask: [x] task/tt-worktree-delete-461a5159
 subtask: [x] task/tt-worktree-show-81644e0f
 subtask: [x] task/absolute-workspace-symlink-path-46b9b1e4
-subtask: [ ] task/tt-history-unlock-397521a9
+subtask: [x] task/tt-history-unlock-397521a9
 subtask: [ ] task/tt-history-truncate-b37bc2e3
 subtask: [x] task/ignore-subcommand-test-files-b794132f
 subtask: [x] task/delete-tt-workspace-branch-623e7bf7
