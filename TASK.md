@@ -1,1 +1,1 @@
-.tt/task/rename-tt-worktree-list-bb3d0083/TASK.md
+.tt/task/bootstrap-cli-d35756ce/TASK.md
