@@ -2,7 +2,8 @@
 title: "Add `tt history unlock` CLI command"
 status: IN-PROGRESS
 created: 2026-04-03T21:28:40Z
-updated: 2026-04-07T09:58:21Z
+updated: 2026-04-07T10:17:23Z
+context: context/implementation-plan-2a233a0b
 ---
 Currently, if a process crashes mid-transaction, the `.tt/history` file is left in a broken state.
 
