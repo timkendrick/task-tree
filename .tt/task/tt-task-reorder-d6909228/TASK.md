@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt task reorder` CLI command"
-status: TODO
+status: IN-PROGRESS
 created: 2026-03-24T22:10:28Z
 updated: 2026-04-07T10:38:25Z
 ---
