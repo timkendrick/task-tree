@@ -2,7 +2,7 @@
 title: "Add `tt history unlock` CLI command"
 status: TODO
 created: 2026-04-03T21:28:40Z
-updated: 2026-04-03T21:30:44Z
+updated: 2026-04-07T09:58:21Z
 ---
 Currently, if a process crashes mid-transaction, the `.tt/history` file is left in a broken state.
 
@@ -14,4 +14,6 @@ If the history is mid-transaction, the command exits with code `1` unless the `-
 
 this command should be mentioned in the transaction start failure shared helper message.
 
-Update DESIGN.md
+Identify crossover with `tt history undo`, potentially changing that command if it overlaps (ask for clarification on how to proceed).
+
+Update DESIGN.md as necessary
