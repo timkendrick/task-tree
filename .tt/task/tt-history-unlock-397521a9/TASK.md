@@ -1,6 +1,6 @@
 ---
 title: "Add `tt history unlock` CLI command"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-03T21:28:40Z
 updated: 2026-04-07T09:58:21Z
 ---
