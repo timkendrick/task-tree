@@ -94,6 +94,7 @@ subtask: [ ] task/tt-task-checkin-delete-worktree-bb7f3e3f
 subtask: [x] task/rename-tt-worktree-list-bb3d0083
 subtask: [ ] task/standardize-filesystem-operations-efdeb08e
 subtask: [ ] task/standardize-vcs-operations-d5419005
+subtask: [ ] task/standardize-metadata-operations-cc4f8cab
 ---
 Implement shell script implementations of all `tt` CLI commands
 
