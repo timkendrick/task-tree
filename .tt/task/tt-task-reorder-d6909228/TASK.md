@@ -2,7 +2,8 @@
 title: "Implement `tt task reorder` CLI command"
 status: IN-PROGRESS
 created: 2026-03-24T22:10:28Z
-updated: 2026-04-07T10:38:25Z
+updated: 2026-04-09T07:29:45Z
+context: context/implementation-plan-1599cc6b
 ---
 Implement `tt task reorder` CLI command (aliased as `tt reorder`)
 
