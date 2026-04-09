@@ -203,31 +203,17 @@ main() {
   }
 
   # Parse current values from frontmatter
-  local current_title current_status current_created current_body
-  current_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
-  current_status="$(parse_frontmatter_field "$task_content" "status")"
-  current_created="$(parse_frontmatter_field "$task_content" "created")"
-
-  # Body is everything after the second ---
-  current_body="$(parse_body "$task_content")"
-
-  # Parse current labels (multiple label: lines)
+  parse_task_frontmatter "$task_content"
+  local current_title="$PARSED_TITLE"
+  local current_status="$PARSED_STATUS"
+  local current_created="$PARSED_CREATED"
+  local current_body="$PARSED_BODY"
   local -a current_labels=()
-  while IFS= read -r lbl; do
-    [[ -n "$lbl" ]] && current_labels+=("$lbl")
-  done < <(printf '%s' "$task_content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^label:/{sub(/^label:[[:space:]]*/,""); print}')
-
-  # Parse current subtask lines (preserve as-is, full "[ ] task/..." string)
+  current_labels=("${PARSED_LABELS[@]+"${PARSED_LABELS[@]}"}")
   local -a current_subtasks=()
-  while IFS= read -r st; do
-    [[ -n "$st" ]] && current_subtasks+=("$st")
-  done < <(printf '%s' "$task_content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^subtask:/{sub(/^subtask:[[:space:]]*/,""); print}')
-
-  # Parse current context references (preserve as-is)
+  current_subtasks=("${PARSED_SUBTASKS[@]+"${PARSED_SUBTASKS[@]}"}")
   local -a current_contexts=()
-  while IFS= read -r ctx; do
-    [[ -n "$ctx" ]] && current_contexts+=("$ctx")
-  done < <(printf '%s' "$task_content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^context:/{sub(/^context:[[:space:]]*/,""); print}')
+  current_contexts=("${PARSED_CONTEXTS[@]+"${PARSED_CONTEXTS[@]}"}")
 
   # If created is empty (old format task file), generate one now
   if [[ -z "$current_created" ]]; then
