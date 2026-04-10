@@ -72,7 +72,7 @@ write_task_file() {
       echo "subtask: $st"
     done
     echo '---'
-    [[ -n "$body" ]] && printf '%s\n' "$body"
+    if [[ -n "$body" ]]; then printf '%s\n' "$body"; fi
   } > "$file"
 }
 
@@ -98,29 +98,28 @@ sort_subtasks_by_status() {
 }
 
 # ---------------------------------------------------------------------------
-# array_move_element ARRAY_NAME OLD_IDX NEW_IDX
-# Moves element at OLD_IDX to NEW_IDX (insert-before semantics) in a named array.
-# Mutates the array referenced by name (bash namerefs).
-array_move_element() {
-  local -n _arr="$1"
-  local old_idx="$2" new_idx="$3"
-  local elem="${_arr[$old_idx]}"
+# subtask_lines_move OLD_IDX NEW_IDX
+# Moves element at OLD_IDX to NEW_IDX (insert-before semantics) in subtask_lines.
+# Operates directly on the subtask_lines array in the caller's scope.
+subtask_lines_move() {
+  local old_idx="$1" new_idx="$2"
+  local elem="${subtask_lines[$old_idx]}"
   # Remove from old position
-  local -a tmp=()
-  local i
-  for i in "${!_arr[@]}"; do
-    [[ $i -eq $old_idx ]] && continue
-    tmp+=("${_arr[$i]}")
+  local -a _tmp=()
+  local _i
+  for _i in "${!subtask_lines[@]}"; do
+    [[ $_i -eq $old_idx ]] && continue
+    _tmp+=("${subtask_lines[$_i]}")
   done
-  # Insert at new_idx into tmp → result
-  local -a result=()
-  local j
-  for j in "${!tmp[@]}"; do
-    [[ $j -eq $new_idx ]] && result+=("$elem")
-    result+=("${tmp[$j]}")
+  # Insert at new_idx into _tmp → result
+  local -a _result=()
+  local _j
+  for _j in "${!_tmp[@]}"; do
+    [[ $_j -eq $new_idx ]] && _result+=("$elem")
+    _result+=("${_tmp[$_j]}")
   done
-  [[ $new_idx -ge ${#tmp[@]} ]] && result+=("$elem")
-  _arr=("${result[@]+"${result[@]}"}")
+  if [[ $new_idx -ge ${#_tmp[@]} ]]; then _result+=("$elem"); fi
+  subtask_lines=("${_result[@]+"${_result[@]}"}")
 }
 
 # ---------------------------------------------------------------------------
@@ -180,11 +179,14 @@ reorder_subtask() {
   local -a subtask_lines=("${PARSED_SUBTASKS[@]+"${PARSED_SUBTASKS[@]}"}")
 
   # 7. Find index of child_id in subtask_lines
+  # Subtask lines have format "[ ] task/id" or "[-] task/id" or "[x] task/id".
+  # The "[ ]" form splits into 3 awk fields ([, ], task/id), while "[-]" and "[x]"
+  # are single tokens. Use sed to strip the bracket group and whitespace instead.
   local child_idx=-1
   local i
   for i in "${!subtask_lines[@]}"; do
     local line_id
-    line_id="$(printf '%s' "${subtask_lines[$i]}" | awk '{print $2}')"
+    line_id="$(printf '%s' "${subtask_lines[$i]}" | sed 's/^\[[^]]*\][[:space:]]*//')"
     if [[ "$line_id" == "$child_id" ]]; then
       child_idx=$i
       break
@@ -224,10 +226,10 @@ reorder_subtask() {
       local sibling_idx=-1
       for i in "${!subtask_lines[@]}"; do
         local line_id
-        line_id="$(printf '%s' "${subtask_lines[$i]}" | awk '{print $2}')"
+        line_id="$(printf '%s' "${subtask_lines[$i]}" | sed 's/^\[[^]]*\][[:space:]]*//')"
         if [[ "$line_id" == "$sibling_id" ]]; then sibling_idx=$i; break; fi
       done
-      [[ $sibling_idx -eq -1 ]] && { log "Error: Sibling '$sibling_id' not found."; exit 1; }
+      [[ $sibling_idx -eq -1 ]] && { log "Error: Sibling '$sibling_id' not found in parent's subtask list."; exit 1; }
       # No-op: child is already immediately before sibling
       if [[ $((child_idx + 1)) -eq $sibling_idx ]]; then exit 0; fi
       # Compute target index after removal
@@ -235,7 +237,7 @@ reorder_subtask() {
       if [[ $sibling_idx -gt $child_idx ]]; then
         target_idx=$((sibling_idx - 1))
       fi
-      array_move_element subtask_lines "$child_idx" "$target_idx"
+      subtask_lines_move "$child_idx" "$target_idx"
       ;;
     after)
       [[ "$sibling_id" == "$child_id" ]] && { log "Error: Cannot reorder relative to itself."; exit 1; }
@@ -243,10 +245,10 @@ reorder_subtask() {
       local sibling_idx=-1
       for i in "${!subtask_lines[@]}"; do
         local line_id
-        line_id="$(printf '%s' "${subtask_lines[$i]}" | awk '{print $2}')"
+        line_id="$(printf '%s' "${subtask_lines[$i]}" | sed 's/^\[[^]]*\][[:space:]]*//')"
         if [[ "$line_id" == "$sibling_id" ]]; then sibling_idx=$i; break; fi
       done
-      [[ $sibling_idx -eq -1 ]] && { log "Error: Sibling '$sibling_id' not found."; exit 1; }
+      [[ $sibling_idx -eq -1 ]] && { log "Error: Sibling '$sibling_id' not found in parent's subtask list."; exit 1; }
       # No-op: child is already immediately after sibling
       if [[ $((child_idx - 1)) -eq $sibling_idx ]]; then exit 0; fi
       # Compute target index after removal (insert at sibling_idx + 1)
@@ -254,7 +256,7 @@ reorder_subtask() {
       if [[ $sibling_idx -gt $child_idx ]]; then
         target_idx=$((sibling_idx))
       fi
-      array_move_element subtask_lines "$child_idx" "$target_idx"
+      subtask_lines_move "$child_idx" "$target_idx"
       ;;
   esac
 
@@ -285,7 +287,6 @@ reorder_subtask() {
   unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
   jj -R "$parent_worktree" commit -m "Reorder subtask: $child_title ($child_id)" >/dev/null 2>&1
   jj -R "$parent_worktree" bookmark set "$parent_id" -r '@-' >/dev/null 2>&1
-  jj -R "$parent_worktree" new '@' >/dev/null 2>&1
 
   # 12. Commit transaction
   tt_commit_transaction "$repo"
@@ -361,7 +362,7 @@ reorder_frontmatter() {
     for ctx in "${contexts[@]+"${contexts[@]}"}"; do echo "context: $ctx"; done
     for st  in "${sorted_subtasks[@]+"${sorted_subtasks[@]}"}"; do echo "subtask: $st"; done
     echo '---'
-    [[ -n "$body" ]] && printf '%s\n' "$body"
+    if [[ -n "$body" ]]; then printf '%s\n' "$body"; fi
   )"
 
   # 9. No-op detection — strip updated: from both sides and compare
@@ -384,7 +385,6 @@ reorder_frontmatter() {
   unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
   jj -R "$canonical_worktree" commit -m "Reorder task: $title ($task_id)" >/dev/null 2>&1
   jj -R "$canonical_worktree" bookmark set "$canonical_branch" -r '@-' >/dev/null 2>&1
-  jj -R "$canonical_worktree" new '@' >/dev/null 2>&1
 
   # 12. Commit transaction
   tt_commit_transaction "$repo"

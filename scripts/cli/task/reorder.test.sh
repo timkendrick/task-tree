@@ -257,29 +257,24 @@ test_task_reorder__tidy_basic() {
   setup_workspace "reorder-tidy-basic"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
-  # Create tasks with different statuses
-  task_a=$(create_task "ta" "Task A") || true
+
+  # Create task_b first, complete+checkin it, then create task_a.
+  # This avoids merge conflicts and gives a non-canonical order:
+  # After checkin: [x] task_b (DONE)
+  # After creating task_a: [x] task_b, [ ] task_a → DONE before TODO = non-canonical.
   task_b=$(create_task "tb" "Task B") || true
-  task_c=$(create_task "tc" "Task C") || true
-  checkout_task "$proj_id" >/dev/null || true
-
-  # Manually complete task_b so subtask order is mixed: [ ] [-] [x]
+  checkout_task "$task_b" >/dev/null || true
   run_tt task complete "$task_b" >/dev/null 2>&1 || true
-
-  # Now the project has: [ ] task_a, [x] task_b — task_c should be TODO still
-  # Start task_a to get [-] status
-  checkout_task "$task_a" >/dev/null || true
-  checkout_task "$proj_id" >/dev/null || true
+  run_tt task checkin "$task_b" >/dev/null 2>&1 || true
+  task_a=$(create_task "ta" "Task A") || true
 
   # Run tidy on the project
   run_tt task reorder "$proj_id" >/dev/null 2>&1 || true
   local order
   order="$(subtask_order "$proj_id")"
 
-  # Expected: IN-PROGRESS first (task_a is [-]), then TODO (task_c is [ ]), then DONE (task_b is [x])
-  # Wait, let me reconsider — task_a was checked out which sets it to IN-PROGRESS
-  # So order should be: task_a [-], task_c [ ], task_b [x]
-  assert_eq "subtasks sorted by status" "$order" "$task_a $task_c $task_b"
+  # Expected: TODO first (task_a), then DONE (task_b)
+  assert_eq "subtasks sorted by status" "$order" "$task_a $task_b"
 }
 
 
@@ -381,13 +376,14 @@ test_task_reorder__tidy_commit_message() {
   setup_workspace "reorder-tidy-commit"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
-  task_a=$(create_task "ta" "Task A") || true
-  task_b=$(create_task "tb" "Task B") || true
-  task_c=$(create_task "tc" "Task C") || true
-  checkout_task "$task_a" >/dev/null || true
 
-  # Complete task_b so there's a mixed order to fix
+  # Create task_b first, complete+checkin, then create task_a.
+  # Result: [x] task_b, [ ] task_a — DONE before TODO = non-canonical.
+  task_b=$(create_task "tb" "Task B") || true
+  checkout_task "$task_b" >/dev/null || true
   run_tt task complete "$task_b" >/dev/null 2>&1 || true
+  run_tt task checkin "$task_b" >/dev/null 2>&1 || true
+  task_a=$(create_task "ta" "Task A") || true
 
   run_tt task reorder "$proj_id" >/dev/null 2>&1 || true
   assert_commit_message "tidy commit message" "@-" "Reorder task: Project"
@@ -399,12 +395,13 @@ test_task_reorder__tidy_transaction_recorded() {
   setup_workspace "reorder-tidy-txn"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
-  task_a=$(create_task "ta" "Task A") || true
+  # Create task_b first, complete+checkin it, then create task_a.
+  # Result: [x] task_b, [ ] task_a — DONE before TODO = non-canonical.
   task_b=$(create_task "tb" "Task B") || true
-  checkout_task "$task_a" >/dev/null || true
-
-  # Complete task_b to create a non-canonical order
+  checkout_task "$task_b" >/dev/null || true
   run_tt task complete "$task_b" >/dev/null 2>&1 || true
+  run_tt task checkin "$task_b" >/dev/null 2>&1 || true
+  task_a=$(create_task "ta" "Task A") || true
 
   get_history_lines; hc_before="${#HISTORY_LINES[@]}"
   run_tt task reorder "$proj_id" >/dev/null 2>&1 || true
