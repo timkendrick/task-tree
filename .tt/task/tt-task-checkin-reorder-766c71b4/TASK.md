@@ -2,7 +2,8 @@
 title: "Add `--reorder` flag to `tt task checkin`"
 status: IN-PROGRESS
 created: 2026-04-14T21:30:17Z
-updated: 2026-04-14T21:30:17Z
+updated: 2026-04-14T21:33:29Z
+context: context/implementation-plan-5e1fa367
 ---
 Add an optional `--reorder` flag to `tt task checkin` that, after the merge commit is written to the parent branch, calls `tt task reorder <parent-id>` in **tidy mode** (no modifier) to canonicalise the parent's subtask frontmatter (sorts subtasks by status: IN-PROGRESS → TODO → DONE).
 
