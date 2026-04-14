@@ -98,6 +98,7 @@ subtask: [x] task/tt-skill-md-updates-c57004aa
 subtask: [x] task/prevent-tt-task-checkout-multiple-worktrees-76626af4
 subtask: [x] task/rename-tt-worktree-list-bb3d0083
 subtask: [ ] task/fix-context-metadata-acb41a0a
+subtask: [ ] task/tt-task-checkin-reorder-766c71b4
 ---
 Implement shell script implementations of all `tt` CLI commands
 
