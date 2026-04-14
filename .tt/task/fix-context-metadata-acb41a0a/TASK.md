@@ -1,6 +1,6 @@
 ---
 title: "Fix `context:` frontmatter updates"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-14T21:10:52Z
 updated: 2026-04-14T21:10:53Z
 ---
