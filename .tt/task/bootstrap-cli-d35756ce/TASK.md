@@ -2,10 +2,9 @@
 title: "Bootstrap CLI"
 status: IN-PROGRESS
 created: 2026-03-15T09:29:32Z
-updated: 2026-04-14T20:29:36Z
+updated: 2026-04-14T21:40:17Z
 context: context/task-tt-task-list-6638a980-d50c1e36
 context: context/context-from-2026-02-21-22-12-e533801d
-subtask: [x] task/tt-task-reorder-d6909228
 subtask: [ ] task/tt-workspace-doctor-fe9143d1
 subtask: [ ] task/zsh-completions-0538e4f5
 subtask: [ ] task/tt-task-prune-9a1ce601
@@ -22,6 +21,9 @@ subtask: [ ] task/standardize-metadata-operations-cc4f8cab
 subtask: [ ] task/standardize-command-output-a1c39913
 subtask: [ ] task/standardize-commit-messages-3f6a9763
 subtask: [ ] task/analyze-cross-worktree-transactions-35b7b43d
+subtask: [ ] task/fix-context-metadata-acb41a0a
+subtask: [ ] task/tt-task-checkin-reorder-766c71b4
+subtask: [x] task/tt-task-reorder-d6909228
 subtask: [x] task/tt-task-list-6638a980
 subtask: [x] task/tt-task-create-5841c217
 subtask: [x] task/tt-task-checkout-f126cd1f
@@ -97,8 +99,6 @@ subtask: [x] task/standardize-help-flag-53aa289f
 subtask: [x] task/tt-skill-md-updates-c57004aa
 subtask: [x] task/prevent-tt-task-checkout-multiple-worktrees-76626af4
 subtask: [x] task/rename-tt-worktree-list-bb3d0083
-subtask: [ ] task/fix-context-metadata-acb41a0a
-subtask: [ ] task/tt-task-checkin-reorder-766c71b4
 ---
 Implement shell script implementations of all `tt` CLI commands
 
