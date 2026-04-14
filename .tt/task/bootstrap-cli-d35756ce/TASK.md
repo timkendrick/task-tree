@@ -2,7 +2,26 @@
 title: "Bootstrap CLI"
 status: IN-PROGRESS
 created: 2026-03-15T09:29:32Z
-updated: 2026-03-15T09:29:32Z
+updated: 2026-04-14T20:29:36Z
+context: context/task-tt-task-list-6638a980-d50c1e36
+context: context/context-from-2026-02-21-22-12-e533801d
+subtask: [-] task/tt-task-reorder-d6909228
+subtask: [ ] task/tt-workspace-doctor-fe9143d1
+subtask: [ ] task/zsh-completions-0538e4f5
+subtask: [ ] task/tt-task-prune-9a1ce601
+subtask: [ ] task/completed-task-file-location-253f710e
+subtask: [ ] task/implicit-bookmark-check-4f5404cf
+subtask: [ ] task/rollback-exit-1-1578e612
+subtask: [ ] task/rename-anonymous-task-id-arguments-2509eae4
+subtask: [ ] task/tt-history-truncate-b37bc2e3
+subtask: [ ] task/tt-worktree-prune-2c7055f6
+subtask: [ ] task/tt-task-checkin-delete-worktree-bb7f3e3f
+subtask: [ ] task/standardize-filesystem-operations-efdeb08e
+subtask: [ ] task/standardize-vcs-operations-d5419005
+subtask: [ ] task/standardize-metadata-operations-cc4f8cab
+subtask: [ ] task/standardize-command-output-a1c39913
+subtask: [ ] task/standardize-commit-messages-3f6a9763
+subtask: [ ] task/analyze-cross-worktree-transactions-35b7b43d
 subtask: [x] task/tt-task-list-6638a980
 subtask: [x] task/tt-task-create-5841c217
 subtask: [x] task/tt-task-checkout-f126cd1f
@@ -27,9 +46,7 @@ subtask: [x] task/tt-task-checkin-switch-b8ba57c3
 subtask: [x] task/tt-task-checkout-log-previous-224e7312
 subtask: [x] task/tt-task-rename-8db18f41
 subtask: [x] task/tt-task-move-091c3d4f
-subtask: [ ] task/tt-workspace-doctor-fe9143d1
 subtask: [x] task/tt-task-list-focus-f23d4002
-subtask: [ ] task/zsh-completions-0538e4f5
 subtask: [x] task/agents-md-tt-workflow-b41db319
 subtask: [x] task/update-agent-workflow-561dfe81
 subtask: [x] task/tt-task-create-checkout-46e1393e
@@ -39,9 +56,6 @@ subtask: [x] task/fix-empty-propagate-commits-c763e236
 subtask: [x] task/additional-task-aliases-e8065e3d
 subtask: [x] task/rename-tt-task-tree-30ea3da5
 subtask: [x] task/standalone-context-files-cf299caa
-context: context/task-tt-task-list-6638a980-d50c1e36
-context: context/context-from-2026-02-21-22-12-e533801d
-subtask: [ ] task/tt-task-prune-9a1ce601
 subtask: [x] task/tt-task-get-context-e83871a2
 subtask: [x] task/tt-task-delete-context-5f97f98a
 subtask: [x] task/tt-task-prompt-6060d454
@@ -58,13 +72,8 @@ subtask: [x] task/jj-rollback-instructions-62776a15
 subtask: [x] task/tt-task-publish-b55033e0
 subtask: [x] task/tt-workspace-root-bbc665ad
 subtask: [x] task/tt-history-undo-cf1594a5
-subtask: [-] task/tt-task-reorder-d6909228
 subtask: [x] task/tt-task-checkin-bookmark-2823aba1
 subtask: [x] task/tt-task-show-completed-0db3cf3d
-subtask: [ ] task/completed-task-file-location-253f710e
-subtask: [ ] task/implicit-bookmark-check-4f5404cf
-subtask: [ ] task/rollback-exit-1-1578e612
-subtask: [ ] task/rename-anonymous-task-id-arguments-2509eae4
 subtask: [x] task/automated-test-suite-b9494d87
 subtask: [x] task/tt-repo-env-var-6546574d
 subtask: [x] task/tt-task-create-parent-191ea092
@@ -77,7 +86,6 @@ subtask: [x] task/tt-worktree-delete-461a5159
 subtask: [x] task/tt-worktree-show-81644e0f
 subtask: [x] task/absolute-workspace-symlink-path-46b9b1e4
 subtask: [x] task/tt-history-unlock-397521a9
-subtask: [ ] task/tt-history-truncate-b37bc2e3
 subtask: [x] task/ignore-subcommand-test-files-b794132f
 subtask: [x] task/delete-tt-workspace-branch-623e7bf7
 subtask: [x] task/worktree-history-file-e66a2487
@@ -87,16 +95,8 @@ subtask: [x] task/tt-task-checkin-worktree-cleanup-bf8d7100
 subtask: [x] task/tt-worktree-delete-54937e0a
 subtask: [x] task/standardize-help-flag-53aa289f
 subtask: [x] task/tt-skill-md-updates-c57004aa
-subtask: [ ] task/tt-worktree-prune-2c7055f6
 subtask: [x] task/prevent-tt-task-checkout-multiple-worktrees-76626af4
-subtask: [ ] task/tt-task-checkin-delete-worktree-bb7f3e3f
 subtask: [x] task/rename-tt-worktree-list-bb3d0083
-subtask: [ ] task/standardize-filesystem-operations-efdeb08e
-subtask: [ ] task/standardize-vcs-operations-d5419005
-subtask: [ ] task/standardize-metadata-operations-cc4f8cab
-subtask: [ ] task/standardize-command-output-a1c39913
-subtask: [ ] task/standardize-commit-messages-3f6a9763
-subtask: [ ] task/analyze-cross-worktree-transactions-35b7b43d
 ---
 Implement shell script implementations of all `tt` CLI commands
 
