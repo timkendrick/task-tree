@@ -835,6 +835,56 @@ collect_descendant_task_dirs() {
 }
 
 # ---------------------------------------------------------------------------
+# Task frontmatter parsing
+# ---------------------------------------------------------------------------
+
+# parse_task_frontmatter CONTENT
+#
+# Populates global variables from task frontmatter:
+#   PARSED_TITLE, PARSED_STATUS, PARSED_CREATED, PARSED_UPDATED, PARSED_BODY
+#   PARSED_LABELS (array), PARSED_CONTEXTS (array), PARSED_SUBTASKS (array)
+#
+# Exits 1 with an error message if any unrecognized frontmatter key is found.
+# Known keys: title, status, created, updated, label, context, subtask
+parse_task_frontmatter() {
+  local content="$1"
+
+  PARSED_TITLE="$(parse_quoted_frontmatter_field "$content" "title")"
+  PARSED_STATUS="$(parse_frontmatter_field "$content" "status")"
+  PARSED_CREATED="$(parse_frontmatter_field "$content" "created")"
+  PARSED_UPDATED="$(parse_frontmatter_field "$content" "updated")"
+  PARSED_BODY="$(parse_body "$content")"
+
+  PARSED_LABELS=()
+  while IFS= read -r lbl; do [[ -n "$lbl" ]] && PARSED_LABELS+=("$lbl"); done \
+    < <(printf '%s' "$content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^label:/{sub(/^label:[[:space:]]*/,""); print}')
+
+  PARSED_CONTEXTS=()
+  while IFS= read -r ctx; do [[ -n "$ctx" ]] && PARSED_CONTEXTS+=("$ctx"); done \
+    < <(printf '%s' "$content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^context:/{sub(/^context:[[:space:]]*/,""); print}')
+
+  PARSED_SUBTASKS=()
+  while IFS= read -r st; do [[ -n "$st" ]] && PARSED_SUBTASKS+=("$st"); done \
+    < <(printf '%s' "$content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^subtask:/{sub(/^subtask:[[:space:]]*/,""); print}')
+
+  # Reject unrecognized frontmatter keys
+  local unknown
+  unknown="$(printf '%s' "$content" | awk '
+    /^---$/ { n++; if (n==2) exit; next }
+    n==1 && /^[a-zA-Z]/ {
+      key=$0; sub(/:.*/, "", key)
+      if (key != "title" && key != "status" && key != "created" && key != "updated" \
+          && key != "label" && key != "context" && key != "subtask")
+        print key
+    }
+  ')"
+  if [[ -n "$unknown" ]]; then
+    printf 'Error: Unrecognized frontmatter field(s):\n%s\n' "$unknown" >&2
+    return 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Transaction management
 #
 # A "transaction" records the jj operation ID before and after a mutating tt

@@ -98,6 +98,7 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} switch       →  tt workspace switch
   ${SCRIPT_NAME} current      →  tt task current
   ${SCRIPT_NAME} edit         →  tt task edit
+  ${SCRIPT_NAME} reorder     →  tt task reorder
 
 EOF
 }
@@ -126,6 +127,7 @@ main() {
     tree)        set -- task     tree         "${@:2}" ;;
     rename)      set -- task     rename       "${@:2}" ;;
     move)        set -- task     move         "${@:2}" ;;
+    reorder)     set -- task     reorder      "${@:2}" ;;
     add-context)  set -- task     context add   "${@:2}" ;;
     get-context)  set -- task     context get   "${@:2}" ;;
     list-context) set -- task     context list  "${@:2}" ;;

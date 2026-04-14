@@ -58,7 +58,7 @@ subtask: [x] task/jj-rollback-instructions-62776a15
 subtask: [x] task/tt-task-publish-b55033e0
 subtask: [x] task/tt-workspace-root-bbc665ad
 subtask: [x] task/tt-history-undo-cf1594a5
-subtask: [ ] task/tt-task-reorder-d6909228
+subtask: [-] task/tt-task-reorder-d6909228
 subtask: [x] task/tt-task-checkin-bookmark-2823aba1
 subtask: [x] task/tt-task-show-completed-0db3cf3d
 subtask: [ ] task/completed-task-file-location-253f710e
