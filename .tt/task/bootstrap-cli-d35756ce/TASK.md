@@ -58,7 +58,7 @@ subtask: [x] task/jj-rollback-instructions-62776a15
 subtask: [x] task/tt-task-publish-b55033e0
 subtask: [x] task/tt-workspace-root-bbc665ad
 subtask: [x] task/tt-history-undo-cf1594a5
-subtask: [ ] task/tt-task-reorder-d6909228
+subtask: [-] task/tt-task-reorder-d6909228
 subtask: [x] task/tt-task-checkin-bookmark-2823aba1
 subtask: [x] task/tt-task-show-completed-0db3cf3d
 subtask: [ ] task/completed-task-file-location-253f710e
@@ -96,6 +96,7 @@ subtask: [ ] task/standardize-vcs-operations-d5419005
 subtask: [ ] task/standardize-metadata-operations-cc4f8cab
 subtask: [ ] task/standardize-command-output-a1c39913
 subtask: [ ] task/standardize-commit-messages-3f6a9763
+subtask: [ ] task/analyze-cross-worktree-transactions-35b7b43d
 ---
 Implement shell script implementations of all `tt` CLI commands
 
