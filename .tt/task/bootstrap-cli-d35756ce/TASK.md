@@ -5,7 +5,7 @@ created: 2026-03-15T09:29:32Z
 updated: 2026-04-14T20:29:36Z
 context: context/task-tt-task-list-6638a980-d50c1e36
 context: context/context-from-2026-02-21-22-12-e533801d
-subtask: [-] task/tt-task-reorder-d6909228
+subtask: [x] task/tt-task-reorder-d6909228
 subtask: [ ] task/tt-workspace-doctor-fe9143d1
 subtask: [ ] task/zsh-completions-0538e4f5
 subtask: [ ] task/tt-task-prune-9a1ce601
