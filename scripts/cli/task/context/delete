@@ -195,7 +195,7 @@ main() {
   local updated_task_content
   updated_task_content="$(printf '%s' "$task_content" | awk -v ctx="$ctx_id_arg" -v ts="$new_timestamp" '
     /^---$/ { sep++; if (sep == 2) { print "---"; next } }
-    /^context:/ && sep == 1 { sub(/^context:[[:space:]]*/, ""); if ($0 == ctx) next }
+    /^context:/ && sep == 1 { val = $0; sub(/^context:[[:space:]]*/, "", val); if (val == ctx) next }
     /^updated:/ && sep == 1 { print "updated: " ts; next }
     { print }
   ')"
