@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt task reorder` CLI command"
-status: IN-PROGRESS
+status: DONE
 created: 2026-03-24T22:10:28Z
 updated: 2026-04-14T20:57:17Z
 context: context/implementation-plan-1599cc6b
