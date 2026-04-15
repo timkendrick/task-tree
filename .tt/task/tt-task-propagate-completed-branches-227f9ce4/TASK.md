@@ -1,6 +1,6 @@
 ---
 title: "Prevent continuation of completed branches in `tt task propagate`"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-15T08:30:16Z
 updated: 2026-04-15T09:00:53Z
 ---
