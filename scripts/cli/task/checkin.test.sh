@@ -289,4 +289,78 @@ test_task_checkin__help() {
 }
 
 
+# ---------------------------------------------------------------------------
+# Bookmark positioning after checkin
+# ---------------------------------------------------------------------------
+
+# After an INCOMPLETE checkin the task bookmark should still point to the last
+# commit on the task branch (e.g. the checkpoint commit).  That commit is
+# already in the parent's ancestry via the handoff/merge, so propagate will
+# later create a resume commit on the parent tip when the parent advances.
+test_task_checkin__incomplete_bookmark_stays_at_last_commit() {
+  setup_workspace "ci-bm-incomplete"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  edit_file "work.txt" "some work"
+  checkpoint_task "Work" >/dev/null || true
+  # Record where the bookmark is before checkin.
+  local commit_before
+  commit_before=$(get_bookmark_commit "$task_id")
+
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true
+
+  local commit_after
+  commit_after=$(get_bookmark_commit "$task_id")
+  assert_eq "incomplete: bookmark unchanged after checkin" "$commit_after" "$commit_before"
+  assert_commit_message "incomplete: bookmark still points to checkpoint" "$task_id" "Checkpoint:"
+}
+
+
+# After a COMPLETE checkin the task bookmark should still point to the
+# "Complete task:" commit — its natural resting place after `tt task complete`.
+# That commit is in the parent's ancestry (via handoff → merge), so a
+# subsequent `propagate` should leave it alone entirely.
+test_task_checkin__complete_bookmark_stays_at_complete_commit() {
+  setup_workspace "ci-bm-complete"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  edit_file "work.txt" "some work"
+  checkpoint_task "Work" >/dev/null || true
+  complete_task >/dev/null || true
+  # Record where the bookmark is before checkin.
+  local commit_before
+  commit_before=$(get_bookmark_commit "$task_id")
+
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true
+
+  local commit_after
+  commit_after=$(get_bookmark_commit "$task_id")
+  assert_eq "complete: bookmark unchanged after checkin" "$commit_after" "$commit_before"
+  assert_commit_message "complete: bookmark still points to complete commit" "$task_id" "Complete task:"
+}
+
+
+# When --propagate is added to a complete checkin the task bookmark must still
+# end up at the "Complete task:" commit — propagate must not create a resume
+# commit for a DONE task and must not rebase it.
+test_task_checkin__complete_with_propagate_bookmark_unchanged() {
+  setup_workspace "ci-bm-prop"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  edit_file "work.txt" "some work"
+  checkpoint_task "Work" >/dev/null || true
+  # Use --complete --propagate to exercise both code paths together.
+  run_tt task checkin --complete --propagate "$task_id" >/dev/null 2>&1 || true
+
+  # The bookmark should be at the "Complete task:" commit, not a child of it.
+  assert_commit_message "bookmark at complete commit after checkin+propagate" "$task_id" "Complete task:"
+}
+
+
 run_tests "tt task checkin"
