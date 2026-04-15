@@ -22,7 +22,7 @@ subtask: [ ] task/standardize-command-output-a1c39913
 subtask: [ ] task/standardize-commit-messages-3f6a9763
 subtask: [ ] task/analyze-cross-worktree-transactions-35b7b43d
 subtask: [ ] task/tt-task-checkin-reorder-766c71b4
-subtask: [ ] task/tt-task-propagate-completed-branches-227f9ce4
+subtask: [x] task/tt-task-propagate-completed-branches-227f9ce4
 subtask: [x] task/fix-context-metadata-acb41a0a
 subtask: [x] task/tt-task-reorder-d6909228
 subtask: [x] task/tt-task-list-6638a980

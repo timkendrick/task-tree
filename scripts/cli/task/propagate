@@ -105,6 +105,9 @@ is_partially_checked_in() {
   task_file="$(task_file_path "$suffix")"
   local content status
   content="$(jj_show_at_revision "$repo" "$child" "$task_file")" || true
+  # If the task file is unreadable (e.g. it lives at a legacy path format),
+  # treat the task as complete so we never create spurious resume commits.
+  [[ -z "$content" ]] && return 1
   status="$(parse_frontmatter_field "$content" "status")"
   [[ "$status" != "DONE" ]]
 }
