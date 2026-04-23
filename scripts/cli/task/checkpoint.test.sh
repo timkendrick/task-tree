@@ -13,7 +13,7 @@ test_task_checkpoint__basic_with_message() {
   output="" exit_code=0
   output=$(checkpoint_task "Test cp") || exit_code=$?
   assert_success "checkpoint succeeds" "$exit_code"
-  assert_commit_message "commit has Checkpoint" "@-" "Checkpoint"
+  assert_commit_message_first_line "commit message" "@-" "[tt:task:$task_id:checkpoint] Test cp"
   assert_wc_clean "WC clean after checkpoint"
 }
 

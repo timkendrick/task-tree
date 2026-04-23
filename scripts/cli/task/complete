@@ -188,7 +188,7 @@ main() {
   mv "$tmpfile" "$target_worktree/$task_file"
 
   # Commit and advance bookmark
-  jj -R "$target_worktree" commit -m "Complete task: $task_title ($bookmark)"
+  jj -R "$target_worktree" commit -m "$(format_commit_message "task" "complete" "$bookmark" "$task_title")"
   jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
 
   local commit_id

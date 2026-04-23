@@ -599,12 +599,12 @@ assert_wc_dirty() {
   fi
 }
 
-# assert_commit_message LABEL REV EXPECTED_SUBSTRING
+# assert_commit_message LABEL REV EXPECTED
 assert_commit_message() {
   local label="$1" rev="$2" expected="$3"
   local msg
   msg="$(get_commit_message "$rev")"
-  assert_contains "$label" "$msg" "$expected"
+  assert_eq "$label" "$msg" "$expected"
 }
 
 # assert_commit_message_first_line LABEL REV EXPECTED

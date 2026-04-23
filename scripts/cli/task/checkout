@@ -292,7 +292,7 @@ main() {
     mv "$tmpfile" "$target_worktree/$task_file"
 
     # Describe the WC, advance the bookmark, then create a clean working WC on top
-    jj -R "$target_worktree" describe -m "Begin task: $task_title ($task_id)"
+    jj -R "$target_worktree" describe -m "$(format_commit_message "task" "checkout" "$task_id" "$task_title")"
     jj -R "$target_worktree" bookmark set "$task_id"
     jj -R "$target_worktree" new "@"
   fi

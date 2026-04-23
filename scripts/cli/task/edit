@@ -316,7 +316,7 @@ main() {
     rewrite_task_file "$repo/$task_file" \
       "$final_title" "$current_status" "$final_body" "$current_created"
 
-    jj -R "$repo" commit -m "Edit task: $final_title ($bookmark)"
+    jj -R "$repo" commit -m "$(format_commit_message "task" "edit" "$bookmark" "$final_title")"
     jj -R "$repo" bookmark set "$bookmark" -r '@-'
 
     # Return to the original working copy position
@@ -347,7 +347,7 @@ main() {
     # Now write the file and commit
     mv "$tmpfile" "$target_worktree/$task_file"
 
-    jj -R "$target_worktree" commit -m "Edit task: $final_title ($bookmark)"
+    jj -R "$target_worktree" commit -m "$(format_commit_message "task" "edit" "$bookmark" "$final_title")"
     jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
   fi
 
