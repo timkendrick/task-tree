@@ -100,6 +100,7 @@ subtask: [x] task/standardize-help-flag-53aa289f
 subtask: [x] task/tt-skill-md-updates-c57004aa
 subtask: [x] task/prevent-tt-task-checkout-multiple-worktrees-76626af4
 subtask: [x] task/rename-tt-worktree-list-bb3d0083
+subtask: [ ] task/tt-task-publish-prevent-change-branch-af1702ab
 ---
 Implement shell script implementations of all `tt` CLI commands
 
