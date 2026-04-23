@@ -1,6 +1,6 @@
 ---
 title: "Prevent changing branches on `tt task publish`"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-23T07:53:42Z
 updated: 2026-04-23T07:53:43Z
 ---
