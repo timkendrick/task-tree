@@ -12,7 +12,7 @@ test_task_edit__edit_title() {
 
   run_tt task edit --title "Updated Title" <<< "" >/dev/null 2>&1 || true
   assert_task_title "title updated" "$task_id" "Updated Title"
-  assert_commit_message "commit has Edit" "@-" "Edit"
+  assert_commit_message "commit has Edit" "@-" ":edit]"
 }
 
 

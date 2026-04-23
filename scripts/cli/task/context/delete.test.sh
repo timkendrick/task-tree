@@ -20,7 +20,7 @@ test_context_delete__basic_delete() {
   output="" exit_code=0
   output=$(run_tt task context delete "$ctx_id" 2>&1) || exit_code=$?
   assert_success "delete succeeds" "$exit_code"
-  assert_commit_message "commit has Delete context" "@-" "Delete context"
+  assert_commit_message "commit has Delete context" "@-" ":context:delete]"
   assert_no_context_entry "context entry removed" "$task_id" "$ctx_id"
   assert_context_file_not_exists "context file gone" "$task_id" "$ctx_id"
 }

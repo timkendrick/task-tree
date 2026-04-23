@@ -232,8 +232,8 @@ test_task_reorder__commit_message() {
   checkout_task "$task_a" >/dev/null || true
 
   run_tt task reorder "$task_a" --down >/dev/null 2>&1 || true
-  assert_commit_message "commit message on parent" "@-" "Reorder subtask: Task A"
-  assert_commit_message "commit message has child id" "@-" "$task_a"
+  assert_commit_message "commit message on parent" "@-" ":reorder]"
+  assert_commit_message "commit message has parent id" "@-" "$proj_id"
 }
 
 
@@ -386,7 +386,7 @@ test_task_reorder__tidy_commit_message() {
   task_a=$(create_task "ta" "Task A") || true
 
   run_tt task reorder "$proj_id" >/dev/null 2>&1 || true
-  assert_commit_message "tidy commit message" "@-" "Reorder task: Project"
+  assert_commit_message "tidy commit message" "@-" ":reorder]"
   assert_commit_message "tidy commit has task id" "@-" "$proj_id"
 }
 

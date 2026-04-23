@@ -314,7 +314,7 @@ test_task_checkin__incomplete_bookmark_stays_at_last_commit() {
   local commit_after
   commit_after=$(get_bookmark_commit "$task_id")
   assert_eq "incomplete: bookmark unchanged after checkin" "$commit_after" "$commit_before"
-  assert_commit_message "incomplete: bookmark still points to checkpoint" "$task_id" "Checkpoint:"
+  assert_commit_message "incomplete: bookmark still points to checkpoint" "$task_id" ":checkpoint]"
 }
 
 
@@ -340,7 +340,7 @@ test_task_checkin__complete_bookmark_stays_at_complete_commit() {
   local commit_after
   commit_after=$(get_bookmark_commit "$task_id")
   assert_eq "complete: bookmark unchanged after checkin" "$commit_after" "$commit_before"
-  assert_commit_message "complete: bookmark still points to complete commit" "$task_id" "Complete task:"
+  assert_commit_message "complete: bookmark still points to complete commit" "$task_id" ":complete]"
 }
 
 
@@ -359,7 +359,7 @@ test_task_checkin__complete_with_propagate_bookmark_unchanged() {
   run_tt task checkin --complete --propagate "$task_id" >/dev/null 2>&1 || true
 
   # The bookmark should be at the "Complete task:" commit, not a child of it.
-  assert_commit_message "bookmark at complete commit after checkin+propagate" "$task_id" "Complete task:"
+  assert_commit_message "bookmark at complete commit after checkin+propagate" "$task_id" ":complete]"
 }
 
 
