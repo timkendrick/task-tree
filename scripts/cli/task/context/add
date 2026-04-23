@@ -281,12 +281,12 @@ main() {
 
     # Files were already written to the filesystem (since target_worktree == current_worktree
     # but on a different branch — this shouldn't normally happen since we checked worktrees above)
-    jj -R "$repo" commit -m "Add context: $ctx_title ($bookmark)"
+    jj -R "$repo" commit -m "$(format_commit_message "task" "context:add" "$bookmark" "$ctx_title")"
     jj -R "$repo" bookmark set "$bookmark" -r '@-'
     jj -R "$repo" new -r "$original_parent_rev"
   else
     # Same branch: commit normally
-    jj -R "$target_worktree" commit -m "Add context: $ctx_title ($bookmark)"
+    jj -R "$target_worktree" commit -m "$(format_commit_message "task" "context:add" "$bookmark" "$ctx_title")"
     jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
   fi
 

@@ -418,7 +418,7 @@ main() {
   if [[ "$is_project" == true ]]; then
     # Project task: first commit creates the stub task file; second commit (via edit) sets metadata.
     write_task_stub "$repo" "$task_suffix"
-    jj "${jj_opts[@]}" describe -m "Create project: $title"
+    jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")"
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
     jj "${jj_opts[@]}" new "@"
     jj "${jj_opts[@]}" bookmark set "$task_id"
@@ -438,7 +438,7 @@ main() {
     write_task_stub "$repo" "$task_suffix"
     add_subtask_to_frontmatter "$parent_path" "$task_id"
     log "Added subtask to parent: $parent_task_file"
-    jj "${jj_opts[@]}" describe -m "Create task: $title ($task_id)"
+    jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")"
     jj "${jj_opts[@]}" bookmark set "$parent_bookmark"
     jj "${jj_opts[@]}" new "@"
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
@@ -451,7 +451,7 @@ main() {
     # Child task with no identifiable parent task file (e.g. branching from a non-task bookmark).
     # Create the stub and bookmark without modifying any parent; edit sets metadata.
     write_task_stub "$repo" "$task_suffix"
-    jj "${jj_opts[@]}" describe -m "Create task: $title ($task_id)"
+    jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")"
     jj "${jjOpts[@]}" new "@"
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
     # Build common args (title, labels)

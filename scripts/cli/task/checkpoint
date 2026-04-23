@@ -129,7 +129,8 @@ main() {
   fi
 
   # Build full commit message
-  local full_msg="Checkpoint: ${message} (${bookmark})"
+  local full_msg
+  full_msg="$(format_commit_message "task" "checkpoint" "$bookmark" "$message")"
 
   # Pre-checkpoint hook (blocking)
   # Begin transaction (records before-op for undo)

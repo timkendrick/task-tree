@@ -243,10 +243,8 @@ main() {
       mv "$tmpfile" "$parent_path"
     fi
 
-    # Commit: jj snapshots the mv automatically; re-use existing message
-    local parent_msg
-    parent_msg=$(jj "${jj_opts[@]}" log -r @ --no-graph -T 'description.first_line()')
-    jj "${jj_opts[@]}" commit -m "$parent_msg"
+    # Commit: jj snapshots the mv automatically; use standardized rename message
+    jj "${jj_opts[@]}" commit -m "$(format_commit_message "task" "rename" "$new_id" "$task_title")"
     jj "${jj_opts[@]}" bookmark set "${parent_bookmark}" -r @-
     jj "${jj_opts[@]}" new "${parent_bookmark}"
   fi

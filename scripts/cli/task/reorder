@@ -285,7 +285,7 @@ reorder_subtask() {
   write_task_file "$parent_worktree/$parent_task_file" \
     "$parent_title" "$parent_status" "$parent_body" "$parent_created"
   unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
-  jj -R "$parent_worktree" commit -m "Reorder subtask: $child_title ($child_id)" >/dev/null 2>&1
+  jj -R "$parent_worktree" commit -m "$(format_commit_message "task" "reorder" "$parent_id" "$parent_title")" >/dev/null 2>&1
   jj -R "$parent_worktree" bookmark set "$parent_id" -r '@-' >/dev/null 2>&1
 
   # 12. Commit transaction
@@ -383,7 +383,7 @@ reorder_frontmatter() {
   export REWRITE_SUBTASKS=("${sorted_subtasks[@]+"${sorted_subtasks[@]}"}")
   write_task_file "$canonical_worktree/$task_file" "$title" "$status" "$body" "$created"
   unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
-  jj -R "$canonical_worktree" commit -m "Reorder task: $title ($task_id)" >/dev/null 2>&1
+  jj -R "$canonical_worktree" commit -m "$(format_commit_message "task" "reorder" "$task_id" "$title")" >/dev/null 2>&1
   jj -R "$canonical_worktree" bookmark set "$canonical_branch" -r '@-' >/dev/null 2>&1
 
   # 12. Commit transaction

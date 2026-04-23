@@ -256,7 +256,7 @@ main() {
   task_dir="$(task_dir_path "$task_slug")"
   rm -rf "${repo:?}/$task_dir"
 
-  jj -R "$repo" describe -m "Move task: $task_title ($task_id)"
+  jj -R "$repo" describe -m "$(format_commit_message "task" "remove" "$task_id" "$task_title")"
   jj -R "$repo" bookmark set "$old_parent"
   jj -R "$repo" new "@"
 
@@ -289,7 +289,7 @@ main() {
     log "Warning: Could not copy task stub '$task_file' from old parent; skipping."
   fi
 
-  jj -R "$repo" describe -m "Move task: $task_title ($task_id)"
+  jj -R "$repo" describe -m "$(format_commit_message "task" "move" "$task_id" "$task_title")"
   jj -R "$repo" bookmark set "$new_parent_id"
   jj -R "$repo" new "@"
 

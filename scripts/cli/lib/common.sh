@@ -32,6 +32,41 @@ jj_show_at_op() {
 }
 
 # ---------------------------------------------------------------------------
+# Commit message formatting
+# ---------------------------------------------------------------------------
+
+# Usage: format_commit_message NAMESPACE OPERATION ENTITY_ID DESCRIPTION
+#
+# Constructs a standardized tt commit message:
+#   [tt:<namespace>:<entity-id>:<operation>] <description>
+#
+# When ENTITY_ID is empty (e.g. workspace operations), uses:
+#   [tt:<namespace>:<operation>] <description>
+#
+# DESCRIPTION may be multi-line for checkpoint commits.
+#
+# Arguments:
+#   NAMESPACE   — the command namespace, e.g. "workspace", "task"
+#   OPERATION   — the operation name, e.g. "create", "edit", "checkpoint", etc.
+#   ENTITY_ID   — the full task ID, e.g. "task/foo-ab123456" or "project/my-ab123456"
+#                 (empty string for workspace-level operations)
+#   DESCRIPTION — human-readable description (title, user message, etc.)
+#
+# Outputs the formatted commit message to stdout.
+format_commit_message() {
+  local namespace="$1"
+  local operation="$2"
+  local entity_id="$3"
+  local description="$4"
+
+  if [[ -z "$entity_id" ]]; then
+    printf '[tt:%s:%s] %s' "$namespace" "$operation" "$description"
+  else
+    printf '[tt:%s:%s:%s] %s' "$namespace" "$entity_id" "$operation" "$description"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Shared slug / ID / timestamp helpers (used by create, edit, add-context)
 # ---------------------------------------------------------------------------
 
