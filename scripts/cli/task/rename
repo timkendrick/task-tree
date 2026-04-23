@@ -19,8 +19,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} --slug <new-slug> [--task <task-id>] [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} --slug <new-slug> [--task <task-id>] [--repo PATH]
 
 Rename a task's slug (the human-readable part of the task ID), preserving the hex suffix.
 For example: task/old-name-abc123 → task/new-name-abc123.
@@ -36,11 +36,10 @@ Options:
   --repo PATH            Repository root (overrides TT_REPO; default: walk up to find .jj)
 
 Examples:
-  ${SCRIPT_NAME} --slug new-name
-  ${SCRIPT_NAME} --slug new-name --task task/old-name-abc123
+  ${COMMAND_NAME:-$SCRIPT_NAME} --slug new-name
+  ${COMMAND_NAME:-$SCRIPT_NAME} --slug new-name --task task/old-name-abc123
 
 EOF
-  exit 1
 }
 
 main() {
@@ -51,34 +50,33 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --slug)
-        [[ $# -lt 2 ]] && { log "Error: --slug requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         slug="$2"
         shift 2
         ;;
       --task)
-        [[ $# -lt 2 ]] && { log "Error: --task requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         task_id="$2"
         shift 2
         ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
         shift 2
         ;;
       -h|--help)
         usage
+        exit 0
         ;;
       *)
-        log "Error: Unknown option: $1"
-        usage
+        usage >&2; exit 1
         ;;
     esac
   done
 
   # --slug is required
   if [[ -z "$slug" ]]; then
-    log "Error: --slug is required"
-    usage
+    usage >&2; exit 1
   fi
 
   # Validate slug format
@@ -166,7 +164,7 @@ main() {
 
   # Get task title for commit message
   local task_title
-  task_title="$(jj "${jj_opts[@]}" --ignore-working-copy file show -r "$old_id" -- "$(task_file_path "$suffix")" 2>/dev/null \
+  task_title="$(jj_show_at_revision "$repo" "$old_id" "$(task_file_path "$suffix")" \
     | awk '/^title:/ { for(i=2;i<=NF;i++) printf "%s ", $i; print ""; exit }')"
 
   if [[ -z "$task_title" ]]; then
@@ -212,7 +210,7 @@ main() {
       while IFS= read -r fpath; do
         local rel="${fpath#${old_rel}/}"
         mkdir -p "$saved_dir/$change_id/$(dirname "$rel")"
-        jj "${jj_opts[@]}" --at-operation "$pre_op" file show -r "$change_id" "$fpath" \
+        jj_show_at_op "$repo" "$pre_op" "$change_id" "$fpath" \
             > "$saved_dir/$change_id/$rel"
       done <<< "$file_list"
     fi
@@ -245,10 +243,8 @@ main() {
       mv "$tmpfile" "$parent_path"
     fi
 
-    # Commit: jj snapshots the mv automatically; re-use existing message
-    local parent_msg
-    parent_msg=$(jj "${jj_opts[@]}" log -r @ --no-graph -T 'description.first_line()')
-    jj "${jj_opts[@]}" commit -m "$parent_msg"
+    # Commit: jj snapshots the mv automatically; use standardized rename message
+    jj "${jj_opts[@]}" commit -m "$(format_commit_message "task" "rename" "$new_id" "$task_title")"
     jj "${jj_opts[@]}" bookmark set "${parent_bookmark}" -r @-
     jj "${jj_opts[@]}" new "${parent_bookmark}"
   fi

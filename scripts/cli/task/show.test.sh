@@ -131,6 +131,29 @@ test_task_show__shows_parent() {
 }
 
 
+test_task_show__cwd_outside_repo() {
+  # Regression: jj file show resolves paths relative to CWD, not the repo root.
+  # tt commands must use the root: prefix so they work regardless of CWD.
+  setup_workspace "show-cwd"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "My Task" "Task description") || true
+  checkout_task "$task_id" >/dev/null || true
+
+  # Run tt show from a directory completely outside the repo, with TT_REPO
+  # pointing to the canonical path. This triggers the bug where jj file show
+  # fails because paths are not relative to CWD.
+  local canonical_repo
+  canonical_repo="$(cd "$REPO" && pwd -P)"
+
+  output="" exit_code=0
+  output=$(cd /tmp && TT_REPO="$canonical_repo" "$TT" task show "$task_id" 2>&1) || exit_code=$?
+  assert_success "show from outside repo (canonical path) succeeds" "$exit_code"
+  assert_contains "title in output" "$output" "My Task"
+  assert_contains "body in output" "$output" "Task description"
+}
+
+
 test_task_show__shows_labels() {
   setup_workspace "show-labels"
   proj_id=$(create_project "proj" "Project") || true
@@ -143,6 +166,18 @@ test_task_show__shows_labels() {
   assert_success "show succeeds" "$exit_code"
   assert_contains "bug label shown" "$output" "bug"
   assert_contains "urgent label shown" "$output" "urgent"
+}
+
+
+test_task_show__help() {
+  setup_workspace "show-help"
+  output="" exit_code=0
+  output=$(run_tt task show --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt task show"
+  assert_required_usage_argument "argument: <task-id>" "$output" "<task-id>"
+  assert_required_usage_argument "argument: --repo" "$output" "--repo"
+  assert_required_usage_argument "argument: --expand-context" "$output" "--expand-context"
 }
 
 

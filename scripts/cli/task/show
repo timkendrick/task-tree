@@ -20,8 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [--repo PATH] [--expand-context]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [--repo PATH] [--expand-context]
 
 Show the metadata and direct child tasks of the current task (default)
 or the given task. Reads from the correct branch per the "where to read"
@@ -35,7 +35,6 @@ Options:
   -h, --help         Show this help.
 
 EOF
-  exit 1
 }
 
 main() {
@@ -46,18 +45,18 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
       --expand-context)
         expand_context=true; shift ;;
-      -h|--help) usage ;;
+      -h|--help) usage; exit 0 ;;
       -*)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
       *)
         if [[ -z "$task_id_arg" ]]; then
           task_id_arg="$1"; shift
         else
-          log "Error: Unexpected argument: $1"; usage
+          usage >&2; exit 1
         fi ;;
     esac
   done
@@ -129,7 +128,7 @@ main() {
 
   # --- Read task file ---
   local content
-  if ! content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$task_file" 2>/dev/null)"; then
+  if ! content="$(jj_show_at_revision "$repo" "$branch" "$task_file")"; then
     log "Error: Could not read task file '$task_file' from '$branch'."
     exit 1
   fi
@@ -213,7 +212,7 @@ main() {
         fi
         if [[ -n "$subtask_id_suffix" ]]; then
           subtask_file="$(task_file_path "$subtask_id_suffix")"
-          subtask_content="$(jj -R "$repo" --ignore-working-copy file show -r "$subtask_branch" -- "$subtask_file" 2>/dev/null || true)"
+          subtask_content="$(jj_show_at_revision "$repo" "$subtask_branch" "$subtask_file" || true)"
           subtask_status="$(parse_frontmatter_field "$subtask_content" "status" 2>/dev/null || true)"
           subtask_title="$(parse_quoted_frontmatter_field "$subtask_content" "title" 2>/dev/null || true)"
         fi
@@ -242,7 +241,7 @@ main() {
       local ctx_file
       ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
       local ctx_content ctx_title
-      ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$ctx_file" 2>/dev/null || true)"
+      ctx_content="$(jj_show_at_revision "$repo" "$branch" "$ctx_file" || true)"
       ctx_title="$(parse_quoted_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
       if [[ -n "$ctx_title" ]]; then
         printf -- '- %s (%s)\n' "$ctx_title" "$ctx_id"
@@ -273,7 +272,7 @@ main() {
         # Resolve context file path on the task's branch
         local ctx_file ctx_content
         ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
-        ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$branch" -- "$ctx_file" 2>/dev/null || true)"
+        ctx_content="$(jj_show_at_revision "$repo" "$branch" "$ctx_file" || true)"
 
         if [[ -n "$ctx_content" ]]; then
           # Parse frontmatter fields (using raw for title to preserve formatting)

@@ -26,8 +26,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [options...]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [options...]
 
 Generate and print the project todo list.
 
@@ -40,14 +40,13 @@ Options:
   -h, --help      Show this help
 
 Examples:
-  ${SCRIPT_NAME}                                    # all projects
-  ${SCRIPT_NAME} --project project/main-abc12345    # one project
-  ${SCRIPT_NAME} --detached                         # all projects + detached
-  ${SCRIPT_NAME} --all                              # all projects + detached
-  ${SCRIPT_NAME} --focus                            # current task chain
+  ${COMMAND_NAME:-$SCRIPT_NAME}                                    # all projects
+  ${COMMAND_NAME:-$SCRIPT_NAME} --project project/main-abc12345    # one project
+  ${COMMAND_NAME:-$SCRIPT_NAME} --detached                         # all projects + detached
+  ${COMMAND_NAME:-$SCRIPT_NAME} --all                              # all projects + detached
+  ${COMMAND_NAME:-$SCRIPT_NAME} --focus                            # current task chain
 
 EOF
-  exit 1
 }
 
 # Usage: get_suffix_from_id FULL_ID PREFIX
@@ -56,15 +55,6 @@ get_suffix_from_id() {
   local id="$1"
   local prefix="$2"
   printf '%s' "${id#$prefix}"
-}
-
-# Usage: read_task_file_at_rev REPO REV TASK_FILE_PATH
-# Outputs file contents to stdout. Returns 1 if file missing.
-read_task_file_at_rev() {
-  local repo="$1"
-  local rev="$2"
-  local path="$3"
-  jj -R "$repo" file show -r "$rev" -- "$path" 2>/dev/null
 }
 
 # Parse YAML-like frontmatter: extract title, status, and subtask lines.
@@ -202,7 +192,7 @@ emit_tree() {
   fi
 
   local content
-  content="$(read_task_file_at_rev "$repo" "$source_branch" "$path" 2>/dev/null)" || true
+  content="$(jj_show_at_revision "$repo" "$source_branch" "$path")" || true
 
   local checkbox title
   local meta
@@ -261,7 +251,7 @@ build_merged_map() {
       local path
       path="$(task_file_path "$suffix")"
       local content
-      content="$(read_task_file_at_rev "$repo" "$branch" "$path" 2>/dev/null)" || true
+      content="$(jj_show_at_revision "$repo" "$branch" "$path")" || true
       if printf '%s' "$content" | grep -qE "subtask:\s*\[x\]\s+${task_id}(\s|$)"; then
         result="${result}${task_id}:${branch}"$'\n'
         break
@@ -306,7 +296,7 @@ collect_task_ids() {
     local path
     path="$(task_file_path "$suffix")"
     local content
-    content="$(read_task_file_at_rev "$repo" "$source_branch" "$path" 2>/dev/null)" || true
+    content="$(jj_show_at_revision "$repo" "$source_branch" "$path")" || true
     local subs
     subs="$(get_subtask_entries "$content" | cut -d'|' -f2)"
     for sub in $subs; do
@@ -327,7 +317,7 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project)
-        [[ $# -lt 2 ]] && { log "Error: --project requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         filter_projects+=("$2")
         shift 2
         ;;
@@ -344,16 +334,16 @@ main() {
         shift
         ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
         shift 2
         ;;
       -h|--help)
         usage
+        exit 0
         ;;
       *)
-        log "Error: Unknown option: $1"
-        usage
+        usage >&2; exit 1
         ;;
     esac
   done
@@ -418,7 +408,7 @@ main() {
         local path
         path="$(task_file_path "$suffix")"
         local content
-        content="$(read_task_file_at_rev "$repo" "$branch" "$path" 2>/dev/null)" || true
+        content="$(jj_show_at_revision "$repo" "$branch" "$path")" || true
         if printf '%s' "$content" | grep -qE "subtask:\s*\[[ x\-]\]\s+${current}(\s|$)"; then
           parent="$branch"
           break

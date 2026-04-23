@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt worktree list — List all jj workspaces and their corresponding tt task IDs.
+#
+# Usage:
+#   list [--task <task-id>] [--quiet] [--repo PATH]
+#
+# Options:
+#   --task <task-id>  Filter to workspaces matching the given task or project ID.
+#   --quiet           Machine-readable: print workspace names only, one per line.
+#   --repo PATH       Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
+#   -h, --help        Show this help.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--quiet] [--repo PATH]
+
+List all jj workspaces for the current repository and their corresponding
+tt task or project IDs.
+
+Output columns:
+  (marker)  *  marks the current workspace
+  NAME      jj workspace name
+  TASK ID   tt task or project ID (nearest ancestor bookmark), or (none)
+  PATH      filesystem path to the workspace root (~-abbreviated), or (none)
+
+Options:
+  --task <task-id>  Filter to only workspaces whose TASK ID matches <task-id>
+  --quiet           Print workspace names only (one per line); no header or table
+  --repo PATH       Repository root (overrides TT_REPO; default: walk up from CWD to find .jj)
+  -h, --help        Show this help
+
+Examples:
+  ${COMMAND_NAME:-$SCRIPT_NAME}
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345 --quiet
+  ${COMMAND_NAME:-$SCRIPT_NAME} --repo /path/to/repo
+
+EOF
+}
+
+main() {
+  local repo=''
+  local task_filter=''
+  local quiet=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        repo="$2"; shift 2 ;;
+      --task)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        task_filter="$2"; shift 2 ;;
+      --quiet)
+        quiet=true; shift ;;
+      -h|--help) usage; exit 0 ;;
+      -*)
+        usage >&2; exit 1 ;;
+      *)
+        usage >&2; exit 1 ;;
+    esac
+  done
+
+  repo="$(resolve_repo "$repo")"
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # Validate --task filter if provided
+  if [[ -n "$task_filter" ]]; then
+    if ! is_task_branch "$task_filter" "$task_prefix" && \
+       ! is_project_branch "$task_filter" "$project_prefix"; then
+      log "Error: '$task_filter' is not a recognized task or project ID"
+      log "  Expected prefix '$task_prefix' or '$project_prefix' with 8-hex suffix"
+      exit 1
+    fi
+  fi
+
+  # Determine current workspace root (to mark with *)
+  local current_ws_root
+  current_ws_root="$(jj -R "$repo" workspace root 2>/dev/null)" || current_ws_root=""
+
+  # Collect workspace list from jj
+  # Template: "name: path\n" — path may be "<Error: ...>" for workspaces without a recorded path
+  local ws_raw
+  ws_raw="$(jj -R "$repo" --ignore-working-copy workspace list \
+    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || ws_raw=""
+
+  # Parse into parallel arrays
+  local -a ws_names=()
+  local -a ws_paths=()
+  local -a ws_task_ids=()
+  local -a ws_is_current=()
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local ws_name ws_path parsed
+    parsed="$(parse_workspace_list_line "$line")"
+    ws_name="$(printf '%s' "$parsed" | sed -n '1p')"
+    ws_path="$(printf '%s' "$parsed" | sed -n '2p')"
+
+    # Normalize path: if error (empty from helper), use (none)
+    if [[ -z "$ws_path" ]]; then
+      ws_path='(none)'
+    fi
+
+    # Resolve tt task ID for this workspace
+    local task_id='(none)'
+    if [[ "$ws_path" != '(none)' && -d "$ws_path" ]]; then
+      local resolve_out
+      resolve_out="$(resolve_current "$ws_path" "$task_prefix" "$project_prefix" 2>/dev/null)" || true
+      local bm
+      bm="$(printf '%s' "$resolve_out" | sed -n '3p')"
+      if [[ -n "$bm" ]]; then
+        task_id="$bm"
+      fi
+    fi
+
+    # Apply --task filter
+    if [[ -n "$task_filter" && "$task_id" != "$task_filter" ]]; then
+      continue
+    fi
+
+    # Abbreviate $HOME in path
+    local display_path="$ws_path"
+    if [[ "$ws_path" != '(none)' ]]; then
+      display_path="${ws_path/#$HOME/~}"
+    fi
+
+    # Is this the current workspace?
+    local is_current=false
+    if [[ -n "$current_ws_root" && "$ws_path" == "$current_ws_root" ]]; then
+      is_current=true
+    fi
+
+    ws_names+=("$ws_name")
+    ws_paths+=("$display_path")
+    ws_task_ids+=("$task_id")
+    ws_is_current+=("$is_current")
+  done <<< "$ws_raw"
+
+  # --quiet mode: print workspace names only, one per line
+  if [[ "$quiet" == true ]]; then
+    for (( i=0; i<${#ws_names[@]}; i++ )); do
+      printf '%s\n' "${ws_names[$i]}"
+    done
+    return 0
+  fi
+
+  # Compute column widths (max of header and each row value)
+  local header_name="NAME" header_task="TASK ID" header_path="PATH"
+  local max_name=${#header_name}
+  local max_task=${#header_task}
+  local max_path=${#header_path}
+
+  local i
+  for (( i=0; i<${#ws_names[@]}; i++ )); do
+    local n=${#ws_names[$i]}
+    local t=${#ws_task_ids[$i]}
+    local p=${#ws_paths[$i]}
+    (( n > max_name )) && max_name=$n
+    (( t > max_task )) && max_task=$t
+    (( p > max_path )) && max_path=$p
+  done
+
+  # ANSI bold (only when stdout is a TTY)
+  local BOLD='' RESET=''
+  if [[ -t 1 ]]; then
+    BOLD=$'\033[1m'
+    RESET=$'\033[0m'
+  fi
+
+  # Print header (marker column is 2 chars wide)
+  printf '  %-*s  %-*s  %s\n' \
+    "$max_name" "$header_name" \
+    "$max_task" "$header_task" \
+    "$header_path"
+
+  # Print rows
+  for (( i=0; i<${#ws_names[@]}; i++ )); do
+    local marker='  '
+    if [[ "${ws_is_current[$i]}" == true ]]; then
+      marker='* '
+      printf '%b%s%-*s  %-*s  %s%b\n' \
+        "$BOLD" \
+        "$marker" \
+        "$max_name" "${ws_names[$i]}" \
+        "$max_task" "${ws_task_ids[$i]}" \
+        "${ws_paths[$i]}" \
+        "$RESET"
+    else
+      printf '%s%-*s  %-*s  %s\n' \
+        "$marker" \
+        "$max_name" "${ws_names[$i]}" \
+        "$max_task" "${ws_task_ids[$i]}" \
+        "${ws_paths[$i]}"
+    fi
+  done
+}
+
+main "$@"

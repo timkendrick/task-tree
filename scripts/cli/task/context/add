@@ -24,8 +24,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${COMMAND_NAME:+$COMMAND_NAME }${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [--title TITLE] [--slug SLUG]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [--title TITLE] [--slug SLUG]
                       [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
 
 Create a standalone context file for the current task (or <task-id>).
@@ -56,7 +56,6 @@ Examples:
   tt task context add --title "Implementation plan"
 
 EOF
-  exit 1
 }
 
 main() {
@@ -69,24 +68,24 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --title)
-        [[ $# -lt 2 ]] && { log "Error: --title requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         ctx_title="$2"; shift 2 ;;
       --slug)
-        [[ $# -lt 2 ]] && { log "Error: --slug requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         ctx_slug="$2"; shift 2 ;;
       --worktree=*) worktree_arg="${1#--worktree=}"; shift ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
       -h|--help)
-        usage ;;
+        usage; exit 0 ;;
       -*)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
       *)
         if [[ -z "$task_id_arg" ]]; then
           task_id_arg="$1"; shift
         else
-          log "Error: Unexpected argument: $1"; usage
+          usage >&2; exit 1
         fi ;;
     esac
   done
@@ -282,12 +281,12 @@ main() {
 
     # Files were already written to the filesystem (since target_worktree == current_worktree
     # but on a different branch — this shouldn't normally happen since we checked worktrees above)
-    jj -R "$repo" commit -m "Add context: $ctx_title ($bookmark)"
+    jj -R "$repo" commit -m "$(format_commit_message "task" "context:add" "$bookmark" "$ctx_title")"
     jj -R "$repo" bookmark set "$bookmark" -r '@-'
     jj -R "$repo" new -r "$original_parent_rev"
   else
     # Same branch: commit normally
-    jj -R "$target_worktree" commit -m "Add context: $ctx_title ($bookmark)"
+    jj -R "$target_worktree" commit -m "$(format_commit_message "task" "context:add" "$bookmark" "$ctx_title")"
     jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
   fi
 

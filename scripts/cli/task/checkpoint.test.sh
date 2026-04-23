@@ -13,7 +13,7 @@ test_task_checkpoint__basic_with_message() {
   output="" exit_code=0
   output=$(checkpoint_task "Test cp") || exit_code=$?
   assert_success "checkpoint succeeds" "$exit_code"
-  assert_commit_message "commit has Checkpoint" "@-" "Checkpoint"
+  assert_commit_message_first_line "commit message" "@-" "[tt:task:$task_id:checkpoint] Test cp"
   assert_wc_clean "WC clean after checkpoint"
 }
 
@@ -67,6 +67,18 @@ test_task_checkpoint__multiple_sequential() {
   get_history_lines
   assert_eq "two new entries" "$((${#HISTORY_LINES[@]} - hc_before))" "2"
   assert_history_integrity "history after 2 checkpoints"
+}
+
+
+test_task_checkpoint__help() {
+  setup_workspace "checkpoint-help"
+  output="" exit_code=0
+  output=$(run_tt task checkpoint --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt task checkpoint"
+  assert_required_usage_argument "argument: --message" "$output" "--message" "-m"
+  assert_required_usage_argument "argument: --squash" "$output" "--squash"
+  assert_required_usage_argument "argument: --repo" "$output" "--repo"
 }
 
 

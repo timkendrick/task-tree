@@ -151,4 +151,16 @@ test_workspace_init__tt_file_without_force() {
 }
 
 
+test_workspace_init__help() {
+  output="" exit_code=0
+  output=$(run_tt workspace init --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt workspace init"
+  assert_required_usage_argument "argument: <path-to-repo>" "$output" "<path-to-repo>"
+  assert_optional_usage_argument "argument: --task-prefix" "$output" "--task-prefix"
+  assert_optional_usage_argument "argument: --project-prefix" "$output" "--project-prefix"
+  assert_optional_usage_argument "argument: --force" "$output" "--force"
+}
+
+
 run_tests "tt workspace init"

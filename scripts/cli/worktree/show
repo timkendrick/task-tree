@@ -5,10 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt workspace worktree — Output the worktree path for a given task/project ID.
+# tt worktree show — Output the worktree path for a given task/project ID.
+#
+# This is a subcommand in the worktree namespace, so the usage examples
+# should show the full command path (tt worktree show), not just show.
 #
 # Usage:
-#   worktree <task-id> [--repo PATH]
+#   tt worktree show <task-id> [--repo PATH]
 #
 # Options:
 #   <task-id>          Task or project branch name (e.g., task/foo-abc12345, project/bar-def12345)
@@ -18,8 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} <task-id> [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <task-id> [--repo PATH]
 
 Output the worktree path for the given task or project ID.
 Falls back to the repository root if no dedicated worktree exists for the task.
@@ -32,11 +35,10 @@ Options:
   -h, --help    Show this help
 
 Examples:
-  ${SCRIPT_NAME} task/foo-abc12345
-  ${SCRIPT_NAME} project/bar-def12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} project/bar-def12345
 
 EOF
-  exit 1
 }
 
 main() {
@@ -46,23 +48,22 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
-      -h|--help) usage ;;
+      -h|--help) usage; exit 0 ;;
       -*)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
       *)
         if [[ -z "$task_id" ]]; then
           task_id="$1"; shift
         else
-          log "Error: Unexpected argument: $1"; usage
+          usage >&2; exit 1
         fi ;;
     esac
   done
 
   if [[ -z "$task_id" ]]; then
-    log "Error: <task-id> is required"
-    usage
+    usage >&2; exit 1
   fi
 
   repo="$(resolve_repo "$repo")"

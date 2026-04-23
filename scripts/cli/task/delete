@@ -24,8 +24,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [--force] [--worktree=<path>] [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [--force] [--worktree=<path>] [--repo PATH]
 
 Remove a task from its parent branch.
 
@@ -39,7 +39,6 @@ Options:
   -h, --help            Show this help.
 
 EOF
-  exit 1
 }
 
 # Usage: collect_subtree REPO ROOT_TASK_ID PARENT_BRANCH TASK_PREFIX PROJECT_PREFIX
@@ -80,7 +79,7 @@ collect_subtree() {
     # Collect subtask IDs from the task's own branch
     local own_subs=""
     local own_content
-    own_content="$(jj -R "$repo" file show -r "$current" -- "$own_file" 2>/dev/null)" || true
+    own_content="$(jj_show_at_revision "$repo" "$current" "$own_file")" || true
     if [[ -n "$own_content" ]]; then
       own_subs="$(printf '%s' "$own_content" | awk '
         /^---$/ { in_fm = !in_fm; next }
@@ -94,7 +93,7 @@ collect_subtree() {
     # Collect subtask IDs from the parent branch's copy of this task's file
     local parent_subs=""
     local parent_content
-    parent_content="$(jj -R "$repo" file show -r "$parent_branch" -- "$own_file" 2>/dev/null)" || true
+    parent_content="$(jj_show_at_revision "$repo" "$parent_branch" "$own_file")" || true
     if [[ -n "$parent_content" ]]; then
       parent_subs="$(printf '%s' "$parent_content" | awk '
         /^---$/ { in_fm = !in_fm; next }
@@ -139,16 +138,16 @@ main() {
       --force)      force=true; shift ;;
       --worktree=*) worktree_arg="${1#--worktree=}"; shift ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
-      -h|--help) usage ;;
+      -h|--help) usage; exit 0 ;;
       -*)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
       *)
         if [[ -z "$task_id_arg" ]]; then
           task_id_arg="$1"; shift
         else
-          log "Error: Unexpected argument: $1"; usage
+          usage >&2; exit 1
         fi
         ;;
     esac
@@ -209,7 +208,7 @@ main() {
 
   # Read task content and check status
   local task_content task_title task_status
-  task_content="$(jj -R "$repo" file show -r "$task_id" -- "$task_file" 2>/dev/null)" || {
+  task_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file")" || {
     log "Error: Could not read task file '$task_file' from bookmark '$task_id'."
     exit 1
   }
@@ -283,7 +282,7 @@ main() {
 
   # Read parent task file content
   local parent_task_content
-  parent_task_content="$(jj -R "$target_ws" file show -r "$parent_bookmark" -- "$parent_task_file" 2>/dev/null)" || {
+  parent_task_content="$(jj_show_at_revision "$target_ws" "$parent_bookmark" "$parent_task_file")" || {
     log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
     exit 1
   }
@@ -324,7 +323,7 @@ main() {
   done <<< "$subtree_ids" || true
 
   # Commit and advance parent bookmark
-  jj -R "$target_ws" commit -m "Remove subtask: $task_title ($task_id)"
+  jj -R "$target_ws" commit -m "$(format_commit_message "task" "delete" "$task_id" "$task_title")"
   jj -R "$target_ws" bookmark set "$parent_bookmark" -r '@-'
   jj -R "$target_ws" new '@'
 
@@ -344,8 +343,7 @@ main() {
     local ws_path="${workspace_dir}/${del_id}"
     if [[ -d "$ws_path" ]] && [[ -d "$ws_path/.jj" || -L "$ws_path/.jj" ]]; then
       local ws_name
-      ws_name="$(jj -R "$ws_path" workspace list --no-pager 2>/dev/null \
-        | awk -v root="$ws_path" '$2 == root {print $1}' | tr -d ':' || true)"
+      ws_name="$(resolve_workspace_name "$repo" "$ws_path")" || true
       if [[ -n "$ws_name" ]]; then
         jj -R "$repo" workspace forget "$ws_name" 2>/dev/null || true
         log "Workspace '$ws_name' ($del_id) forgotten from jj."

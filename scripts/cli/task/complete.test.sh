@@ -14,7 +14,7 @@ test_task_complete__complete_current_task() {
   output=$(complete_task) || exit_code=$?
   assert_success "complete succeeds" "$exit_code"
   assert_task_status "DONE" "$task_id" "DONE"
-  assert_commit_message "commit has Complete" "@-" "Complete"
+  assert_commit_message "commit message" "@-" "[tt:task:$task_id:complete] T"
   assert_wc_clean "WC clean"
 }
 
@@ -85,6 +85,18 @@ test_task_complete__records_transaction() {
   get_history_lines
   assert_eq "one new entry" "$((${#HISTORY_LINES[@]} - hc_before))" "1"
   assert_history_integrity "history after complete"
+}
+
+
+test_task_complete__help() {
+  setup_workspace "complete-help"
+  output="" exit_code=0
+  output=$(run_tt task complete --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt task complete"
+  assert_required_usage_argument "argument: <task-id>" "$output" "<task-id>"
+  assert_required_usage_argument "argument: --force" "$output" "--force"
+  assert_required_usage_argument "argument: --repo" "$output" "--repo"
 }
 
 
