@@ -184,10 +184,6 @@ main() {
       ;;
   esac
 
-  # --- Save original WC revision in target workspace ---
-  local original_rev
-  original_rev="$(get_worktree_current_rev "$target_ws")"
-
   # --- Create handoff commit ---
   # New WC branching from project bookmark (stages files for handoff)
   jj -R "$target_ws" new "$child_bookmark"
@@ -199,7 +195,7 @@ main() {
   rm -rf "$target_ws/.tt/task"
 
   # Commit the handoff (project bookmark does NOT advance)
-  jj -R "$target_ws" commit -m "Publish: $task_title ($task_id)"
+  jj -R "$target_ws" commit -m "$(format_commit_message "task" "handoff" "$task_id" "$task_title")"
   local handoff_commit
   handoff_commit="$(jj -R "$target_ws" log -r '@-' --no-graph -T 'commit_id')"
 
@@ -214,18 +210,11 @@ main() {
     exit 1
   fi
 
-  jj -R "$target_ws" describe -m "Merge subtask: $task_title ($task_id)"
+  jj -R "$target_ws" describe -m "$(format_commit_message "task" "publish" "$task_id" "$task_title")"
   jj -R "$target_ws" bookmark set "$target" -r '@'
 
-  # Leave a clean open WC in target_ws
-  jj -R "$target_ws" new '@'
-
-  # --- Restore target workspace to original position (no switch) ---
-  # We stay on the project branch. Restore target_ws to where it was before
-  # so the delivery branch workspace is not left stranded on the merge commit.
-  if [[ "$target_ws" != "$current_worktree" ]]; then
-    jj -R "$target_ws" edit "$original_rev" 2>/dev/null || true
-  fi
+  # After publish, return to the project branch.
+  jj -R "$target_ws" new "$child_bookmark"
 
   # Commit transaction (records after-op for undo)
   tt_commit_transaction "$repo"
