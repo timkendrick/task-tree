@@ -37,7 +37,7 @@ The todo list is not persisted; it is derived from project branches, task hierar
 
 Each branch stores its own local task context in a task file and can introspect the hierarchy to read parent context, traceable back to its enclosing project.
 
-Only the **current** task's task file is writable by the user; all other task files (including the parent task file) are read-only. This is enforced by `tt task checkin` (see §6.6): validation fails if the unmerged range contains modifications to any task file other than the current task's. The parent task file is updated only by the tool itself, not by the user: the `Handoff:` and `Merge subtask:` commits (which are created on the parent branch, not the child branch) mark the subtask as done in the parent's frontmatter at checkin time.
+Only the **current** task's task file is writable by the user; all other task files (including the parent task file) are read-only. This is enforced by `tt task checkin` (see §6.6): validation fails if the unmerged range contains modifications to any task file other than the current task's. The parent task file is updated only by the tool itself, not by the user: the `[tt:task:<id>:handoff]` and `[tt:task:<id>:checkin]` commits (which are created on the parent branch, not the child branch) mark the subtask as done in the parent's frontmatter at checkin time.
 
 ---
 
@@ -235,7 +235,7 @@ The command exits with an error if none of these resolves to a valid jj reposito
 
 ### 5.3 Workspace
 
-- **`tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]`** — Initialize a task-tree project. Creates the virtual workspace directory, `.tt/config.toml` (with optional task prefix and project prefix), `.tt/.gitignore` (containing `/history` and `/workspace`), an empty `.tt/history` transaction log, a `.tt/workspace` symlink pointing to the virtual project directory, and a `HEAD` symlink in the virtual directory that initially points to the repo and is later updated to the most recently checked-out task workspace (serving as a quick link to the current development context). Creates a `Create workspace` commit in the jj repository (`.tt/config.toml` and `.tt/.gitignore` are committed; `.tt/history` and `.tt/workspace` are gitignored). Requires a clean working directory; aborts if `.tt` exists in the repo root as a non-directory entry (use `--force` to remove it). With `--force`, also allows overwriting files in an already-populated virtual folder. See §9 step 1, §6.2 (HEAD symlink and `.tt/workspace`), and §6.12 (transaction history).
+- **`tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]`** — Initialize a task-tree project. Creates the virtual workspace directory, `.tt/config.toml` (with optional task prefix and project prefix), `.tt/.gitignore` (containing `/history` and `/workspace`), an empty `.tt/history` transaction log, a `.tt/workspace` symlink pointing to the virtual project directory, and a `HEAD` symlink in the virtual directory that initially points to the repo and is later updated to the most recently checked-out task workspace (serving as a quick link to the current development context). Creates a `[tt:workspace:init] Create workspace` commit in the jj repository (`.tt/config.toml` and `.tt/.gitignore` are committed; `.tt/history` and `.tt/workspace` are gitignored). Requires a clean working directory; aborts if `.tt` exists in the repo root as a non-directory entry (use `--force` to remove it). With `--force`, also allows overwriting files in an already-populated virtual folder. See §9 step 1, §6.2 (HEAD symlink and `.tt/workspace`), and §6.12 (transaction history).
 
 - **`tt workspace switch <task-id> [--worktree=<path>] [--force]`** — Update the virtual project's `HEAD` symlink to point to an existing worktree for the given task or project. Unlike `tt task checkout --switch`, this command does not create worktrees, switch VCS branches, or update task status; it only redirects `HEAD`. Refuses if no worktree exists for the task (the user must run `tt task checkout --worktree` first). If multiple worktrees exist for the task, `--worktree=<path>` is required to disambiguate. Refuses if the workspace currently pointed to by `HEAD` has uncommitted changes, unless `--force` is provided. Runs `pre-checkout` and `post-checkout` hooks; hook env vars `TT_PREVIOUS_TASK_ID`/`TT_PREVIOUS_TASK_BRANCH` reflect the task that `HEAD` was pointing to before the switch. Output is the same confirmation as `tt task checkout`. See §6.2.
 
@@ -270,7 +270,7 @@ The command exits with an error if none of these resolves to a valid jj reposito
   tt task create --slug my-task --title "My task" --checkout --worktree
   ```
 
-- **`tt task edit [<task-id>] [--title <title>] [--label <label> ...] [--delete-label <label> ...] [--worktree <path>] [--repo <path>]`** — Edit the title and/or labels of a task. Reads the task body from stdin (via pipe or redirect) if stdin is not a terminal; otherwise preserves the existing body. With no metadata flags and stdin is a terminal, opens an editor pre-populated with the current body text (interactive mode). `--label` appends; `--delete-label` removes (silent no-op if absent). Requires a clean working copy. Creates an `Edit task: <title> (<task-id>)` commit and advances the task bookmark. See §6.1.1.
+- **`tt task edit [<task-id>] [--title <title>] [--label <label> ...] [--delete-label <label> ...] [--worktree <path>] [--repo <path>]`** — Edit the title and/or labels of a task. Reads the task body from stdin (via pipe or redirect) if stdin is not a terminal; otherwise preserves the existing body. With no metadata flags and stdin is a terminal, opens an editor pre-populated with the current body text (interactive mode). `--label` appends; `--delete-label` removes (silent no-op if absent). Requires a clean working copy. Creates a `[tt:task:<task-id>:edit] <title>` commit and advances the task bookmark. See §6.1.1.
 
   **Examples:**
   ```bash
@@ -297,13 +297,13 @@ The command exits with an error if none of these resolves to a valid jj reposito
 
 - **`tt task checkpoint [--message <msg>] [--squash]`** — Record the current state and advance the task bookmark. If the working copy is empty, moves the bookmark to the working copy's parent commit (and updates that commit's description if `--message` is given). If the working copy has pending changes, creates a new commit from those changes (`jj commit`, using `--message` as the description) and moves the bookmark to it. The target commit must be a strict descendant of the current bookmark tip, unless `--force` is specified. With `--squash`, squashes all commits between the last bookmark and the current working copy into a single checkpoint commit (see §6.3.2). Prints a short confirmation on success. See §6.3. Hooks: **pre-checkpoint**, **post-checkpoint**.
 
-- **`tt task complete [<task-id>] [--worktree=<path>] [--force]`** — Mark the current task (or a given task) as done. Creates a `Complete task: <title> (<task-id>)` commit on the task branch that sets `status` to `DONE` in the task file, and advances the task bookmark to this commit. Requires a clean working copy and all child tasks to be done (every `subtask:` entry marked `[x]`) unless `--force` is specified. `--worktree=<path>` is required when the task has multiple worktrees. See §6.4. Hooks: **pre-complete** (blocking), **post-complete** (optional).
+- **`tt task complete [<task-id>] [--worktree=<path>] [--force]`** — Mark the current task (or a given task) as done. Creates a `[tt:task:<task-id>:complete] <title>` commit on the task branch that sets `status` to `DONE` in the task file, and advances the task bookmark to this commit. Requires a clean working copy and all child tasks to be done (every `subtask:` entry marked `[x]`) unless `--force` is specified. `--worktree=<path>` is required when the task has multiple worktrees. See §6.4. Hooks: **pre-complete** (blocking), **post-complete** (optional).
 
-- **`tt task checkin [<task-id>] [--context <markdown>] [--complete] [--rebase | --merge] [--force] [--delete] [--retain-worktree] [--worktree=<path>] [--propagate [--propagate-rebase | --propagate-merge] [--propagate-shallow] [--propagate-force] [--propagate-dry-run] [--propagate-to <child-id>]]`** — Merge the current task branch (or `<task-id>`) into its parent branch. Only valid on task branches (those with a parent); use `tt task publish` for project branches. Supports **partial checkins** (task status `IN-PROGRESS`; shares work-in-progress with the parent) and **complete checkins** (task status `DONE`; marks the task finished). Always creates a **handoff commit** (child bookmark does not advance) and merges it into the parent as `Merge subtask: <title> (<task-id>)`. The handoff always updates the corresponding `subtask:` entry in the parent's frontmatter to reflect the child's current status (`[x]` if `DONE`, `[-]` if `IN-PROGRESS`). The user is always switched to the parent worktree after the merge. With `--complete`: first runs `tt task complete` if the task is not already `DONE`, then proceeds with checkin. With `--context <markdown>`, appends a summary section to the parent task file body. With `--delete` (requires task `status: DONE`): after the normal checkin completes, delegates to `tt task delete` to remove the child task file and `subtask:` entry from the parent branch (two separate commits on the parent branch). With `--retain-worktree`: skip the automatic worktree deletion after a complete checkin; the jj workspace remains registered and the files remain on disk. `--worktree=<path>` disambiguates when the child task has multiple worktrees. Runs validation (see §6.6); when called without an explicit `<task-id>`, also verifies that the task bookmark is up to date: if any commits exist between the bookmark and the working-copy parent (`@-`), the command fails with a prompt to run `tt task checkpoint` first (or to pass `<task-id>` explicitly to bypass the check). With `--rebase`/`--merge`, first propagates from parent and bails on conflict unless `--force`. With `--propagate`, after the checkin completes, runs `tt task propagate --from <parent>` to push the newly-merged parent tip down to the parent's remaining children. Accepts `--propagate-rebase | --propagate-merge` (strategy; default rebase), `--propagate-shallow` (direct children only), `--propagate-force` (proceed despite conflicts), `--propagate-dry-run` (show propagation plan without applying; the checkin itself still runs normally), and `--propagate-to <child-id>` (repeatable; limit propagation to specific children). See §6.5 and §6.6.
+- **`tt task checkin [<task-id>] [--context <markdown>] [--complete] [--rebase | --merge] [--force] [--delete] [--retain-worktree] [--worktree=<path>] [--propagate [--propagate-rebase | --propagate-merge] [--propagate-shallow] [--propagate-force] [--propagate-dry-run] [--propagate-to <child-id>]]`** — Merge the current task branch (or `<task-id>`) into its parent branch. Only valid on task branches (those with a parent); use `tt task publish` for project branches. Supports **partial checkins** (task status `IN-PROGRESS`; shares work-in-progress with the parent) and **complete checkins** (task status `DONE`; marks the task finished). Always creates a **handoff commit** (child bookmark does not advance) and merges it into the parent as `[tt:task:<task-id>:checkin] <title>`. The handoff always updates the corresponding `subtask:` entry in the parent's frontmatter to reflect the child's current status (`[x]` if `DONE`, `[-]` if `IN-PROGRESS`). The user is always switched to the parent worktree after the merge. With `--complete`: first runs `tt task complete` if the task is not already `DONE`, then proceeds with checkin. With `--context <markdown>`, appends a summary section to the parent task file body. With `--delete` (requires task `status: DONE`): after the normal checkin completes, delegates to `tt task delete` to remove the child task file and `subtask:` entry from the parent branch (two separate commits on the parent branch). With `--retain-worktree`: skip the automatic worktree deletion after a complete checkin; the jj workspace remains registered and the files remain on disk. `--worktree=<path>` disambiguates when the child task has multiple worktrees. Runs validation (see §6.6); when called without an explicit `<task-id>`, also verifies that the task bookmark is up to date: if any commits exist between the bookmark and the working-copy parent (`@-`), the command fails with a prompt to run `tt task checkpoint` first (or to pass `<task-id>` explicitly to bypass the check). With `--rebase`/`--merge`, first propagates from parent and bails on conflict unless `--force`. With `--propagate`, after the checkin completes, runs `tt task propagate --from <parent>` to push the newly-merged parent tip down to the parent's remaining children. Accepts `--propagate-rebase | --propagate-merge` (strategy; default rebase), `--propagate-shallow` (direct children only), `--propagate-force` (proceed despite conflicts), `--propagate-dry-run` (show propagation plan without applying; the checkin itself still runs normally), and `--propagate-to <child-id>` (repeatable; limit propagation to specific children). See §6.5 and §6.6.
 
 - **`tt task publish [<project-id>] --target <branch> [--rebase | --merge] [--force] [--repo PATH] [--workspace-dir PATH]`** — Publish a project branch's work to an external delivery branch (e.g. `main`). Only valid on project branches (parentless roots); use `tt task checkin` for task branches that have a parent. Creates a **publish commit** that removes the `TASK.md` root symlink and the entire `.tt/task/` directory from the working tree (task files are development-only scaffolding that must not land on the delivery branch; `.tt/config.toml` is kept), then merges the publish commit into `--target`. The target bookmark advances to the merge commit. The user **remains on the project branch** after publishing (no workspace switch). With `--rebase` or `--merge`, first propagates from the target branch into the project branch before publishing. With `--force`, proceeds even if merge conflicts arise. See §6.5.
 
-- **`tt task context add [<task-id>] [--title <title>] [--slug <slug>] [--worktree=<path>]`** — Create a new context file associated with the current task (or `<task-id>`). Prompts for title and slug (like task creation) if not provided. Reads the context body from stdin (via pipe or redirect) if stdin is not a terminal; otherwise opens an editor for the body. Generates a context ID of the form `context/<ctx-slug>-<ctx-hex>` and writes the context file to `.tt/task/<task-slug>/context/<ctx-slug>-<ctx-hex>.md`. Adds a `context: context/<ctx-slug>-<ctx-hex>` entry to the task file's frontmatter and refreshes the task's `updated` timestamp. Creates a commit: `Add context: <context-title> (<task-id>)` and advances the task bookmark. When `<task-id>` is given, the task must have a checked-out worktree; `--worktree=<path>` disambiguates when multiple worktrees exist.
+- **`tt task context add [<task-id>] [--title <title>] [--slug <slug>] [--worktree=<path>]`** — Create a new context file associated with the current task (or `<task-id>`). Prompts for title and slug (like task creation) if not provided. Reads the context body from stdin (via pipe or redirect) if stdin is not a terminal; otherwise opens an editor for the body. Generates a context ID of the form `context/<ctx-slug>-<ctx-hex>` and writes the context file to `.tt/task/<task-slug>/context/<ctx-slug>-<ctx-hex>.md`. Adds a `context: context/<ctx-slug>-<ctx-hex>` entry to the task file's frontmatter and refreshes the task's `updated` timestamp. Creates a commit: `[tt:task:<task-id>:context:add] <context-title>` and advances the task bookmark. When `<task-id>` is given, the task must have a checked-out worktree; `--worktree=<path>` disambiguates when multiple worktrees exist.
 
   **Examples:**
   ```bash
@@ -321,7 +321,7 @@ The command exits with an error if none of these resolves to a valid jj reposito
 
 - **`tt task context list [<task-id>] [--task <task-id>] [--repo PATH]`** — List the context IDs for a task to stdout. If `<task-id>` is provided, lists context for that task; otherwise lists context for the current task. The `--task` flag is an alternative way to specify the task (takes precedence over the positional argument). Context IDs are output one per line in declaration order (as they appear in the task file's frontmatter). Exits with code 0 even if the task has no context files (produces no output in that case). Exits with code 1 if the task is not found or is not a valid task/project branch. Applies the "where to read" rule (§7.1 / Appendix A step 3). No hooks.
 
-- **`tt task context delete <context-id> [--task <task-id>] [--repo PATH]`** — Delete a context file from the specified task (default: current task). Removes the context file from the repository and removes the corresponding `context:` entry from the task's frontmatter. Creates a commit: `Delete context: <context-title> (<task-id>)` and advances the task bookmark. Exits with code 1 if the context ID is not registered on the task. Applies the "where to read" rule (§7.1 / Appendix A step 3). No hooks.
+- **`tt task context delete <context-id> [--task <task-id>] [--repo PATH]`** — Delete a context file from the specified task (default: current task). Removes the context file from the repository and removes the corresponding `context:` entry from the task's frontmatter. Creates a commit: `[tt:task:<task-id>:context:delete] <context-title>` and advances the task bookmark. Exits with code 1 if the context ID is not registered on the task. Applies the "where to read" rule (§7.1 / Appendix A step 3). No hooks.
 
 - **`tt task tree [--project <project-id>]... [--detached] | [--all]`** — Generate and print the full project todo list to stdout. Tasks are grouped by project; orphaned tasks are excluded by default. Optional `--project`, `--detached` and `--all` filter which sections are shown. Output format is the markdown described in §4.1. See §7.1 and Appendix A.
 
@@ -339,7 +339,7 @@ The command exits with an error if none of these resolves to a valid jj reposito
 
 - **`tt task reorder <task-id> <modifier>`** — Reorder a direct child task. Modifier is one of `--up`, `--down`, `--after <other-task-id>`, or `--before <other-task-id>` (mutually exclusive). Fails if the reorder is impossible (e.g. already first with `--up`, or `<other-task-id>` is not a sibling). See §6.7.
 
-- **`tt task delete [<task-id>] [--force]`** — Remove a task and its entire descendant subtree from the parent branch. Collects the full subtree via union traversal (reads subtask lists from both each task's own branch and the parent branch's copy at every level). Creates a single `Remove subtask: <title> (<task-id>)` commit on the parent branch that removes the top-level `subtask:` entry and all descendant task files present on that branch. After the commit, deletes all bookmarks in the subtree (`jj bookmark delete`). Dedicated workspaces are forgotten from jj; files left on disk with a warning. Defaults to the current branch if no `<task-id>` is given. Requires task `status: DONE` unless `--force` is specified (which also skips the clean working-copy check). Aborts if no parent is found. See §6.9.
+- **`tt task delete [<task-id>] [--force]`** — Remove a task and its entire descendant subtree from the parent branch. Collects the full subtree via union traversal (reads subtask lists from both each task's own branch and the parent branch's copy at every level). Creates a single `[tt:task:<task-id>:delete] <title>` commit on the parent branch that removes the top-level `subtask:` entry and all descendant task files present on that branch. After the commit, deletes all bookmarks in the subtree (`jj bookmark delete`). Dedicated workspaces are forgotten from jj; files left on disk with a warning. Defaults to the current branch if no `<task-id>` is given. Requires task `status: DONE` unless `--force` is specified (which also skips the clean working-copy check). Aborts if no parent is found. See §6.9.
 
 - **`tt task rename --slug <new-slug> [--task <task-id>] [--repo PATH] [--workspace-dir PATH]`** — Rename a task's slug (the human-readable part of the task ID), preserving the hex suffix. For example: `task/old-name-abc123` → `task/new-name-abc123`. Renames the jj bookmark, the task directory, and updates the parent's subtask reference. Requires a clean working copy. If the task has no parent (e.g., a project), only the bookmark and directory are renamed. Silently succeeds if the new slug matches the current slug. Errors if the new ID would conflict with an existing bookmark. See §6.10.
 
@@ -363,46 +363,47 @@ Each task and project branch follows a structured lifecycle of named commits. Th
 
 | Commit description | Command | Purpose |
 |--------------------|---------|---------|
-| `Create workspace` | `tt workspace init` | Adds `.tt/config.toml` to the working copy |
-| `Create project: <title>` | `tt task create --project` | Creates the project task file on the project branch |
-| `Begin task: <title> (<task-id>)` | `tt task checkout` | First checkout: creates `TASK.md` symlink and sets status → `IN-PROGRESS`; advances task bookmark |
-| `Create task: <child-title> (<task-id>)` | `tt task create` | On the parent branch: creates child task file and registers `subtask: [ ] <task-id>` in the parent file; parent bookmark advances |
-| `Edit task: <title> (<task-id>)` | `tt task edit` (also invoked by `tt task create`) | Sets title, description, and labels in the task file frontmatter; task bookmark initialised here on the child branch |
-| `Checkpoint: <message> (<task-id>)` or `Checkpoint: <task-title> (<task-id>)` | `tt task checkpoint` | Advances the task bookmark to the current working state |
-| `Complete task: <title> (<task-id>)` | `tt task complete` | Sets status → `DONE` in the task file; final task bookmark advance |
-| `Handoff: <title> (<task-id>)` | `tt task checkin` | Off-mainline merge-source commit; child bookmark does **not** advance to this commit |
-| `Publish: <title> (<project-id>)` | `tt task publish` | Off-mainline merge-source commit for project branches; project bookmark does **not** advance to this commit |
-| `Merge subtask: <title> (<task-id>)` | `tt task checkin` | Empty merge commit on the parent branch; parent bookmark advances |
-| `Remove subtask: <title> (<task-id>)` | `tt task delete` | On the parent branch: removes child task file and `subtask:` entry from parent frontmatter; parent bookmark advances |
+| `[tt:workspace:init] Create workspace` | `tt workspace init` | Adds `.tt/config.toml` to the working copy |
+| `[tt:task:<project-id>:create] <title>` | `tt task create --project` | Creates the project task file on the project branch |
+| `[tt:task:<task-id>:checkout] <title>` | `tt task checkout` | First checkout: creates `TASK.md` symlink and sets status → `IN-PROGRESS`; advances task bookmark |
+| `[tt:task:<task-id>:create] <title>` | `tt task create` | On the parent branch: creates child task file and registers `subtask: [ ] <task-id>` in the parent file; parent bookmark advances |
+| `[tt:task:<task-id>:edit] <title>` | `tt task edit` (also invoked by `tt task create`) | Sets title, description, and labels in the task file frontmatter; task bookmark initialised here on the child branch |
+| `[tt:task:<task-id>:checkpoint] <message>` | `tt task checkpoint` | Advances the task bookmark to the current working state |
+| `[tt:task:<task-id>:complete] <title>` | `tt task complete` | Sets status → `DONE` in the task file; final task bookmark advance |
+| `[tt:task:<task-id>:handoff] <title>` | `tt task checkin` | Off-mainline merge-source commit; child bookmark does **not** advance to this commit |
+| `[tt:task:<project-id>:handoff] <title>` | `tt task publish` | Off-mainline merge-source commit for project branches; project bookmark does **not** advance to this commit |
+| `[tt:task:<task-id>:checkin] <title>` | `tt task checkin` | Empty merge commit on the parent branch; parent bookmark advances |
+| `[tt:task:<project-id>:publish] <title>` | `tt task publish` | Empty merge commit on the target branch; target bookmark advances |
+| `[tt:task:<task-id>:delete] <title>` | `tt task delete` | On the parent branch: removes child task file and `subtask:` entry from parent frontmatter; parent bookmark advances |
 
 **Branch lifecycle diagram.** The diagram below shows the commit graph for a project `project/P` containing one task `task/T`, from workspace initialisation through to task completion. Commits are shown newest-first (top) to oldest (bottom), matching `jj log` output. `↑` marks where the named bookmark sits after each commit; `├─╮` is a branch fork (task branches from parent); `○─╯` is a merge (handoff merges into parent).
 
 ```
 (initial commit):
-  ○  Create workspace
+  ○  [tt:workspace:init] Create workspace
 
 project/P:
-  ○  Checkpoint: ...                                 (continued project work, optional)
+  ○  [tt:task:task/T:checkpoint] ...                 (continued project work, optional)
   │  ↑ project/P
-  ○  Merge subtask: <T-title> (task/T)               ← tt task checkin
+  ○  [tt:task:task/T:checkin] <T-title>              ← tt task checkin
   ├─╮
-  │ ○  Handoff: <T-title> (task/T)                   ← tt task checkin  (NOT on mainline)
-  │ ○  Complete task: <T-title> (task/T)             ← tt task complete  (status → DONE)
+  │ ○  [tt:task:task/T:handoff] <T-title>            ← tt task checkin  (NOT on mainline)
+  │ ○  [tt:task:task/T:complete] <T-title>           ← tt task complete  (status → DONE)
   │ │  ↑ task/T  (final bookmark position)
-  │ ○  Checkpoint: ...                               ← tt task checkpoint
+  │ ○  [tt:task:task/T:checkpoint] ...               ← tt task checkpoint
   │ │  ↑ task/T
-  │ ○  Begin task: <T-title> (task/T)                ← tt task checkout
+  │ ○  [tt:task:task/T:checkout] <T-title>           ← tt task checkout
   │ │  ↑ task/T
-  │ ○  Edit task: <T-title> (task/T)                  ← tt task edit  (child branch init)
+  │ ○  [tt:task:task/T:edit] <T-title>               ← tt task edit  (child branch init)
   │    ↑ task/T  (initial bookmark position)
   ├─╯
-  ○  Create task: <T-title> (task/T)                 ← tt task create  (on parent branch)
+  ○  [tt:task:task/T:create] <T-title>               ← tt task create  (on parent branch)
   │  ↑ project/P
-  ○  Checkpoint: ...                                 (optional project work)
+  ○  [tt:task:task/T:checkpoint] ...                 (optional project work)
   │  ↑ project/P
-  ○  Begin task: <title> (project/P)                 ← tt task checkout
+  ○  [tt:task:project/P:checkout] <title>            ← tt task checkout
   │  ↑ project/P
-  ○  Create project: <title>                         ← tt task create --project
+  ○  [tt:task:project/P:create] <title>              ← tt task create --project
      ↑ project/P  (initial bookmark position)
 ```
 
@@ -410,30 +411,30 @@ project/P:
 
 ```
 project/P:
-  ○  Merge subtask: <T-title> (task/T)               ← tt task checkin  (complete)
+  ○  [tt:task:task/T:checkin] <T-title>              ← tt task checkin  (complete)
   ├─╮
-  │ ○  Handoff: <T-title> (task/T)                   (NOT on mainline)
-  │ ○  Complete task: <T-title> (task/T)             ← tt task complete
+  │ ○  [tt:task:task/T:handoff] <T-title>            (NOT on mainline)
+  │ ○  [tt:task:task/T:complete] <T-title>           ← tt task complete
   │ │  ↑ task/T  (final)
-  │ ○  Checkpoint: ... (more work)
+  │ ○  [tt:task:task/T:checkpoint] ... (more work)
   │ │  ↑ task/T
-  ○─╯  Merge subtask: <T-title> (task/T)             ← tt task checkin  (partial)
+  ○─╯  [tt:task:task/T:checkin] <T-title>            ← tt task checkin  (partial)
   ├─╮
-  │ ○  Handoff: <T-title> (task/T)                   (NOT on mainline)
-  │ ○  Checkpoint: ...
+  │ ○  [tt:task:task/T:handoff] <T-title>            (NOT on mainline)
+  │ ○  [tt:task:task/T:checkpoint] ...
   │    ↑ task/T  (bookmark stayed here during partial checkin)
   ├─╯
-  ○  Create task: <T-title> (task/T)                 ← tt task create
+  ○  [tt:task:task/T:create] <T-title>               ← tt task create
   ...
 ```
 
-Note that `Checkpoint:` at the bottom of the task/T arm in the partial diagram is the common ancestor of both the subsequent `Checkpoint: (more work)` commits (task continues from this point) and the partial `Handoff:` (which branches off from the same commit).
+Note that the `[tt:task:task/T:checkpoint]` at the bottom of the task/T arm in the partial diagram is the common ancestor of both the subsequent `[tt:task:task/T:checkpoint]` (more work) commits (task continues from this point) and the partial `[tt:task:task/T:handoff]` (which branches off from the same commit).
 
 ---
 
 ### 6.1 Task creation (`tt task create`)
 
-**With `--parent`:** The tool creates a commit **on the parent task's branch** (regardless of which branch is currently checked out) that both creates a minimal task stub directory (`.tt/task/<slug>-<hex>/TASK.md` containing `status: TODO`, `created`, and `updated` timestamps) and adds `subtask: [ ] <task-id>` to the parent task file, described as `Create task: <title> (<task-id>)`. The parent bookmark is advanced to this commit. The child task's branch is then initialised by invoking `tt task edit` to set the title, body, and labels; the task bookmark is initialised here with an `Edit task: <title> (<task-id>)` commit. The `TASK.md` symlink is created when the task is first checked out (see §6.2). After task creation, if the working copy was already on the parent branch, it is left at the updated parent branch tip; otherwise it is restored to its original position.
+**With `--parent`:** The tool creates a commit **on the parent task's branch** (regardless of which branch is currently checked out) that both creates a minimal task stub directory (`.tt/task/<slug>-<hex>/TASK.md` containing `status: TODO`, `created`, and `updated` timestamps) and adds `subtask: [ ] <task-id>` to the parent task file, described as `[tt:task:<task-id>:create] <title>`. The parent bookmark is advanced to this commit. The child task's branch is then initialised by invoking `tt task edit` to set the title, body, and labels; the task bookmark is initialised here with a `[tt:task:<task-id>:edit] <title>` commit. The `TASK.md` symlink is created when the task is first checked out (see §6.2). After task creation, if the working copy was already on the parent branch, it is left at the updated parent branch tip; otherwise it is restored to its original position.
 
 **Preconditions** (checked before any VCS operation; any failure aborts the command):
 
@@ -470,7 +471,7 @@ Because the parent task file is modified, sibling (and descendant) branches may 
 
 **Preconditions:** must be on a task or project branch; working copy must be clean.
 
-**Commit:** `Edit task: <title> (<task-id>)`. The task bookmark is advanced to this commit. The `updated` timestamp is refreshed.
+**Commit:** `[tt:task:<task-id>:edit] <title>`. The task bookmark is advanced to this commit. The `updated` timestamp is refreshed.
 
 **Output:** prints `<task-id>` on success.
 
@@ -490,7 +491,7 @@ If the target workspace's working copy is an ancestor task's workspace (not the 
 
 `tt task checkpoint` records the current state of work and advances the task bookmark. It always creates a new commit, even if the working copy is empty.
 
-**Commit message:** `Checkpoint: <message> (<task-id>)`. The `<message>` part comes from `--message` if provided; otherwise the user is prompted to enter it in an editor (see §6.3.1 below).
+**Commit message:** `[tt:task:<task-id>:checkpoint] <message>`. The `<message>` part comes from `--message` if provided; otherwise the user is prompted to enter it in an editor (see §6.3.1 below).
 
 **Commit flow:** Always `jj commit -m "<full-message>"` regardless of whether the working copy has pending changes. This works for both empty and non-empty WC and always leaves a clean open working copy on top.
 
@@ -556,7 +557,7 @@ bookmark → Checkpoint → @ (new open WC)
 
 ### 6.4 Complete (`tt task complete`)
 
-`tt task complete` marks a task as done. It creates a `Complete task: <title> (<task-id>)` commit on the task branch that updates `status` from `IN-PROGRESS` to `DONE` in the task file, and advances the task bookmark to this commit.
+`tt task complete` marks a task as done. It creates a `[tt:task:<task-id>:complete] <title>` commit on the task branch that updates `status` from `IN-PROGRESS` to `DONE` in the task file, and advances the task bookmark to this commit.
 
 An optional `<task-id>` positional argument may be provided. If given, the command completes that task regardless of which branch is currently checked out. If omitted, the command completes the current task (the task whose branch is currently checked out). The target task must have a checked-out worktree; `--worktree=<path>` is required when the task has multiple worktrees.
 
@@ -568,7 +569,7 @@ An optional `<task-id>` positional argument may be provided. If given, the comma
 - Working copy of the target worktree is clean.
 - All child tasks are done: every `subtask:` entry in the target task file is marked `[x]`. `--force` bypasses this check.
 
-**Behavior:** Updates `status: DONE` in the task file frontmatter, describes the commit as `Complete task: <title> (<task-id>)`, advances the task bookmark, and leaves a clean working copy on top. Once a task is marked `DONE`, `tt task checkin` will automatically mark the corresponding `subtask:` entry in the parent's frontmatter as `[x]` when the handoff is created (see §6.5).
+**Behavior:** Updates `status: DONE` in the task file frontmatter, describes the commit as `[tt:task:<task-id>:complete] <title>`, advances the task bookmark, and leaves a clean working copy on top. Once a task is marked `DONE`, `tt task checkin` will automatically mark the corresponding `subtask:` entry in the parent's frontmatter as `[x]` when the handoff is created (see §6.5).
 
 **Hooks:** Runs **pre-complete** (blocking) before any VCS operation, and **post-complete** (optional) after success. Both run in the target task worktree.
 
@@ -597,12 +598,12 @@ In both modes, with `--rebase` or `--merge`, the tool first propagates from the 
 The handoff commit contains:
 
 1. `TASK.md` rewritten to point to the parent task's task file (`rm TASK.md && ln -s .tt/task/<parent-slug>/TASK.md TASK.md`), resolving the TASK.md conflict with the parent branch.
-2. If `--context <markdown>` is provided: a new context file is created in the parent task directory (`.tt/task/<parent-slug>/context/<ctx-slug>-<ctx-hex>.md`) with title `Handoff: <child-task-title>`, and a corresponding `context: context/<ctx-slug>-<ctx-hex>` entry is added to the parent task file's frontmatter.
+2. If `--context <markdown>` is provided: a new context file is created in the parent task directory (`.tt/task/<parent-slug>/context/<ctx-slug>-<ctx-hex>.md`) with title derived from the child task title, and a corresponding `context: context/<ctx-slug>-<ctx-hex>` entry is added to the parent task file's frontmatter.
 3. The corresponding `subtask:` entry in the parent task file's frontmatter is updated to reflect the child's current status: `subtask: [x] <task-id>` if `DONE`, or `subtask: [-] <task-id>` if `IN-PROGRESS`.
 
-The handoff commit is described as `Handoff: <task-title> (<task-id>)`.
+The handoff commit is described as `[tt:task:<task-id>:handoff] <task-title>`.
 
-**Merging into the parent.** After the handoff commit is created, the tool locates the parent task worktree (creating and initializing it if necessary) and merges the handoff commit into the parent branch. The resulting merge commit is described as `Merge subtask: <task-title> (<task-id>)`. The parent branch bookmark advances to this merge commit.
+**Merging into the parent.** After the handoff commit is created, the tool locates the parent task worktree (creating and initializing it if necessary) and merges the handoff commit into the parent branch. The resulting merge commit is described as `[tt:task:<task-id>:checkin] <task-title>`. The parent branch bookmark advances to this merge commit.
 
 **After checkin:**
 - **Partial checkin (task status `IN-PROGRESS`):** The tool switches the worktree to the parent (updates `HEAD` symlink). The child bookmark has not moved. The parent now contains the merged handoff commit and sibling branches can be propagated.
@@ -616,9 +617,9 @@ Merge conflicts in the working copy or other `.tt/` files must be resolved manua
 
 **Publish commit.** Like `tt task checkin`'s handoff, `tt task publish` creates an off-mainline merge-source commit as a child of the project bookmark (the project bookmark does not advance to it). It removes the `TASK.md` root symlink and the entire `.tt/task/` directory from the working tree. Task files are development-only scaffolding; they must not land on the delivery branch. The `.tt/config.toml` workspace configuration file is not removed. The `--context` option is not supported (there is no parent task file to attach context to). The task-file diff validation (see §6.6) does not apply to `tt task publish`.
 
-The publish commit is described as `Publish: <project-title> (<project-id>)`.
+The publish commit is described as `[tt:task:<project-id>:handoff] <project-title>`.
 
-**Merging into the target.** After the handoff commit is created, the tool merges it into the target branch. The resulting merge commit is described as `Merge subtask: <project-title> (<project-id>)`. The target branch bookmark advances to this merge commit.
+**Merging into the target.** After the handoff commit is created, the tool merges it into the target branch. The resulting merge commit is described as `[tt:task:<project-id>:publish] <project-title>`. The target branch bookmark advances to this merge commit.
 
 With `--rebase` or `--merge`, the tool first propagates from the target into the project branch before publishing; if propagation cannot complete without conflicts, the command bails unless `--force` is used.
 
@@ -631,7 +632,7 @@ Before attempting any merge, `tt task checkin` performs validation and refuses i
 - Current branch is a task branch (not a project branch — use `tt task publish` for project branches)
 - Current task has exactly one parent
 - No conflicts with parent once the handoff commit has been applied (unless `--force`), or after the optional pre-checkin propagate step when using `--rebase`/`--merge`
-- No modifications to non-editable task files in the unmerged range: only the current task file may be modified by the user. Any changes to any other `.tt/task` file in the unmerged range cause checkin to abort. (The parent task file is updated by the tool itself via the `Handoff:` and `Merge subtask:` commits, which are on the parent branch and are not part of the child's unmerged range.)
+- No modifications to non-editable task files in the unmerged range: only the current task file may be modified by the user. Any changes to any other `.tt/task` file in the unmerged range cause checkin to abort. (The parent task file is updated by the tool itself via the `[tt:task:<id>:handoff]` and `[tt:task:<id>:checkin]` commits, which are on the parent branch and are not part of the child's unmerged range.)
 - The only change to `TASK.md` in the unmerged range from the child is the symlink pointing to the child's task file, then reverted by the handoff commit
 
 On failure, `tt task checkin` aborts with an error and leaves the repository unchanged. Implementations may add further checks via hooks.
@@ -666,13 +667,13 @@ If no `<task-id>` is given, the command operates on the current branch.
 5. In the target workspace, create a new WC branching from the parent bookmark (`jj new <parent_bookmark>`).
 6. Remove the `subtask:` entry for the top-level task from the parent task file's frontmatter.
 7. Remove the top-level task directory and all descendant task directories present on the parent branch (best-effort via `rm -rf`).
-8. Commit: `Remove subtask: <title> (<task-id>)`. Advance the parent bookmark to this commit.
+8. Commit: `[tt:task:<task-id>:delete] <title>`. Advance the parent bookmark to this commit.
 9. Leave a clean open WC in the target workspace (`jj new '@'`).
 10. Bulk delete bookmarks: run `jj bookmark delete` for every task in the subtree (root + all descendants). Log a warning for any that cannot be deleted.
 11. For each task in the subtree: if a dedicated workspace exists at `<workspace-dir>/<task-id>/`, run `jj workspace forget <name>` to deregister it from jj, but **do not delete the files**. Alert the user that the workspace directory still exists and must be cleaned up manually.
 12. Run **post-delete** hook (non-blocking).
 
-**Delegation from `tt task checkin --delete`:** When `tt task checkin` is run with `--delete`, it first performs the normal checkin (handoff + merge commits on the parent branch), then invokes `tt task delete` on the same task. This produces two commits on the parent branch: the `Merge subtask:` commit from checkin, followed by the `Remove subtask:` commit from delete. All subtree bookmarks are deleted after the `Remove subtask:` commit.
+**Delegation from `tt task checkin --delete`:** When `tt task checkin` is run with `--delete`, it first performs the normal checkin (handoff + merge commits on the parent branch), then invokes `tt task delete` on the same task. This produces two commits on the parent branch: the `[tt:task:<id>:checkin]` commit from checkin, followed by the `[tt:task:<id>:delete]` commit from delete. All subtree bookmarks are deleted after the `[tt:task:<id>:delete]` commit.
 
 **Hooks:** Runs **pre-delete** (blocking) before any VCS operation, and **post-delete** (non-blocking) after success.
 
@@ -961,7 +962,7 @@ Every hook receives at least:
 
 The standard workflow:
 
-1. **Initialize** — `tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]`. The tool checks that the repo working directory is clean and that `.tt` does not exist as a non-directory entry in the repo root. It creates the virtual project directory, `.tt/config.toml` (task prefix default `task/`, project prefix default `project/`), a `.tt/workspace` symlink pointing to the virtual project directory, a `.tt/.gitignore` (containing `/history` and `/workspace`), and a `HEAD` symlink in the virtual directory that initially points to the repo and is updated on each checkout. It creates a `Create workspace` commit in the jj repository (`.tt/config.toml` and `.tt/.gitignore` are tracked; `.tt/history` and `.tt/workspace` are gitignored). No named bookmark is created by this command. See §5.1 and §6.2.
+1. **Initialize** — `tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]`. The tool checks that the repo working directory is clean and that `.tt` does not exist as a non-directory entry in the repo root. It creates the virtual project directory, `.tt/config.toml` (task prefix default `task/`, project prefix default `project/`), a `.tt/workspace` symlink pointing to the virtual project directory, a `.tt/.gitignore` (containing `/history` and `/workspace`), and a `HEAD` symlink in the virtual directory that initially points to the repo and is updated on each checkout. It creates a `[tt:workspace:init] Create workspace` commit in the jj repository (`.tt/config.toml` and `.tt/.gitignore` are tracked; `.tt/history` and `.tt/workspace` are gitignored). No named bookmark is created by this command. See §5.1 and §6.2.
 
 2. **Create a project** — `tt task create --project [--target <commit-rev>] [--slug <slug>] [--title <title>] [--label <label> ...]`. The tool prompts for title (and autosuggested branch name) if needed, reads the task body from stdin (via pipe or redirect) if stdin is not a terminal; otherwise opens an editor for body input. Creates the project branch from the `--target` VCS revision if specified, defaulting to the current revision, and creates the project task file. If the target revision itself exists within a task tree, the tool notifies the user and refuses to proceed. See §6.1.
 
@@ -972,9 +973,9 @@ The standard workflow:
 5. **Work on the task** — User commits changes on the branch and accumulates context in `./TASK.md`.
    - **Add context** — Run `tt task context add [--title <title>]` and provide context body via stdin (e.g., `cat ./notes.md | tt task context add --title "Research notes"`). If stdin is a terminal, an editor is opened for body input. Creates a commit. See §5.2.
    - **Read context** — Run `tt task context get [<context-id>...]` to print the raw contents of one or more context files for the current task to stdout. See §5.2.
-   - **Checkpoint** — Run `tt task checkpoint [--message <message>]` to create a named `Checkpoint: <message>` commit and advance the task bookmark. See §6.3.
+   - **Checkpoint** — Run `tt task checkpoint [--message <message>]` to create a `[tt:task:<task-id>:checkpoint] <message>` commit and advance the task bookmark. See §6.3.
 
-6. **Complete the task** — `tt task complete [<task-id>] [--worktree=<path>] [--force]`. When work is done, marks the task `DONE` with a `Complete task: <title> (<task-id>)` commit and advances the task bookmark. Requires all child tasks to be done unless `--force`. Can be invoked from any workspace by passing `<task-id>`. See §6.4.
+6. **Complete the task** — `tt task complete [<task-id>] [--worktree=<path>] [--force]`. When work is done, marks the task `DONE` with a `[tt:task:<task-id>:complete] <title>` commit and advances the task bookmark. Requires all child tasks to be done unless `--force`. Can be invoked from any workspace by passing `<task-id>`. See §6.4.
 
 7. **Finish the task** — For task branches (those with a parent): `tt task checkin [<task-id>] [--rebase | --merge] [--force] [--delete] [--worktree=<path>] [--propagate [...]]`. The tool runs checkin validation (§6.6); if using `--rebase`/`--merge`, first propagates from parent and bails on conflict unless `--force`. It creates the handoff commit, merges into the parent, then switches to the parent worktree and cleans up the child worktree. Can be invoked from any workspace by passing `<task-id>`. If merge conflicts occur (e.g. in other `.tt/` files), the user resolves manually; for `TASK.md`, keep the parent's version. With `--propagate`, also runs `tt task propagate --from <parent>` after the merge completes. For project branches (parentless roots): `tt task publish [<project-id>] --target <branch> [--rebase | --merge] [--force]`. Creates a handoff commit that strips task scaffolding files, merges into `--target`, and leaves the user on the project branch (no workspace switch). See §6.5 and §6.6.
 

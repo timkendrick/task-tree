@@ -199,7 +199,7 @@ main() {
   rm -rf "$target_ws/.tt/task"
 
   # Commit the handoff (project bookmark does NOT advance)
-  jj -R "$target_ws" commit -m "Publish: $task_title ($task_id)"
+  jj -R "$target_ws" commit -m "$(format_commit_message "task" "handoff" "$task_id" "$task_title")"
   local handoff_commit
   handoff_commit="$(jj -R "$target_ws" log -r '@-' --no-graph -T 'commit_id')"
 
@@ -214,7 +214,7 @@ main() {
     exit 1
   fi
 
-  jj -R "$target_ws" describe -m "Merge subtask: $task_title ($task_id)"
+  jj -R "$target_ws" describe -m "$(format_commit_message "task" "publish" "$task_id" "$task_title")"
   jj -R "$target_ws" bookmark set "$target" -r '@'
 
   # Leave a clean open WC in target_ws
