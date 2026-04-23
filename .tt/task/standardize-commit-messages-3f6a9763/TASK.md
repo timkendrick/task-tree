@@ -1,6 +1,6 @@
 ---
 title: "Standardize commit messages across all commands"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-07T09:56:38Z
 updated: 2026-04-23T07:14:54Z
 context: context/implementation-plan-84f963b2
