@@ -210,7 +210,7 @@ main() {
   rm -f "$target_worktree/$ctx_file"
 
   # Commit the changes
-  jj -R "$target_worktree" commit -m "Delete context: $ctx_title ($branch)"
+  jj -R "$target_worktree" commit -m "$(format_commit_message "task" "context:delete" "$branch" "$ctx_title")"
   jj -R "$target_worktree" bookmark set "$branch" -r '@-'
 
   # Commit transaction (records after-op for undo)
