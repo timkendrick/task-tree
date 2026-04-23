@@ -19,7 +19,7 @@ subtask: [ ] task/standardize-filesystem-operations-efdeb08e
 subtask: [ ] task/standardize-vcs-operations-d5419005
 subtask: [ ] task/standardize-metadata-operations-cc4f8cab
 subtask: [ ] task/standardize-command-output-a1c39913
-subtask: [ ] task/standardize-commit-messages-3f6a9763
+subtask: [x] task/standardize-commit-messages-3f6a9763
 subtask: [ ] task/analyze-cross-worktree-transactions-35b7b43d
 subtask: [ ] task/tt-task-checkin-reorder-766c71b4
 subtask: [x] task/tt-task-propagate-completed-branches-227f9ce4
