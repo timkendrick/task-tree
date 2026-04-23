@@ -220,7 +220,7 @@ TOML
   log "Created HEAD -> $repo_abs"
 
   # Commit to jj (config.toml and .gitignore are tracked; history and workspace are ignored)
-  jj -R "$repo_abs" commit -m "Create workspace"
+  jj -R "$repo_abs" commit -m "$(format_commit_message "workspace" "init" "" "Create workspace")"
 
   log "Initialized workspace:"
   log "  repo:           $repo_abs"
