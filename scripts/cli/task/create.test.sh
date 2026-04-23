@@ -135,4 +135,19 @@ test_task_create__propagate() {
 }
 
 
+test_task_create__help() {
+  setup_workspace "create-help"
+  output="" exit_code=0
+  output=$(run_tt task create --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt task create"
+  assert_optional_usage_argument "argument: --title" "$output" "--title"
+  assert_optional_usage_argument "argument: --slug" "$output" "--slug"
+  assert_optional_usage_argument "argument: --parent" "$output" "--parent"
+  assert_optional_usage_argument "argument: --project" "$output" "--project"
+  assert_optional_usage_argument "argument: --repo" "$output" "--repo"
+  assert_optional_usage_argument "argument: --force" "$output" "--force"
+}
+
+
 run_tests "tt task create"

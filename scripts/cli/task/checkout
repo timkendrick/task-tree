@@ -23,8 +23,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} <task-id> [--worktree[=<path>] [--switch]] [--force] [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <task-id> [--worktree[=<path>] [--switch]] [--force] [--repo PATH]
 
 Switch to the given task or project branch.
 
@@ -42,20 +42,20 @@ Options:
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
-  ${SCRIPT_NAME} task/foo-abc12345
-  ${SCRIPT_NAME} task/foo-abc12345 --worktree
-  ${SCRIPT_NAME} task/foo-abc12345 --worktree --switch
-  ${SCRIPT_NAME} task/foo-abc12345 --worktree=/path/to/workspace
-  ${SCRIPT_NAME} task/foo-abc12345 --force
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --worktree
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --worktree --switch
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --worktree=/path/to/workspace
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --force
 
 EOF
-  exit 1
 }
 
 main() {
   local task_id=''
   local worktree_flag=false
   local worktree_path=''
+  local explicit_path=false
   local switch_flag=false
   local force=false
   local repo=''
@@ -69,6 +69,7 @@ main() {
       --worktree=*)
         worktree_flag=true
         worktree_path="${1#--worktree=}"
+        explicit_path=true
         shift
         ;;
       --switch)
@@ -80,37 +81,34 @@ main() {
         shift
         ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
         shift 2
         ;;
       -h|--help)
         usage
+        exit 0
         ;;
       -*)
-        log "Error: Unknown option: $1"
-        usage
+        usage >&2; exit 1
         ;;
       *)
         if [[ -z "$task_id" ]]; then
           task_id="$1"
           shift
         else
-          log "Error: Unexpected argument: $1"
-          usage
+          usage >&2; exit 1
         fi
         ;;
     esac
   done
 
   if [[ -z "$task_id" ]]; then
-    log "Error: <task-id> is required"
-    usage
+    usage >&2; exit 1
   fi
 
   if [[ "$switch_flag" == true && "$worktree_flag" != true ]]; then
-    log "Error: --switch requires --worktree"
-    usage
+    usage >&2; exit 1
   fi
 
   repo="$(resolve_repo "$repo")"
@@ -145,7 +143,7 @@ main() {
 
   # Read task frontmatter from the bookmark
   local task_file_content task_title task_status
-  task_file_content="$(jj "${jj_opts[@]}" file show -r "$task_id" -- "$task_file" 2>/dev/null)" || true
+  task_file_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file")" || true
   task_title="$(parse_quoted_frontmatter_field "$task_file_content" "title")"
   task_status="$(parse_frontmatter_field "$task_file_content" "status")"
 
@@ -196,6 +194,34 @@ main() {
         worktree_path="${workspace_dir}/${task_id}"
       fi
     fi
+
+    # When --worktree=<path> was explicitly given, verify it doesn't
+    # conflict with an existing workspace at a different path.
+    if [[ "$explicit_path" == true ]]; then
+      local existing_wts
+      existing_wts="$(find_worktrees_for_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")"
+      if [[ -n "$existing_wts" ]]; then
+        local normalized_worktree match_found=false
+        normalized_worktree="$(realpath "$worktree_path" 2>/dev/null || echo "$worktree_path")"
+        while IFS= read -r existing_path; do
+          [[ -z "$existing_path" ]] && continue
+          local normalized_existing
+          normalized_existing="$(realpath "$existing_path")"
+          if [[ "$normalized_worktree" == "$normalized_existing" ]]; then
+            match_found=true
+            break
+          fi
+        done <<< "$existing_wts"
+        if [[ "$match_found" != true ]]; then
+          local first_existing
+          first_existing="$(printf '%s' "$existing_wts" | head -1)"
+          log "Error: Task '$task_id' already has a workspace at '$first_existing'."
+          log "  Multiple worktrees per task are not supported."
+          exit 1
+        fi
+      fi
+    fi
+
     target_worktree="$worktree_path"
 
     if [[ -d "$target_worktree" && ( -d "$target_worktree/.jj" || -L "$target_worktree/.jj" ) ]]; then
@@ -233,12 +259,11 @@ main() {
   if [[ "$new_worktree" == true ]]; then
     log "Creating workspace: $target_worktree"
     jj "${jj_opts[@]}" workspace add --name "$task_id" -r "$task_id" "$target_worktree"
-    # Plant .tt/workspace symlink in the new worktree (copied from repo's symlink)
-    local src_workspace="$repo/.tt/workspace"
-    if [[ -L "$src_workspace" ]]; then
-      local wt_tt_dir="$target_worktree/.tt"
-      mkdir -p "$wt_tt_dir"
-      ln -snf "$(readlink "$src_workspace")" "$wt_tt_dir/workspace"
+    # Plant .tt/workspace symlink and history file in the new worktree.
+    mkdir -p "$target_worktree/.tt"
+    init_tt_history "$target_worktree"
+    if [[ -L "$repo/.tt/workspace" ]]; then
+      set_workspace_dir "$target_worktree" "$(get_workspace_dir "$repo")"
     fi
   elif [[ "$worktree_flag" == true ]]; then
     # Existing workspace: move its WC to a new commit on top of the task bookmark
@@ -267,7 +292,7 @@ main() {
     mv "$tmpfile" "$target_worktree/$task_file"
 
     # Describe the WC, advance the bookmark, then create a clean working WC on top
-    jj -R "$target_worktree" describe -m "Begin task: $task_title ($task_id)"
+    jj -R "$target_worktree" describe -m "$(format_commit_message "task" "checkout" "$task_id" "$task_title")"
     jj -R "$target_worktree" bookmark set "$task_id"
     jj -R "$target_worktree" new "@"
   fi

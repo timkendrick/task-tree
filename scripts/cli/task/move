@@ -20,8 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [--task <task-id>] --parent <parent-task-id> [--repo PATH] [--workspace-dir PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] --parent <parent-task-id> [--repo PATH] [--workspace-dir PATH]
 
 Reparent a task by moving it to a different parent.
 
@@ -37,11 +37,10 @@ Options:
   -h, --help             Show this help
 
 Examples:
-  ${SCRIPT_NAME} --parent project/main-app-abc12345
-  ${SCRIPT_NAME} --task task/foo-abc12345 --parent task/bar-def67890
+  ${COMMAND_NAME:-$SCRIPT_NAME} --parent project/main-app-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345 --parent task/bar-def67890
 
 EOF
-  exit "${1:-1}"
 }
 
 main() {
@@ -52,34 +51,33 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --task)
-        [[ $# -lt 2 ]] && { log "Error: --task requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         task_id_arg="$2"
         shift 2
         ;;
       --parent)
-        [[ $# -lt 2 ]] && { log "Error: --parent requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         new_parent_id="$2"
         shift 2
         ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
         shift 2
         ;;
       -h|--help)
-        usage 0
+        usage
+        exit 0
         ;;
       *)
-        log "Error: Unknown option: $1"
-        usage
+        usage >&2; exit 1
         ;;
     esac
   done
 
   # --parent is required
   if [[ -z "$new_parent_id" ]]; then
-    log "Error: --parent is required"
-    usage
+    usage >&2; exit 1
   fi
 
   repo="$(resolve_repo "$repo")"
@@ -192,7 +190,7 @@ main() {
 
   # Read task title for commit messages
   local task_content task_title
-  task_content="$(jj -R "$repo" file show -r "$task_id" -- "$task_file" 2>/dev/null)" || {
+  task_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file")" || {
     log "Error: Could not read task file '$task_file' from '$task_id'."
     exit 1
   }
@@ -258,7 +256,7 @@ main() {
   task_dir="$(task_dir_path "$task_slug")"
   rm -rf "${repo:?}/$task_dir"
 
-  jj -R "$repo" describe -m "Move task: $task_title ($task_id)"
+  jj -R "$repo" describe -m "$(format_commit_message "task" "remove" "$task_id" "$task_title")"
   jj -R "$repo" bookmark set "$old_parent"
   jj -R "$repo" new "@"
 
@@ -284,14 +282,14 @@ main() {
   local task_dir_new
   task_dir_new="$(task_dir_path "$task_slug")"
   mkdir -p "$repo/$task_dir_new"
-  if jj -R "$repo" file show -r "$old_parent_commit_id" -- "$task_file" \
-       > "$repo/$task_file" 2>/dev/null; then
+  if jj_show_at_revision "$repo" "$old_parent_commit_id" "$task_file" \
+       > "$repo/$task_file"; then
     log "Copied task stub from old parent to new parent: $task_file"
   else
     log "Warning: Could not copy task stub '$task_file' from old parent; skipping."
   fi
 
-  jj -R "$repo" describe -m "Move task: $task_title ($task_id)"
+  jj -R "$repo" describe -m "$(format_commit_message "task" "move" "$task_id" "$task_title")"
   jj -R "$repo" bookmark set "$new_parent_id"
   jj -R "$repo" new "@"
 

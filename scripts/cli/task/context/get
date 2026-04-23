@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task context get — Print the raw contents of context file(s) for a task.
 #
 # Usage:
-#   get [<context-id> [...]] [--task <task-id>] [--repo PATH] [-h|--help]
+#   get [<context-id>...] [--task <task-id>] [--repo PATH] [-h|--help]
 #
 # Options:
 #   <context-id>...      Context IDs to retrieve (default: all context files).
@@ -22,8 +22,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${COMMAND_NAME:+$COMMAND_NAME }${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<context-id> [...]] [--task <task-id>] [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<context-id>...] [--task <task-id>] [--repo PATH]
 
 Print the raw contents of context file(s) for a task to stdout.
 
@@ -41,13 +41,12 @@ Options:
   -h, --help           Show this help.
 
 Examples:
-  ${SCRIPT_NAME}
-  ${SCRIPT_NAME} context/oauth-notes-abc12345
-  ${SCRIPT_NAME} context/oauth-notes-abc12345 context/api-design-deadbeef
-  ${SCRIPT_NAME} --task task/foo-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME}
+  ${COMMAND_NAME:-$SCRIPT_NAME} context/oauth-notes-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} context/oauth-notes-abc12345 context/api-design-deadbeef
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345
 
 EOF
-  exit 1
 }
 
 main() {
@@ -58,14 +57,14 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --task)
-        [[ $# -lt 2 ]] && { log "Error: --task requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         task_id_arg="$2"; shift 2 ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
-      -h|--help) usage ;;
+      -h|--help) usage; exit 0 ;;
       -*)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
       *)
         ctx_id_args+=("$1"); shift ;;
     esac
@@ -120,7 +119,7 @@ main() {
   local task_file
   task_file="$(task_file_path "$task_suffix")"
   local task_content
-  if ! task_content="$(jj -R "$repo" --ignore-working-copy file show -r "$read_branch" -- "$task_file" 2>/dev/null)"; then
+  if ! task_content="$(jj_show_at_revision "$repo" "$read_branch" "$task_file")"; then
     log "Error: Could not read task file '$task_file' from '$read_branch'."
     exit 1
   fi
@@ -175,7 +174,7 @@ main() {
     local ctx_file
     ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
     local ctx_content
-    if ! ctx_content="$(jj -R "$repo" --ignore-working-copy file show -r "$read_branch" -- "$ctx_file" 2>/dev/null)"; then
+    if ! ctx_content="$(jj_show_at_revision "$repo" "$read_branch" "$ctx_file")"; then
       log "Error: Could not read context file '$ctx_file' from '$read_branch'."
       exit 1
     fi

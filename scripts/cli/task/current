@@ -12,8 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--repo PATH]
 
 Print the current task or project branch name to stdout.
 
@@ -22,7 +22,6 @@ Options:
   -h, --help   Show this help.
 
 EOF
-  exit 1
 }
 
 main() {
@@ -31,11 +30,11 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
-      -h|--help) usage ;;
-      -*) log "Error: Unknown option: $1"; usage ;;
-      *)  log "Error: Unexpected argument: $1"; usage ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage >&2; exit 1 ;;
+      *)  usage >&2; exit 1 ;;
     esac
   done
 

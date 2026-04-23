@@ -56,4 +56,17 @@ test_workspace_switch__switches_to_existing_worktree() {
 }
 
 
+test_workspace_switch__help() {
+  setup_workspace "switch-help"
+  output="" exit_code=0
+  output=$(run_tt workspace switch --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt workspace switch"
+  assert_required_usage_argument "argument: <task-id>" "$output" "<task-id>"
+  assert_required_usage_argument "argument: --worktree=<path>" "$output" "--worktree=<path>"
+  assert_required_usage_argument "argument: --force" "$output" "--force"
+  assert_required_usage_argument "argument: --repo" "$output" "--repo"
+}
+
+
 run_tests "tt workspace switch"

@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task checkpoint — record current state and advance the task bookmark.
 #
 # Usage:
-#   checkpoint [-m <message>] [--squash] [--repo PATH]
+#   checkpoint [--message <message>] [--squash] [--repo PATH]
 #
 # Options:
 #   -m, --message <msg>  Commit message (skips editor prompt).
@@ -18,8 +18,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [-m <message>] [--squash] [--repo PATH]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--message <message>] [--squash] [--repo PATH]
 
 Record the current state of work by creating a named commit and advancing the task bookmark.
 
@@ -29,13 +29,12 @@ Options:
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
-  ${SCRIPT_NAME} -m "add foo"
-  ${SCRIPT_NAME} --message "refactor bar"
-  ${SCRIPT_NAME} --squash -m "collapse and checkpoint"
-  ${SCRIPT_NAME}           # opens editor
+  ${COMMAND_NAME:-$SCRIPT_NAME} -m "add foo"
+  ${COMMAND_NAME:-$SCRIPT_NAME} --message "refactor bar"
+  ${COMMAND_NAME:-$SCRIPT_NAME} --squash -m "collapse and checkpoint"
+  ${COMMAND_NAME:-$SCRIPT_NAME}           # opens editor
 
 EOF
-  exit 1
 }
 
 main() {
@@ -46,7 +45,7 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -m|--message)
-        [[ $# -lt 2 ]] && { log "Error: $1 requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         message="$2"
         shift 2
         ;;
@@ -55,7 +54,7 @@ main() {
         shift
         ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
         shift 2
         ;;
@@ -65,14 +64,13 @@ main() {
         ;;
       -h|--help)
         usage
+        exit 0
         ;;
       -*)
-        log "Error: Unknown option: $1"
-        usage
+        usage >&2; exit 1
         ;;
       *)
-        log "Error: Unexpected argument: $1"
-        usage
+        usage >&2; exit 1
         ;;
     esac
   done
@@ -112,7 +110,7 @@ main() {
 
   # Read task title from task file frontmatter
   local task_file_content task_title
-  task_file_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || true
+  task_file_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
   task_title="$(parse_quoted_frontmatter_field "$task_file_content" "title")"
 
   # Derive task ID (bookmark name without prefix) for display
@@ -131,7 +129,8 @@ main() {
   fi
 
   # Build full commit message
-  local full_msg="Checkpoint: ${message} (${bookmark})"
+  local full_msg
+  full_msg="$(format_commit_message "task" "checkpoint" "$bookmark" "$message")"
 
   # Pre-checkpoint hook (blocking)
   # Begin transaction (records before-op for undo)

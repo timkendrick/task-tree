@@ -24,8 +24,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
-  cat >&2 <<EOF
-Usage: ${SCRIPT_NAME} [<task-id>] [options...]
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [options...]
 
 Edit title, body, and/or labels of a task.
 
@@ -42,15 +42,14 @@ otherwise if none of --title, --label, or --delete-label are given, opens
 an editor pre-populated with the current body text (interactive mode).
 
 Examples:
-  ${SCRIPT_NAME}                                       # interactive: opens editor with current body
-  ${SCRIPT_NAME} --title "New title"                   # preserve body (terminal stdin)
-  echo "New description" | ${SCRIPT_NAME}              # stdin pipe, edit current task
-  ${SCRIPT_NAME} < ./description.md                    # stdin redirect, edit current task
-  echo "New description" | ${SCRIPT_NAME} task/abc-123 # stdin pipe, edit specific task
-  ${SCRIPT_NAME} --title "Updated" < ./description.md  # stdin + explicit title
+  ${COMMAND_NAME:-$SCRIPT_NAME}                                       # interactive: opens editor with current body
+  ${COMMAND_NAME:-$SCRIPT_NAME} --title "New title"                   # preserve body (terminal stdin)
+  echo "New description" | ${COMMAND_NAME:-$SCRIPT_NAME}              # stdin pipe, edit current task
+  ${COMMAND_NAME:-$SCRIPT_NAME} < ./description.md                    # stdin redirect, edit current task
+  echo "New description" | ${COMMAND_NAME:-$SCRIPT_NAME} task/abc-123 # stdin pipe, edit specific task
+  ${COMMAND_NAME:-$SCRIPT_NAME} --title "Updated" < ./description.md  # stdin + explicit title
 
 EOF
-  exit 1
 }
 
 # Usage: rewrite_task_file FILE TITLE STATUS BODY CREATED LABELS... SUBTASKS... CONTEXTS...
@@ -118,28 +117,28 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --title)
-        [[ $# -lt 2 ]] && { log "Error: --title requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         new_title="$2"; has_title=true; shift 2 ;;
       --label)
-        [[ $# -lt 2 ]] && { log "Error: --label requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         add_labels+=("$2"); shift 2 ;;
       --delete-label)
-        [[ $# -lt 2 ]] && { log "Error: --delete-label requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         delete_labels+=("$2"); shift 2 ;;
       --worktree)
-        [[ $# -lt 2 ]] && { log "Error: --worktree requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         worktree_arg="$2"; shift 2 ;;
       --repo)
-        [[ $# -lt 2 ]] && { log "Error: --repo requires an argument"; usage; }
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
-      -h|--help) usage ;;
+      -h|--help) usage; exit 0 ;;
       -*)
-        log "Error: Unknown option: $1"; usage ;;
+        usage >&2; exit 1 ;;
       *)
         if [[ -z "$task_id_arg" ]]; then
           task_id_arg="$1"; shift
         else
-          log "Error: Unexpected argument: $1"; usage
+          usage >&2; exit 1
         fi ;;
     esac
   done
@@ -198,37 +197,23 @@ main() {
 
   # Read current task file content from bookmark
   local task_content
-  task_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || {
+  task_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || {
     log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
     exit 1
   }
 
   # Parse current values from frontmatter
-  local current_title current_status current_created current_body
-  current_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
-  current_status="$(parse_frontmatter_field "$task_content" "status")"
-  current_created="$(parse_frontmatter_field "$task_content" "created")"
-
-  # Body is everything after the second ---
-  current_body="$(parse_body "$task_content")"
-
-  # Parse current labels (multiple label: lines)
+  parse_task_frontmatter "$task_content"
+  local current_title="$PARSED_TITLE"
+  local current_status="$PARSED_STATUS"
+  local current_created="$PARSED_CREATED"
+  local current_body="$PARSED_BODY"
   local -a current_labels=()
-  while IFS= read -r lbl; do
-    [[ -n "$lbl" ]] && current_labels+=("$lbl")
-  done < <(printf '%s' "$task_content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^label:/{sub(/^label:[[:space:]]*/,""); print}')
-
-  # Parse current subtask lines (preserve as-is, full "[ ] task/..." string)
+  current_labels=("${PARSED_LABELS[@]+"${PARSED_LABELS[@]}"}")
   local -a current_subtasks=()
-  while IFS= read -r st; do
-    [[ -n "$st" ]] && current_subtasks+=("$st")
-  done < <(printf '%s' "$task_content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^subtask:/{sub(/^subtask:[[:space:]]*/,""); print}')
-
-  # Parse current context references (preserve as-is)
+  current_subtasks=("${PARSED_SUBTASKS[@]+"${PARSED_SUBTASKS[@]}"}")
   local -a current_contexts=()
-  while IFS= read -r ctx; do
-    [[ -n "$ctx" ]] && current_contexts+=("$ctx")
-  done < <(printf '%s' "$task_content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^context:/{sub(/^context:[[:space:]]*/,""); print}')
+  current_contexts=("${PARSED_CONTEXTS[@]+"${PARSED_CONTEXTS[@]}"}")
 
   # If created is empty (old format task file), generate one now
   if [[ -z "$current_created" ]]; then
@@ -308,7 +293,7 @@ main() {
     rewrite_task_file "$tmpfile" \
       "$final_title" "$current_status" "$final_body" "$current_created"
     local current_file_content
-    current_file_content="$(jj -R "$repo" file show -r "$bookmark" -- "$task_file" 2>/dev/null)" || true
+    current_file_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
 
     if ! task_file_changed "$current_file_content" "$tmpfile"; then
       rm -f "$tmpfile"
@@ -331,7 +316,7 @@ main() {
     rewrite_task_file "$repo/$task_file" \
       "$final_title" "$current_status" "$final_body" "$current_created"
 
-    jj -R "$repo" commit -m "Edit task: $final_title ($bookmark)"
+    jj -R "$repo" commit -m "$(format_commit_message "task" "edit" "$bookmark" "$final_title")"
     jj -R "$repo" bookmark set "$bookmark" -r '@-'
 
     # Return to the original working copy position
@@ -362,7 +347,7 @@ main() {
     # Now write the file and commit
     mv "$tmpfile" "$target_worktree/$task_file"
 
-    jj -R "$target_worktree" commit -m "Edit task: $final_title ($bookmark)"
+    jj -R "$target_worktree" commit -m "$(format_commit_message "task" "edit" "$bookmark" "$final_title")"
     jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
   fi
 

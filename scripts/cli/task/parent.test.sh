@@ -68,4 +68,16 @@ test_task_parent__project_when_already_a_project() {
 }
 
 
+test_task_parent__help() {
+  setup_workspace "parent-help"
+  output="" exit_code=0
+  output=$(run_tt task parent --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_usage_command_name "command name" "$output" "tt task parent"
+  assert_required_usage_argument "argument: <task-id>" "$output" "<task-id>"
+  assert_required_usage_argument "argument: --project" "$output" "--project"
+  assert_required_usage_argument "argument: --repo" "$output" "--repo"
+}
+
+
 run_tests "tt task parent"

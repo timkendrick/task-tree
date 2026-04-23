@@ -50,6 +50,11 @@ else
   _RED='' _GREEN='' _YELLOW='' _CYAN='' _BOLD='' _RESET=''
 fi
 
+# Escape a string for use in a grep -E (extended regex) pattern.
+_escape_ere() {
+  printf '%s' "$1" | sed 's/[.[\*^$()+?{|\\]/\\&/g'
+}
+
 # ---------------------------------------------------------------------------
 # Test Lifecycle
 # ---------------------------------------------------------------------------
@@ -245,6 +250,14 @@ is_diff_empty() {
   local diff_output
   diff_output="$(jj -R "$REPO" diff -r "$rev" --name-only 2>/dev/null)"
   [[ -z "$diff_output" ]]
+}
+
+# Create a plain jj commit in the current repo (does not advance any bookmarks).
+# Usage: jj_commit MESSAGE [REPO]
+jj_commit() {
+  local msg="$1"
+  local repo="${2:-$REPO}"
+  jj -R "$repo" commit -m "$msg" >/dev/null 2>&1
 }
 
 # Read a file from a specific revision.
@@ -586,12 +599,12 @@ assert_wc_dirty() {
   fi
 }
 
-# assert_commit_message LABEL REV EXPECTED_SUBSTRING
+# assert_commit_message LABEL REV EXPECTED
 assert_commit_message() {
   local label="$1" rev="$2" expected="$3"
   local msg
   msg="$(get_commit_message "$rev")"
-  assert_contains "$label" "$msg" "$expected"
+  assert_eq "$label" "$msg" "$expected"
 }
 
 # assert_commit_message_first_line LABEL REV EXPECTED
@@ -1349,4 +1362,95 @@ _harness_run_one() {
 skip_test() {
   _log_skip "$1: $2"
   _record_skip
+}
+
+# ---------------------------------------------------------------------------
+# Usage Instructions Assertion Helpers
+# ---------------------------------------------------------------------------
+
+# Assert that usage output starts with "Usage: <command-name>".
+# Checks the first line begins with "Usage: " followed by the expected command name.
+# Usage: assert_usage_command_name LABEL OUTPUT EXPECTED_COMMAND
+assert_usage_command_name() {
+  local label="$1" output="$2" expected="$3"
+  local first_line
+  first_line="$(printf '%s' "$output" | head -1)"
+  local expected_prefix="Usage: ${expected}"
+  # Check that first line starts with "Usage: <command-name>"
+  if [[ "$first_line" == "${expected_prefix}"* ]]; then
+    _log_pass "$label"
+    _record_pass
+  else
+    _log_fail "$label: expected first line to start with '$expected_prefix', got: '$first_line'"
+    _record_fail "$label: expected first line to start with '$expected_prefix', got: '$first_line'"
+  fi
+}
+
+# Assert that a required argument appears both in the Usage: line AND as an
+# indented description line. Use for positional arguments like <task-id> that
+# are shown in the Usage: summary line.
+# Usage: assert_required_usage_argument LABEL OUTPUT ARGUMENT [ALIAS]
+assert_required_usage_argument() {
+  local label="$1" output="$2" argument="$3" alias="${4:-}"
+  local first_line
+  first_line="$(printf '%s' "$output" | head -1)"
+  local escaped_arg
+  escaped_arg="$(_escape_ere "$argument")"
+
+  # Check 1: argument appears in Usage line with word-boundary context
+  local usage_has_arg=false
+  if printf '%s' "$first_line" | grep -qE "(^|[^a-zA-Z0-9-])${escaped_arg}([^a-zA-Z0-9-]|\$)"; then
+    usage_has_arg=true
+  fi
+  if [[ "$usage_has_arg" == true ]]; then
+    _log_pass "$label (in Usage line)"
+    _record_pass
+  else
+    _log_fail "$label (in Usage line): argument '$argument' not found in Usage line: '$first_line'"
+    _record_fail "$label (in Usage line): argument '$argument' not found in Usage line"
+  fi
+
+  # Check 2: argument (with optional alias) starts an indented description line
+  local escaped_alias=""
+  if [[ -n "$alias" ]]; then
+    escaped_alias="$(_escape_ere "$alias"), "
+  fi
+  local detail_has_arg=false
+  if printf '%s' "$output" | grep -qE "^  ${escaped_alias}${escaped_arg}[^a-zA-Z0-9_]"; then
+    detail_has_arg=true
+  fi
+  if [[ "$detail_has_arg" == true ]]; then
+    _log_pass "$label (documented)"
+    _record_pass
+  else
+    _log_fail "$label (documented): no indented description line found for '$argument'"
+    _record_fail "$label (documented): no indented description line found for '$argument'"
+  fi
+}
+
+# Assert that an optional argument (typically a --flag) appears as an indented
+# description line. Skips the Usage-line check since options are often omitted
+# from the Usage: summary line.
+# Usage: assert_optional_usage_argument LABEL OUTPUT ARGUMENT [ALIAS]
+assert_optional_usage_argument() {
+  local label="$1" output="$2" argument="$3" alias="${4:-}"
+  local escaped_arg
+  escaped_arg="$(_escape_ere "$argument")"
+
+  # Check: argument (with optional alias) starts an indented description line
+  local escaped_alias=""
+  if [[ -n "$alias" ]]; then
+    escaped_alias="$(_escape_ere "$alias"), "
+  fi
+  local detail_has_arg=false
+  if printf '%s' "$output" | grep -qE "^  ${escaped_alias}${escaped_arg}[^a-zA-Z0-9_]"; then
+    detail_has_arg=true
+  fi
+  if [[ "$detail_has_arg" == true ]]; then
+    _log_pass "$label (documented)"
+    _record_pass
+  else
+    _log_fail "$label (documented): no indented description line found for '$argument'"
+    _record_fail "$label (documented): no indented description line found for '$argument'"
+  fi
 }
