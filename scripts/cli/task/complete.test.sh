@@ -14,7 +14,7 @@ test_task_complete__complete_current_task() {
   output=$(complete_task) || exit_code=$?
   assert_success "complete succeeds" "$exit_code"
   assert_task_status "DONE" "$task_id" "DONE"
-  assert_commit_message "commit has Complete" "@-" ":complete]"
+  assert_commit_message "commit message" "@-" "[tt:task:$task_id:complete] T"
   assert_wc_clean "WC clean"
 }
 
