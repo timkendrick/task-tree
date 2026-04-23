@@ -80,8 +80,10 @@ test_task_publish__wc_stays_on_project_after_publish() {
   checkpoint_task "Work" >/dev/null || true
 
   run_tt task publish "$proj_id" --target "main" >/dev/null 2>&1 || true
-  # After publish, WC should be on project branch still
-  # (the command leaves us on the project)
+
+  # After publish, WC should still be on the project branch
+  assert_current_task "WC stays on project branch after publish" "$proj_id"
+  assert_wc_clean "WC is clean after publish"
 }
 
 
