@@ -1,6 +1,6 @@
 ---
 title: "Standardize commit messages across all commands"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-07T09:56:38Z
 updated: 2026-04-07T09:56:38Z
 ---
