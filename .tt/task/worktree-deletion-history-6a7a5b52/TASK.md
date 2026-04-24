@@ -1,6 +1,6 @@
 ---
 title: "Skip final history transaction when deleting worktree working copy"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-24T07:50:25Z
 updated: 2026-04-24T07:50:26Z
 ---
