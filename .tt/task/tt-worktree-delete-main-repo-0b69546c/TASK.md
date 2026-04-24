@@ -1,6 +1,6 @@
 ---
 title: "Prevent deleting canonical repo via `tt worktree delete`"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-24T12:39:46Z
 updated: 2026-04-24T13:05:35Z
 context: context/implementation-plan-e27a1fdb
