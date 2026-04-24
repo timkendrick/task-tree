@@ -22,7 +22,7 @@ subtask: [ ] task/standardize-command-output-a1c39913
 subtask: [ ] task/tt-task-checkin-reorder-766c71b4
 subtask: [ ] task/custom-merge-conflict-resolver-06dbf6a0
 subtask: [ ] task/frontmatter-label-ordering-252d77b0
-subtask: [ ] task/retain-crashed-editor-contents-dcd6b730
+subtask: [x] task/retain-crashed-editor-contents-dcd6b730
 subtask: [x] task/analyze-cross-worktree-transactions-35b7b43d
 subtask: [x] task/standardize-commit-messages-3f6a9763
 subtask: [x] task/tt-task-propagate-completed-branches-227f9ce4
