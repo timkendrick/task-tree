@@ -1,6 +1,6 @@
 ---
 title: "Analyze cross-worktree transactions"
-status: TODO
+status: DONE
 created: 2026-04-07T10:57:11Z
 updated: 2026-04-07T10:57:12Z
 ---
