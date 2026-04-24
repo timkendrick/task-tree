@@ -1,6 +1,6 @@
 ---
 title: "Consolidate transaction history to canonical repo via .jj/repo pointer"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-24T09:24:59Z
 updated: 2026-04-24T09:48:03Z
 context: context/plan-7aa355b9
