@@ -1,6 +1,6 @@
 ---
 title: "Insert frontmatter labels in correct position"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-24T07:36:46Z
 updated: 2026-04-24T07:36:46Z
 ---
