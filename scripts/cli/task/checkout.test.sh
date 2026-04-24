@@ -103,14 +103,14 @@ test_task_checkout__worktree_creates_history_file() {
   # Derive the worktree path (conventional: <workspace_dir>/<task_id>)
   local worktree_path="$VIRTUAL/$task_id"
 
-  # The new worktree must have a .tt/history file so that tt commands
-  # run from within the worktree can record transactions.
-  assert_file_exists ".tt/history exists in worktree" "$worktree_path/.tt/history"
+  # The worktree must NOT have its own .tt/history — history lives only
+  # in the canonical repo (shared across all jj workspaces).
+  assert_file_not_exists "worktree has no .tt/history" "$worktree_path/.tt/history"
 
-  # Running a tt command from within the worktree should not error on
-  # a missing history file (the sed "No such file or directory" failure).
+  # Running a tt command from within the worktree should succeed, writing
+  # its transaction to the canonical repo's .tt/history via the .jj/repo pointer.
   local wt_output wt_exit=0
-  wt_output=$(TT_REPO="$worktree_path" run_tt task checkpoint -m "checkpoint from worktree" 2>&1) || wt_exit=$?
+  wt_output=$(run_tt_in_worktree "$worktree_path" task checkpoint -m "checkpoint from worktree" 2>&1) || wt_exit=$?
   assert_success "tt command in worktree succeeds" "$wt_exit"
 }
 

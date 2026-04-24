@@ -17,9 +17,14 @@ jj_show_at_revision() {
 # Usage: get_jj_op_id REPO
 # Prints the current jj operation ID to stdout.
 # Returns 1 if the operation ID cannot be read.
+#
+# Runs jj in a subshell that cds into REPO first. This ensures jj can resolve
+# its CWD even when the caller's working directory has been deleted (e.g. after
+# a worktree is removed by `worktree delete`). The -R flag tells jj which repo
+# to operate on, so the cd only affects CWD resolution, not the target repo.
 get_jj_op_id() {
   local repo="$1"
-  jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null
+  (cd "$repo" && jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)
 }
 
 # Usage: jj_show_at_op REPO OP REV PATH
@@ -925,21 +930,67 @@ parse_task_frontmatter() {
 # A "transaction" records the jj operation ID before and after a mutating tt
 # command, enabling `tt history undo` to restore the repository state.
 #
-# Log file: <repo>/.tt/history
+# Log file: <canonical-repo>/.tt/history
 # Format:   one line per transaction: <before-op-id>:<after-op-id>
 #           An in-progress transaction has an empty after-op-id: <before-op-id>:
 #
+# History location: the history file always lives in the **canonical** jj repo
+# root (the repo whose .jj/repo entry is a directory, not a pointer file).
+# Secondary jj workspaces have a .jj/repo *file* containing a relative path
+# back to the canonical repo's .jj/repo directory. resolve_history_repo
+# follows that pointer so all workspaces share a single history file.
+#
 # Nesting: sub-commands invoked by a top-level command inherit TT_TRANSACTION_ID
 # via the environment. tt_begin_transaction is a no-op when TT_TRANSACTION_ID is
-# already set. The internal (non-exported) _TT_TRANSACTION_OWNER flag ensures
-# only the owning process commits or rolls back the transaction.
+# already set. The internal (non-exported) _TT_TRANSACTION_OWNER variable
+# stores the resolved history file path for the owning process; it is not
+# exported so sub-processes never inherit it (they are not the transaction owner).
 # ---------------------------------------------------------------------------
+
+# Usage: resolve_history_repo REPO
+# Returns the canonical repo root for history file location.
+# If REPO is a secondary jj workspace (.jj/repo is a pointer file),
+# follows the pointer to find the canonical repo root.
+# If REPO is already the canonical repo (.jj/repo is a directory), returns REPO.
+resolve_history_repo() {
+  local repo="$1"
+  local repo_entry="$repo/.jj/repo"
+  if [[ -f "$repo_entry" ]]; then
+    # Secondary workspace: .jj/repo is a file containing a relative path to
+    # the canonical repo's .jj/repo directory (e.g. "../../../../repo/.jj/repo").
+    local target
+    target="$(cd "$repo/.jj" && realpath "$(cat "$repo_entry")")" \
+      || { log "Error: Could not resolve canonical repo from $repo_entry"; return 1; }
+    # target = /path/to/canonical/.jj/repo — strip /.jj/repo to get repo root
+    dirname "$(dirname "$target")"
+  else
+    # Canonical repo: .jj/repo is a directory (the actual op store)
+    printf '%s' "$repo"
+  fi
+}
+
+# Usage: resolve_history_file_location REPO
+# Returns the path to the .tt/history file for REPO.
+# Follows .jj/repo pointer files so secondary jj workspaces resolve to the
+# canonical repo's history file rather than a per-worktree copy.
+# Canonical repos return <repo>/.tt/history directly.
+resolve_history_file_location() {
+  local repo="$1"
+  local canonical_repo
+  canonical_repo="$(resolve_history_repo "$repo")" || return 1
+  printf '%s/.tt/history' "$canonical_repo"
+}
 
 # Usage: tt_begin_transaction REPO
 # Begins a tt transaction. No-op if TT_TRANSACTION_ID is already set (nested call).
 # Captures the current jj operation ID, checks for in-progress transactions,
 # appends "<before-op-id>:" to .tt/history, exports TT_TRANSACTION_ID, and sets
 # an ERR trap to auto-rollback on failure.
+#
+# Resolves and caches the canonical history file path in _TT_TRANSACTION_OWNER
+# at begin time (while the repo/worktree still exists on disk), so that
+# tt_commit_transaction and tt_rollback_transaction can use it even if the
+# worktree has been deleted by the time they run (e.g. worktree delete).
 tt_begin_transaction() {
   local repo="$1"
   # No-op when nested (parent command already began a transaction)
@@ -947,7 +998,8 @@ tt_begin_transaction() {
     return 0
   fi
 
-  local history_file="$repo/.tt/history"
+  local history_file
+  history_file="$(resolve_history_file_location "$repo")" || exit 1
 
   # Capture current jj operation ID
   local before_op
@@ -976,8 +1028,11 @@ tt_begin_transaction() {
 
   # Export for sub-commands (nested tt_begin_transaction calls will be no-ops)
   export TT_TRANSACTION_ID="$before_op"
-  # Mark this process as the transaction owner (not exported; sub-processes don't inherit)
-  _TT_TRANSACTION_OWNER=true
+  # Store resolved history file path for commit/rollback (not exported — sub-processes
+  # are not the transaction owner). Using the file path rather than `true` means we
+  # avoid re-resolving at commit/rollback time, which may fail if the worktree has
+  # been deleted by then (e.g. worktree delete).
+  _TT_TRANSACTION_OWNER="$history_file"
 
   # Set ERR trap to auto-rollback on failure
   trap 'tt_rollback_transaction "'"$repo"'"' ERR
@@ -989,16 +1044,25 @@ tt_begin_transaction() {
 tt_commit_transaction() {
   local repo="$1"
   # Only the owning process commits the transaction
-  if [[ "${_TT_TRANSACTION_OWNER:-}" != "true" ]]; then
+  if [[ -z "${_TT_TRANSACTION_OWNER:-}" ]]; then
     return 0
   fi
 
-  local history_file="$repo/.tt/history"
+  local history_file="${_TT_TRANSACTION_OWNER}"
   local before_op="${TT_TRANSACTION_ID}"
+
+  # Derive canonical repo from the history file path (walk up from .tt/ to find .jj/).
+  # This is safe even if $repo (a worktree) has been deleted, since history_file
+  # is always inside the canonical repo which remains on disk.
+  local canonical_repo
+  canonical_repo="$(cd "$(dirname "$history_file")" && find_repo_root)" || {
+    log "Warning: Could not derive canonical repo from history file path; history may be incomplete"
+    canonical_repo="$repo"
+  }
 
   # Capture current jj operation ID
   local after_op
-  after_op="$(get_jj_op_id "$repo")" || {
+  after_op="$(get_jj_op_id "$canonical_repo")" || {
     log "Warning: Could not read jj operation ID for transaction commit; history may be incomplete"
     after_op="unknown"
   }
@@ -1022,7 +1086,7 @@ tt_commit_transaction() {
 tt_rollback_transaction() {
   local repo="$1"
   # Only the owning process rolls back
-  if [[ "${_TT_TRANSACTION_OWNER:-}" != "true" ]]; then
+  if [[ -z "${_TT_TRANSACTION_OWNER:-}" ]]; then
     return 0
   fi
 
@@ -1031,12 +1095,19 @@ tt_rollback_transaction() {
     return 0
   fi
 
-  local history_file="$repo/.tt/history"
+  local history_file="${_TT_TRANSACTION_OWNER}"
+
+  # Derive canonical repo from the history file path (walk up from .tt/ to find .jj/).
+  local canonical_repo
+  canonical_repo="$(cd "$(dirname "$history_file")" && find_repo_root)" || canonical_repo="$repo"
 
   log "Rolling back transaction (restoring jj operation: ${before_op:0:12}...)"
 
-  # Restore jj to before-op state
-  jj -R "$repo" op restore "$before_op" 2>/dev/null || \
+  # Restore jj to before-op state.
+  # Use a subshell to cd into the canonical repo first, so jj can resolve CWD
+  # even when the caller's working directory has been deleted (e.g. after
+  # worktree delete).
+  (cd "$canonical_repo" && jj -R "$canonical_repo" op restore "$before_op" 2>/dev/null) || \
     log "Warning: Could not restore jj operation state; manual recovery may be needed"
 
   # Remove the in-progress line from history

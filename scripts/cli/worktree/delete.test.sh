@@ -12,7 +12,7 @@ test_worktree_delete__basic_delete() {
   run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
   # Complete from within the worktree so @ is left clean (empty change on top of bookmark)
   worktree_path=$(run_tt worktree show "$task_id" 2>/dev/null) || true
-  (cd "$worktree_path" && run_tt task complete "$task_id" >/dev/null 2>&1) || true
+  run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
   assert_neq "worktree is not repo" "$worktree_path" "$REPO"
   assert_file_exists "worktree dir exists" "$worktree_path"
@@ -63,7 +63,7 @@ test_worktree_delete__dirty_wc_rejected() {
   run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
   worktree_path=$(run_tt worktree show "$task_id" 2>/dev/null) || true
   # Complete from within the worktree (leaves clean @), then make WC dirty
-  (cd "$worktree_path" && run_tt task complete "$task_id" >/dev/null 2>&1) || true
+  run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
   echo "dirty" > "$worktree_path/dirty-file.txt"
 
@@ -99,7 +99,7 @@ test_worktree_delete__commits_after_bookmark_rejected() {
   run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
   worktree_path=$(run_tt worktree show "$task_id" 2>/dev/null) || true
   # Complete from within worktree (leaves clean @ on top of bookmark); then add a new commit
-  (cd "$worktree_path" && run_tt task complete "$task_id" >/dev/null 2>&1) || true
+  run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
   echo "some work" > "$worktree_path/work.txt"
   jj -R "$worktree_path" commit -m "Some work" >/dev/null 2>&1 || true
@@ -136,7 +136,7 @@ test_worktree_delete__head_symlink_reset() {
   task_id=$(create_task "my-task" "My Task") || true
   run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
   worktree_path=$(run_tt worktree show "$task_id" 2>/dev/null) || true
-  (cd "$worktree_path" && run_tt task complete "$task_id" >/dev/null 2>&1) || true
+  run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
   # Verify HEAD points to the worktree
   local head_target
@@ -160,7 +160,7 @@ test_worktree_delete__head_symlink_unchanged() {
   task_a=$(create_task "task-a" "Task A") || true
   run_tt task checkout "$task_a" --worktree --switch >/dev/null 2>&1 || true
   worktree_a=$(run_tt worktree show "$task_a" 2>/dev/null) || true
-  (cd "$worktree_a" && run_tt task complete "$task_a" >/dev/null 2>&1) || true
+  run_tt_in_worktree "$worktree_a" task complete "$task_a" >/dev/null 2>&1 || true
   task_b=$(create_task "task-b" "Task B") || true
   run_tt task checkout "$task_b" --worktree --switch >/dev/null 2>&1 || true
 
@@ -173,24 +173,6 @@ test_worktree_delete__head_symlink_unchanged() {
   assert_contains "HEAD unchanged, still task_b" "$head_target" "$task_b"
 }
 
-
-test_worktree_delete__records_transaction() {
-  setup_workspace "wt-del-txn"
-  proj_id=$(create_project "proj" "Project") || true
-  checkout_task "$proj_id" >/dev/null || true
-  task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
-  worktree_path=$(run_tt worktree show "$task_id" 2>/dev/null) || true
-  (cd "$worktree_path" && run_tt task complete "$task_id" >/dev/null 2>&1) || true
-
-  get_history_lines; hc_before="${#HISTORY_LINES[@]}"
-  run_tt worktree delete --task "$task_id" >/dev/null 2>&1 || true
-  get_history_lines
-  assert_eq "one new entry" "$((${#HISTORY_LINES[@]} - hc_before))" "1"
-  assert_history_integrity "history after delete"
-}
-
-
 test_worktree_delete__bookmark_preserved() {
   setup_workspace "wt-del-bm"
   proj_id=$(create_project "proj" "Project") || true
@@ -199,7 +181,7 @@ test_worktree_delete__bookmark_preserved() {
   run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
   worktree_path=$(run_tt worktree show "$task_id" 2>/dev/null) || true
   (cd "$worktree_path" && checkpoint_task "Work" >/dev/null 2>&1) || true
-  (cd "$worktree_path" && run_tt task complete "$task_id" >/dev/null 2>&1) || true
+  run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
   run_tt worktree delete --task "$task_id" >/dev/null 2>&1 || true
 
@@ -270,7 +252,7 @@ test_worktree_delete__done_status_allowed() {
   task_id=$(create_task "my-task" "My Task") || true
   run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
   worktree_path=$(run_tt worktree show "$task_id" 2>/dev/null) || true
-  (cd "$worktree_path" && run_tt task complete "$task_id" >/dev/null 2>&1) || true
+  run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
   output="" exit_code=0
   output=$(run_tt worktree delete --task "$task_id" 2>&1) || exit_code=$?
@@ -329,6 +311,53 @@ test_worktree_delete__help() {
   assert_required_usage_argument "argument: --worktree=<path>" "$output" "--worktree=<path>"
   assert_required_usage_argument "argument: --force" "$output" "--force"
   assert_required_usage_argument "argument: --repo" "$output" "--repo"
+}
+
+
+test_worktree_delete__transaction_succeeds() {
+  # When worktree delete is run from outside the worktree being deleted,
+  # the history entry should be written to the canonical repo, not the worktree.
+  setup_workspace "wt-del-txn"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "my-task" "My Task") || true
+  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
+  worktree_path=$(run_tt worktree show "$task_id" 2>/dev/null) || true
+  run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
+
+  get_history_lines; hc_before="${#HISTORY_LINES[@]}"
+  output="" exit_code=0
+  output=$(run_tt worktree delete --task "$task_id" >/dev/null 2>&1) || exit_code=$?
+  assert_success "delete from worktree succeeds" "$exit_code"
+  assert_file_not_exists "worktree dir removed" "$worktree_path"
+  assert_bookmark_exists "bookmark preserved" "$task_id"
+  get_history_lines
+  assert_eq "one new entry" "$((${#HISTORY_LINES[@]} - hc_before))" "1"
+  assert_history_integrity "history after delete"
+}
+
+
+test_worktree_delete__transaction_succeeds_from_worktree() {
+  # When worktree delete is run from inside the worktree being deleted,
+  # the history entry should be written to the canonical repo (not the worktree
+  # which gets deleted), and the chain should be intact.
+  setup_workspace "wt-del-txn-wt"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "my-task" "My Task") || true
+  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
+  worktree_path=$(run_tt worktree show "$task_id" 2>/dev/null) || true
+  run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
+
+  get_history_lines; hc_before="${#HISTORY_LINES[@]}"
+  output="" exit_code=0
+  output=$(run_tt_in_worktree "$worktree_path" worktree delete --task "$task_id" --force 2>&1) || exit_code=$?
+  assert_success "delete from worktree succeeds" "$exit_code"
+  assert_file_not_exists "worktree dir removed" "$worktree_path"
+  assert_bookmark_exists "bookmark preserved" "$task_id"
+  get_history_lines
+  assert_eq "one new entry" "$((${#HISTORY_LINES[@]} - hc_before))" "1"
+  assert_history_integrity "history after delete"
 }
 
 

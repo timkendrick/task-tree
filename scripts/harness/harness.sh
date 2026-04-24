@@ -106,6 +106,15 @@ run_tt() {
   TT_REPO="${TT_REPO:-${REPO:-}}" "$TT" "$@"
 }
 
+# Run a tt command from within a worktree, simulating a user who has cd'd into
+# the worktree without TT_REPO set. This exercises the find_repo_root code path
+# (resolving $repo from CWD) rather than the TT_REPO shortcut.
+# Usage: run_tt_in_worktree WORKTREE_PATH [args...]
+run_tt_in_worktree() {
+  local worktree_path="$1"; shift
+  (cd "$worktree_path" && unset TT_REPO && "$TT" "$@")
+}
+
 # Edit a working copy file (creates or overwrites).
 # Usage: edit_file PATH CONTENT
 edit_file() {
