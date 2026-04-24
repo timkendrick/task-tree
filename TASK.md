@@ -1,1 +1,1 @@
-.tt/task/bootstrap-cli-d35756ce/TASK.md
+.tt/task/tt-worktree-delete-main-repo-0b69546c/TASK.md
