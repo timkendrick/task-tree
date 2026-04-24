@@ -2,7 +2,8 @@
 title: "Prevent deleting canonical repo via `tt worktree delete`"
 status: IN-PROGRESS
 created: 2026-04-24T12:39:46Z
-updated: 2026-04-24T12:39:46Z
+updated: 2026-04-24T13:05:35Z
+context: context/implementation-plan-e27a1fdb
 ---
 `tt worktree delete` can be used to delete worktrees that have been forked from the canonical repo.
 
