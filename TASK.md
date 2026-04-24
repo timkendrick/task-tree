@@ -1,1 +1,1 @@
-.tt/task/bootstrap-cli-d35756ce/TASK.md
+.tt/task/worktree-deletion-history-6a7a5b52/TASK.md
