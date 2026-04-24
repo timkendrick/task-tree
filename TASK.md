@@ -1,1 +1,1 @@
-.tt/task/consolidate-history-to-canonical-repo-2d461c2d/TASK.md
+.tt/task/worktree-deletion-history-6a7a5b52/TASK.md
