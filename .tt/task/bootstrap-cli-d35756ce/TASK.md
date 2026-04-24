@@ -2,7 +2,7 @@
 title: "Bootstrap CLI"
 status: IN-PROGRESS
 created: 2026-03-15T09:29:32Z
-updated: 2026-04-24T07:44:10Z
+updated: 2026-04-24T10:33:50Z
 context: context/task-tt-task-list-6638a980-d50c1e36
 context: context/context-from-2026-02-21-22-12-e533801d
 subtask: [ ] task/tt-workspace-doctor-fe9143d1
@@ -19,11 +19,11 @@ subtask: [ ] task/standardize-filesystem-operations-efdeb08e
 subtask: [ ] task/standardize-vcs-operations-d5419005
 subtask: [ ] task/standardize-metadata-operations-cc4f8cab
 subtask: [ ] task/standardize-command-output-a1c39913
-subtask: [x] task/analyze-cross-worktree-transactions-35b7b43d
 subtask: [ ] task/tt-task-checkin-reorder-766c71b4
 subtask: [ ] task/custom-merge-conflict-resolver-06dbf6a0
 subtask: [ ] task/frontmatter-label-ordering-252d77b0
 subtask: [ ] task/retain-crashed-editor-contents-dcd6b730
+subtask: [x] task/analyze-cross-worktree-transactions-35b7b43d
 subtask: [x] task/standardize-commit-messages-3f6a9763
 subtask: [x] task/tt-task-propagate-completed-branches-227f9ce4
 subtask: [x] task/fix-context-metadata-acb41a0a
