@@ -3,7 +3,7 @@ title: "Skip final history transaction when deleting worktree working copy"
 status: IN-PROGRESS
 created: 2026-04-24T07:50:25Z
 updated: 2026-04-24T07:50:26Z
-subtask: [ ] task/consolidate-history-to-canonical-repo-2d461c2d
+subtask: [x] task/consolidate-history-to-canonical-repo-2d461c2d
 ---
 scripts/cli/worktree/delete
 

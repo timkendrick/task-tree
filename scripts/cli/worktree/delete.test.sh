@@ -316,7 +316,7 @@ test_worktree_delete__help() {
 
 test_worktree_delete__transaction_succeeds() {
   # When worktree delete is run from outside the worktree being deleted,
-  # it should not attempt to update the now-deleted history file.
+  # the history entry should be written to the canonical repo, not the worktree.
   setup_workspace "wt-del-txn"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
@@ -325,17 +325,22 @@ test_worktree_delete__transaction_succeeds() {
   worktree_path=$(run_tt worktree show "$task_id" 2>/dev/null) || true
   run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
+  get_history_lines; hc_before="${#HISTORY_LINES[@]}"
   output="" exit_code=0
   output=$(run_tt worktree delete --task "$task_id" >/dev/null 2>&1) || exit_code=$?
   assert_success "delete from worktree succeeds" "$exit_code"
   assert_file_not_exists "worktree dir removed" "$worktree_path"
   assert_bookmark_exists "bookmark preserved" "$task_id"
+  get_history_lines
+  assert_eq "one new entry" "$((${#HISTORY_LINES[@]} - hc_before))" "1"
+  assert_history_integrity "history after delete"
 }
 
 
 test_worktree_delete__transaction_succeeds_from_worktree() {
   # When worktree delete is run from inside the worktree being deleted,
-  # it should not attempt to update the now-deleted history file.
+  # the history entry should be written to the canonical repo (not the worktree
+  # which gets deleted), and the chain should be intact.
   setup_workspace "wt-del-txn-wt"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
@@ -344,11 +349,15 @@ test_worktree_delete__transaction_succeeds_from_worktree() {
   worktree_path=$(run_tt worktree show "$task_id" 2>/dev/null) || true
   run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
+  get_history_lines; hc_before="${#HISTORY_LINES[@]}"
   output="" exit_code=0
   output=$(run_tt_in_worktree "$worktree_path" worktree delete --task "$task_id" --force 2>&1) || exit_code=$?
   assert_success "delete from worktree succeeds" "$exit_code"
   assert_file_not_exists "worktree dir removed" "$worktree_path"
   assert_bookmark_exists "bookmark preserved" "$task_id"
+  get_history_lines
+  assert_eq "one new entry" "$((${#HISTORY_LINES[@]} - hc_before))" "1"
+  assert_history_integrity "history after delete"
 }
 
 

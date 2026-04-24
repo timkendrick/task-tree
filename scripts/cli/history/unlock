@@ -81,7 +81,8 @@ main() {
 
   repo="$(resolve_repo "$repo")"
 
-  local history_file="$repo/.tt/history"
+  local history_file
+  history_file="$(resolve_history_file_location "$repo")" || exit 1
 
   # History file must exist (workspace must be initialized)
   if [[ ! -f "$history_file" ]]; then
