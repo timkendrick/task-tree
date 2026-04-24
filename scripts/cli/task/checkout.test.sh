@@ -110,7 +110,7 @@ test_task_checkout__worktree_creates_history_file() {
   # Running a tt command from within the worktree should not error on
   # a missing history file (the sed "No such file or directory" failure).
   local wt_output wt_exit=0
-  wt_output=$(TT_REPO="$worktree_path" run_tt task checkpoint -m "checkpoint from worktree" 2>&1) || wt_exit=$?
+  wt_output=$(run_tt_in_worktree "$worktree_path" task checkpoint -m "checkpoint from worktree" 2>&1) || wt_exit=$?
   assert_success "tt command in worktree succeeds" "$wt_exit"
 }
 
