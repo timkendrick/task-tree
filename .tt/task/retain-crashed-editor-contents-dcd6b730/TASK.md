@@ -1,6 +1,6 @@
 ---
 title: "Retain temporary file when editor exits with non-zero status"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-24T07:44:02Z
 updated: 2026-04-24T07:44:03Z
 ---
