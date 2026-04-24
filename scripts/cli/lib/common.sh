@@ -425,6 +425,8 @@ parse_quoted_frontmatter_field() {
 # Usage: raw=$(prompt_raw <<< "$template")
 # Reads template from stdin, opens editor, returns raw file content (no stripping).
 # Exits non-zero if editor exits non-zero.
+# On editor failure, the temporary file is retained on disk and its path is
+# printed to stderr so the user can recover any unsaved edits.
 prompt_raw() {
   local editor
   # Note: we use `vim` rather than `vi` because to ensure POSIX compliance, when it is invoked as `vi`,
@@ -437,8 +439,9 @@ prompt_raw() {
   trap 'rm -f "$tmpfile"' RETURN
   cat > "$tmpfile"
   "$editor" "$tmpfile" </dev/tty >/dev/tty || {
-    log "Error: Editor exited with non-zero status.";
-    cat "$tmpfile" >&2
+    trap - RETURN
+    log "Error: Editor exited with non-zero status."
+    log "  Editor contents: $tmpfile"
     return 1;
   }
   cat "$tmpfile"
