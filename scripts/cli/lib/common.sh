@@ -940,7 +940,7 @@ parse_task_frontmatter() {
 # History location: the history file always lives in the **canonical** jj repo
 # root (the repo whose .jj/repo entry is a directory, not a pointer file).
 # Secondary jj workspaces have a .jj/repo *file* containing a relative path
-# back to the canonical repo's .jj/repo directory. resolve_history_repo
+# back to the canonical repo's .jj/repo directory. resolve_canonical_repo
 # follows that pointer so all workspaces share a single history file.
 #
 # Nesting: sub-commands invoked by a top-level command inherit TT_TRANSACTION_ID
@@ -950,12 +950,12 @@ parse_task_frontmatter() {
 # exported so sub-processes never inherit it (they are not the transaction owner).
 # ---------------------------------------------------------------------------
 
-# Usage: resolve_history_repo REPO
-# Returns the canonical repo root for history file location.
+# Usage: resolve_canonical_repo REPO
+# Returns the canonical repo root for the repository.
 # If REPO is a secondary jj workspace (.jj/repo is a pointer file),
 # follows the pointer to find the canonical repo root.
 # If REPO is already the canonical repo (.jj/repo is a directory), returns REPO.
-resolve_history_repo() {
+resolve_canonical_repo() {
   local repo="$1"
   local repo_entry="$repo/.jj/repo"
   if [[ -f "$repo_entry" ]]; then
@@ -980,7 +980,7 @@ resolve_history_repo() {
 resolve_history_file_location() {
   local repo="$1"
   local canonical_repo
-  canonical_repo="$(resolve_history_repo "$repo")" || return 1
+  canonical_repo="$(resolve_canonical_repo "$repo")" || return 1
   printf '%s/.tt/history' "$canonical_repo"
 }
 
