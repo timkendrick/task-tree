@@ -361,4 +361,37 @@ test_worktree_delete__transaction_succeeds_from_worktree() {
 }
 
 
+test_worktree_delete__canonical_repo_rejected() {
+  # When the only "worktree" for a task is the canonical repo itself
+  # (task checked out in the main workspace without --worktree),
+  # tt worktree delete should refuse with "Not a task worktree".
+  setup_workspace "wt-del-canonical"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "my-task" "My Task") || true
+  # Checkout WITHOUT --worktree, so the task lives in the main repo workspace
+  run_tt task checkout "$task_id" >/dev/null 2>&1 || true
+
+  output="" exit_code=0
+  output=$(run_tt worktree delete --task "$task_id" 2>&1) || exit_code=$?
+  assert_failure "canonical repo rejected" "$exit_code"
+  assert_contains "mentions not a task worktree" "$output" "Not a task worktree"
+}
+
+
+test_worktree_delete__canonical_repo_force_not_allowed() {
+  # --force does NOT bypass the canonical repo check
+  setup_workspace "wt-del-canonical-force"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "my-task" "My Task") || true
+  run_tt task checkout "$task_id" >/dev/null 2>&1 || true
+
+  output="" exit_code=0
+  output=$(run_tt worktree delete --task "$task_id" --force 2>&1) || exit_code=$?
+  assert_failure "canonical repo rejected even with --force" "$exit_code"
+  assert_contains "mentions not a task worktree" "$output" "Not a task worktree"
+}
+
+
 run_tests "tt worktree delete"
