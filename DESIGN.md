@@ -122,6 +122,8 @@ created: 2026-03-12T23:04:57Z
 updated: 2026-03-12T23:10:00Z
 label: back-end
 label: auth
+context: context/initial-research-ab3243f0
+context: context/provider-comparison-7f8e2d1a
 subtask: [x] task/research-oauth-flow-c10103b7
 subtask: [-] task/determine-sso-providers-3ddc3c2f
 subtask: [ ] task/plan-feature-9fdbbd60
@@ -130,8 +132,6 @@ subtask: [ ] task/implement-feature-7702ec93
 subtask: [ ] task/review-implementation-34a0507c
 subtask: [ ] task/update-docs-6369ad14
 subtask: [ ] task/update-context-48c3fa01
-context: context/initial-research-ab3243f0
-context: context/provider-comparison-7f8e2d1a
 ---
 Users should be able to sign into the application from a variety of providers
 via a Single-Sign-On (SSO) process.
@@ -139,6 +139,20 @@ via a Single-Sign-On (SSO) process.
 The list of providers should be extensible and configurable via environment
 variables.
 ```
+
+**Canonical frontmatter field order.** All task files must use the following canonical field ordering within the frontmatter block:
+
+```
+title:       (required, exactly one)
+status:      (required, exactly one)
+created:     (required, exactly one)
+updated:     (required, exactly one)
+label:       (zero or more; each on its own line)
+context:     (zero or more; each on its own line)
+subtask:     (zero or more; each on its own line)
+```
+
+All tool commands that mutate task file frontmatter maintain this ordering automatically. The `rewrite_task_file` shared helper in `scripts/cli/lib/common.sh` normalises ordering on full rewrites; `append_frontmatter_context` and `append_frontmatter_subtask` insert at the correct position for incremental mutations.
 
 At merge time, the parent task's frontmatter is updated with the completed child (e.g. `subtask: [x] <task-id>`). The user may request full removal of the child task from the parent branch using `tt task delete` (or `tt task checkin --delete`, which runs the normal checkin and then delegates to `tt task delete`). This removes the child task directory and its `subtask:` entry from the parent's frontmatter entirely, making the task invisible in the todo list. If `--delete` is not used, the task directory remains in the repository and the `subtask: [x]` entry is preserved.
 

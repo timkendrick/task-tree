@@ -363,4 +363,25 @@ test_task_checkin__complete_with_propagate_bookmark_unchanged() {
 }
 
 
+test_task_checkin__context_before_subtask_in_parent() {
+  setup_workspace "checkin-ctx-order"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "parent" "Parent") || true
+  checkout_task "$task_id" >/dev/null || true
+
+  # Create two children so parent has multiple subtask: entries
+  child_a=$(create_task_under "$task_id" "ca" "Child A") || true
+  child_b=$(create_task_under "$task_id" "cb" "Child B") || true
+
+  # Check in child_a with --context (adds context: entry to parent)
+  checkout_task "$child_a" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+  run_tt task checkin --complete --context "Handoff notes" "$child_a" >/dev/null 2>&1 || true
+
+  # Read parent task file and verify canonical ordering
+  content="$(read_task_file "$task_id")"
+  assert_frontmatter_order "valid order after checkin with --context" "$content"
+}
+
 run_tests "tt task checkin"
