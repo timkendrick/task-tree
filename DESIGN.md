@@ -122,6 +122,8 @@ created: 2026-03-12T23:04:57Z
 updated: 2026-03-12T23:10:00Z
 label: back-end
 label: auth
+context: context/initial-research-ab3243f0
+context: context/provider-comparison-7f8e2d1a
 subtask: [x] task/research-oauth-flow-c10103b7
 subtask: [-] task/determine-sso-providers-3ddc3c2f
 subtask: [ ] task/plan-feature-9fdbbd60
@@ -130,8 +132,6 @@ subtask: [ ] task/implement-feature-7702ec93
 subtask: [ ] task/review-implementation-34a0507c
 subtask: [ ] task/update-docs-6369ad14
 subtask: [ ] task/update-context-48c3fa01
-context: context/initial-research-ab3243f0
-context: context/provider-comparison-7f8e2d1a
 ---
 Users should be able to sign into the application from a variety of providers
 via a Single-Sign-On (SSO) process.
@@ -139,6 +139,20 @@ via a Single-Sign-On (SSO) process.
 The list of providers should be extensible and configurable via environment
 variables.
 ```
+
+**Canonical frontmatter field order.** All task files must use the following canonical field ordering within the frontmatter block:
+
+```
+title:       (required, exactly one)
+status:      (required, exactly one)
+created:     (required, exactly one)
+updated:     (required, exactly one)
+label:       (zero or more; each on its own line)
+context:     (zero or more; each on its own line)
+subtask:     (zero or more; each on its own line)
+```
+
+All tool commands that mutate task file frontmatter maintain this ordering automatically. The `write_task_file` shared helper in `scripts/cli/lib/common.sh` normalises ordering on full rewrites; `write_context_file` handles context file creation (no status/label/context/subtask fields); `append_frontmatter_context` and `append_frontmatter_subtask` insert at the correct position for incremental mutations.
 
 At merge time, the parent task's frontmatter is updated with the completed child (e.g. `subtask: [x] <task-id>`). The user may request full removal of the child task from the parent branch using `tt task delete` (or `tt task checkin --delete`, which runs the normal checkin and then delegates to `tt task delete`). This removes the child task directory and its `subtask:` entry from the parent's frontmatter entirely, making the task invisible in the todo list. If `--delete` is not used, the task directory remains in the repository and the `subtask: [x]` entry is preserved.
 
@@ -241,7 +255,7 @@ The command exits with an error if none of these resolves to a valid jj reposito
 
 ### 5.4 Task
 
-- **`tt task create [--parent <parent-task-id> | --project [--target <commit-rev>]] [--slug <slug>] [--title <title>] [--label <label> ...] [--propagate [--rebase | --merge] [--shallow] [--force]] [--checkout [--worktree[=<path>]]] [--force]`** — Create a new task or project. With `--parent` (default: current branch): creates a commit on the parent's branch that both creates the new task stub directory (with `status: TODO`, `created`, and `updated` timestamps in `TASK.md`) and registers `subtask: [ ] <task-id>` in the parent's task file; the child branch is forked as an empty commit from this updated parent tip. The `TASK.md` symlink is created at first checkout. With `--project` (mutually exclusive with `--parent`): creates a parentless project using the project prefix; the project branch forks from `--target` if specified, else the current revision. Prompts for title if not provided. Reads the task body/description from stdin (via pipe or redirect) if stdin is not a terminal; otherwise opens an editor for body input. **`--slug` is required when stdin is not a terminal (non-interactive mode); in interactive mode the user is prompted with a suggested default derived from the title.** With `--propagate`, propagates the parent's new commit to its existing descendant branches after creation (equivalent to running `tt task propagate --from <parent>` with any given flags); supports `--rebase | --merge` (strategy; default rebase), `--shallow` (direct children only), and `--force` (proceed despite conflicts). With `--checkout`, runs `tt task checkout` on the newly created task before exiting; `--worktree[=<path>]` (only valid with `--checkout`) passes through to checkout to use or create a dedicated jj workspace. With `--force` (outside of `--propagate`), overwrites if the child branch already exists. See §6.1.
+- **`tt task create [--parent <parent-task-id> | --project [--target <commit-rev>]] [--slug <slug>] [--title <title>] [--label <label> ...] [--propagate [--rebase | --merge] [--shallow] [--force]] [--checkout [--worktree[=<path>]]] [--force]`** — Create a new task or project. With `--parent` (default: current branch): creates a commit on the parent's branch that both creates the new task stub directory (with a placeholder `title: ""`, `status: TODO`, `created`, and `updated` timestamps in `TASK.md`; the title is filled in by the subsequent edit step) and registers `subtask: [ ] <task-id>` in the parent's task file; the child branch is forked as an empty commit from this updated parent tip. The `TASK.md` symlink is created at first checkout. With `--project` (mutually exclusive with `--parent`): creates a parentless project using the project prefix; the project branch forks from `--target` if specified, else the current revision. Prompts for title if not provided. Reads the task body/description from stdin (via pipe or redirect) if stdin is not a terminal; otherwise opens an editor for body input. **`--slug` is required when stdin is not a terminal (non-interactive mode); in interactive mode the user is prompted with a suggested default derived from the title.** With `--propagate`, propagates the parent's new commit to its existing descendant branches after creation (equivalent to running `tt task propagate --from <parent>` with any given flags); supports `--rebase | --merge` (strategy; default rebase), `--shallow` (direct children only), and `--force` (proceed despite conflicts). With `--checkout`, runs `tt task checkout` on the newly created task before exiting; `--worktree[=<path>]` (only valid with `--checkout`) passes through to checkout to use or create a dedicated jj workspace. With `--force` (outside of `--propagate`), overwrites if the child branch already exists. See §6.1.
 
   **Examples:**
   ```bash

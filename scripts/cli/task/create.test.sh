@@ -150,4 +150,21 @@ test_task_create__help() {
 }
 
 
+test_task_create__subtask_after_existing_context() {
+  setup_workspace "create-subtask-order"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "parent" "Parent") || true
+  checkout_task "$task_id" >/dev/null || true
+
+  # Add a context to the parent first
+  echo "Body" | run_tt task context add --title "Research" --slug "research" >/dev/null 2>&1 || true
+
+  # Now create a child — the subtask entry must appear after the context entry
+  create_task_under "$task_id" "child" "Child" >/dev/null || true
+
+  content="$(read_task_file "$task_id")"
+  assert_frontmatter_order "canonical order after subtask added to parent with context" "$content"
+}
+
 run_tests "tt task create"

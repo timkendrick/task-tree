@@ -119,39 +119,6 @@ resolve_parent() {
   fi
 }
 
-# Usage: write_task_stub REPO TASK_SUFFIX
-#
-# Write a minimal task file stub in the directory format.
-# Creates .tt/task/<suffix>/TASK.md with status, created, updated timestamps.
-write_task_stub() {
-  local repo="$1"
-  local suffix="$2"
-  local dir
-  dir="$(task_dir_path "$suffix")"
-  local file
-  file="$(task_file_path "$suffix")"
-  local ts
-  ts="$(generate_timestamp)"
-  mkdir -p "$repo/$dir"
-  printf -- '---\nstatus: TODO\ncreated: %s\nupdated: %s\n---\n' "$ts" "$ts" > "$repo/$file"
-  log "Created task file: $file"
-}
-
-# Usage: add_subtask_to_frontmatter PARENT_PATH TASK_ID
-#
-# Add a subtask line before the closing --- of YAML frontmatter in the parent task file.
-add_subtask_to_frontmatter() {
-  local parent_path="$1"
-  local task_id="$2"
-  local tmpfile
-  tmpfile="$(mktemp)"
-  awk -v task_id="$task_id" '
-    /^---$/ { sep++; if (sep == 2) { print "subtask: [ ] " task_id } }
-    { print }
-  ' "$parent_path" > "$tmpfile"
-  mv "$tmpfile" "$parent_path"
-}
-
 main() {
   local slug=''
   local slug_explicit=false
@@ -436,7 +403,7 @@ main() {
       exit 1
     fi
     write_task_stub "$repo" "$task_suffix"
-    add_subtask_to_frontmatter "$parent_path" "$task_id"
+    append_frontmatter_subtask "$parent_path" "$task_id"
     log "Added subtask to parent: $parent_task_file"
     jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")"
     jj "${jj_opts[@]}" bookmark set "$parent_bookmark"
