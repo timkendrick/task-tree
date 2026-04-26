@@ -1,6 +1,6 @@
 ---
 title: "Insert frontmatter labels in correct position"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-24T07:36:46Z
 updated: 2026-04-26T15:22:09Z
 context: context/implementation-plan-c6c98cce
