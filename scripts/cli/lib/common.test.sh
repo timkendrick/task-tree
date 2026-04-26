@@ -369,4 +369,53 @@ test_select_value__failing_picker_command_fails() {
 # terminal detached (macOS has no setsid), so any such test would pass headless
 # and fail when the suite is run from a real terminal.
 
+# ---------------------------------------------------------------------------
+# get_jj_op_id — stale working copy
+# ---------------------------------------------------------------------------
+
+# Regression test: get_jj_op_id must pass --ignore-working-copy to jj so that
+# it succeeds when the repo's default workspace has a stale working copy.
+#
+# A stale WC arises in multi-workspace setups where the canonical repo's
+# default workspace has no recorded path (or its WC commit was rewritten from
+# another workspace) and jj cannot auto-update it.  Without
+# --ignore-working-copy, `jj op log` exits non-zero on such repos, causing
+# tt_commit_transaction to fall back to after_op="unknown".
+#
+# We simulate the stale-WC condition with a mock jj shim: the shim exits 1
+# (printing the canonical stale-WC error) unless --ignore-working-copy is
+# present, in which case it prints a synthetic op ID and exits 0.  This
+# exercises get_jj_op_id in isolation without requiring a real stale repo.
+test_get_jj_op_id__passes_ignore_working_copy() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+
+  # Create a mock jj shim that simulates the stale-WC failure
+  local fake_jj="$dir/jj"
+  cat > "$fake_jj" << 'FAKE_JJ'
+#!/usr/bin/env bash
+# Simulate a repo whose default workspace has a stale working copy.
+# Succeed (printing a synthetic op ID) only when --ignore-working-copy is present.
+for arg in "$@"; do
+  if [[ "$arg" == "--ignore-working-copy" ]]; then
+    printf 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890\n'
+    exit 0
+  fi
+done
+printf 'Error: The working copy is stale (not updated since operation abcdef12).\n' >&2
+printf 'Hint: Run `jj workspace update-stale` to update it.\n' >&2
+exit 1
+FAKE_JJ
+  chmod +x "$fake_jj"
+
+  # Prepend fake jj to PATH so get_jj_op_id calls it instead of the real jj.
+  # The repo path must be an existing directory (get_jj_op_id cd's into it).
+  local op_id
+  op_id="$(PATH="$dir:$PATH" get_jj_op_id "$dir")" || true
+
+  assert_neq "get_jj_op_id returns non-empty result" "$op_id" ""
+  assert_not_contains "get_jj_op_id does not return \"unknown\"" "$op_id" "unknown"
+}
+
 run_tests "tt lib/common (unit)"
