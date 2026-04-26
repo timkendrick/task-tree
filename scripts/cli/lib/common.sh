@@ -24,7 +24,7 @@ jj_show_at_revision() {
 # to operate on, so the cd only affects CWD resolution, not the target repo.
 get_jj_op_id() {
   local repo="$1"
-  (cd "$repo" && jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)
+  (cd "$repo" && jj -R "$repo" --ignore-working-copy op log --no-graph -T id -n 1 2>/dev/null)
 }
 
 # Usage: jj_show_at_op REPO OP REV PATH

@@ -198,7 +198,7 @@ last_line() {
 
 # Get the current jj operation ID.
 get_jj_op() {
-  jj -R "$REPO" op log --no-graph -T id -n 1 2>/dev/null
+  jj -R "$REPO" --ignore-working-copy op log --no-graph -T id -n 1 2>/dev/null
 }
 
 # Get the current working-copy revision's change ID (short 8 chars).
