@@ -1,6 +1,6 @@
 ---
 title: "Operation ID not being retrieved correctly when committing transactions"
-status: TODO
+status: IN-PROGRESS
 created: 2026-04-26T16:10:24Z
 updated: 2026-04-26T16:10:24Z
 ---
