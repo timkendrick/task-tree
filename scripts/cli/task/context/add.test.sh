@@ -111,4 +111,22 @@ test_task_context_add__help() {
 }
 
 
+test_context_add__context_inserted_before_subtask() {
+  setup_workspace "ctxadd-order"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+
+  # Create a child so the parent task has a subtask: entry
+  create_task_under "$task_id" "child" "Child" >/dev/null || true
+  checkout_task "$task_id" >/dev/null || true
+
+  # Add context — must appear before the subtask entry
+  echo "Body" | run_tt task context add --title "Research" --slug "research" >/dev/null 2>&1 || true
+
+  content="$(read_task_file "$task_id")"
+  assert_frontmatter_order "valid order after context add on task with subtask" "$content"
+}
+
 run_tests "tt task context add"

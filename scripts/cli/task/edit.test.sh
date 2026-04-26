@@ -109,4 +109,24 @@ test_task_edit__help() {
 }
 
 
+test_task_edit__frontmatter_canonical_order() {
+  setup_workspace "edit-order"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+
+  # Add a label, create a subtask, then add context to maximally populate frontmatter
+  run_tt task edit --label "bug" <<< "" >/dev/null 2>&1 || true
+  create_task_under "$task_id" "child" "Child" >/dev/null || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "Body" | run_tt task context add --title "Ctx" --slug "ctx" >/dev/null 2>&1 || true
+
+  # Run edit to trigger write_task_file
+  run_tt task edit --title "Updated T" <<< "" >/dev/null 2>&1 || true
+
+  content="$(read_task_file "$task_id")"
+  assert_frontmatter_order "canonical order after edit" "$content"
+}
+
 run_tests "tt task edit"
