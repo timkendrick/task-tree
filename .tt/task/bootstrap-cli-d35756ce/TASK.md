@@ -106,6 +106,7 @@ subtask: [x] task/rename-tt-worktree-list-bb3d0083
 subtask: [x] task/tt-task-publish-prevent-change-branch-af1702ab
 subtask: [x] task/worktree-deletion-history-6a7a5b52
 subtask: [x] task/tt-worktree-delete-main-repo-0b69546c
+subtask: [ ] task/tt-task-context-edit-550ce515
 ---
 Implement shell script implementations of all `tt` CLI commands
 
