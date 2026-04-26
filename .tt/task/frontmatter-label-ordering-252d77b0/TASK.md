@@ -2,7 +2,8 @@
 title: "Insert frontmatter labels in correct position"
 status: IN-PROGRESS
 created: 2026-04-24T07:36:46Z
-updated: 2026-04-24T07:36:46Z
+updated: 2026-04-26T08:25:17Z
+context: context/implementation-plan-c6c98cce
 ---
 Currently, when adding context to a task, the `context:` frontmatter entry is added after all existing frontmatter entries, regardless of what other frontmatter labels currently exist in the task.
 
