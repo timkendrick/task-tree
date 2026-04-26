@@ -122,7 +122,7 @@ test_task_edit__frontmatter_canonical_order() {
   checkout_task "$task_id" >/dev/null || true
   echo "Body" | run_tt task context add --title "Ctx" --slug "ctx" >/dev/null 2>&1 || true
 
-  # Run edit to trigger rewrite_task_file
+  # Run edit to trigger write_task_file
   run_tt task edit --title "Updated T" <<< "" >/dev/null 2>&1 || true
 
   content="$(read_task_file "$task_id")"

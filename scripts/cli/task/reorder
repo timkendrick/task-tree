@@ -254,8 +254,10 @@ reorder_subtask() {
   export REWRITE_LABELS=("${parent_labels[@]+"${parent_labels[@]}"}")
   export REWRITE_CONTEXTS=("${parent_contexts[@]+"${parent_contexts[@]}"}")
   export REWRITE_SUBTASKS=("${subtask_lines[@]+"${subtask_lines[@]}"}")
-  rewrite_task_file "$parent_worktree/$parent_task_file" \
-    "$parent_title" "$parent_status" "$parent_body" "$parent_created"
+  local reorder_updated
+  reorder_updated="$(generate_timestamp)"
+  write_task_file "$parent_worktree/$parent_task_file" \
+    "$parent_title" "$parent_status" "$parent_body" "$parent_created" "$reorder_updated"
   unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
   jj -R "$parent_worktree" commit -m "$(format_commit_message "task" "reorder" "$parent_id" "$parent_title")" >/dev/null 2>&1
   jj -R "$parent_worktree" bookmark set "$parent_id" -r '@-' >/dev/null 2>&1
@@ -353,7 +355,9 @@ reorder_frontmatter() {
   export REWRITE_LABELS=("${labels[@]+"${labels[@]}"}")
   export REWRITE_CONTEXTS=("${contexts[@]+"${contexts[@]}"}")
   export REWRITE_SUBTASKS=("${sorted_subtasks[@]+"${sorted_subtasks[@]}"}")
-  rewrite_task_file "$canonical_worktree/$task_file" "$title" "$status" "$body" "$created"
+  local reorder_updated
+  reorder_updated="$(generate_timestamp)"
+  write_task_file "$canonical_worktree/$task_file" "$title" "$status" "$body" "$created" "$reorder_updated"
   unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
   jj -R "$canonical_worktree" commit -m "$(format_commit_message "task" "reorder" "$task_id" "$title")" >/dev/null 2>&1
   jj -R "$canonical_worktree" bookmark set "$canonical_branch" -r '@-' >/dev/null 2>&1

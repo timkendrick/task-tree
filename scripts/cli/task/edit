@@ -232,10 +232,14 @@ main() {
     cross_branch=true
   fi
 
-  # Export arrays for rewrite_task_file
+  # Export arrays for write_task_file
   export REWRITE_LABELS=("${final_labels[@]+"${final_labels[@]}"}")
   export REWRITE_SUBTASKS=("${current_subtasks[@]+"${current_subtasks[@]}"}")
   export REWRITE_CONTEXTS=("${current_contexts[@]+"${current_contexts[@]}"}")
+
+  # Generate the updated timestamp once so all write calls in this invocation are consistent.
+  local updated
+  updated="$(generate_timestamp)"
 
   if [[ "$cross_branch" == true ]]; then
     # Cross-branch edit: commit directly on the target branch using jj operations.
@@ -248,8 +252,8 @@ main() {
     # before beginning the transaction (avoids orphaned in-progress entries on no-op).
     local tmpfile
     tmpfile="$(mktemp)"
-    rewrite_task_file "$tmpfile" \
-      "$final_title" "$current_status" "$final_body" "$current_created"
+    write_task_file "$tmpfile" \
+      "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
     local current_file_content
     current_file_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
 
@@ -271,8 +275,8 @@ main() {
     jj -R "$repo" new
 
     # Write updated task file now that we're on the target branch
-    rewrite_task_file "$repo/$task_file" \
-      "$final_title" "$current_status" "$final_body" "$current_created"
+    write_task_file "$repo/$task_file" \
+      "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
 
     jj -R "$repo" commit -m "$(format_commit_message "task" "edit" "$bookmark" "$final_title")"
     jj -R "$repo" bookmark set "$bookmark" -r '@-'
@@ -286,8 +290,8 @@ main() {
     # gap in the history chain).
     local tmpfile
     tmpfile="$(mktemp)"
-    rewrite_task_file "$tmpfile" \
-      "$final_title" "$current_status" "$final_body" "$current_created"
+    write_task_file "$tmpfile" \
+      "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
     local current_file_on_disk
     current_file_on_disk="$(cat "$target_worktree/$task_file" 2>/dev/null)" || true
 

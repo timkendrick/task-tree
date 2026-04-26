@@ -119,26 +119,6 @@ resolve_parent() {
   fi
 }
 
-# Usage: write_task_stub REPO TASK_SUFFIX
-#
-# Write a minimal task file stub in the directory format.
-# Creates .tt/task/<suffix>/TASK.md with status, created, updated timestamps.
-write_task_stub() {
-  local repo="$1"
-  local suffix="$2"
-  local dir
-  dir="$(task_dir_path "$suffix")"
-  local file
-  file="$(task_file_path "$suffix")"
-  local ts
-  ts="$(generate_timestamp)"
-  mkdir -p "$repo/$dir"
-  printf -- '---\nstatus: TODO\ncreated: %s\nupdated: %s\n---\n' "$ts" "$ts" > "$repo/$file"
-  log "Created task file: $file"
-}
-
-
-
 main() {
   local slug=''
   local slug_explicit=false
