@@ -2,7 +2,7 @@
 title: "Bootstrap CLI"
 status: IN-PROGRESS
 created: 2026-03-15T09:29:32Z
-updated: 2026-04-24T10:33:50Z
+updated: 2026-04-26T16:02:05Z
 context: context/task-tt-task-list-6638a980-d50c1e36
 context: context/context-from-2026-02-21-22-12-e533801d
 subtask: [ ] task/tt-workspace-doctor-fe9143d1
@@ -21,6 +21,7 @@ subtask: [ ] task/standardize-metadata-operations-cc4f8cab
 subtask: [ ] task/standardize-command-output-a1c39913
 subtask: [ ] task/tt-task-checkin-reorder-766c71b4
 subtask: [ ] task/custom-merge-conflict-resolver-06dbf6a0
+subtask: [ ] task/tt-task-context-edit-550ce515
 subtask: [x] task/frontmatter-label-ordering-252d77b0
 subtask: [x] task/retain-crashed-editor-contents-dcd6b730
 subtask: [x] task/analyze-cross-worktree-transactions-35b7b43d
@@ -106,7 +107,6 @@ subtask: [x] task/rename-tt-worktree-list-bb3d0083
 subtask: [x] task/tt-task-publish-prevent-change-branch-af1702ab
 subtask: [x] task/worktree-deletion-history-6a7a5b52
 subtask: [x] task/tt-worktree-delete-main-repo-0b69546c
-subtask: [ ] task/tt-task-context-edit-550ce515
 ---
 Implement shell script implementations of all `tt` CLI commands
 
