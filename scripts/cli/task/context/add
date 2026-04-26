@@ -261,18 +261,8 @@ main() {
   } > "$target_worktree/$ctx_file"
 
   # Add context reference to task file frontmatter and update 'updated' timestamp
-  local task_content
-  task_content="$(cat "$task_file_path_on_disk")"
-
-  # Insert context entry before closing ---; also refresh 'updated' timestamp
-  local updated_task_content
-  updated_task_content="$(printf '%s' "$task_content" | awk -v ctx="$ctx_id" -v ts="$ctx_ts" '
-    /^---$/ { sep++; if (sep == 2) { print "context: " ctx } }
-    /^updated:/ && sep == 1 { print "updated: " ts; next }
-    { print }
-  ')"
-
-  printf '%s\n' "$updated_task_content" > "$task_file_path_on_disk"
+  append_frontmatter_context "$task_file_path_on_disk" "$ctx_id"
+  update_frontmatter_timestamp "$task_file_path_on_disk" "$ctx_ts"
 
   if [[ "$target_worktree" == "$current_worktree" && "$current_bookmark" != "$bookmark" ]]; then
     # Cross-branch: need to use jj edit + commit sequence
