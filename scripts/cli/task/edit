@@ -52,48 +52,6 @@ Examples:
 EOF
 }
 
-# Usage: rewrite_task_file FILE TITLE STATUS BODY CREATED LABELS... SUBTASKS... CONTEXTS...
-#
-# Rewrites the task file with new frontmatter + body.
-# LABELS, SUBTASKS, CONTEXTS are passed as arrays via nameref (bash 4.3+), so we
-# instead collect them via additional positional args prefixed with "label:", "subtask:", "context:".
-#
-# Simplified signature: rewrite_task_file FILE TITLE STATUS BODY CREATED
-# plus arrays passed as caller-managed env vars REWRITE_LABELS, REWRITE_SUBTASKS, REWRITE_CONTEXTS.
-rewrite_task_file() {
-  local file="$1"
-  local title="$2"
-  local status="$3"
-  local body="$4"
-  local created="$5"
-  # REWRITE_LABELS, REWRITE_SUBTASKS, REWRITE_CONTEXTS are caller-set env arrays (via 'local -a' + export trick)
-  # We read them via indirect references below.
-
-  local updated
-  updated="$(generate_timestamp)"
-
-  {
-    echo '---'
-    echo "title: \"${title//\"/\\\"}\""
-    echo "status: $status"
-    echo "created: $created"
-    echo "updated: $updated"
-    for label in "${REWRITE_LABELS[@]+"${REWRITE_LABELS[@]}"}"; do
-      echo "label: $label"
-    done
-    for subtask in "${REWRITE_SUBTASKS[@]+"${REWRITE_SUBTASKS[@]}"}"; do
-      echo "subtask: $subtask"
-    done
-    for ctx in "${REWRITE_CONTEXTS[@]+"${REWRITE_CONTEXTS[@]}"}"; do
-      echo "context: $ctx"
-    done
-    echo '---'
-    if [[ -n "$body" ]]; then
-      printf '%s\n' "$body"
-    fi
-  } > "$file"
-}
-
 # task_file_changed CURRENT_CONTENT PROPOSED_FILE
 # Returns 0 (true) if the proposed file differs from the current content
 # in any field other than 'updated:', 1 (false) if the edit would be a no-op.

@@ -266,13 +266,7 @@ main() {
   log "Updating new parent: $new_parent_id"
   jj -R "$repo" new "$new_parent_id"
 
-  local tmpfile2
-  tmpfile2="$(mktemp)"
-  awk -v task_id="$task_id" '
-    /^---$/ { sep++; if (sep == 2) { print "subtask: [ ] " task_id } }
-    { print }
-  ' "$repo/$new_parent_task_file" > "$tmpfile2"
-  mv "$tmpfile2" "$repo/$new_parent_task_file"
+  append_frontmatter_subtask "$repo/$new_parent_task_file" "$task_id"
 
   # Copy the task's stub file from the old parent commit onto the new parent, using
   # the commit_id captured before Step 1 moved the bookmark.  This makes the new

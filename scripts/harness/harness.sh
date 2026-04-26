@@ -936,6 +936,63 @@ assert_context_count() {
 }
 
 # ---------------------------------------------------------------------------
+# Frontmatter Ordering Assertion
+# ---------------------------------------------------------------------------
+
+# assert_frontmatter_order LABEL CONTENT
+#
+# Validates that CONTENT has a well-formed frontmatter block with fields in
+# canonical order. Checks:
+#   1. Starts with "---" and contains a second "---" closing delimiter.
+#   2. Each frontmatter line matches the pattern: <known-key>: <value>
+#      (known keys: title, status, created, updated, label, context, subtask)
+#   3. All present fields appear in canonical order:
+#      title < status < created < updated < label < context < subtask
+#      (every occurrence of key A precedes every occurrence of key B)
+#
+# CONTENT is the raw file content (including `---` delimiters and body).
+assert_frontmatter_order() {
+  local label="$1" content="$2"
+  local result
+  result="$(printf '%s' "$content" | awk '
+    BEGIN {
+      split("title,status,created,updated,label,context,subtask", _keys, ",")
+      for (_i = 1; _i <= length(_keys); _i++) rank[_keys[_i]] = _i
+      prev_rank = 0
+      errors = 0
+      sep = 0
+    }
+    /^---$/ {
+      sep++
+      if (sep == 2) { if (errors == 0) print "ok"; exit }
+      next
+    }
+    sep == 1 {
+      k = $0; sub(/:.*$/, "", k)
+      if (!(k in rank)) {
+        print "unknown key: " k " at line " NR
+        errors++
+        next
+      }
+      r = rank[k]
+      if (r < prev_rank) {
+        print "ordering violation: " k " (rank " r ") after rank " prev_rank " at line " NR
+        errors++
+      }
+      prev_rank = r
+    }
+    END { if (sep < 2 && errors == 0) { print "missing closing ---" } }
+  ')" || true
+  if [[ "$result" == "ok" ]]; then
+    _log_pass "$label"
+    _record_pass
+  else
+    _log_fail "$label: $result"
+    _record_fail "$label: $result"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Current Task / Misc Assertions
 # ---------------------------------------------------------------------------
 
