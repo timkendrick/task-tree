@@ -931,31 +931,30 @@ parse_task_frontmatter() {
 # Frontmatter mutation helpers
 # ---------------------------------------------------------------------------
 
-# rewrite_task_file FILE TITLE STATUS BODY CREATED
+# write_task_file FILE TITLE STATUS BODY CREATED UPDATED
 #
-# Rewrites FILE with canonical frontmatter followed by BODY.
+# Writes FILE with canonical frontmatter followed by BODY.
 # Arrays REWRITE_LABELS, REWRITE_CONTEXTS, REWRITE_SUBTASKS must be set by
 # the caller as environment variables before calling this function.
 #
 # Canonical field order: title, status, created, updated, label…, context…, subtask…
-# The 'updated' timestamp is generated fresh on each call.
+# STATUS is omitted when empty (used for context files which have no status field).
+# Timestamps are caller-supplied; generate via generate_timestamp at the call site.
 # Writes to a temp file and renames for atomicity.
-rewrite_task_file() {
+write_task_file() {
   local file="$1"
   local title="$2"
   local status="$3"
   local body="$4"
   local created="$5"
-
-  local updated
-  updated="$(generate_timestamp)"
+  local updated="$6"
 
   local tmpfile
   tmpfile="$(mktemp)"
   {
     echo '---'
     echo "title: \"${title//\"/\\\"}\""
-    echo "status: $status"
+    [[ -n "$status" ]] && echo "status: $status"
     echo "created: $created"
     echo "updated: $updated"
     for lbl in "${REWRITE_LABELS[@]+"${REWRITE_LABELS[@]}"}"; do
@@ -973,6 +972,42 @@ rewrite_task_file() {
     fi
   } > "$tmpfile"
   mv "$tmpfile" "$file"
+}
+
+# write_context_file FILE TITLE BODY CREATED UPDATED
+#
+# Writes a context file with title, created, updated, and body.
+# Context files have no status, label, context, or subtask fields.
+# Delegates to write_task_file with empty status and empty arrays.
+write_context_file() {
+  local file="$1"
+  local title="$2"
+  local body="$3"
+  local created="$4"
+  local updated="$5"
+  local REWRITE_LABELS=() REWRITE_CONTEXTS=() REWRITE_SUBTASKS=()
+  write_task_file "$file" "$title" "" "$body" "$created" "$updated"
+}
+
+# write_task_stub REPO TASK_SUFFIX
+#
+# Writes a minimal task file stub at .tt/task/<suffix>/TASK.md.
+# Produces a placeholder title: "", status: TODO, and created/updated timestamps.
+# The placeholder title is overwritten by the subsequent `tt task edit` call
+# during task creation.
+write_task_stub() {
+  local repo="$1"
+  local suffix="$2"
+  local dir
+  dir="$(task_dir_path "$suffix")"
+  local file
+  file="$(task_file_path "$suffix")"
+  local ts
+  ts="$(generate_timestamp)"
+  mkdir -p "$repo/$dir"
+  local REWRITE_LABELS=() REWRITE_CONTEXTS=() REWRITE_SUBTASKS=()
+  write_task_file "$repo/$file" "" "TODO" "" "$ts" "$ts"
+  log "Created task file: $file"
 }
 
 # _insert_frontmatter_line FILE LINE_TO_INSERT [BEFORE_PATTERN]

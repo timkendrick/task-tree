@@ -383,14 +383,7 @@ main() {
     mkdir -p "$target_ws/$(dirname "$ctx_file")"
 
     # Write context file
-    {
-      printf -- '---\n'
-      printf 'title: "%s"\n' "${ctx_title//\"/\\\"}"
-      printf 'created: %s\n' "$ctx_ts"
-      printf 'updated: %s\n' "$ctx_ts"
-      printf -- '---\n'
-      printf '%s\n' "$context_text"
-    } > "$target_ws/$ctx_file"
+    write_context_file "$target_ws/$ctx_file" "$ctx_title" "$context_text" "$ctx_ts" "$ctx_ts"
 
     log "Created context file: $ctx_file"
   fi

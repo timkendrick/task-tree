@@ -251,14 +251,7 @@ main() {
   mkdir -p "$ctx_dir"
 
   # Write context file
-  {
-    printf -- '---\n'
-    printf 'title: "%s"\n' "${ctx_title//\"/\\\"}"
-    printf 'created: %s\n' "$ctx_ts"
-    printf 'updated: %s\n' "$ctx_ts"
-    printf -- '---\n'
-    printf '%s\n' "$body"
-  } > "$target_worktree/$ctx_file"
+  write_context_file "$target_worktree/$ctx_file" "$ctx_title" "$body" "$ctx_ts" "$ctx_ts"
 
   # Add context reference to task file frontmatter and update 'updated' timestamp
   append_frontmatter_context "$task_file_path_on_disk" "$ctx_id"

@@ -174,10 +174,10 @@ test_update_frontmatter_timestamp__updates_in_place() {
 }
 
 # ---------------------------------------------------------------------------
-# rewrite_task_file
+# write_task_file
 # ---------------------------------------------------------------------------
 
-test_rewrite_task_file__canonical_order() {
+test_write_task_file__canonical_order() {
   local dir
   dir="$(mktemp -d)"
   trap 'rm -rf "$dir"' RETURN
@@ -187,7 +187,7 @@ test_rewrite_task_file__canonical_order() {
   REWRITE_CONTEXTS=("context/ctx1-aaa11111" "context/ctx2-bbb22222")
   REWRITE_SUBTASKS=("[ ] task/child-abc12345" "[x] task/child-def67890")
 
-  rewrite_task_file "$file" "My Task" "IN-PROGRESS" "Task body here." "2025-01-01T00:00:00Z"
+  write_task_file "$file" "My Task" "IN-PROGRESS" "Task body here." "2025-01-01T00:00:00Z" "2025-06-01T12:00:00Z"
 
   local content
   content="$(cat "$file")"
@@ -203,7 +203,7 @@ test_rewrite_task_file__canonical_order() {
   unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
 }
 
-test_rewrite_task_file__atomic_write() {
+test_write_task_file__atomic_write() {
   local dir
   dir="$(mktemp -d)"
   trap 'rm -rf "$dir"' RETURN
@@ -216,7 +216,7 @@ test_rewrite_task_file__atomic_write() {
   REWRITE_CONTEXTS=()
   REWRITE_SUBTASKS=()
 
-  rewrite_task_file "$file" "New Title" "TODO" "" "2025-01-01T00:00:00Z"
+  write_task_file "$file" "New Title" "TODO" "" "2025-01-01T00:00:00Z" "2025-06-01T12:00:00Z"
 
   local content
   content="$(cat "$file")"
@@ -225,7 +225,7 @@ test_rewrite_task_file__atomic_write() {
   unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
 }
 
-test_rewrite_task_file__label_before_context_before_subtask() {
+test_write_task_file__label_before_context_before_subtask() {
   local dir
   dir="$(mktemp -d)"
   trap 'rm -rf "$dir"' RETURN
@@ -235,7 +235,7 @@ test_rewrite_task_file__label_before_context_before_subtask() {
   REWRITE_CONTEXTS=("context/plan-abc12345")
   REWRITE_SUBTASKS=("[ ] task/child-def67890")
 
-  rewrite_task_file "$file" "Task" "TODO" "" "2025-01-01T00:00:00Z"
+  write_task_file "$file" "Task" "TODO" "" "2025-01-01T00:00:00Z" "2025-06-01T12:00:00Z"
 
   local content
   content="$(cat "$file")"
@@ -251,6 +251,69 @@ test_rewrite_task_file__label_before_context_before_subtask() {
     "$([[ "$ctx_line" -lt "$sub_line" ]] && echo yes || echo no)" "yes"
 
   unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
+}
+
+test_write_task_file__omits_status_when_empty() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  REWRITE_LABELS=()
+  REWRITE_CONTEXTS=()
+  REWRITE_SUBTASKS=()
+
+  write_task_file "$file" "No Status" "" "" "2025-01-01T00:00:00Z" "2025-06-01T12:00:00Z"
+
+  local content
+  content="$(cat "$file")"
+  assert_not_contains "no status line" "$content" "^status:"
+  assert_contains "title present" "$content" 'title: "No Status"'
+
+  unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
+}
+
+# ---------------------------------------------------------------------------
+# write_context_file
+# ---------------------------------------------------------------------------
+
+test_write_context_file__fields() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/context.md"
+
+  write_context_file "$file" "My Context" "Context body." "2025-01-01T00:00:00Z" "2025-06-01T12:00:00Z"
+
+  local content
+  content="$(cat "$file")"
+  assert_contains "title" "$content" 'title: "My Context"'
+  assert_contains "created" "$content" 'created: 2025-01-01T00:00:00Z'
+  assert_contains "updated" "$content" 'updated: 2025-06-01T12:00:00Z'
+  assert_contains "body" "$content" 'Context body.'
+  assert_not_contains "no status" "$content" '^status:'
+  assert_not_contains "no label" "$content" '^label:'
+  assert_not_contains "no context ref" "$content" '^context:'
+  assert_not_contains "no subtask" "$content" '^subtask:'
+}
+
+# ---------------------------------------------------------------------------
+# write_task_stub (via task/create)
+# ---------------------------------------------------------------------------
+
+test_write_task_stub__has_placeholder_title() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+
+  local suffix="my-stub-abc12345"
+  write_task_stub "$dir" "$suffix"
+
+  local file="$dir/.tt/task/$suffix/TASK.md"
+  local content
+  content="$(cat "$file")"
+  assert_contains "placeholder title line" "$content" 'title: ""'
+  assert_contains "status TODO" "$content" 'status: TODO'
 }
 
 run_tests "tt lib/common (unit)"
