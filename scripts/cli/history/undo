@@ -80,7 +80,8 @@ main() {
 
   repo="$(resolve_repo "$repo")"
 
-  local history_file="$repo/.tt/history"
+  local history_file
+  history_file="$(resolve_history_file_location "$repo")" || exit 1
 
   # Check history file exists and has at least one entry
   if [[ ! -f "$history_file" ]] || [[ ! -s "$history_file" ]]; then

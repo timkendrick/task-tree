@@ -132,6 +132,14 @@ main() {
     fi
   fi
 
+  # Refuse to delete the canonical (main) repo workspace — this is always an error
+  local canonical_repo
+  canonical_repo="$(resolve_canonical_repo "$repo")"
+  if [[ "$(realpath "$target_worktree" 2>/dev/null || printf '%s' "$target_worktree")" == "$(realpath "$canonical_repo" 2>/dev/null || printf '%s' "$canonical_repo")" ]]; then
+    log "Error: Not a task worktree"
+    exit 1
+  fi
+
   # All pre-mutation safety checks — all skippable with --force
   if [[ "$force" != true ]]; then
     # Refuse to delete the current working copy worktree

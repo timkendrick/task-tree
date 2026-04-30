@@ -170,7 +170,7 @@ test_task_checkin__head_symlink_updated_from_worktree() {
   local worktree_path="$VIRTUAL/$task_id"
 
   # Checkpoint from within the worktree
-  TT_REPO="$worktree_path" run_tt task checkpoint -m "work" >/dev/null 2>&1 || true
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
 
   # HEAD currently points to the task worktree
   local head_before
@@ -179,7 +179,7 @@ test_task_checkin__head_symlink_updated_from_worktree() {
 
   # Run checkin FROM WITHIN the worktree (no TT_REPO set)
   local exit_code=0
-  (cd "$worktree_path" && unset TT_REPO && "$TT" task checkin --complete 2>&1) || exit_code=$?
+  output=$(run_tt_in_worktree "$worktree_path" task checkin --complete 2>&1) || exit_code=$?
 
   assert_success "checkin from worktree succeeds" "$exit_code"
 
@@ -204,7 +204,7 @@ test_task_checkin__worktree_deleted_after_complete_checkin() {
   assert_file_exists "worktree exists before checkin" "$worktree_path"
 
   # Checkpoint from the worktree
-  TT_REPO="$worktree_path" run_tt task checkpoint -m "work" >/dev/null 2>&1 || true
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
 
   # Complete checkin (from main repo, with explicit task_id)
   run_tt task checkin --complete "$task_id" >/dev/null 2>&1 || true
@@ -225,7 +225,7 @@ test_task_checkin__retain_worktree_flag() {
   local worktree_path="$VIRTUAL/$task_id"
   assert_file_exists "worktree exists before checkin" "$worktree_path"
 
-  TT_REPO="$worktree_path" run_tt task checkpoint -m "work" >/dev/null 2>&1 || true
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
 
   # Checkin with --retain-worktree
   run_tt task checkin --complete --retain-worktree "$task_id" >/dev/null 2>&1 || true
@@ -245,7 +245,7 @@ test_task_checkin__worktree_not_deleted_after_partial_checkin() {
   run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
   local worktree_path="$VIRTUAL/$task_id"
 
-  TT_REPO="$worktree_path" run_tt task checkpoint -m "work" >/dev/null 2>&1 || true
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
 
   # Partial checkin (IN-PROGRESS, not complete)
   run_tt task checkin "$task_id" >/dev/null 2>&1 || true
@@ -362,5 +362,26 @@ test_task_checkin__complete_with_propagate_bookmark_unchanged() {
   assert_commit_message "bookmark at complete commit after checkin+propagate" "$task_id" "[tt:task:$task_id:complete] T"
 }
 
+
+test_task_checkin__context_before_subtask_in_parent() {
+  setup_workspace "checkin-ctx-order"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "parent" "Parent") || true
+  checkout_task "$task_id" >/dev/null || true
+
+  # Create two children so parent has multiple subtask: entries
+  child_a=$(create_task_under "$task_id" "ca" "Child A") || true
+  child_b=$(create_task_under "$task_id" "cb" "Child B") || true
+
+  # Check in child_a with --context (adds context: entry to parent)
+  checkout_task "$child_a" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+  run_tt task checkin --complete --context "Handoff notes" "$child_a" >/dev/null 2>&1 || true
+
+  # Read parent task file and verify canonical ordering
+  content="$(read_task_file "$task_id")"
+  assert_frontmatter_order "valid order after checkin with --context" "$content"
+}
 
 run_tests "tt task checkin"

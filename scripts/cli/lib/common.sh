@@ -17,9 +17,14 @@ jj_show_at_revision() {
 # Usage: get_jj_op_id REPO
 # Prints the current jj operation ID to stdout.
 # Returns 1 if the operation ID cannot be read.
+#
+# Runs jj in a subshell that cds into REPO first. This ensures jj can resolve
+# its CWD even when the caller's working directory has been deleted (e.g. after
+# a worktree is removed by `worktree delete`). The -R flag tells jj which repo
+# to operate on, so the cd only affects CWD resolution, not the target repo.
 get_jj_op_id() {
   local repo="$1"
-  jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null
+  (cd "$repo" && jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)
 }
 
 # Usage: jj_show_at_op REPO OP REV PATH
@@ -420,6 +425,8 @@ parse_quoted_frontmatter_field() {
 # Usage: raw=$(prompt_raw <<< "$template")
 # Reads template from stdin, opens editor, returns raw file content (no stripping).
 # Exits non-zero if editor exits non-zero.
+# On editor failure, the temporary file is retained on disk and its path is
+# printed to stderr so the user can recover any unsaved edits.
 prompt_raw() {
   local editor
   # Note: we use `vim` rather than `vi` because to ensure POSIX compliance, when it is invoked as `vi`,
@@ -432,8 +439,9 @@ prompt_raw() {
   trap 'rm -f "$tmpfile"' RETURN
   cat > "$tmpfile"
   "$editor" "$tmpfile" </dev/tty >/dev/tty || {
-    log "Error: Editor exited with non-zero status.";
-    cat "$tmpfile" >&2
+    trap - RETURN
+    log "Error: Editor exited with non-zero status."
+    log "  Editor contents: $tmpfile"
     return 1;
   }
   cat "$tmpfile"
@@ -920,26 +928,218 @@ parse_task_frontmatter() {
 }
 
 # ---------------------------------------------------------------------------
+# Frontmatter mutation helpers
+# ---------------------------------------------------------------------------
+
+# write_task_file FILE TITLE STATUS BODY CREATED UPDATED
+#
+# Writes FILE with canonical frontmatter followed by BODY.
+# Arrays REWRITE_LABELS, REWRITE_CONTEXTS, REWRITE_SUBTASKS must be set by
+# the caller as environment variables before calling this function.
+#
+# Canonical field order: title, status, created, updated, label…, context…, subtask…
+# STATUS is omitted when empty (used for context files which have no status field).
+# Timestamps are caller-supplied; generate via generate_timestamp at the call site.
+# Writes to a temp file and renames for atomicity.
+write_task_file() {
+  local file="$1"
+  local title="$2"
+  local status="$3"
+  local body="$4"
+  local created="$5"
+  local updated="$6"
+
+  local tmpfile
+  tmpfile="$(mktemp)"
+  {
+    echo '---'
+    echo "title: \"${title//\"/\\\"}\""
+    [[ -n "$status" ]] && echo "status: $status"
+    echo "created: $created"
+    echo "updated: $updated"
+    for lbl in "${REWRITE_LABELS[@]+"${REWRITE_LABELS[@]}"}"; do
+      echo "label: $lbl"
+    done
+    for ctx in "${REWRITE_CONTEXTS[@]+"${REWRITE_CONTEXTS[@]}"}"; do
+      echo "context: $ctx"
+    done
+    for st in "${REWRITE_SUBTASKS[@]+"${REWRITE_SUBTASKS[@]}"}"; do
+      echo "subtask: $st"
+    done
+    echo '---'
+    if [[ -n "$body" ]]; then
+      printf '%s\n' "$body"
+    fi
+  } > "$tmpfile"
+  mv "$tmpfile" "$file"
+}
+
+# write_context_file FILE TITLE BODY CREATED UPDATED
+#
+# Writes a context file with title, created, updated, and body.
+# Context files have no status, label, context, or subtask fields.
+# Delegates to write_task_file with empty status and empty arrays.
+write_context_file() {
+  local file="$1"
+  local title="$2"
+  local body="$3"
+  local created="$4"
+  local updated="$5"
+  local REWRITE_LABELS=() REWRITE_CONTEXTS=() REWRITE_SUBTASKS=()
+  write_task_file "$file" "$title" "" "$body" "$created" "$updated"
+}
+
+# write_task_stub REPO TASK_SUFFIX
+#
+# Writes a minimal task file stub at .tt/task/<suffix>/TASK.md.
+# Produces a placeholder title: "", status: TODO, and created/updated timestamps.
+# The placeholder title is overwritten by the subsequent `tt task edit` call
+# during task creation.
+write_task_stub() {
+  local repo="$1"
+  local suffix="$2"
+  local dir
+  dir="$(task_dir_path "$suffix")"
+  local file
+  file="$(task_file_path "$suffix")"
+  local ts
+  ts="$(generate_timestamp)"
+  mkdir -p "$repo/$dir"
+  local REWRITE_LABELS=() REWRITE_CONTEXTS=() REWRITE_SUBTASKS=()
+  write_task_file "$repo/$file" "" "TODO" "" "$ts" "$ts"
+  log "Created task file: $file"
+}
+
+# _insert_frontmatter_line FILE LINE_TO_INSERT [BEFORE_PATTERN]
+#
+# Shared implementation for inserting a line into YAML frontmatter.
+# Inserts LINE_TO_INSERT at the correct position:
+#   - If BEFORE_PATTERN is given: before the first line matching that pattern
+#     within the frontmatter block.
+#   - If omitted: before the closing --- separator.
+# Uses temp file + mv for atomicity.
+_insert_frontmatter_line() {
+  local file="$1" line="$2" before="${3:-}"
+  local tmpfile
+  tmpfile="$(mktemp)"
+  awk -v ins="$line" -v bef="$before" '
+    BEGIN { sep=0; inserted=0 }
+    /^---$/ {
+      sep++
+      if (sep == 2 && !inserted) { print ins; inserted=1 }
+      print; next
+    }
+    sep == 1 && bef != "" && !inserted && $0 ~ bef {
+      print ins; inserted=1
+    }
+    { print }
+  ' "$file" > "$tmpfile"
+  mv "$tmpfile" "$file"
+}
+
+# append_frontmatter_context FILE CTX_ID
+#
+# Appends a 'context: CTX_ID' line before the first 'subtask:' line
+# (or before the closing '---' if no subtask entries exist).
+# Does not update the 'updated:' timestamp — call update_frontmatter_timestamp
+# separately if needed.
+append_frontmatter_context() {
+  _insert_frontmatter_line "$1" "context: $2" "^subtask:"
+}
+
+# append_frontmatter_subtask FILE TASK_ID
+#
+# Appends a 'subtask: [ ] TASK_ID' line before the closing '---' separator
+# (after any existing context: or subtask: entries).
+append_frontmatter_subtask() {
+  _insert_frontmatter_line "$1" "subtask: [ ] $2" ""
+}
+
+# update_frontmatter_timestamp FILE TIMESTAMP
+#
+# Updates the 'updated:' field in the frontmatter of FILE to TIMESTAMP.
+# Uses temp file + mv for atomicity.
+update_frontmatter_timestamp() {
+  local file="$1"
+  local ts="$2"
+  local tmpfile
+  tmpfile="$(mktemp)"
+  awk -v ts="$ts" '
+    BEGIN { sep=0 }
+    /^---$/ { sep++; print; next }
+    sep == 1 && /^updated:/ { print "updated: " ts; next }
+    { print }
+  ' "$file" > "$tmpfile"
+  mv "$tmpfile" "$file"
+}
+
+# ---------------------------------------------------------------------------
 # Transaction management
 #
 # A "transaction" records the jj operation ID before and after a mutating tt
 # command, enabling `tt history undo` to restore the repository state.
 #
-# Log file: <repo>/.tt/history
+# Log file: <canonical-repo>/.tt/history
 # Format:   one line per transaction: <before-op-id>:<after-op-id>
 #           An in-progress transaction has an empty after-op-id: <before-op-id>:
 #
+# History location: the history file always lives in the **canonical** jj repo
+# root (the repo whose .jj/repo entry is a directory, not a pointer file).
+# Secondary jj workspaces have a .jj/repo *file* containing a relative path
+# back to the canonical repo's .jj/repo directory. resolve_canonical_repo
+# follows that pointer so all workspaces share a single history file.
+#
 # Nesting: sub-commands invoked by a top-level command inherit TT_TRANSACTION_ID
 # via the environment. tt_begin_transaction is a no-op when TT_TRANSACTION_ID is
-# already set. The internal (non-exported) _TT_TRANSACTION_OWNER flag ensures
-# only the owning process commits or rolls back the transaction.
+# already set. The internal (non-exported) _TT_TRANSACTION_OWNER variable
+# stores the resolved history file path for the owning process; it is not
+# exported so sub-processes never inherit it (they are not the transaction owner).
 # ---------------------------------------------------------------------------
+
+# Usage: resolve_canonical_repo REPO
+# Returns the canonical repo root for the repository.
+# If REPO is a secondary jj workspace (.jj/repo is a pointer file),
+# follows the pointer to find the canonical repo root.
+# If REPO is already the canonical repo (.jj/repo is a directory), returns REPO.
+resolve_canonical_repo() {
+  local repo="$1"
+  local repo_entry="$repo/.jj/repo"
+  if [[ -f "$repo_entry" ]]; then
+    # Secondary workspace: .jj/repo is a file containing a relative path to
+    # the canonical repo's .jj/repo directory (e.g. "../../../../repo/.jj/repo").
+    local target
+    target="$(cd "$repo/.jj" && realpath "$(cat "$repo_entry")")" \
+      || { log "Error: Could not resolve canonical repo from $repo_entry"; return 1; }
+    # target = /path/to/canonical/.jj/repo — strip /.jj/repo to get repo root
+    dirname "$(dirname "$target")"
+  else
+    # Canonical repo: .jj/repo is a directory (the actual op store)
+    printf '%s' "$repo"
+  fi
+}
+
+# Usage: resolve_history_file_location REPO
+# Returns the path to the .tt/history file for REPO.
+# Follows .jj/repo pointer files so secondary jj workspaces resolve to the
+# canonical repo's history file rather than a per-worktree copy.
+# Canonical repos return <repo>/.tt/history directly.
+resolve_history_file_location() {
+  local repo="$1"
+  local canonical_repo
+  canonical_repo="$(resolve_canonical_repo "$repo")" || return 1
+  printf '%s/.tt/history' "$canonical_repo"
+}
 
 # Usage: tt_begin_transaction REPO
 # Begins a tt transaction. No-op if TT_TRANSACTION_ID is already set (nested call).
 # Captures the current jj operation ID, checks for in-progress transactions,
 # appends "<before-op-id>:" to .tt/history, exports TT_TRANSACTION_ID, and sets
 # an ERR trap to auto-rollback on failure.
+#
+# Resolves and caches the canonical history file path in _TT_TRANSACTION_OWNER
+# at begin time (while the repo/worktree still exists on disk), so that
+# tt_commit_transaction and tt_rollback_transaction can use it even if the
+# worktree has been deleted by the time they run (e.g. worktree delete).
 tt_begin_transaction() {
   local repo="$1"
   # No-op when nested (parent command already began a transaction)
@@ -947,7 +1147,8 @@ tt_begin_transaction() {
     return 0
   fi
 
-  local history_file="$repo/.tt/history"
+  local history_file
+  history_file="$(resolve_history_file_location "$repo")" || exit 1
 
   # Capture current jj operation ID
   local before_op
@@ -976,8 +1177,11 @@ tt_begin_transaction() {
 
   # Export for sub-commands (nested tt_begin_transaction calls will be no-ops)
   export TT_TRANSACTION_ID="$before_op"
-  # Mark this process as the transaction owner (not exported; sub-processes don't inherit)
-  _TT_TRANSACTION_OWNER=true
+  # Store resolved history file path for commit/rollback (not exported — sub-processes
+  # are not the transaction owner). Using the file path rather than `true` means we
+  # avoid re-resolving at commit/rollback time, which may fail if the worktree has
+  # been deleted by then (e.g. worktree delete).
+  _TT_TRANSACTION_OWNER="$history_file"
 
   # Set ERR trap to auto-rollback on failure
   trap 'tt_rollback_transaction "'"$repo"'"' ERR
@@ -989,16 +1193,25 @@ tt_begin_transaction() {
 tt_commit_transaction() {
   local repo="$1"
   # Only the owning process commits the transaction
-  if [[ "${_TT_TRANSACTION_OWNER:-}" != "true" ]]; then
+  if [[ -z "${_TT_TRANSACTION_OWNER:-}" ]]; then
     return 0
   fi
 
-  local history_file="$repo/.tt/history"
+  local history_file="${_TT_TRANSACTION_OWNER}"
   local before_op="${TT_TRANSACTION_ID}"
+
+  # Derive canonical repo from the history file path (walk up from .tt/ to find .jj/).
+  # This is safe even if $repo (a worktree) has been deleted, since history_file
+  # is always inside the canonical repo which remains on disk.
+  local canonical_repo
+  canonical_repo="$(cd "$(dirname "$history_file")" && find_repo_root)" || {
+    log "Warning: Could not derive canonical repo from history file path; history may be incomplete"
+    canonical_repo="$repo"
+  }
 
   # Capture current jj operation ID
   local after_op
-  after_op="$(get_jj_op_id "$repo")" || {
+  after_op="$(get_jj_op_id "$canonical_repo")" || {
     log "Warning: Could not read jj operation ID for transaction commit; history may be incomplete"
     after_op="unknown"
   }
@@ -1022,7 +1235,7 @@ tt_commit_transaction() {
 tt_rollback_transaction() {
   local repo="$1"
   # Only the owning process rolls back
-  if [[ "${_TT_TRANSACTION_OWNER:-}" != "true" ]]; then
+  if [[ -z "${_TT_TRANSACTION_OWNER:-}" ]]; then
     return 0
   fi
 
@@ -1031,12 +1244,19 @@ tt_rollback_transaction() {
     return 0
   fi
 
-  local history_file="$repo/.tt/history"
+  local history_file="${_TT_TRANSACTION_OWNER}"
+
+  # Derive canonical repo from the history file path (walk up from .tt/ to find .jj/).
+  local canonical_repo
+  canonical_repo="$(cd "$(dirname "$history_file")" && find_repo_root)" || canonical_repo="$repo"
 
   log "Rolling back transaction (restoring jj operation: ${before_op:0:12}...)"
 
-  # Restore jj to before-op state
-  jj -R "$repo" op restore "$before_op" 2>/dev/null || \
+  # Restore jj to before-op state.
+  # Use a subshell to cd into the canonical repo first, so jj can resolve CWD
+  # even when the caller's working directory has been deleted (e.g. after
+  # worktree delete).
+  (cd "$canonical_repo" && jj -R "$canonical_repo" op restore "$before_op" 2>/dev/null) || \
     log "Warning: Could not restore jj operation state; manual recovery may be needed"
 
   # Remove the in-progress line from history
