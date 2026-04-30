@@ -106,6 +106,15 @@ run_tt() {
   TT_REPO="${TT_REPO:-${REPO:-}}" "$TT" "$@"
 }
 
+# Run a tt command from within a worktree, simulating a user who has cd'd into
+# the worktree without TT_REPO set. This exercises the find_repo_root code path
+# (resolving $repo from CWD) rather than the TT_REPO shortcut.
+# Usage: run_tt_in_worktree WORKTREE_PATH [args...]
+run_tt_in_worktree() {
+  local worktree_path="$1"; shift
+  (cd "$worktree_path" && unset TT_REPO && "$TT" "$@")
+}
+
 # Edit a working copy file (creates or overwrites).
 # Usage: edit_file PATH CONTENT
 edit_file() {
@@ -924,6 +933,63 @@ assert_context_file_not_exists() {
 assert_context_count() {
   local label="$1" task_id="$2" expected="$3" rev="${4:-$task_id}"
   assert_frontmatter_field_count "$label" "$task_id" "context" "$expected" "$rev"
+}
+
+# ---------------------------------------------------------------------------
+# Frontmatter Ordering Assertion
+# ---------------------------------------------------------------------------
+
+# assert_frontmatter_order LABEL CONTENT
+#
+# Validates that CONTENT has a well-formed frontmatter block with fields in
+# canonical order. Checks:
+#   1. Starts with "---" and contains a second "---" closing delimiter.
+#   2. Each frontmatter line matches the pattern: <known-key>: <value>
+#      (known keys: title, status, created, updated, label, context, subtask)
+#   3. All present fields appear in canonical order:
+#      title < status < created < updated < label < context < subtask
+#      (every occurrence of key A precedes every occurrence of key B)
+#
+# CONTENT is the raw file content (including `---` delimiters and body).
+assert_frontmatter_order() {
+  local label="$1" content="$2"
+  local result
+  result="$(printf '%s' "$content" | awk '
+    BEGIN {
+      split("title,status,created,updated,label,context,subtask", _keys, ",")
+      for (_i = 1; _i <= length(_keys); _i++) rank[_keys[_i]] = _i
+      prev_rank = 0
+      errors = 0
+      sep = 0
+    }
+    /^---$/ {
+      sep++
+      if (sep == 2) { if (errors == 0) print "ok"; exit }
+      next
+    }
+    sep == 1 {
+      k = $0; sub(/:.*$/, "", k)
+      if (!(k in rank)) {
+        print "unknown key: " k " at line " NR
+        errors++
+        next
+      }
+      r = rank[k]
+      if (r < prev_rank) {
+        print "ordering violation: " k " (rank " r ") after rank " prev_rank " at line " NR
+        errors++
+      }
+      prev_rank = r
+    }
+    END { if (sep < 2 && errors == 0) { print "missing closing ---" } }
+  ')" || true
+  if [[ "$result" == "ok" ]]; then
+    _log_pass "$label"
+    _record_pass
+  else
+    _log_fail "$label: $result"
+    _record_fail "$label: $result"
+  fi
 }
 
 # ---------------------------------------------------------------------------

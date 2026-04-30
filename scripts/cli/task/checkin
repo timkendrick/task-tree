@@ -383,25 +383,18 @@ main() {
     mkdir -p "$target_ws/$(dirname "$ctx_file")"
 
     # Write context file
-    {
-      printf -- '---\n'
-      printf 'title: "%s"\n' "${ctx_title//\"/\\\"}"
-      printf 'created: %s\n' "$ctx_ts"
-      printf 'updated: %s\n' "$ctx_ts"
-      printf -- '---\n'
-      printf '%s\n' "$context_text"
-    } > "$target_ws/$ctx_file"
-
-    # Add context reference to parent task file frontmatter
-    updated_parent_content="$(printf '%s' "$updated_parent_content" | awk -v ctx="$ctx_id" '
-      /^---$/ { sep++; if (sep == 2) { print "context: " ctx } }
-      { print }
-    ')"
+    write_context_file "$target_ws/$ctx_file" "$ctx_title" "$context_text" "$ctx_ts" "$ctx_ts"
 
     log "Created context file: $ctx_file"
   fi
 
   printf '%s\n' "$updated_parent_content" > "$target_ws/$parent_task_file"
+
+  # Insert context entry in the correct position (after any existing context:
+  # entries, before the first subtask: entry) now that the file is on disk.
+  if [[ -n "${ctx_id:-}" ]]; then
+    append_frontmatter_context "$target_ws/$parent_task_file" "$ctx_id"
+  fi
 
   # Commit the handoff (child bookmark does NOT advance)
   jj -R "$target_ws" commit -m "$(format_commit_message "task" "handoff" "$task_id" "$task_title")"
