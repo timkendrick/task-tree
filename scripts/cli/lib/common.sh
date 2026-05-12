@@ -172,6 +172,13 @@ log() {
   printf '%s\n' "$*" >&2
 }
 
+# Resolve DIR to a canonical absolute path, following OS-level symlinks (pwd -P).
+# Exits 1 if the directory does not exist or cannot be entered.
+# Usage: resolve_path_symlinks DIR
+resolve_path_symlinks() {
+  (cd "$1" && pwd -P)
+}
+
 # Find repo root by walking up from current directory to find .jj; return 1 if not found.
 # Uses pwd -P to resolve symlinks so that working from inside a symlinked directory
 # (e.g. /virtual/HEAD) does not produce a symlink path as the repo root.
@@ -221,7 +228,7 @@ resolve_repo() {
   fi
 
   # Canonicalize to match jj's own path representation (e.g. /var → /private/var on macOS)
-  repo="$(cd "$repo" && pwd -P)"
+  repo="$(resolve_path_symlinks "$repo")"
   printf '%s' "$repo"
 }
 
@@ -289,9 +296,9 @@ get_workspace_dir() {
       # Resolve relative targets against the symlink's parent directory,
       # then canonicalise to strip OS-level symlinks (e.g. /var -> /private/var).
       if [[ "$ws_dir" != /* ]]; then
-        ws_dir="$(cd "$(dirname "$symlink")" && cd "$ws_dir" && pwd -P)"
+        ws_dir="$(resolve_path_symlinks "$(cd "$(dirname "$symlink")" && cd "$ws_dir" && pwd)")"
       else
-        ws_dir="$(cd "$ws_dir" && pwd -P)"
+        ws_dir="$(resolve_path_symlinks "$ws_dir")"
       fi
       printf '%s' "$ws_dir"
       return 0
@@ -362,7 +369,7 @@ run_hook() {
 make_absolute_symlink() {
   local target_path="$1" symlink_path="$2"
   if [[ "$target_path" != /* ]]; then
-    target_path="$(cd "$target_path" && pwd)"
+    target_path="$(resolve_path_symlinks "$target_path")"
   fi
   ln -snf "$target_path" "$symlink_path"
 }
