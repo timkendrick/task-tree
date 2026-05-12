@@ -101,7 +101,8 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} root         →  tt workspace root
   ${SCRIPT_NAME} current      →  tt task current
   ${SCRIPT_NAME} edit         →  tt task edit
-  ${SCRIPT_NAME} reorder     →  tt task reorder
+  ${SCRIPT_NAME} reorder      →  tt task reorder
+  ${SCRIPT_NAME} revset       →  tt task revset
 
 EOF
 }
