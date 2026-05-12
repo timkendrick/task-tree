@@ -213,6 +213,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt prompt` | `tt task prompt` |
 | `tt move` | `tt task move` |
 | `tt undo` | `tt history undo` |
+| `tt active` | `tt worktree active` |
 | `tt repo` | `tt workspace repo` |
 | `tt root` | `tt workspace root` |
 
