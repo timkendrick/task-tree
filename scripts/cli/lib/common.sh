@@ -286,9 +286,12 @@ get_workspace_dir() {
     local ws_dir
     ws_dir="$(readlink "$symlink")"
     if [[ -n "$ws_dir" ]]; then
-      # Resolve relative targets against the symlink's parent directory
+      # Resolve relative targets against the symlink's parent directory,
+      # then canonicalise to strip OS-level symlinks (e.g. /var -> /private/var).
       if [[ "$ws_dir" != /* ]]; then
-        ws_dir="$(cd "$(dirname "$symlink")" && cd "$ws_dir" && pwd)"
+        ws_dir="$(cd "$(dirname "$symlink")" && cd "$ws_dir" && pwd -P)"
+      else
+        ws_dir="$(cd "$ws_dir" && pwd -P)"
       fi
       printf '%s' "$ws_dir"
       return 0

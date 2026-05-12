@@ -81,6 +81,8 @@ setup_workspace() {
   REPO="$_TEST_ROOT/$name/repo"
   VIRTUAL="$_TEST_ROOT/$name/virtual"
   mkdir -p "$REPO"
+  # Resolve any symlinks in the path (e.g. /var -> /private/var on macOS)
+  REPO="$(cd "$REPO" && pwd -P)"
 
   jj git init "$REPO" >/dev/null 2>&1
   cd "$REPO"
