@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt workspace switch — redirect the virtual project's HEAD symlink to an existing task worktree.
+# tt worktree switch — redirect the virtual project's HEAD symlink to an existing task worktree.
 #
 # Usage:
 #   switch <task-id> [--worktree=<path>] [--force] [--repo PATH]
