@@ -214,6 +214,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt move` | `tt task move` |
 | `tt undo` | `tt history undo` |
 | `tt repo` | `tt workspace repo` |
+| `tt root` | `tt workspace root` |
 
 ### 5.0 Repository root resolution
 
@@ -251,6 +252,8 @@ The command exits with an error if none of these resolves to a valid jj reposito
 ### 5.3 Workspace
 
 - **`tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]`** — Initialize a task-tree project. Creates the virtual workspace directory, `.tt/config.toml` (with optional task prefix and project prefix), `.tt/.gitignore` (containing `/history` and `/workspace`), an empty `.tt/history` transaction log, a `.tt/workspace` symlink pointing to the virtual project directory, and a `HEAD` symlink in the virtual directory that initially points to the repo and is later updated to the most recently checked-out task workspace (serving as a quick link to the current development context). Creates a `[tt:workspace:init] Create workspace` commit in the jj repository (`.tt/config.toml` and `.tt/.gitignore` are committed; `.tt/history` and `.tt/workspace` are gitignored). Requires a clean working directory; aborts if `.tt` exists in the repo root as a non-directory entry (use `--force` to remove it). With `--force`, also allows overwriting files in an already-populated virtual folder. See §9 step 1, §6.2 (HEAD symlink and `.tt/workspace`), and §6.12 (transaction history).
+
+- **`tt workspace root [--repo PATH]`** — Print the virtual workspace directory path. Resolves and prints the path that the `.tt/workspace` symlink points to — the virtual project directory configured by `tt workspace init`. Exits with an error if the workspace has not been initialised (no `.tt/workspace` symlink present). See §5.0.
 
 - **`tt workspace repo [--repo PATH]`** — Print the canonical repository root path. When run from a task worktree (a secondary jj workspace), resolves and prints the path to the primary (canonical) repository root rather than the worktree itself. Useful for locating shared repository resources from any worktree. See §5.0.
 

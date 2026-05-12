@@ -97,6 +97,7 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} init         →  tt workspace init
   ${SCRIPT_NAME} switch       →  tt workspace switch
   ${SCRIPT_NAME} repo         →  tt workspace repo
+  ${SCRIPT_NAME} root         →  tt workspace root
   ${SCRIPT_NAME} current      →  tt task current
   ${SCRIPT_NAME} edit         →  tt task edit
   ${SCRIPT_NAME} reorder     →  tt task reorder
@@ -135,6 +136,7 @@ main() {
     delete-context) set -- task context delete "${@:2}" ;;
     prompt)      set -- task     prompt       "${@:2}" ;;
     repo)        set -- workspace repo        "${@:2}" ;;
+    root)        set -- workspace root        "${@:2}" ;;
   esac
 
   if [[ $# -ge 1 && ( "$1" == "--help" || "$1" == "-h" ) ]]; then
