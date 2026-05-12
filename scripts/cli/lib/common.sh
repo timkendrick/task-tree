@@ -172,6 +172,13 @@ log() {
   printf '%s\n' "$*" >&2
 }
 
+# Resolve DIR to a canonical absolute path, following OS-level symlinks (pwd -P).
+# Exits 1 if the directory does not exist or cannot be entered.
+# Usage: resolve_path_symlinks DIR
+resolve_path_symlinks() {
+  (cd "$1" && pwd -P)
+}
+
 # Find repo root by walking up from current directory to find .jj; return 1 if not found.
 # Uses pwd -P to resolve symlinks so that working from inside a symlinked directory
 # (e.g. /virtual/HEAD) does not produce a symlink path as the repo root.
@@ -221,7 +228,7 @@ resolve_repo() {
   fi
 
   # Canonicalize to match jj's own path representation (e.g. /var → /private/var on macOS)
-  repo="$(cd "$repo" && pwd -P)"
+  repo="$(resolve_path_symlinks "$repo")"
   printf '%s' "$repo"
 }
 
@@ -286,9 +293,12 @@ get_workspace_dir() {
     local ws_dir
     ws_dir="$(readlink "$symlink")"
     if [[ -n "$ws_dir" ]]; then
-      # Resolve relative targets against the symlink's parent directory
+      # Resolve relative targets against the symlink's parent directory,
+      # then canonicalise to strip OS-level symlinks (e.g. /var -> /private/var).
       if [[ "$ws_dir" != /* ]]; then
-        ws_dir="$(cd "$(dirname "$symlink")" && cd "$ws_dir" && pwd)"
+        ws_dir="$(resolve_path_symlinks "$(cd "$(dirname "$symlink")" && cd "$ws_dir" && pwd)")"
+      else
+        ws_dir="$(resolve_path_symlinks "$ws_dir")"
       fi
       printf '%s' "$ws_dir"
       return 0
@@ -359,7 +369,7 @@ run_hook() {
 make_absolute_symlink() {
   local target_path="$1" symlink_path="$2"
   if [[ "$target_path" != /* ]]; then
-    target_path="$(cd "$target_path" && pwd)"
+    target_path="$(resolve_path_symlinks "$target_path")"
   fi
   ln -snf "$target_path" "$symlink_path"
 }
@@ -763,29 +773,23 @@ check_bookmark_up_to_date() {
   [[ -z "$ahead_commits" ]]
 }
 
-# Usage: resolve_head_worktree WORKSPACE_DIR REPO
-# Resolves the worktree path that HEAD currently points to.
-# Falls back to REPO if HEAD is not a symlink or doesn't exist.
-# Always returns an absolute path.
-resolve_head_worktree() {
-  local workspace_dir="$1" repo="$2"
-  local head_path="${workspace_dir}/HEAD"
-  if [[ -n "$workspace_dir" && -L "$head_path" ]]; then
-    local head_target
-    head_target="$(readlink "$head_path")" || true
-    if [[ -n "$head_target" ]]; then
-      # Resolve relative symlink
-      if [[ "$head_target" != /* ]]; then
-        head_target="${workspace_dir}/${head_target}"
-      fi
-      # Canonicalize (returns repo if target doesn't exist)
-      local resolved
-      resolved="$(cd "$head_target" 2>/dev/null && pwd)" || resolved="$repo"
-      printf '%s' "$resolved"
-      return 0
-    fi
+
+# Read the active worktree path from <workspace-dir>/HEAD.
+# Returns 1 if the HEAD symlink is absent or unreadable; never falls back.
+# Always returns a canonicalised absolute path (pwd -P).
+get_active_worktree() {
+  local workspace_dir="$1"
+  local head_path="$workspace_dir/HEAD"
+  [[ -L "$head_path" ]] || return 1
+  local head_target
+  head_target="$(readlink "$head_path")" || return 1
+  [[ -n "$head_target" ]] || return 1
+  # Resolve relative symlink
+  if [[ "$head_target" != /* ]]; then
+    head_target="${workspace_dir}/${head_target}"
   fi
-  printf '%s' "$repo"
+  resolved="$(resolve_path_symlinks "$head_target")"
+  printf '%s' "$resolved"
 }
 
 # Map a task status field to a GFM checkbox string.
