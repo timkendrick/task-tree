@@ -773,29 +773,23 @@ check_bookmark_up_to_date() {
   [[ -z "$ahead_commits" ]]
 }
 
-# Usage: resolve_head_worktree WORKSPACE_DIR REPO
-# Resolves the worktree path that HEAD currently points to.
-# Falls back to REPO if HEAD is not a symlink or doesn't exist.
-# Always returns an absolute path.
-resolve_head_worktree() {
-  local workspace_dir="$1" repo="$2"
-  local head_path="${workspace_dir}/HEAD"
-  if [[ -n "$workspace_dir" && -L "$head_path" ]]; then
-    local head_target
-    head_target="$(readlink "$head_path")" || true
-    if [[ -n "$head_target" ]]; then
-      # Resolve relative symlink
-      if [[ "$head_target" != /* ]]; then
-        head_target="${workspace_dir}/${head_target}"
-      fi
-      # Canonicalize (returns repo if target doesn't exist)
-      local resolved
-      resolved="$(cd "$head_target" 2>/dev/null && pwd)" || resolved="$repo"
-      printf '%s' "$resolved"
-      return 0
-    fi
+
+# Read the active worktree path from <workspace-dir>/HEAD.
+# Returns 1 if the HEAD symlink is absent or unreadable; never falls back.
+# Always returns a canonicalised absolute path (pwd -P).
+get_active_worktree() {
+  local workspace_dir="$1"
+  local head_path="$workspace_dir/HEAD"
+  [[ -L "$head_path" ]] || return 1
+  local head_target
+  head_target="$(readlink "$head_path")" || return 1
+  [[ -n "$head_target" ]] || return 1
+  # Resolve relative symlink
+  if [[ "$head_target" != /* ]]; then
+    head_target="${workspace_dir}/${head_target}"
   fi
-  printf '%s' "$repo"
+  resolved="$(resolve_path_symlinks "$head_target")"
+  printf '%s' "$resolved"
 }
 
 # Map a task status field to a GFM checkbox string.
