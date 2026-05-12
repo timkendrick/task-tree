@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt workspace repo — Print the canonical repository root path.
+#
+# In a worktree, this resolves to the primary (canonical) jj repository,
+# not the worktree itself.
+#
+# Usage:
+#   tt workspace repo [--repo PATH]
+#
+# Options:
+#   --repo PATH   Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
+#   -h, --help    Show this help.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--repo PATH]
+
+Print the canonical repository root path.
+
+When run from a task worktree (a secondary jj workspace), this resolves and
+prints the path to the primary (canonical) repository root, not the worktree
+itself. Useful for locating shared repository resources from any worktree.
+
+Options:
+  --repo PATH   Repository root (overrides TT_REPO; default: walk up from CWD to find .jj)
+  -h, --help    Show this help
+
+Examples:
+  ${COMMAND_NAME:-$SCRIPT_NAME}
+  ${COMMAND_NAME:-$SCRIPT_NAME} --repo /path/to/repo
+
+
+EOF
+}
+
+main() {
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      -*)
+        usage >&2; exit 1 ;;
+      *)
+        usage >&2; exit 1 ;;
+    esac
+  done
+
+  repo="$(resolve_repo "$repo")"
+  canonical="$(resolve_canonical_repo "$repo")"
+  printf '%s\n' "$canonical"
+}
+
+main "$@"

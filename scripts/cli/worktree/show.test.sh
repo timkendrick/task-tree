@@ -13,7 +13,7 @@ test_worktree_show__no_dedicated_worktree_falls_back_to_repo() {
   output="" exit_code=0
   output=$(run_tt worktree show "$task_id" 2>&1) || exit_code=$?
   assert_success "worktree lookup succeeds" "$exit_code"
-  assert_contains "output is repo root" "$output" "$REPO"
+  assert_eq "output is repo root" "$output" "$REPO"
 }
 
 
