@@ -110,7 +110,7 @@ subtask: [x] task/worktree-deletion-history-6a7a5b52
 subtask: [x] task/tt-worktree-delete-main-repo-0b69546c
 subtask: [x] task/tt-worktree-root-d13ad3af
 subtask: [x] task/tt-worktree-switch-d4aa9c8c
-subtask: [ ] task/tt-task-revset-ad71104d
+subtask: [x] task/tt-task-revset-ad71104d
 ---
 Implement shell script implementations of all `tt` CLI commands
 
