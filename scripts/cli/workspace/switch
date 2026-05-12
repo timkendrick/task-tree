@@ -188,7 +188,7 @@ main() {
       outgoing_worktree="$head_target"
     fi
     # Canonicalize
-    outgoing_worktree="$(cd "$outgoing_worktree" 2>/dev/null && pwd)" || outgoing_worktree="$repo"
+    outgoing_worktree="$(resolve_path_symlinks "$outgoing_worktree" 2>/dev/null)" || outgoing_worktree="$repo"
   else
     outgoing_worktree="$repo"
   fi
