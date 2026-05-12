@@ -177,21 +177,7 @@ main() {
 
   # Resolve outgoing context from HEAD symlink
   local outgoing_worktree previous_task_id
-  local head_path="${workspace_dir}/HEAD"
-  if [[ -n "$workspace_dir" && -L "$head_path" ]]; then
-    local head_target
-    head_target="$(readlink "$head_path")"
-    # Resolve relative symlink relative to workspace_dir
-    if [[ "$head_target" != /* ]]; then
-      outgoing_worktree="${workspace_dir}/${head_target}"
-    else
-      outgoing_worktree="$head_target"
-    fi
-    # Canonicalize
-    outgoing_worktree="$(resolve_path_symlinks "$outgoing_worktree" 2>/dev/null)" || outgoing_worktree="$repo"
-  else
-    outgoing_worktree="$repo"
-  fi
+  outgoing_worktree="$(get_active_worktree "$workspace_dir")" || outgoing_worktree="$repo"
 
   # Resolve previous task ID from outgoing worktree
   local resolve_output
