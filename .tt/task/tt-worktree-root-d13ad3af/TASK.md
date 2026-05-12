@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt worktree root` command"
-status: IN-PROGRESS
+status: DONE
 created: 2026-05-12T06:26:31Z
 updated: 2026-05-12T06:26:31Z
 ---
