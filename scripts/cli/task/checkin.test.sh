@@ -384,4 +384,40 @@ test_task_checkin__context_before_subtask_in_parent() {
   assert_frontmatter_order "valid order after checkin with --context" "$content"
 }
 
+test_task_checkin__head_not_switched_when_checkin_non_active_task() {
+  # Bug: when checking in a task that is NOT the active task (HEAD points to
+  # a different task), HEAD should be left untouched.
+  setup_workspace "ci-head-no-switch"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "a" "Task A") || true
+  task_b=$(create_task "b" "Task B") || true
+
+  # Propagate parent to task A so it has task B's subtask entry (avoids conflict)
+  run_tt task propagate --from "$proj_id" --to "$task_a" >/dev/null 2>&1 || true
+
+  # Give both tasks dedicated worktrees so that target_ws != current_worktree
+  run_tt task checkout "$task_a" --worktree --switch >/dev/null 2>&1 || true
+  local worktree_a="$VIRTUAL/$task_a"
+  run_tt_in_worktree "$worktree_a" task checkpoint -m "Work on A" >/dev/null 2>&1 || true
+  run_tt_in_worktree "$worktree_a" task complete >/dev/null 2>&1 || true
+
+  # Give task B its own worktree and switch HEAD to it
+  run_tt task checkout "$task_b" --worktree --switch >/dev/null 2>&1 || true
+  local worktree_b="$VIRTUAL/$task_b"
+
+  local head_before
+  head_before="$(readlink "$VIRTUAL/HEAD")"
+
+  # Checkin task A by explicit ID from task B's worktree (we are NOT on task A)
+  local exit_code=0
+  output=$(run_tt_in_worktree "$worktree_b" task checkin "$task_a" 2>&1) || exit_code=$?
+  assert_success "checkin of non-active task succeeds" "$exit_code"
+
+  # HEAD should still point to wherever it was before (task B's context)
+  local head_after
+  head_after="$(readlink "$VIRTUAL/HEAD")"
+  assert_eq "HEAD unchanged after checkin of non-active task" "$head_after" "$head_before"
+}
+
 run_tests "tt task checkin"
