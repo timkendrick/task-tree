@@ -22,29 +22,29 @@ tt task parent       # Print the parent task ID
 
 The standard workflow for working with tasks:
 
-1. **Create a task** — `./scripts/cli/tt task create --title "<title>" [--slug <slug>] [--parent <parent-task-id>] [--label <label>...] [--propagate] [--checkout [--worktree[=<path>]]]`. Creates a new task under the parent (default: current branch), adds `subtask: [ ] <task-id>` to the parent, and forks the child branch. With `--propagate`, updates sibling branches. With `--checkout`, runs checkout on the newly created task; `--worktree` optionally uses or creates a dedicated jj workspace. Run `./scripts/cli/tt task create --help` for options.
+1. **Create a task** — `tt task create --title "<title>" [--slug <slug>] [--parent <parent-task-id>] [--label <label>...] [--propagate] [--checkout [--worktree[=<path>]]]`. Creates a new task under the parent (default: current branch), adds `subtask: [ ] <task-id>` to the parent, and forks the child branch. With `--propagate`, updates sibling branches. With `--checkout`, runs checkout on the newly created task; `--worktree` optionally uses or creates a dedicated jj workspace. Run `tt task create --help` for options.
 
-2. **Begin a task** — `./scripts/cli/tt task checkout <task-id> [--worktree[=<path>]] [--switch] [--force]`. Switches to the task branch, updates status to IN-PROGRESS if TODO, creates TASK.md symlink on first checkout. With `--worktree`, uses or creates a dedicated jj workspace; `--switch` also updates the HEAD symlink to the new worktree. Run `./scripts/cli/tt task checkout --help` for options.
+2. **Begin a task** — `tt task checkout <task-id> [--worktree[=<path>]] [--switch] [--force]`. Switches to the task branch, updates status to IN-PROGRESS if TODO, creates TASK.md symlink on first checkout. With `--worktree`, uses or creates a dedicated jj workspace; `--switch` also updates the HEAD symlink to the new worktree. Run `tt task checkout --help` for options.
 
 3. **Work on the task** — Make commits on the branch and accumulate context in `./TASK.md`.
-   - **Add context** — Run `./scripts/cli/tt task context add [--title TITLE] [--slug SLUG]` to create a standalone context file for the task (reads body from stdin if piped, otherwise opens editor). Run `./scripts/cli/tt task context add --help` for options.
-   - **Checkpoint** — Run `./scripts/cli/tt task checkpoint [-m <message>] [--squash]` to create a named checkpoint commit and advance the task bookmark. Run `./scripts/cli/tt task checkpoint --help` for options.
+   - **Add context** — Run `tt task context add [--title TITLE] [--slug SLUG]` to create a standalone context file for the task (reads body from stdin if piped, otherwise opens editor). Run `tt task context add --help` for options.
+   - **Checkpoint** — Run `tt task checkpoint [-m <message>] [--squash]` to create a named checkpoint commit and advance the task bookmark. Run `tt task checkpoint --help` for options.
 
-4. **Complete the task** — Run `./scripts/cli/tt task complete [<task-id>] [--force]`. Marks the task DONE with a `Complete task:` commit. Requires all child tasks done (use `--force` to bypass). Run `./scripts/cli/tt task complete --help` for options.
+4. **Complete the task** — Run `tt task complete [<task-id>] [--force]`. Marks the task DONE with a `Complete task:` commit. Requires all child tasks done (use `--force` to bypass). Run `tt task complete --help` for options.
 
-5. **Finish the task** — `./scripts/cli/tt task checkin [<task-id>] [--complete] [--rebase | --merge] [--delete] [--propagate]`. Merges the task into its parent. With `--complete`, runs complete first if not DONE. With `--delete`, removes the task file after checkin (requires DONE). Run `./scripts/cli/tt task checkin --help` for options.
+5. **Finish the task** — `tt task checkin [<task-id>] [--complete] [--rebase | --merge] [--delete] [--propagate]`. Merges the task into its parent. With `--complete`, runs complete first if not DONE. With `--delete`, removes the task file after checkin (requires DONE). Run `tt task checkin --help` for options.
 
 Note that steps 1 and 2 can be combined into a single `tt task create --checkout` command, and steps 4 and 5 can be combined into a single `tt task checkin --complete` command.
 
 ## Command reference
 
-Use `./scripts/cli/tt task <subcommand> --help` for detailed options on any command.
+Use `tt task <subcommand> --help` for detailed options on any command.
 
 ```shell
-./scripts/cli/tt task create --title "<title>" [options...]
-./scripts/cli/tt task create --help    # Show task creation options
-./scripts/cli/tt task --help           # List available task subcommands
-./scripts/cli/tt --help                # General usage
+tt task create --title "<title>" [options...]
+tt task create --help    # Show task creation options
+tt task --help           # List available task subcommands
+tt --help                # General usage
 ```
 
 ### Task commands
