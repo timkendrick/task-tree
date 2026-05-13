@@ -2,7 +2,8 @@
 title: "Prevent `tt task checkin` of completed files from incorrectly switching worktree"
 status: IN-PROGRESS
 created: 2026-05-13T20:12:33Z
-updated: 2026-05-13T20:12:34Z
+updated: 2026-05-13T20:18:32Z
+context: context/implementation-plan-prevent-checkin-head-switch-42873dc2
 ---
 Currently, when checking a completed task into its parent task via `tt task checkin --complete`, the `HEAD` worktree symlink is updated to match the parent task.
 
