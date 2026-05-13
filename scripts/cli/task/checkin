@@ -434,15 +434,25 @@ main() {
     "TT_INCOMING_BRANCH=$task_id"
 
   # --- Post-checkin cleanup ---
-  # Always switch to the parent branch after checkin, regardless of task status.
-  if [[ "$target_ws" != "$current_worktree" ]]; then
-    # target_ws is a different worktree from the current one; switch HEAD to parent
-    perform_workspace_switch "$repo" "${workspace_dir:-}" "$parent_bookmark" \
-      "$target_ws" "$current_worktree" "$task_id"
+  # Switch HEAD to the parent worktree only if HEAD currently points to the
+  # child task's worktree.  If HEAD points elsewhere (e.g. the user is working
+  # on a sibling task), leave it untouched.
+  local active_ws=""
+  if active_ws="$(get_active_worktree "${workspace_dir:-}")"; then
+    active_ws="$(resolve_path_symlinks "$active_ws")"
+  fi
+  local resolved_child_ws
+  resolved_child_ws="$(resolve_path_symlinks "$child_worktree")"
 
+  if [[ "$active_ws" == "$resolved_child_ws" ]]; then
+    if [[ "$target_ws" != "$current_worktree" ]]; then
+      perform_workspace_switch "$repo" "${workspace_dir:-}" "$parent_bookmark" \
+        "$target_ws" "$current_worktree" "$task_id"
+    else
+      log "Now on parent branch: $parent_bookmark"
+    fi
   else
-    # target_ws is same as current workspace — WC is already on parent branch
-    log "Now on parent branch: $parent_bookmark"
+    log "HEAD points to a different task; not switching worktree."
   fi
 
   if [[ "$task_status" != "DONE" ]]; then
