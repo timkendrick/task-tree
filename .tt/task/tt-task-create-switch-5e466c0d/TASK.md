@@ -1,6 +1,6 @@
 ---
 title: "Allow switching worktree via `tt task create --checkout --worktree --switch`"
-status: TODO
+status: IN-PROGRESS
 created: 2026-05-18T15:56:44Z
 updated: 2026-05-18T15:56:45Z
 ---
