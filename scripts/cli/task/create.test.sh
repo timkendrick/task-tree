@@ -150,6 +150,44 @@ test_task_create__help() {
 }
 
 
+test_task_create__switch_without_checkout_rejected() {
+  setup_workspace "create-switch-no-checkout"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task create --slug "mytask" --title "My Task" --switch <<< "" 2>&1) || exit_code=$?
+  assert_failure "--switch without --checkout rejected" "$exit_code"
+}
+
+
+test_task_create__switch_without_worktree_rejected() {
+  setup_workspace "create-switch-no-worktree"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task create --slug "mytask" --title "My Task" --checkout --switch <<< "" 2>&1) || exit_code=$?
+  assert_failure "--switch without --worktree rejected" "$exit_code"
+}
+
+
+test_task_create__checkout_worktree_switch() {
+  setup_workspace "create-checkout-wt-switch"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  task_id=$(run_tt task create --slug "mytask" --title "My Task" --checkout --worktree --switch <<< "" | tail -1) || true
+  assert_success "create with --checkout --worktree --switch succeeds" "$?"
+  assert_matches "task ID format" "$task_id" "task/%mytask%"
+
+  # HEAD symlink should point to the worktree directory
+  local head_target
+  head_target="$(readlink "$VIRTUAL/HEAD")"
+  assert_eq "HEAD is absolute" "${head_target:0:1}" "/"
+}
+
+
 test_task_create__subtask_after_existing_context() {
   setup_workspace "create-subtask-order"
   proj_id=$(create_project "proj" "Project") || true
