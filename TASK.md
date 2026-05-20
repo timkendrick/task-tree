@@ -1,1 +1,1 @@
-.tt/task/tt-worktree-path-arg-e7054ae4/TASK.md
+.tt/task/bootstrap-cli-d35756ce/TASK.md
