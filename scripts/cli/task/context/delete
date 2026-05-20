@@ -104,9 +104,7 @@ main() {
       exit 1
     fi
   else
-    local resolve_output
-    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-    branch="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    branch="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$branch" ]]; then
       log "Error: Not on a task or project branch. Use --task to specify."
       exit 1
@@ -137,7 +135,7 @@ main() {
   # This ensures any local changes (if we had --force) would be preserved
   # but since we require clean WC, this just advances the bookmark if needed
   local current_bookmark
-  current_bookmark="$(resolve_current "$target_worktree" "$task_prefix" "$project_prefix" | sed -n '3p')"
+  current_bookmark="$(resolve_current_bookmark "$target_worktree" "$task_prefix" "$project_prefix")"
 
   # Read task file content from current worktree
   local task_file task_content

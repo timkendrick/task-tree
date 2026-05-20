@@ -116,10 +116,8 @@ main() {
     # Resolve tt task ID for this workspace
     local task_id='(none)'
     if [[ "$ws_path" != '(none)' && -d "$ws_path" ]]; then
-      local resolve_out
-      resolve_out="$(resolve_current "$ws_path" "$task_prefix" "$project_prefix" 2>/dev/null)" || true
       local bm
-      bm="$(printf '%s' "$resolve_out" | sed -n '3p')"
+      bm="$(resolve_current_bookmark "$ws_path" "$task_prefix" "$project_prefix" 2>/dev/null)" || true
       if [[ -n "$bm" ]]; then
         task_id="$bm"
       fi

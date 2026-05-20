@@ -182,10 +182,7 @@ main() {
     fi
     task_file="$(task_file_path "$task_slug")"
   else
-    local resolve_output
-    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
-    task_id="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    { read -r _rev; read -r task_file; read -r task_id; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$task_id" ]]; then
       log "Error: Not on a task or project branch. Pass a task ID explicitly."
       exit 1

@@ -361,9 +361,7 @@ main() {
       exit 1
     fi
   else
-    local resolve_output
-    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-    from_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    from_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$from_bookmark" ]]; then
       log "Error: Not on a task or project branch. Use --from to specify the source."
       exit 1
