@@ -113,6 +113,7 @@ subtask: [x] task/tt-worktree-switch-d4aa9c8c
 subtask: [x] task/tt-task-revset-ad71104d
 subtask: [x] task/tt-task-checkin-prevent-switch-0c1bbf4a
 subtask: [x] task/tt-task-create-switch-5e466c0d
+subtask: [ ] task/tt-worktree-path-arg-e7054ae4
 ---
 Implement shell script implementations of all `tt` CLI commands
 
