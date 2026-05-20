@@ -98,18 +98,15 @@ main() {
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  local resolve_output task_id
-  resolve_output="$(resolve_current "$canonical_worktree_path" "$task_prefix" "$project_prefix")" || true
-  task_id="$(printf '%s' "$resolve_output" | sed -n '3p')"
+  local task_id
+  task_id="$(resolve_current_bookmark "$canonical_worktree_path" "$task_prefix" "$project_prefix")" || true
 
   # Resolve outgoing context from HEAD symlink
   local outgoing_worktree previous_task_id
   outgoing_worktree="$(get_active_worktree "$workspace_dir")" || outgoing_worktree="$repo"
 
   # Resolve previous task ID from outgoing worktree
-  local resolve_output
-  resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")" || true
-  previous_task_id="$(printf '%s' "$resolve_output" | sed -n '3p')"
+  previous_task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")" || true
 
   # Dirty check on outgoing worktree
   if ! is_wc_clean "$outgoing_worktree"; then

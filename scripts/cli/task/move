@@ -104,9 +104,7 @@ main() {
       exit 1
     fi
   else
-    local resolve_output
-    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-    task_id="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$task_id" ]]; then
       log "Error: Not on a task or project branch. Use --task to specify."
       exit 1
@@ -224,9 +222,7 @@ main() {
   local original_rev=''
   local current_branch=''
   local restore_to_old_parent=false
-  local current_resolve
-  current_resolve="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-  current_branch="$(printf '%s' "$current_resolve" | sed -n '3p')"
+  current_branch="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
   if [[ "$current_branch" == "$task_id" ]]; then
     : # case 1 — no restore
   elif [[ "$current_branch" == "$old_parent" ]]; then
