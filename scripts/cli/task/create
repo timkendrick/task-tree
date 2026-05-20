@@ -31,6 +31,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --shallow              (with --propagate) Propagate to direct children only
 #   --checkout             After creation, run checkout on the newly created task
 #   --worktree[=<path>]    (with --checkout) Use or create a dedicated jj workspace for the task
+#   --switch              (with --checkout --worktree) Also update the HEAD symlink to the new worktree
 #
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -57,6 +58,7 @@ Options:
   --shallow             (with --propagate) Propagate to direct children only
   --checkout            After creation, run checkout on the newly created task
   --worktree[=<path>]   (with --checkout) Use or create a dedicated jj workspace for the task
+  --switch              (with --checkout --worktree) Also update the HEAD symlink to the new worktree
 
 Body is read from stdin (via pipe or redirect) if stdin is not a terminal;
 otherwise opens an editor for body input.
@@ -72,6 +74,7 @@ Examples:
   ${COMMAND_NAME:-$SCRIPT_NAME} --title "New feature" --propagate --shallow < ./description.md
   ${COMMAND_NAME:-$SCRIPT_NAME} --slug my-task --title "My task" --checkout
   ${COMMAND_NAME:-$SCRIPT_NAME} --slug my-task --title "My task" --checkout --worktree
+  ${COMMAND_NAME:-$SCRIPT_NAME} --slug my-task --title "My task" --checkout --worktree --switch
 
 EOF
 }
@@ -136,6 +139,7 @@ main() {
   local checkout=false
   local checkout_worktree=false
   local checkout_worktree_path=''
+  local checkout_switch=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -211,6 +215,10 @@ main() {
         checkout_worktree_path="${1#--worktree=}"
         shift
         ;;
+      --switch)
+        checkout_switch=true
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -230,6 +238,10 @@ main() {
   fi
 
   if [[ "$checkout_worktree" == true && "$checkout" == false ]]; then
+    usage >&2; exit 1
+  fi
+
+  if [[ "$checkout_switch" == true && "$checkout_worktree" == false ]]; then
     usage >&2; exit 1
   fi
 
@@ -448,6 +460,9 @@ main() {
         checkout_args+=(--worktree="$checkout_worktree_path")
       else
         checkout_args+=(--worktree)
+      fi
+      if [[ "$checkout_switch" == true ]]; then
+        checkout_args+=(--switch)
       fi
     fi
     "$SCRIPT_DIR/checkout" "${checkout_args[@]}"
