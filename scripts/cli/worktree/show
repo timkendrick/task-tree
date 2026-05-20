@@ -11,10 +11,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # should show the full command path (tt worktree show), not just show.
 #
 # Usage:
-#   tt worktree show <task-id> [--repo PATH]
+#   tt worktree show --task <task-id> [--repo PATH]
 #
 # Options:
-#   <task-id>          Task or project branch name (e.g., task/foo-abc12345, project/bar-def12345)
+#   --task <task-id>   Task or project branch name (e.g., task/foo-abc12345, project/bar-def12345)
 #   --repo PATH        Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   -h, --help         Show this help.
 
@@ -22,21 +22,19 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <task-id> [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} --task <task-id> [--repo PATH]
 
 Output the worktree path for the given task or project ID.
 Falls back to the repository root if no dedicated worktree exists for the task.
 
-Arguments:
-  <task-id>  Task or project ID (e.g., task/foo-abc12345, project/bar-def12345)
-
 Options:
-  --repo PATH   Repository root (overrides TT_REPO; default: walk up from CWD to find .jj)
-  -h, --help    Show this help
+  --task <task-id>  Task or project ID (e.g., task/foo-abc12345, project/bar-def12345) (required)
+  --repo PATH       Repository root (overrides TT_REPO; default: walk up from CWD to find .jj)
+  -h, --help        Show this help
 
 Examples:
-  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345
-  ${COMMAND_NAME:-$SCRIPT_NAME} project/bar-def12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task project/bar-def12345
 
 EOF
 }
@@ -47,6 +45,9 @@ main() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --task)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        task_id="$2"; shift 2 ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
@@ -54,11 +55,7 @@ main() {
       -*)
         usage >&2; exit 1 ;;
       *)
-        if [[ -z "$task_id" ]]; then
-          task_id="$1"; shift
-        else
-          usage >&2; exit 1
-        fi ;;
+        usage >&2; exit 1 ;;
     esac
   done
 
