@@ -679,10 +679,8 @@ find_worktrees_for_branch() {
     [[ -z "$ws_root" ]] && continue
     [[ ! -d "$ws_root" ]] && continue
     # Resolve current bookmark in this workspace
-    local resolve_out
-    resolve_out="$(resolve_current "$ws_root" "$task_prefix" "$project_prefix" 2>/dev/null)" || continue
     local ws_bookmark
-    ws_bookmark="$(printf '%s' "$resolve_out" | sed -n '3p')"
+    ws_bookmark="$(resolve_current_bookmark "$ws_root" "$task_prefix" "$project_prefix" 2>/dev/null)" || continue
     if [[ "$ws_bookmark" == "$bookmark" ]]; then
       printf '%s\n' "$ws_root"
     fi
@@ -726,6 +724,39 @@ resolve_current() {
       printf '%s\n\n\n' "$parent_rev"
     fi
   fi
+}
+
+# Usage: resolve_current_rev REPO TASK_PREFIX PROJECT_PREFIX
+#
+# Convenience wrapper around resolve_current that returns only the commit ID
+# (line 1 of resolve_current's output). Prints the commit ID to stdout, or
+# '@' if no bookmarks are found in the working copy ancestry.
+resolve_current_rev() {
+  local resolve_output
+  resolve_output="$(resolve_current "$@")" || return $?
+  printf '%s' "$resolve_output" | sed -n '1p'
+}
+
+# Usage: resolve_current_task_file REPO TASK_PREFIX PROJECT_PREFIX
+#
+# Convenience wrapper around resolve_current that returns only the task file path
+# (line 2 of resolve_current's output). Prints the path to stdout, or an empty
+# string if the current branch is not a task or project branch.
+resolve_current_task_file() {
+  local resolve_output
+  resolve_output="$(resolve_current "$@")" || return $?
+  printf '%s' "$resolve_output" | sed -n '2p'
+}
+
+# Usage: resolve_current_bookmark REPO TASK_PREFIX PROJECT_PREFIX
+#
+# Convenience wrapper around resolve_current that returns only the bookmark name
+# (line 3 of resolve_current's output). Prints the bookmark name to stdout, or
+# an empty string if no bookmark is found in the working copy ancestry.
+resolve_current_bookmark() {
+  local resolve_output
+  resolve_output="$(resolve_current "$@")" || return $?
+  printf '%s' "$resolve_output" | sed -n '3p'
 }
 
 # Usage: resolve_workspace_name REPO WORKTREE_PATH

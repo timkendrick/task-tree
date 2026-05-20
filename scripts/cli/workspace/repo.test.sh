@@ -29,7 +29,7 @@ test_workspace_repo__from_worktree_resolves_canonical() {
   run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
 
   # Find the worktree path for this task
-  worktree_path=$(run_tt worktree show "$task_id" 2>/dev/null) || worktree_path=""
+  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || worktree_path=""
 
   # Only run the worktree test if a dedicated worktree was actually created
   if [[ -n "$worktree_path" && "$worktree_path" != "$REPO" ]]; then

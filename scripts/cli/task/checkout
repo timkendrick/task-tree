@@ -162,9 +162,7 @@ main() {
   # Resolve current worktree and bookmark for hook env vars
   local current_worktree previous_task_id previous_task_branch
   current_worktree="$(resolve_current_worktree "$repo")"
-  local resolve_output
-  resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-  previous_task_id="$(printf '%s' "$resolve_output" | sed -n '3p')"
+  previous_task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
   previous_task_branch="$previous_task_id"
 
   # Determine target worktree and whether it's being created fresh

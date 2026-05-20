@@ -69,10 +69,7 @@ main() {
   local branch task_file task_suffix
 
   if [[ -z "$task_id_arg" ]]; then
-    local resolve_output
-    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
-    branch="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    { read -r _rev; read -r task_file; read -r branch; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$branch" ]]; then
       log "Error: Not on a task or project branch."
       exit 1
