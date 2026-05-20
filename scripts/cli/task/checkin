@@ -161,10 +161,7 @@ main() {
     child_slug="${child_bookmark#"$task_prefix"}"
     task_file="$(task_file_path "$child_slug")"
   else
-    local resolve_output
-    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
-    child_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    { read -r _rev; read -r task_file; read -r child_bookmark; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$child_bookmark" ]]; then
       log "Error: Not on a task or project branch."
       exit 1

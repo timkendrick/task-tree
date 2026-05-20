@@ -415,9 +415,7 @@ main() {
 
   # Resolve default task_id if not provided
   if [[ -z "$task_id" ]]; then
-    local resolve_output
-    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-    task_id="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$task_id" ]]; then
       log "Error: Not on a task or project branch."
       exit 1

@@ -37,7 +37,7 @@ test_worktree_active__after_checkout_returns_worktree() {
   # Check out with a dedicated worktree (updates HEAD)
   run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
 
-  worktree_path=$(run_tt worktree show "$task_id" 2>/dev/null) || worktree_path=""
+  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || worktree_path=""
 
   if [[ -n "$worktree_path" && "$worktree_path" != "$REPO" ]]; then
     output="" exit_code=0

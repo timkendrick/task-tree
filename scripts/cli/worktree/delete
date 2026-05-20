@@ -8,14 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt worktree delete — Delete a task's worktree.
 #
 # Usage:
-#   delete --task <task-id> [--worktree=<path>] [--force] [--repo PATH]
+#   delete <worktree-path> [--force] [--repo PATH]
 #
 # Forgets the jj workspace and removes all files from the worktree path.
 # The task bookmark is NOT deleted.
 #
 # Options:
-#   --task <task-id>       Required. Task or project ID.
-#   --worktree=<path>      Disambiguate when task has multiple worktrees.
+#   <worktree-path>        Required. Path to the worktree to delete.
 #   --force                Skip safety checks (dirty WC, commits after bookmark).
 #   --repo PATH            Repository root.
 #   -h, --help             Show this help.
@@ -24,72 +23,71 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} --task <task-id> [--worktree=<path>] [--force] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <worktree-path> [--force] [--repo PATH]
 
 Delete a task's worktree. Forgets the jj workspace and removes all files.
 The task bookmark is NOT deleted.
 
 Arguments:
-  --task <task-id>       Task or project ID (required)
+  <worktree-path>      Path to the worktree to delete (required)
 
 Options:
-  --worktree=<path>      Disambiguate when task has multiple worktrees.
   --force                Skip safety checks (dirty WC, commits after bookmark).
   --repo PATH            Repository root (overrides TT_REPO; default: find .jj).
   -h, --help             Show this help.
 
 Examples:
-  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345
-  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345 --worktree=/path/to/worktree
-  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345 --force
+  ${COMMAND_NAME:-$SCRIPT_NAME} /path/to/worktree
+  ${COMMAND_NAME:-$SCRIPT_NAME} /path/to/worktree --force
 
 EOF
 }
 
 main() {
-  local task_id=''
-  local worktree_arg=''
+  local worktree_path=''
   local force=false
   local repo=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --task)
-        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
-        task_id="$2"; shift 2 ;;
-      --worktree=*)
-        worktree_arg="${1#--worktree=}"; shift ;;
       --force)
         force=true; shift ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
       -h|--help) usage; exit 0 ;;
-      *)
+      -*)
         usage >&2; exit 1 ;;
+      *)
+        if [[ -z "$worktree_path" ]]; then
+          worktree_path="$1"; shift
+        else
+          usage >&2; exit 1
+        fi ;;
     esac
   done
 
-  if [[ -z "$task_id" ]]; then
+  if [[ -z "$worktree_path" ]]; then
     usage >&2; exit 1
   fi
 
   repo="$(resolve_repo "$repo")"
 
+  # Canonicalize the path for comparison with jj workspace list
+  local canonical_worktree_path
+  canonical_worktree_path="$(resolve_path_symlinks "$worktree_path" 2>/dev/null)" || canonical_worktree_path="$worktree_path"
+
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"
   project_prefix="$(get_project_prefix "$repo")"
 
-  # Validate task_id format
-  if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
-    log "Error: '$task_id' is not a recognized task or project ID"
-    log "  Expected prefix '$task_prefix' or '$project_prefix' with 8-hex suffix"
-    exit 1
-  fi
-
-  # Verify the bookmark exists
-  if ! jj -R "$repo" log -r "$task_id" --no-graph -T '' 2>/dev/null; then
-    log "Error: Task '$task_id' not found in repository"
+  # Refuse to delete the canonical (main) repo workspace — this is always an error
+  local canonical_repo
+  canonical_repo="$(resolve_canonical_repo "$repo")"
+  local resolved_canonical_repo
+  resolved_canonical_repo="$(resolve_path_symlinks "$canonical_repo" 2>/dev/null)" || resolved_canonical_repo="$canonical_repo"
+  if [[ "$canonical_worktree_path" == "$resolved_canonical_repo" ]]; then
+    log "Error: Not a task worktree"
     exit 1
   fi
 
@@ -97,48 +95,16 @@ main() {
   local workspace_dir
   workspace_dir="$(get_workspace_dir "$repo")" || true
 
-  # Find worktrees for this task
-  local found_worktrees wt_count
-  found_worktrees="$(find_worktrees_for_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")"
-  wt_count="$(printf '%s' "$found_worktrees" | grep -c . 2>/dev/null || true)"
-
-  local target_worktree
-
-  if [[ "$wt_count" -eq 0 ]]; then
-    log "Error: No worktree found for '$task_id'"
+  # Resolve jj workspace name — validates the path is a known jj workspace
+  local ws_name
+  ws_name="$(resolve_workspace_name "$repo" "$canonical_worktree_path")" || {
+    log "Error: Could not resolve jj workspace name for '$worktree_path'"
     exit 1
-  fi
+  }
 
-  # Disambiguation
-  if [[ "$wt_count" -gt 1 ]]; then
-    if [[ -z "$worktree_arg" ]]; then
-      log "Error: Multiple worktrees found for '$task_id'; use --worktree=<path>:"
-      printf '%s\n' "$found_worktrees" | while IFS= read -r p; do log "  $p"; done
-      exit 1
-    fi
-    if ! printf '%s\n' "$found_worktrees" | grep -qxF "$worktree_arg"; then
-      log "Error: --worktree=$worktree_arg is not a worktree for '$task_id'"
-      log "  Available worktrees:"
-      printf '%s\n' "$found_worktrees" | while IFS= read -r p; do log "    $p"; done
-      exit 1
-    fi
-    target_worktree="$worktree_arg"
-  else
-    target_worktree="$(printf '%s' "$found_worktrees" | head -1)"
-    if [[ -n "$worktree_arg" && "$worktree_arg" != "$target_worktree" ]]; then
-      log "Error: --worktree=$worktree_arg does not match the worktree for '$task_id'"
-      log "  Found worktree: $target_worktree"
-      exit 1
-    fi
-  fi
-
-  # Refuse to delete the canonical (main) repo workspace — this is always an error
-  local canonical_repo
-  canonical_repo="$(resolve_canonical_repo "$repo")"
-  if [[ "$(realpath "$target_worktree" 2>/dev/null || printf '%s' "$target_worktree")" == "$(realpath "$canonical_repo" 2>/dev/null || printf '%s' "$canonical_repo")" ]]; then
-    log "Error: Not a task worktree"
-    exit 1
-  fi
+  # Resolve task ID from the worktree's current bookmark (for safety checks)
+  local task_id
+  task_id="$(resolve_current_bookmark "$canonical_worktree_path" "$task_prefix" "$project_prefix")" || true
 
   # All pre-mutation safety checks — all skippable with --force
   if [[ "$force" != true ]]; then
@@ -146,53 +112,48 @@ main() {
     local current_wc_root
     current_wc_root="$(jj workspace root 2>/dev/null)" || current_wc_root=""
     if [[ -n "$current_wc_root" ]]; then
-      local canon_current canon_target
-      canon_current="$(realpath "$current_wc_root" 2>/dev/null)" || canon_current="$current_wc_root"
-      canon_target="$(realpath "$target_worktree" 2>/dev/null)" || canon_target="$target_worktree"
-      if [[ "$canon_current" == "$canon_target" ]]; then
-        log "Error: Cannot delete the current working copy worktree '$target_worktree'."
+      local canonical_current_root
+      canonical_current_root="$(resolve_path_symlinks "$current_wc_root" 2>/dev/null)" || canonical_current_root="$current_wc_root"
+      if [[ "$canonical_current_root" == "$canonical_worktree_path" ]]; then
+        log "Error: Cannot delete the current working copy worktree '$worktree_path'."
         log "  Switch to a different worktree first, or use --force."
         exit 1
       fi
     fi
 
-    # Status check: task must be DONE
-    local task_suffix task_file task_content task_status
-    if is_task_branch "$task_id" "$task_prefix"; then
-      task_suffix="${task_id#$task_prefix}"
-    else
-      task_suffix="${task_id#$project_prefix}"
-    fi
-    task_file="$(task_file_path "$task_suffix")"
-    task_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file" 2>/dev/null)" || task_content=""
-    task_status="$(parse_frontmatter_field "$task_content" "status")"
-    if [[ "$task_status" != "DONE" ]]; then
-      log "Error: Task '$task_id' status is '${task_status:-unknown}' (not DONE)."
-      log "  Complete the task first, or use --force to delete the worktree anyway."
-      exit 1
+    # Task-based safety checks (only if a task bookmark was resolved)
+    if [[ -n "$task_id" ]] && (is_task_branch "$task_id" "$task_prefix" || is_project_branch "$task_id" "$project_prefix"); then
+      # Status check: task must be DONE
+      local task_suffix task_file task_content task_status
+      if is_task_branch "$task_id" "$task_prefix"; then
+        task_suffix="${task_id#$task_prefix}"
+      else
+        task_suffix="${task_id#$project_prefix}"
+      fi
+      task_file="$(task_file_path "$task_suffix")"
+      task_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file" 2>/dev/null)" || task_content=""
+      task_status="$(parse_frontmatter_field "$task_content" "status")"
+      if [[ "$task_status" != "DONE" ]]; then
+        log "Error: Task '$task_id' status is '${task_status:-unknown}' (not DONE)."
+        log "  Complete the task first, or use --force to delete the worktree anyway."
+        exit 1
+      fi
+
+      # Bookmark must be up to date (no commits after bookmark)
+      if ! check_bookmark_up_to_date "$canonical_worktree_path" "$task_id"; then
+        log "Error: Worktree has commits after the task bookmark '$task_id'."
+        log "  Checkpoint or discard these commits first, or use --force."
+        exit 1
+      fi
     fi
 
     # Worktree must be clean (no uncommitted changes)
-    if ! is_wc_clean "$target_worktree"; then
-      log "Error: Worktree '$target_worktree' has uncommitted changes."
+    if ! is_wc_clean "$canonical_worktree_path"; then
+      log "Error: Worktree '$worktree_path' has uncommitted changes."
       log "  Commit or discard changes first, or use --force."
       exit 1
     fi
-
-    # Bookmark must be up to date (no commits after bookmark)
-    if ! check_bookmark_up_to_date "$target_worktree" "$task_id"; then
-      log "Error: Worktree has commits after the task bookmark '$task_id'."
-      log "  Checkpoint or discard these commits first, or use --force."
-      exit 1
-    fi
   fi
-
-  # Resolve jj workspace name
-  local ws_name
-  ws_name="$(resolve_workspace_name "$repo" "$target_worktree")" || {
-    log "Error: Could not resolve jj workspace name for '$target_worktree'"
-    exit 1
-  }
 
   # Capture HEAD symlink target BEFORE deletion, since the worktree path
   # will no longer be resolvable after forget_worktree removes the files.
@@ -200,7 +161,7 @@ main() {
   if [[ -n "$workspace_dir" && -L "${workspace_dir}/HEAD" ]]; then
     local existing_head
     if existing_head="$(get_active_worktree "$workspace_dir")"; then
-      if [[ "$existing_head" == "$(resolve_path_symlinks "$target_worktree")" ]]; then
+      if [[ "$existing_head" == "$canonical_worktree_path" ]]; then
         head_needs_reset=true
       fi
     fi
@@ -210,7 +171,7 @@ main() {
   tt_begin_transaction "$repo"
 
   # Forget workspace and remove files
-  forget_worktree "$repo" "$ws_name" "$target_worktree"
+  forget_worktree "$repo" "$ws_name" "$canonical_worktree_path"
 
   # If HEAD pointed to the deleted worktree, reset it to repo root
   if [[ "$head_needs_reset" == true ]]; then
@@ -220,8 +181,10 @@ main() {
   # Commit transaction
   tt_commit_transaction "$repo"
 
-  log "Deleted worktree: $target_worktree"
-  log "  Task: $task_id"
+  log "Deleted worktree: $worktree_path"
+  if [[ -n "$task_id" ]]; then
+    log "  Task: $task_id"
+  fi
   log "  Workspace '$ws_name' forgotten from jj"
 }
 
