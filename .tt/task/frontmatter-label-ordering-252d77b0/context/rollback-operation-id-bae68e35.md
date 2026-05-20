@@ -1,6 +1,0 @@
----
-title: "Rollback operation ID"
-created: 2026-04-26T15:22:09Z
-updated: 2026-04-26T15:22:09Z
----
-jj op restore d79b60c3343e65e44c55ed80fe3010b7d3f05a454cc45c040c56e549d88133e88460d73049f82123a15fd1b3888f5a814353e4e1eb9687da58adfa8c1f82acf0
