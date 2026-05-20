@@ -8,11 +8,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt worktree switch — redirect the virtual project's HEAD symlink to an existing task worktree.
 #
 # Usage:
-#   switch <task-id> [--worktree=<path>] [--force] [--repo PATH]
+#   switch <worktree-path> [--force] [--repo PATH]
 #
 # Options:
-#   <task-id>            Task or project ID (required)
-#   --worktree=<path>    Specify exact worktree path when multiple exist for the task.
+#   <worktree-path>      Path to the worktree to switch to (required)
 #   --force              Proceed even if the outgoing workspace has local changes.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
@@ -20,39 +19,32 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <task-id> [--worktree=<path>] [--force] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <worktree-path> [--force] [--repo PATH]
 
 Redirect the virtual project's HEAD symlink to an existing task worktree.
 The worktree must already exist (run \`tt task checkout --worktree\` first).
 
 Arguments:
-  <task-id>  Task or project ID (e.g. task/foo-abc12345, project/bar-deadbeef)
+  <worktree-path>  Path to the worktree to switch to
 
 Options:
-  --worktree=<path>     Specify exact worktree path (required when multiple exist).
   --force               Proceed even if the outgoing workspace has local changes.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
-  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345
-  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --worktree=/path/to/worktree
-  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --force
+  ${COMMAND_NAME:-$SCRIPT_NAME} /path/to/worktree
+  ${COMMAND_NAME:-$SCRIPT_NAME} /path/to/worktree --force
 
 EOF
 }
 
 main() {
-  local task_id=''
   local worktree_path=''
   local force=false
   local repo=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --worktree=*)
-        worktree_path="${1#--worktree=}"
-        shift
-        ;;
       --force)
         force=true
         shift
@@ -70,8 +62,8 @@ main() {
         usage >&2; exit 1
         ;;
       *)
-        if [[ -z "$task_id" ]]; then
-          task_id="$1"
+        if [[ -z "$worktree_path" ]]; then
+          worktree_path="$1"
           shift
         else
           usage >&2; exit 1
@@ -80,100 +72,35 @@ main() {
     esac
   done
 
-  if [[ -z "$task_id" ]]; then
+  if [[ -z "$worktree_path" ]]; then
     usage >&2; exit 1
   fi
 
   repo="$(resolve_repo "$repo")"
 
-  local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  # Canonicalize the path for comparison with jj workspace list
+  local canonical_worktree_path
+  canonical_worktree_path="$(resolve_path_symlinks "$worktree_path" 2>/dev/null)" || canonical_worktree_path="$worktree_path"
 
-  # Validate task_id format
-  if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
-    log "Error: '$task_id' is not a recognized task or project ID"
-    log "  Expected prefix '$task_prefix' or '$project_prefix' with 8-hex suffix"
+  # Validate that the path is a valid jj workspace
+  local ws_name
+  ws_name="$(resolve_workspace_name "$repo" "$canonical_worktree_path")" || {
+    log "Error: '$worktree_path' is not a jj workspace in this repository"
     exit 1
-  fi
-
-  local jj_opts=(-R "$repo")
-
-  # Verify bookmark exists
-  if ! jj "${jj_opts[@]}" log -r "$task_id" --no-graph -T '' 2>/dev/null; then
-    log "Error: Task '$task_id' not found in repository"
-    exit 1
-  fi
+  }
 
   # Resolve workspace dir via .tt/workspace symlink
   local workspace_dir
   workspace_dir="$(get_workspace_dir "$repo")" || true
 
-  # Find worktrees for this task via `jj workspace list`.
-  # Use a template to emit "<name>: <root-path>" lines; the default output format
-  # contains commit metadata, not paths. Workspaces without a recorded path emit
-  # "<Error: Workspace has no recorded path: ...>" for the root — those are skipped.
-  local workspace_list
-  workspace_list="$(jj "${jj_opts[@]}" workspace list \
-    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || true
+  # Resolve task ID from the worktree (best-effort, for hooks/logging)
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
 
-  # Parse workspace list: each line is "<name>: <absolute-path>"
-  # Then check if that workspace's WC is on the task bookmark.
-  local -a matching_worktrees=()
-  while IFS= read -r line; do
-    # Extract path from "name: /path/to/worktree"
-    local wt_path
-    wt_path="$(printf '%s' "$line" | sed 's/^[^:]*: //')"
-    [[ -z "$wt_path" ]] && continue
-    # Skip workspaces without a recorded path (jj emits "<Error: ...>" for these)
-    [[ "$wt_path" == '<Error:'* ]] && continue
-    # Check if this worktree's current bookmark matches task_id.
-    # --ignore-working-copy avoids snapshotting (and lock contention) since we
-    # only need to read the bookmark name.
-    local wt_branch
-    wt_branch="$(jj -R "$wt_path" --ignore-working-copy log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
-      -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || continue
-    wt_branch="${wt_branch%%,*}"
-    if [[ "$wt_branch" == "$task_id" ]]; then
-      matching_worktrees+=("$wt_path")
-    fi
-  done <<< "$workspace_list"
-
-  local target_worktree
-  local num_matches="${#matching_worktrees[@]}"
-
-  if [[ "$num_matches" -eq 0 ]]; then
-    log "Error: No worktree found for '$task_id'. Run \`tt task checkout --worktree\` first."
-    exit 1
-  elif [[ "$num_matches" -eq 1 ]]; then
-    target_worktree="${matching_worktrees[0]}"
-    if [[ -n "$worktree_path" && "$worktree_path" != "$target_worktree" ]]; then
-      log "Error: Specified --worktree='$worktree_path' does not match found worktree '$target_worktree'."
-      exit 1
-    fi
-  else
-    # Multiple matches
-    if [[ -z "$worktree_path" ]]; then
-      log "Error: Multiple worktrees found for '$task_id'. Specify with --worktree=<path>."
-      for wt in "${matching_worktrees[@]}"; do
-        log "  $wt"
-      done
-      exit 1
-    fi
-    # Verify the specified path is in the list
-    local found=false
-    for wt in "${matching_worktrees[@]}"; do
-      if [[ "$wt" == "$worktree_path" ]]; then
-        found=true
-        break
-      fi
-    done
-    if [[ "$found" != true ]]; then
-      log "Error: Specified --worktree='$worktree_path' not found in worktrees for '$task_id'."
-      exit 1
-    fi
-    target_worktree="$worktree_path"
-  fi
+  local resolve_output task_id
+  resolve_output="$(resolve_current "$canonical_worktree_path" "$task_prefix" "$project_prefix")" || true
+  task_id="$(printf '%s' "$resolve_output" | sed -n '3p')"
 
   # Resolve outgoing context from HEAD symlink
   local outgoing_worktree previous_task_id
@@ -194,10 +121,14 @@ main() {
     log "Warning: Outgoing workspace has uncommitted changes (proceeding due to --force)."
   fi
 
-  perform_workspace_switch "$repo" "${workspace_dir:-}" "$task_id" \
-    "$target_worktree" "$outgoing_worktree" "$previous_task_id"
+  perform_workspace_switch "$repo" "${workspace_dir:-}" "${task_id:-}" \
+    "$canonical_worktree_path" "$outgoing_worktree" "$previous_task_id"
 
-  log "Switched to $task_id"
+  if [[ -n "$task_id" ]]; then
+    log "Switched to $task_id"
+  else
+    log "Switched to $worktree_path"
+  fi
 }
 
 main "$@"

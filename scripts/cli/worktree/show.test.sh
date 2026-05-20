@@ -11,7 +11,7 @@ test_worktree_show__no_dedicated_worktree_falls_back_to_repo() {
   task_id=$(create_task "my-task" "My Task") || true
 
   output="" exit_code=0
-  output=$(run_tt worktree show "$task_id" 2>&1) || exit_code=$?
+  output=$(run_tt worktree show --task "$task_id" 2>&1) || exit_code=$?
   assert_success "worktree lookup succeeds" "$exit_code"
   assert_eq "output is repo root" "$output" "$REPO"
 }
@@ -20,8 +20,17 @@ test_worktree_show__no_dedicated_worktree_falls_back_to_repo() {
 test_worktree_show__non_existent_bookmark() {
   setup_workspace "worktree-noexist"
   output="" exit_code=0
-  output=$(run_tt worktree show "task/nonexistent-00000000" 2>&1) || exit_code=$?
+  output=$(run_tt worktree show --task "task/nonexistent-00000000" 2>&1) || exit_code=$?
   assert_failure "non-existent bookmark rejected" "$exit_code"
+}
+
+
+test_worktree_show__bare_positional_arg_rejected() {
+  setup_workspace "worktree-positional"
+  output="" exit_code=0
+  output=$(run_tt worktree show "task/nonexistent-00000000" 2>&1) || exit_code=$?
+  assert_failure "bare positional arg rejected" "$exit_code"
+  assert_contains "shows usage" "$output" "Usage:"
 }
 
 
@@ -31,7 +40,7 @@ test_worktree_show__help() {
   output=$(run_tt worktree show --help 2>&1) || exit_code=$?
   assert_success "exit code" "$exit_code"
   assert_usage_command_name "command name" "$output" "tt worktree show"
-  assert_required_usage_argument "argument: <task-id>" "$output" "<task-id>"
+  assert_required_usage_argument "argument: --task" "$output" "--task"
   assert_required_usage_argument "argument: --repo" "$output" "--repo"
 }
 
