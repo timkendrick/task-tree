@@ -4,21 +4,12 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
 
 
-test_worktree_switch__invalid_task_id_rejected() {
+test_worktree_switch__non_workspace_path_rejected() {
   setup_workspace "switch-invalid"
-  proj_id=$(create_project "proj" "Project") || true
-
   output="" exit_code=0
-  output=$(run_tt worktree switch "not-a-task-id" 2>&1) || exit_code=$?
-  assert_failure "invalid task ID rejected" "$exit_code"
-}
-
-
-test_worktree_switch__non_existent_bookmark_rejected() {
-  setup_workspace "switch-noexist"
-  output="" exit_code=0
-  output=$(run_tt worktree switch "task/nonexistent-00000000" 2>&1) || exit_code=$?
-  assert_failure "non-existent bookmark rejected" "$exit_code"
+  output=$(run_tt worktree switch "/tmp/nonexistent-path" 2>&1) || exit_code=$?
+  assert_failure "non-workspace path rejected" "$exit_code"
+  assert_contains "error mentions workspace" "$output" "not a jj workspace"
 }
 
 
@@ -38,7 +29,7 @@ test_worktree_switch__switches_to_existing_worktree() {
 
   # Now switch HEAD to the task worktree via tt worktree switch
   output="" exit_code=0
-  output=$(run_tt worktree switch "$task_id" 2>&1) || exit_code=$?
+  output=$(run_tt worktree switch "$worktree_path" 2>&1) || exit_code=$?
   assert_success "worktree switch succeeds" "$exit_code"
 
   # HEAD symlink should now resolve to the task worktree
@@ -62,8 +53,7 @@ test_worktree_switch__help() {
   output=$(run_tt worktree switch --help 2>&1) || exit_code=$?
   assert_success "exit code" "$exit_code"
   assert_usage_command_name "command name" "$output" "tt worktree switch"
-  assert_required_usage_argument "argument: <task-id>" "$output" "<task-id>"
-  assert_required_usage_argument "argument: --worktree=<path>" "$output" "--worktree=<path>"
+  assert_required_usage_argument "argument: <worktree-path>" "$output" "<worktree-path>"
   assert_required_usage_argument "argument: --force" "$output" "--force"
   assert_required_usage_argument "argument: --repo" "$output" "--repo"
 }
