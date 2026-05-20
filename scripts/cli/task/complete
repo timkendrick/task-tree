@@ -71,10 +71,7 @@ main() {
   local bookmark task_file
 
   if [[ -z "$task_id_arg" ]]; then
-    local resolve_output
-    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
-    bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    { read -r _rev; read -r task_file; read -r bookmark; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
 
     if [[ -z "$bookmark" ]]; then
       log "Error: Not on a task or project branch."
