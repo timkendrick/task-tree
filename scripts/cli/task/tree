@@ -371,10 +371,8 @@ main() {
   task_branches="$(printf '%s' "$task_branches" | sort -u)"
   local all_task_project_branches="${project_branches}"$'\n'"${task_branches}"
 
-  local resolve_output
-  resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
   local current_bookmark
-  current_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+  current_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
   local current_task_id=''
   if [[ -n "$current_bookmark" ]] && { is_task_branch "$current_bookmark" "$task_prefix" || is_project_branch "$current_bookmark" "$project_prefix"; }; then
     current_task_id="$current_bookmark"

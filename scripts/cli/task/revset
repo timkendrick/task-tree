@@ -61,12 +61,10 @@ main() {
 
   if [[ -z "$task_id_arg" ]]; then
     # Resolve current task
-    local resolve_out
-    if ! resolve_out="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"; then
+    if ! task_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"; then
       log "Error: Not on a task or project branch."
       exit 1
     fi
-    task_bookmark="$(printf '%s' "$resolve_out" | sed -n '3p')"
     if [[ -z "$task_bookmark" ]]; then
       log "Error: Not on a task or project branch."
       exit 1

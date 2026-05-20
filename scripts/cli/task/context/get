@@ -94,9 +94,7 @@ main() {
       exit 1
     fi
   else
-    local resolve_output
-    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-    branch="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    branch="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$branch" ]]; then
       log "Error: Not on a task or project branch. Use --task to specify."
       exit 1
