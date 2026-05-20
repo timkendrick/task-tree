@@ -103,9 +103,8 @@ main() {
   }
 
   # Resolve task ID from the worktree's current bookmark (for safety checks)
-  local resolve_out task_id
-  resolve_out="$(resolve_current "$canonical_worktree_path" "$task_prefix" "$project_prefix")" || true
-  task_id="$(printf '%s' "$resolve_out" | sed -n '3p')"
+  local task_id
+  task_id="$(resolve_current_bookmark "$canonical_worktree_path" "$task_prefix" "$project_prefix")" || true
 
   # All pre-mutation safety checks — all skippable with --force
   if [[ "$force" != true ]]; then

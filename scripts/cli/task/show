@@ -81,10 +81,8 @@ main() {
 
   if [[ -z "$task_id_arg" ]]; then
     # No task-id: use current branch
-    local resolve_output
-    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
-    branch="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    task_file="$(resolve_current_task_file "$repo" "$task_prefix" "$project_prefix")"
+    branch="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
 
     if [[ -z "$branch" ]]; then
       log "Error: Not on a task or project branch."

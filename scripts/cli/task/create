@@ -369,7 +369,7 @@ main() {
   # leave it at the updated parent tip after task creation rather than restoring to the now-stale
   # original revision. Otherwise, restore as normal.
   local current_bookmark
-  current_bookmark="$(resolve_current "$repo" "$task_prefix" "$project_prefix" | sed -n '3p')"
+  current_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
   local restore_to_parent=false
   if [[ -n "$parent_bookmark" ]] && [[ "$current_bookmark" == "$parent_bookmark" ]]; then
     restore_to_parent=true

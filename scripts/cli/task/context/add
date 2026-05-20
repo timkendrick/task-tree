@@ -121,10 +121,8 @@ main() {
     task_suffix="$suffix"
     task_file="$(task_file_path "$suffix")"
   else
-    local resolve_output
-    resolve_output="$(resolve_current "$repo" "$task_prefix" "$project_prefix")"
-    task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
-    bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    task_file="$(resolve_current_task_file "$repo" "$task_prefix" "$project_prefix")"
+    bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$bookmark" ]]; then
       log "Error: not on a task or project branch."
       exit 1
@@ -147,7 +145,7 @@ main() {
   if [[ -n "$task_id_arg" && "$wt_count" -eq 0 ]]; then
     # No dedicated worktree; only safe if we're already on this branch
     local current_bookmark
-    current_bookmark="$(resolve_current "$repo" "$task_prefix" "$project_prefix" | sed -n '3p')"
+    current_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ "$current_bookmark" != "$bookmark" ]]; then
       log "Error: No worktree found for '$bookmark'. Check it out first with:"
       log "  tt task checkout $bookmark --worktree"
@@ -239,7 +237,7 @@ main() {
   # Determine if we need a cross-branch commit (must resolve BEFORE starting
   # the transaction, since resolve_current may trigger a jj snapshot)
   local current_bookmark
-  current_bookmark="$(resolve_current "$repo" "$task_prefix" "$project_prefix" | sed -n '3p')"
+  current_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
 
   # Begin transaction (records before-op for undo) BEFORE any filesystem writes,
   # so the before-op matches the previous command's after-op in the history chain.
