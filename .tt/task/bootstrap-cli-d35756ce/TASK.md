@@ -114,6 +114,7 @@ subtask: [x] task/tt-task-revset-ad71104d
 subtask: [x] task/tt-task-checkin-prevent-switch-0c1bbf4a
 subtask: [x] task/tt-task-create-switch-5e466c0d
 subtask: [x] task/tt-worktree-path-arg-e7054ae4
+subtask: [ ] task/tt-task-checkpoint-commit-message-5e7ae39e
 ---
 Implement shell script implementations of all `tt` CLI commands
 
