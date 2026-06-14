@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt task select` CLI command"
-status: TODO
+status: IN-PROGRESS
 created: 2026-06-14T10:03:51Z
 updated: 2026-06-14T10:03:51Z
 ---
