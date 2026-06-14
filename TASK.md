@@ -1,1 +1,1 @@
-.tt/task/repo-setup-hook-fe57760f/TASK.md
+.tt/task/bootstrap-cli-d35756ce/TASK.md
