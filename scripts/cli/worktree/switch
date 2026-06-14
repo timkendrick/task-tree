@@ -8,10 +8,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt worktree switch — redirect the virtual project's HEAD symlink to an existing task worktree.
 #
 # Usage:
-#   switch <worktree-path> [--force] [--repo PATH]
+#   switch [<worktree-path>] [--force] [--repo PATH]
 #
 # Options:
-#   <worktree-path>      Path to the worktree to switch to (required)
+#   <worktree-path>      Path to the worktree to switch to (optional; defaults to current worktree)
 #   --force              Proceed even if the outgoing workspace has local changes.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
@@ -19,13 +19,15 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <worktree-path> [--force] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<worktree-path>] [--force] [--repo PATH]
 
 Redirect the virtual project's HEAD symlink to an existing task worktree.
 The worktree must already exist (run \`tt task checkout --worktree\` first).
+If <worktree-path> is omitted, defaults to the worktree containing the current working directory.
 
 Arguments:
-  <worktree-path>  Path to the worktree to switch to
+  [<worktree-path>]  Path to the worktree to switch to (optional; defaults to the worktree
+                   containing the current working directory)
 
 Options:
   --force               Proceed even if the outgoing workspace has local changes.
@@ -72,8 +74,15 @@ main() {
     esac
   done
 
+  # If no worktree path given, detect from CWD before resolving repo
   if [[ -z "$worktree_path" ]]; then
-    usage >&2; exit 1
+    local detected
+    detected="$(jj workspace root 2>/dev/null)" || {
+      log "Error: could not detect current worktree from working directory"
+      exit 1
+    }
+    detected="$(resolve_path_symlinks "$detected" 2>/dev/null)" || detected="$detected"
+    worktree_path="$detected"
   fi
 
   repo="$(resolve_repo "$repo")"
