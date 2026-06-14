@@ -1,6 +1,6 @@
 ---
 title: "Return worktree path in `tt task checkout` command output"
-status: TODO
+status: IN-PROGRESS
 created: 2026-06-14T10:06:49Z
 updated: 2026-06-14T10:06:50Z
 ---
