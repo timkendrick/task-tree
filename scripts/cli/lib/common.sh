@@ -781,6 +781,31 @@ resolve_workspace_name() {
   return 1
 }
 
+# Usage: list_workspaces REPO TASK_PREFIX PROJECT_PREFIX
+# Prints tab-separated workspace data, one line per workspace:
+#   name\tpath\ttask_id
+# path is empty string if unavailable; task_id is empty string if unresolved.
+list_workspaces() {
+  local repo="$1" task_prefix="$2" project_prefix="$3"
+  local ws_raw
+  ws_raw="$(jj -R "$repo" --ignore-working-copy workspace list \
+    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || return 0
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local parsed ws_name ws_path
+    parsed="$(parse_workspace_list_line "$line")"
+    ws_name="$(printf '%s' "$parsed" | sed -n '1p')"
+    ws_path="$(printf '%s' "$parsed" | sed -n '2p')"
+
+    local task_id=''
+    if [[ -n "$ws_path" && -d "$ws_path" ]]; then
+      task_id="$(resolve_current_bookmark "$ws_path" "$task_prefix" "$project_prefix" 2>/dev/null)" || true
+    fi
+
+    printf '%s\t%s\t%s\n' "$ws_name" "$ws_path" "$task_id"
+  done <<< "$ws_raw"
+}
+
 # Usage: forget_worktree REPO WORKSPACE_NAME [WORKTREE_PATH]
 # Forgets the jj workspace from the repository model.
 # If WORKTREE_PATH is provided, also removes all files from disk.
