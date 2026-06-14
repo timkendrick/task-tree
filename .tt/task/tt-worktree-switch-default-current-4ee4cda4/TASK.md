@@ -1,6 +1,6 @@
 ---
 title: "Default to current worktree in `tt worktree switch`"
-status: TODO
+status: IN-PROGRESS
 created: 2026-06-14T09:18:00Z
 updated: 2026-06-14T09:18:01Z
 ---
