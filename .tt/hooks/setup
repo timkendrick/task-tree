@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+workspace_dir="${TT_WORKSPACE_DIR}"
+project_dir="${TT_WORKTREE_DIR}"
+repo="$(tt repo --repo "${workspace_dir}/HEAD")"
+
+echo "Setting up worktree ${project_dir} from repository ${repo}…" >&2
+
+# Link gitignored files from the workspace to the canonical repository
+echo "Linking workspace files…" >&2
+setupinclude="$repo/.setupinclude"
+if [ -f "$setupinclude" ]; then
+    # Load the list of files to link
+    linked_files=()
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] && linked_files+=("${line#/}")
+    done < "$setupinclude"
+    # Create symlinks for each file in the list
+    src_dir="$repo"
+    dest_dir="$project_dir"
+    for file in "${linked_files[@]}"; do
+        src="$src_dir/$file"
+        dest="$dest_dir/$file"
+        echo "Linking ${file}…" >&2
+        mkdir -p "$(dirname "$dest")"
+        if [ -e "$dest" ]; then
+            echo " File already exists, skipping" >&2
+        else
+            echo " $dest > $src" >&2
+            ln -s "$src" "$dest"
+        fi
+    done
+else
+    echo "No .setupinclude found in ${repo}, skipping workspace file linking" >&2
+fi
