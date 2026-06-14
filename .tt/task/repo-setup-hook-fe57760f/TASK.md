@@ -1,6 +1,6 @@
 ---
 title: "Add `setup` hook script"
-status: TODO
+status: IN-PROGRESS
 created: 2026-06-14T09:06:31Z
 updated: 2026-06-14T09:06:32Z
 ---
