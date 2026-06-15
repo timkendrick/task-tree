@@ -307,7 +307,7 @@ test_write_task_stub__has_placeholder_title() {
   trap 'rm -rf "$dir"' RETURN
 
   local suffix="my-stub-abc12345"
-  write_task_stub "$dir" "$suffix"
+  write_task_stub "$dir" "$suffix" 2>/dev/null
 
   local file="$dir/.tt/task/$suffix/TASK.md"
   local content

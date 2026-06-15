@@ -203,7 +203,7 @@ test_task_reorder__dirty_wc_fails() {
   echo "dirty" > "$REPO/dirty-file.txt"
 
   local exit_code=0
-  run_tt task reorder "$task_a" --up 2>&1 || exit_code=$?
+  output=$(run_tt task reorder "$task_a" --up 2>&1) || exit_code=$?
   assert_failure "dirty wc fails" "$exit_code"
 }
 
@@ -311,7 +311,7 @@ test_task_reorder__tidy_labels_preserved() {
   setup_workspace "reorder-tidy-labels"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
-  task_id=$(run_tt task create --slug "t" --title "T" --label "alpha" --label "beta" --label "gamma" <<< "" | tail -1) || true
+  task_id=$(run_tt task create --slug "t" --title "T" --label "alpha" --label "beta" --label "gamma" <<< "" 2>/dev/null | tail -1) || true
   checkout_task "$task_id" >/dev/null || true
 
   run_tt task reorder "$task_id" >/dev/null 2>&1 || true
@@ -433,7 +433,7 @@ test_task_reorder__tidy_dirty_wc_fails() {
   echo "dirty" > "$REPO/dirty-file.txt"
 
   local exit_code=0
-  run_tt task reorder "$task_a" 2>&1 || exit_code=$?
+  output=$(run_tt task reorder "$task_a" 2>&1) || exit_code=$?
   assert_failure "dirty wc fails tidy" "$exit_code"
 }
 
