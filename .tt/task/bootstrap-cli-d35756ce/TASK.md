@@ -123,6 +123,7 @@ subtask: [x] task/tt-task-checkout-return-worktree-path-ba774e02
 subtask: [x] task/tt-task-create-stdout-b4443ed9
 subtask: [x] task/tt-task-checkin-context-stdin-f0e55d66
 subtask: [x] task/agentic-workflows-skill-518d8078
+subtask: [ ] task/tt-task-checkin-prompt-editor-hint-f0603a42
 ---
 Implement shell script implementations of all `tt` CLI commands
 
