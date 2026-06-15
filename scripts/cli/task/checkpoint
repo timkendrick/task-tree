@@ -116,8 +116,8 @@ main() {
   # Get message from editor if not provided
   if [[ -z "$message" ]]; then
     local template
-    template="$(printf '%s\n\n# Task: %s (%s)\n# An empty message cancels the checkpoint.' \
-      "$task_title" "$task_title" "$task_id")"
+    template="$(printf '%s\n\n# Task: %s\n# An empty message cancels the checkpoint.' \
+      "$task_title" "$task_id")"
     message="$(prompt <<< "$template")" || exit 1
     if [[ -z "$message" ]]; then
       log "Checkpoint cancelled."
