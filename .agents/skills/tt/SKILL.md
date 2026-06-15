@@ -55,7 +55,7 @@ tt task create --title "<title>" [--slug <slug>] [--parent <task-id>]
                [--label <label>...] [--propagate [--rebase | --merge] [--shallow] [--force]]
                [--checkout [--worktree[=<path>]]]
 ```
-Creates a task under the current branch (or `--parent`). Body read from stdin if piped.
+Creates a task under the current branch (or `--parent`). Body read from stdin if piped. On success, prints the generated task ID to stdout (all other output is on stderr) so it can be piped, e.g. `tt task checkout "$(tt task create --slug foo --title 'Foo' < ./desc.md)"`.
 
 #### `tt task checkout`
 ```
@@ -78,12 +78,14 @@ Mark a task DONE. Requires all child tasks to be done, unless `--force` is given
 #### `tt task checkin`
 ```
 tt task checkin [<task-id>] [--complete] [--rebase | --merge] [--force] [--delete]
-                [--context <markdown>] [--retain-worktree]
+                [--context <markdown>|-] [--retain-worktree]
                 [--propagate [--propagate-rebase | --propagate-merge]
                 [--propagate-shallow] [--propagate-force] [--propagate-dry-run]
                 [--propagate-to <child-id>]]
 ```
 Merge a task branch into its parent. `--complete` marks it done first. `--delete` removes the task file after checkin. `--propagate` propagates the updated parent tip to sibling branches.
+
+`--context <markdown>` provides handoff context inline. `--context -` reads context from stdin. When no `--context` is given and stdin is a TTY, an editor opens for context input (empty input = no context file created).
 
 #### `tt task show`
 ```

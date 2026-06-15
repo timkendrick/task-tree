@@ -389,7 +389,7 @@ main() {
   # Begin transaction (records before-op for undo)
   tt_begin_transaction "$repo"
 
-  jj "${jj_opts[@]}" new "$parent_rev"
+  jj "${jj_opts[@]}" new "$parent_rev" >&2
 
   # Ensure .tt/task exists
   mkdir -p "$repo/.tt/task"
@@ -397,15 +397,15 @@ main() {
   if [[ "$is_project" == true ]]; then
     # Project task: first commit creates the stub task file; second commit (via edit) sets metadata.
     write_task_stub "$repo" "$task_suffix"
-    jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")"
-    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
-    jj "${jj_opts[@]}" new "@"
-    jj "${jj_opts[@]}" bookmark set "$task_id"
+    jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")" >&2 >&2
+    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
+    jj "${jj_opts[@]}" new "@" >&2
+    jj "${jj_opts[@]}" bookmark set "$task_id" >&2
     # Build common args (title, labels)
     local edit_args=(--repo "$repo" --title "$title")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
     # Pipe body to edit
-    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body"
+    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body" >&2 >&2
   elif [[ -n "$parent_task_file" ]]; then
     # Child task: commit on parent branch creates the stub and registers the subtask;
     # the child branch's initial commit (via edit) sets title, body, and labels.
@@ -417,27 +417,27 @@ main() {
     write_task_stub "$repo" "$task_suffix"
     append_frontmatter_subtask "$parent_path" "$task_id"
     log "Added subtask to parent: $parent_task_file"
-    jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")"
-    jj "${jj_opts[@]}" bookmark set "$parent_bookmark"
-    jj "${jj_opts[@]}" new "@"
-    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
+    jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")" >&2
+    jj "${jj_opts[@]}" bookmark set "$parent_bookmark" >&2
+    jj "${jj_opts[@]}" new "@" >&2
+    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
     # Build common args (title, labels)
     local edit_args=(--repo "$repo" --title "$title")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
     # Pipe body to edit
-    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body"
+    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body" >&2
   else
     # Child task with no identifiable parent task file (e.g. branching from a non-task bookmark).
     # Create the stub and bookmark without modifying any parent; edit sets metadata.
     write_task_stub "$repo" "$task_suffix"
-    jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")"
-    jj "${jjOpts[@]}" new "@"
-    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true )
+    jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")" >&2
+    jj "${jjOpts[@]}" new "@" >&2
+    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2
     # Build common args (title, labels)
     local edit_args=(--repo "$repo" --title "$title")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
     # Pipe body to edit
-    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body"
+    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body" >&2
   fi
 
   log "Created task $task_id (bookmark: $task_id)"
@@ -449,7 +449,7 @@ main() {
     [[ "$force" == true ]] && propagate_args+=(--force)
     [[ "$dry_run" == true ]] && propagate_args+=(--dry-run)
     log "Propagating from $parent_bookmark..."
-    "$SCRIPT_DIR/propagate" "${propagate_args[@]}"
+    "$SCRIPT_DIR/propagate" "${propagate_args[@]}" >&2
   fi
 
   if [[ "$checkout" == true ]]; then
@@ -465,15 +465,15 @@ main() {
         checkout_args+=(--switch)
       fi
     fi
-    "$SCRIPT_DIR/checkout" "${checkout_args[@]}"
+    "$SCRIPT_DIR/checkout" "${checkout_args[@]}" >&2
   else
     # Explicitly restore WC to where the user was before the command.
     # This must happen before tt_commit_transaction so the restore is
     # captured in the transaction's after-op-id.
     if [[ "$restore_to_parent" == true ]]; then
-      jj -R "$repo" new "$parent_bookmark" 2>/dev/null || true
+      jj -R "$repo" new "$parent_bookmark" >/dev/null 2>&1 || true
     elif [[ -n "$original_rev" ]]; then
-      jj -R "$repo" edit "$original_rev" 2>/dev/null || true
+      jj -R "$repo" edit "$original_rev" >/dev/null 2>&1 || true
     fi
   fi
 

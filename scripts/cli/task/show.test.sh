@@ -158,7 +158,7 @@ test_task_show__shows_labels() {
   setup_workspace "show-labels"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
-  task_id=$(run_tt task create --slug "t" --title "T" --label "bug" --label "urgent" <<< "" | tail -1) || true
+  task_id=$(run_tt task create --slug "t" --title "T" --label "bug" --label "urgent" <<< "" 2>/dev/null | tail -1) || true
   checkout_task "$task_id" >/dev/null || true
 
   output="" exit_code=0
