@@ -210,6 +210,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt delete-context` | `tt task context delete` |
 | `tt current` | `tt task current` |
 | `tt revset` | `tt task revset` |
+| `tt select` | `tt task select` |
 | `tt edit` | `tt task edit` |
 | `tt prompt` | `tt task prompt` |
 | `tt move` | `tt task move` |
@@ -357,6 +358,8 @@ The command exits with an error if none of these resolves to a valid jj reposito
 - **`tt task revset [--task <task-id>] [--git] [--repo PATH]`** — Print a revision range covering all unmerged commits on a task branch since it diverged from its parent branch. Without `--task`, uses the current task and includes any trailing commits beyond the task bookmark (up to `@` if working copy is non-empty, or `@-` if empty). With `--task`, the range covers only the task bookmark itself. Without `--git`, outputs a jj revset (`<parent-bookmark>..<upper-bound>`). With `--git`, outputs a git commit range (`<from>..<to>`) where `<from>` is the `commit_id` of the fork point between the parent bookmark and the upper bound, and `<to>` is the `commit_id` of the upper bound. Exits with an error if the task cannot be located or the bookmark does not exist. No hooks.
 
 - **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step. No hooks.
+
+- **`tt task select`** — Interactively select an active (non-completed) task or project. Requires an interactive terminal. Lists all task and project bookmarks, excludes DONE tasks, sorts alphabetically, and pipes the list to an interactive selector. The selected task ID is printed to stdout. Exits with code 1 if no active tasks are found or if the terminal is not interactive.
 
 - **`tt task show [<task-id>] [--expand-context]`** — Show the metadata and direct child tasks of the current task (default) or the given task. Reads from the correct branch per the "where to read" rule (§7.1 / Appendix A step 3): merged tasks are read from the parent branch that received the checkin; ongoing tasks are read from their own branch. Output format: lowercase header block (`task`, `status`, `title`; and `parent` if the task has a parent), followed by a subtasks section, a context section (listing context file titles and IDs), and a body section, all always present and separated by `---` dividers. With `--expand-context`, additionally prints the full content of context files after the body section, each preceded by `---` and a header indicating the context file title and ID. Output to stdout only. No hooks.
 
