@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task checkin — Merge a task branch's work into its parent branch.
 #
 # Usage:
-#   checkin [<task-id>] [--context <markdown>] [--complete] [--rebase | --merge]
+#   checkin [<task-id>] [--context <markdown>|-] [--complete] [--rebase | --merge]
 #           [--force] [--delete] [--retain-worktree]
 #           [--worktree=<path>] [--repo PATH]
 #           [--propagate] [--propagate-rebase | --propagate-merge]
@@ -18,6 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Options:
 #   <task-id>               Task branch to check in (default: current branch).
 #   --context <markdown>    Create a context file on the parent task with handoff notes.
+#   --context -             Read context from stdin.
 #   --complete              Run `tt task complete` first if status is not DONE.
 #   --rebase                Rebase child onto parent before checkin.
 #   --merge                 Merge parent into child before checkin.
@@ -45,6 +46,8 @@ Only valid on task branches. For project branches, use 'tt task publish'.
 Options:
   <task-id>                 Task branch to check in (default: current branch).
   --context <markdown>      Create a context file on the parent task with handoff notes.
+  --context -               Read context from stdin. If no --context is given and stdin is
+                            a TTY, opens an editor for context input (empty input = no context).
   --complete                Run complete first if status is not DONE.
   --rebase                  Rebase child onto parent before checkin.
   --merge                   Merge parent into child before checkin.
@@ -67,6 +70,7 @@ EOF
 
 main() {
   local context_text=''
+  local context_mode='arg'  # 'arg' | 'stdin' | 'editor'
   local do_complete=false
   local strategy=''
   local force=false
@@ -86,7 +90,13 @@ main() {
     case "$1" in
       --context)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
-        context_text="$2"; shift 2 ;;
+        if [[ "$2" == '-' ]]; then
+          context_mode='stdin'
+        else
+          context_text="$2"
+          context_mode='arg'
+        fi
+        shift 2 ;;
       --complete)   do_complete=true; shift ;;
       --rebase)
         [[ -n "$strategy" && "$strategy" != rebase ]] && { usage >&2; exit 1; }
@@ -125,6 +135,28 @@ main() {
         fi ;;
     esac
   done
+
+  # Resolve context: stdin or interactive editor
+  if [[ "$context_mode" == 'stdin' ]]; then
+    context_text="$(cat)"
+  elif [[ "$context_mode" == 'arg' ]] && [[ -z "$context_text" ]] && [[ -t 0 ]]; then
+    # No --context arg, interactive session: open editor
+    local raw
+    raw="$(prompt_raw </dev/null)" || {
+      log "Error: Editor exited with non-zero status."
+      exit 1
+    }
+    context_text="$raw"
+  fi
+
+  # Trim whitespace; treat blank input as "no context"
+  local trimmed_context
+  trimmed_context="$(printf '%s' "$context_text" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  if [[ ! "$trimmed_context" =~ [^[:space:]] ]]; then
+    context_text=''
+  else
+    context_text="$trimmed_context"
+  fi
 
   repo="$(resolve_repo "$repo")"
 

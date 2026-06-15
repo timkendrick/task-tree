@@ -420,4 +420,44 @@ test_task_checkin__head_not_switched_when_checkin_non_active_task() {
   assert_eq "HEAD unchanged after checkin of non-active task" "$head_after" "$head_before"
 }
 
+test_task_checkin__context_from_stdin() {
+  setup_workspace "checkin-ctx-stdin"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "parent" "Parent") || true
+  checkout_task "$task_id" >/dev/null || true
+  child_id=$(create_task_under "$task_id" "child" "Child") || true
+  checkout_task "$child_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+
+  # Pass --context - to read from stdin
+  echo "Context from stdin" | run_tt task checkin --complete --context - "$child_id" >/dev/null 2>&1 || true
+
+  # Verify context file was created on the parent task
+  ctx_list="$(run_tt task context list "$task_id" 2>/dev/null)" || true
+  assert_contains "context file created via stdin" "$ctx_list" "context/"
+
+  # Verify context file body
+  ctx_body="$(run_tt task context get --task "$task_id" 2>/dev/null)" || true
+  assert_contains "context body from stdin" "$ctx_body" "Context from stdin"
+}
+
+test_task_checkin__context_empty_stdin_skips_context() {
+  setup_workspace "checkin-ctx-empty-stdin"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "parent" "Parent") || true
+  checkout_task "$task_id" >/dev/null || true
+  child_id=$(create_task_under "$task_id" "child" "Child") || true
+  checkout_task "$child_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+
+  # Pass --context - with empty stdin
+  echo -n "" | run_tt task checkin --complete --context - "$child_id" >/dev/null 2>&1 || true
+
+  # Verify no context file was created
+  ctx_list="$(run_tt task context list "$task_id" 2>/dev/null)" || true
+  assert_eq "no context file for empty stdin" "$ctx_list" ""
+}
+
 run_tests "tt task checkin"
