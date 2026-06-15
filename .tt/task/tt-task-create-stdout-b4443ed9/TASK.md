@@ -1,6 +1,6 @@
 ---
 title: "Allow piping `tt task create` output"
-status: TODO
+status: IN-PROGRESS
 created: 2026-06-15T09:28:29Z
 updated: 2026-06-15T09:28:30Z
 ---
