@@ -1,6 +1,6 @@
 ---
 title: "Show hint comment in `tt task checkin` prompt editor"
-status: IN-PROGRESS
+status: DONE
 created: 2026-06-15T13:08:32Z
 updated: 2026-06-15T13:08:33Z
 ---
