@@ -53,9 +53,52 @@ test_worktree_switch__help() {
   output=$(run_tt worktree switch --help 2>&1) || exit_code=$?
   assert_success "exit code" "$exit_code"
   assert_usage_command_name "command name" "$output" "tt worktree switch"
-  assert_required_usage_argument "argument: <worktree-path>" "$output" "<worktree-path>"
+  assert_required_usage_argument "argument: [<worktree-path>]" "$output" "[<worktree-path>]"
   assert_required_usage_argument "argument: --force" "$output" "--force"
   assert_required_usage_argument "argument: --repo" "$output" "--repo"
+}
+
+test_worktree_switch__defaults_to_current_worktree() {
+  setup_workspace "switch-default-cwd"
+  local proj_id task_id
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null 2>&1 || true
+  task_id=$(create_task "my-task" "My Task") || true
+
+  # Check out the task with a dedicated worktree
+  local worktree_path="$_TEST_ROOT/switch-default-cwd-task-wt"
+  run_tt task checkout "$task_id" --worktree="$worktree_path" >/dev/null 2>&1 || true
+
+  # Switch HEAD back to main repo so we can test switching to the worktree
+  jj -R "$REPO" new "$proj_id" >/dev/null 2>&1 || true
+  run_tt worktree switch "$REPO" >/dev/null 2>&1 || true
+
+  # Now invoke switch with no args from within the task worktree
+  output="" exit_code=0
+  output=$(run_tt_in_worktree "$worktree_path" worktree switch 2>&1) || exit_code=$?
+  assert_success "switch with no arg from worktree succeeds" "$exit_code"
+
+  # HEAD symlink should now resolve to the task worktree
+  local virtual_dir
+  virtual_dir="$(readlink "$REPO/.tt/workspace")"
+  local head_target
+  head_target="$(readlink "$virtual_dir/HEAD" 2>/dev/null || true)"
+  if [[ "$head_target" != /* ]]; then
+    head_target="$virtual_dir/$head_target"
+  fi
+  local resolved_head canonical_worktree
+  resolved_head="$(cd "$head_target" 2>/dev/null && pwd -P)" || true
+  canonical_worktree="$(cd "$worktree_path" 2>/dev/null && pwd -P)" || true
+  assert_eq "HEAD points to task worktree" "$resolved_head" "$canonical_worktree"
+}
+
+test_worktree_switch__no_arg_outside_worktree_fails() {
+  setup_workspace "switch-no-arg-outside"
+  # Run switch with no arg from a temp dir that is not inside any jj workspace
+  output="" exit_code=0
+  output=$(run_tt_in_worktree "/tmp" worktree switch 2>&1) || exit_code=$?
+  assert_failure "switch with no arg outside worktree fails" "$exit_code"
+  assert_contains "error message" "$output" "could not detect current worktree"
 }
 
 

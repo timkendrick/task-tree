@@ -87,13 +87,7 @@ main() {
 
   # Determine current workspace root (to mark with *)
   local current_ws_root
-  current_ws_root="$(jj -R "$repo" workspace root 2>/dev/null)" || current_ws_root=""
-
-  # Collect workspace list from jj
-  # Template: "name: path\n" — path may be "<Error: ...>" for workspaces without a recorded path
-  local ws_raw
-  ws_raw="$(jj -R "$repo" --ignore-working-copy workspace list \
-    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || ws_raw=""
+  current_ws_root="$(resolve_current_worktree "$repo")" || current_ws_root=""
 
   # Parse into parallel arrays
   local -a ws_names=()
@@ -101,26 +95,20 @@ main() {
   local -a ws_task_ids=()
   local -a ws_is_current=()
 
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    local ws_name ws_path parsed
-    parsed="$(parse_workspace_list_line "$line")"
-    ws_name="$(printf '%s' "$parsed" | sed -n '1p')"
-    ws_path="$(printf '%s' "$parsed" | sed -n '2p')"
+  local ws_data
+  ws_data="$(list_workspaces "$repo" "$task_prefix" "$project_prefix")" || ws_data=''
 
-    # Normalize path: if error (empty from helper), use (none)
+  while IFS=$'\t' read -r ws_name ws_path task_id; do
+    [[ -z "$ws_name" ]] && continue
+
+    # Normalize path: if empty, use (none)
     if [[ -z "$ws_path" ]]; then
       ws_path='(none)'
     fi
 
-    # Resolve tt task ID for this workspace
-    local task_id='(none)'
-    if [[ "$ws_path" != '(none)' && -d "$ws_path" ]]; then
-      local bm
-      bm="$(resolve_current_bookmark "$ws_path" "$task_prefix" "$project_prefix" 2>/dev/null)" || true
-      if [[ -n "$bm" ]]; then
-        task_id="$bm"
-      fi
+    # Normalize task_id: if empty, use (none)
+    if [[ -z "$task_id" ]]; then
+      task_id='(none)'
     fi
 
     # Apply --task filter
@@ -144,7 +132,7 @@ main() {
     ws_paths+=("$display_path")
     ws_task_ids+=("$task_id")
     ws_is_current+=("$is_current")
-  done <<< "$ws_raw"
+  done <<< "$ws_data"
 
   # --quiet mode: print workspace names only, one per line
   if [[ "$quiet" == true ]]; then

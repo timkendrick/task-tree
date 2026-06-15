@@ -61,7 +61,7 @@ Creates a task under the current branch (or `--parent`). Body read from stdin if
 ```
 tt task checkout <task-id> [--worktree[=<path>]] [--switch] [--force]
 ```
-Switch to the given task branch. `--worktree` uses/creates a dedicated jj workspace; `--switch` also updates HEAD to the new worktree.
+Switch to the given task branch. `--worktree` uses/creates a dedicated jj workspace; `--switch` also updates HEAD to the new worktree. Returns the worktree path to stdout for piping into other commands.
 
 #### `tt task checkpoint`
 ```
@@ -71,15 +71,17 @@ Record the current state of work. `--squash` collapses all commits since the las
 
 #### `tt task complete`
 ```
-tt task complete [<task-id>] [--force]
+tt task complete [<task-id>] [--worktree=<path>] [--force]
 ```
 Mark a task DONE. Requires all child tasks to be done, unless `--force` is given.
 
 #### `tt task checkin`
 ```
 tt task checkin [<task-id>] [--complete] [--rebase | --merge] [--force] [--delete]
-                [--context <markdown>] [--propagate [--propagate-rebase | --propagate-merge]
-                [--propagate-shallow] [--propagate-to <child-id>]]
+                [--context <markdown>] [--retain-worktree]
+                [--propagate [--propagate-rebase | --propagate-merge]
+                [--propagate-shallow] [--propagate-force] [--propagate-dry-run]
+                [--propagate-to <child-id>]]
 ```
 Merge a task branch into its parent. `--complete` marks it done first. `--delete` removes the task file after checkin. `--propagate` propagates the updated parent tip to sibling branches.
 
@@ -127,7 +129,7 @@ Reparent a task by moving it to a different parent.
 
 #### `tt task delete`
 ```
-tt task delete [<task-id>] [--force]
+tt task delete [<task-id>] [--worktree=<path>] [--force]
 ```
 Remove a task from its parent branch. `--force` skips DONE and clean working-copy checks.
 
@@ -192,11 +194,11 @@ tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix
 ```
 Initialize a new tt workspace. Creates `.tt/config.toml` in the repo and the virtual project folder.
 
-#### `tt workspace switch`  (alias: `tt switch`)
+#### `tt worktree switch`  (alias: `tt switch`)
 ```
-tt workspace switch <task-id> [--worktree=<path>] [--force]
+tt worktree switch [<worktree-path>] [--force]
 ```
-Redirect the virtual project's HEAD symlink to an existing task worktree. The worktree must already exist (run `tt task checkout --worktree` first).
+Redirect the virtual project's HEAD symlink to an existing worktree. The worktree must already exist (run `tt task checkout --worktree` first).
 
 #### `tt worktree list`
 ```
@@ -206,15 +208,15 @@ List all jj workspaces and their corresponding tt task/project IDs. `--quiet` pr
 
 #### `tt worktree show`
 ```
-tt worktree show <task-id>
+tt worktree show --task <task-id>
 ```
 Output the worktree path for a task or project ID. Falls back to the repo root if no dedicated worktree exists.
 
 #### `tt worktree delete`
 ```
-tt worktree delete --task <task-id>
+tt worktree delete <worktree-path> [--force]
 ```
-Delete the worktree for the given task or project and remove its working directory. The task still exists and can be checked out again to recreate the worktree.
+Delete the given worktree directory and remove its jj workspace. The task still exists and can be checked out again to recreate the worktree.
 
 ### History commands
 
