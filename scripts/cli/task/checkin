@@ -136,27 +136,6 @@ main() {
     esac
   done
 
-  # Resolve context: stdin or interactive editor
-  if [[ "$context_mode" == 'stdin' ]]; then
-    context_text="$(cat)"
-  elif [[ "$context_mode" == 'arg' ]] && [[ -z "$context_text" ]] && [[ -t 0 ]]; then
-    # No --context arg, interactive session: open editor
-    local raw
-    raw="$(prompt_raw </dev/null)" || {
-      log "Error: Editor exited with non-zero status."
-      exit 1
-    }
-    context_text="$raw"
-  fi
-
-  # Trim whitespace; treat blank input as "no context"
-  local trimmed_context
-  trimmed_context="$(printf '%s' "$context_text" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-  if [[ ! "$trimmed_context" =~ [^[:space:]] ]]; then
-    context_text=''
-  else
-    context_text="$trimmed_context"
-  fi
 
   repo="$(resolve_repo "$repo")"
 
@@ -227,26 +206,6 @@ main() {
     assert_bookmark_up_to_date "$child_worktree" "$child_bookmark"
   fi
 
-  # Begin transaction early so that --complete and --propagate sub-commands
-  # are nested within this transaction (their tt_begin_transaction calls
-  # become no-ops, keeping a single history entry for the whole checkin).
-  tt_begin_transaction "$repo"
-
-  # --- Optional: run complete first ---
-  if [[ "$do_complete" == true ]]; then
-    local task_content_check
-    task_content_check="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || true
-    local status_check
-    status_check="$(parse_frontmatter_field "$task_content_check" "status")"
-    if [[ "$status_check" != "DONE" ]]; then
-      log "Running complete for $child_bookmark..."
-      "$SCRIPT_DIR/complete" --repo "$repo" \
-        ${task_id_arg:+"$task_id_arg"} \
-        ${worktree_arg:+--worktree="$worktree_arg"} \
-        ${force:+--force}
-    fi
-  fi
-
   # --- Read current task state from bookmark ---
   local task_content task_title task_status
   task_content="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || {
@@ -279,6 +238,48 @@ main() {
     parent_slug="${parent_bookmark#"$project_prefix"}"
   fi
   parent_task_file="$(task_file_path "$parent_slug")"
+
+  # Resolve context: stdin or interactive editor
+  if [[ "$context_mode" == 'stdin' ]]; then
+    context_text="$(cat)"
+  elif [[ "$context_mode" == 'arg' ]] && [[ -z "$context_text" ]] && [[ -t 0 ]]; then
+    # No --context arg, interactive session: open editor with hint
+    local template
+    template="$(printf '\n# Task: %s\n# Optional handoff context' "$task_id")"
+    context_text="$(prompt <<< "$template")" || {
+      log "Error: Editor exited with non-zero status."
+      exit 1
+    }
+  fi
+  # Trim whitespace; treat blank input as "no context"
+  local trimmed_context
+  trimmed_context="$(printf '%s' "$context_text" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  if [[ ! "$trimmed_context" =~ [^[:space:]] ]]; then
+    context_text=''
+  else
+    context_text="$trimmed_context"
+  fi
+
+
+  # Begin transaction early so that --complete and --propagate sub-commands
+  # are nested within this transaction (their tt_begin_transaction calls
+  # become no-ops, keeping a single history entry for the whole checkin).
+  tt_begin_transaction "$repo"
+
+  # --- Optional: run complete first ---
+  if [[ "$do_complete" == true ]]; then
+    local task_content_check
+    task_content_check="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || true
+    local status_check
+    status_check="$(parse_frontmatter_field "$task_content_check" "status")"
+    if [[ "$status_check" != "DONE" ]]; then
+      log "Running complete for $child_bookmark..."
+      "$SCRIPT_DIR/complete" --repo "$repo" \
+        ${task_id_arg:+"$task_id_arg"} \
+        ${worktree_arg:+--worktree="$worktree_arg"} \
+        ${force:+--force}
+    fi
+  fi
 
   log "Checking in: $child_bookmark -> $parent_bookmark"
 
