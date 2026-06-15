@@ -119,7 +119,7 @@ subtask: [ ] task/tt-task-publish-commit-message-4062975b
 subtask: [x] task/repo-setup-hook-fe57760f
 subtask: [x] task/tt-worktree-switch-default-current-4ee4cda4
 subtask: [ ] task/tt-task-select-79ceaada
-subtask: [ ] task/tt-task-checkout-return-worktree-path-ba774e02
+subtask: [x] task/tt-task-checkout-return-worktree-path-ba774e02
 ---
 Implement shell script implementations of all `tt` CLI commands
 

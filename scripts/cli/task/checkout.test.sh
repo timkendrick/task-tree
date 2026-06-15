@@ -165,6 +165,32 @@ test_task_checkout__worktree_same_path_succeeds() {
 }
 
 
+test_task_checkout__prints_worktree_path_to_stdout() {
+  setup_workspace "checkout-stdout-path"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+
+  local stdout_output
+  stdout_output=$(run_tt task checkout "$task_id" 2>/dev/null)
+  assert_eq "stdout is worktree path" "$stdout_output" "$REPO"
+}
+
+
+test_task_checkout__worktree_prints_worktree_path_to_stdout() {
+  setup_workspace "checkout-wt-stdout"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+
+  local stdout_output
+  stdout_output=$(run_tt task checkout "$task_id" --worktree --switch 2>/dev/null)
+  local expected_path
+  expected_path="$(realpath "$VIRTUAL/$task_id")"
+  assert_eq "stdout is worktree path" "$stdout_output" "$expected_path"
+}
+
+
 test_task_checkout__help() {
   setup_workspace "checkout-help"
   output="" exit_code=0
