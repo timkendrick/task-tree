@@ -1,6 +1,6 @@
 ---
 title: "Implement tt task select CLI command and integration tests"
-status: TODO
+status: IN-PROGRESS
 created: 2026-06-15T13:35:51Z
 updated: 2026-06-15T13:35:52Z
 ---
