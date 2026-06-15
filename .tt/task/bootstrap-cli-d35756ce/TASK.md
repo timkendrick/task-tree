@@ -2,7 +2,7 @@
 title: "Bootstrap CLI"
 status: IN-PROGRESS
 created: 2026-03-15T09:29:32Z
-updated: 2026-04-26T16:14:47Z
+updated: 2026-06-15T15:15:36Z
 context: context/task-tt-task-list-6638a980-d50c1e36
 context: context/context-from-2026-02-21-22-12-e533801d
 subtask: [ ] task/tt-workspace-doctor-fe9143d1
@@ -23,6 +23,9 @@ subtask: [ ] task/tt-task-checkin-reorder-766c71b4
 subtask: [ ] task/custom-merge-conflict-resolver-06dbf6a0
 subtask: [ ] task/tt-task-context-edit-550ce515
 subtask: [ ] task/transaction-commit-operation-id-dff4fe9c
+subtask: [ ] task/tt-task-checkpoint-commit-message-5e7ae39e
+subtask: [ ] task/tt-task-publish-commit-message-4062975b
+subtask: [ ] task/tt-propagate-parent-child-task-symlink-conflict-3bef09e2
 subtask: [x] task/frontmatter-label-ordering-252d77b0
 subtask: [x] task/retain-crashed-editor-contents-dcd6b730
 subtask: [x] task/analyze-cross-worktree-transactions-35b7b43d
@@ -114,8 +117,6 @@ subtask: [x] task/tt-task-revset-ad71104d
 subtask: [x] task/tt-task-checkin-prevent-switch-0c1bbf4a
 subtask: [x] task/tt-task-create-switch-5e466c0d
 subtask: [x] task/tt-worktree-path-arg-e7054ae4
-subtask: [ ] task/tt-task-checkpoint-commit-message-5e7ae39e
-subtask: [ ] task/tt-task-publish-commit-message-4062975b
 subtask: [x] task/repo-setup-hook-fe57760f
 subtask: [x] task/tt-worktree-switch-default-current-4ee4cda4
 subtask: [x] task/tt-task-select-79ceaada
@@ -124,7 +125,6 @@ subtask: [x] task/tt-task-create-stdout-b4443ed9
 subtask: [x] task/tt-task-checkin-context-stdin-f0e55d66
 subtask: [x] task/agentic-workflows-skill-518d8078
 subtask: [x] task/tt-task-checkin-prompt-editor-hint-f0603a42
-subtask: [ ] task/tt-propagate-parent-child-task-symlink-conflict-3bef09e2
 ---
 Implement shell script implementations of all `tt` CLI commands
 
