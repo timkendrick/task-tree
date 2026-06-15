@@ -78,12 +78,14 @@ Mark a task DONE. Requires all child tasks to be done, unless `--force` is given
 #### `tt task checkin`
 ```
 tt task checkin [<task-id>] [--complete] [--rebase | --merge] [--force] [--delete]
-                [--context <markdown>] [--retain-worktree]
+                [--context <markdown>|-] [--retain-worktree]
                 [--propagate [--propagate-rebase | --propagate-merge]
                 [--propagate-shallow] [--propagate-force] [--propagate-dry-run]
                 [--propagate-to <child-id>]]
 ```
 Merge a task branch into its parent. `--complete` marks it done first. `--delete` removes the task file after checkin. `--propagate` propagates the updated parent tip to sibling branches.
+
+`--context <markdown>` provides handoff context inline. `--context -` reads context from stdin. When no `--context` is given and stdin is a TTY, an editor opens for context input (empty input = no context file created).
 
 #### `tt task show`
 ```
