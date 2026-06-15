@@ -1,6 +1,6 @@
 ---
 title: "Implement select.sh interactive selector library"
-status: IN-PROGRESS
+status: DONE
 created: 2026-06-15T13:35:39Z
 updated: 2026-06-15T13:35:40Z
 subtask: [x] task/select-lib-tests-e57aa273
