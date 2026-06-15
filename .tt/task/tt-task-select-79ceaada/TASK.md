@@ -3,6 +3,7 @@ title: "Implement `tt task select` CLI command"
 status: IN-PROGRESS
 created: 2026-06-14T10:03:51Z
 updated: 2026-06-14T10:03:51Z
+subtask: [ ] task/select-lib-d2e0e5fc
 ---
 Many `tt task` commands rely on knowing a specific task ID. This can be cumbersome as the unique task identifiers are not particularly human-friendly.
 
