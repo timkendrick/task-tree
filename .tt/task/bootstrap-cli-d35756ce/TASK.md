@@ -118,7 +118,7 @@ subtask: [ ] task/tt-task-checkpoint-commit-message-5e7ae39e
 subtask: [ ] task/tt-task-publish-commit-message-4062975b
 subtask: [x] task/repo-setup-hook-fe57760f
 subtask: [x] task/tt-worktree-switch-default-current-4ee4cda4
-subtask: [ ] task/tt-task-select-79ceaada
+subtask: [x] task/tt-task-select-79ceaada
 subtask: [x] task/tt-task-checkout-return-worktree-path-ba774e02
 subtask: [x] task/tt-task-create-stdout-b4443ed9
 subtask: [x] task/tt-task-checkin-context-stdin-f0e55d66
