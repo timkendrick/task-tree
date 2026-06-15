@@ -55,7 +55,7 @@ tt task create --title "<title>" [--slug <slug>] [--parent <task-id>]
                [--label <label>...] [--propagate [--rebase | --merge] [--shallow] [--force]]
                [--checkout [--worktree[=<path>]]]
 ```
-Creates a task under the current branch (or `--parent`). Body read from stdin if piped.
+Creates a task under the current branch (or `--parent`). Body read from stdin if piped. On success, prints the generated task ID to stdout (all other output is on stderr) so it can be piped, e.g. `tt task checkout "$(tt task create --slug foo --title 'Foo' < ./desc.md)"`.
 
 #### `tt task checkout`
 ```

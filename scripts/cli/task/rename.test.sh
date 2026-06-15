@@ -92,7 +92,7 @@ test_task_rename__preserves_task_file_content() {
   setup_workspace "rename-preserve"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
-  task_id=$(run_tt task create --slug "t" --title "T" --label "bug" <<< "Body text" | tail -1) || true
+  task_id=$(run_tt task create --slug "t" --title "T" --label "bug" <<< "Body text" 2>/dev/null | tail -1) || true
   checkout_task "$task_id" >/dev/null || true
 
   run_tt task rename --slug "renamed" >/dev/null 2>&1 || true
