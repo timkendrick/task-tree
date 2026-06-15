@@ -256,7 +256,7 @@ main() {
   # Perform the checkout
   if [[ "$new_worktree" == true ]]; then
     log "Creating workspace: $target_worktree"
-    jj "${jj_opts[@]}" workspace add --name "$task_id" -r "$task_id" "$target_worktree"
+    jj "${jj_opts[@]}" workspace add --name "$task_id" -r "$task_id" "$target_worktree" >&2
     # Plant .tt/workspace symlink in the new worktree.
     # Note: history lives in the canonical repo only.
     mkdir -p "$target_worktree/.tt"
@@ -265,10 +265,10 @@ main() {
     fi
   elif [[ "$worktree_flag" == true ]]; then
     # Existing workspace: move its WC to a new commit on top of the task bookmark
-    jj -R "$target_worktree" new "$task_id"
+    jj -R "$target_worktree" new "$task_id" >&2
   else
     # Main workspace: new WC on top of task bookmark
-    jj "${jj_opts[@]}" new "$task_id"
+    jj "${jj_opts[@]}" new "$task_id" >&2
   fi
 
   # Create "Begin task" commit if TASK.md doesn't yet exist on the branch
@@ -290,9 +290,9 @@ main() {
     mv "$tmpfile" "$target_worktree/$task_file"
 
     # Describe the WC, advance the bookmark, then create a clean working WC on top
-    jj -R "$target_worktree" describe -m "$(format_commit_message "task" "checkout" "$task_id" "$task_title")"
-    jj -R "$target_worktree" bookmark set "$task_id"
-    jj -R "$target_worktree" new "@"
+    jj -R "$target_worktree" describe -m "$(format_commit_message "task" "checkout" "$task_id" "$task_title")" >&2
+    jj -R "$target_worktree" bookmark set "$task_id" >&2
+    jj -R "$target_worktree" new "@" >&2
   fi
 
   # Update HEAD symlink and fire post-checkout hook.
@@ -327,6 +327,9 @@ main() {
   if [[ "$worktree_flag" == true ]]; then
     log "  Worktree: $target_worktree"
   fi
+
+  # Print the worktree path to stdout for piping
+  printf '%s\n' "$target_worktree"
 }
 
 main "$@"
