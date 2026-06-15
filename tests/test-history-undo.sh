@@ -187,11 +187,10 @@ verify_history_integrity() {
 # Run a tt command, capturing output. Suppresses the jj operation ID log.
 # Returns the exit code of the tt command.
 run_tt() {
-  local output exit_code=0
-  output=$("$TT" "$@" 2>&1) || exit_code=$?
-  # Filter out the "jj operation ID before command:" log line for cleaner output
-  echo "$output" | grep -v "^jj operation ID before command:" || true
-  return $exit_code
+  # Run a tt command, preserving stdout/stderr distinction.
+  # stderr passes through to the terminal; stdout is passed through to the caller.
+  # The caller can redirect stdout/stderr independently as needed.
+  "$TT" "$@"
 }
 
 # Create a task (non-interactive) and return its ID
@@ -200,13 +199,12 @@ create_task() {
   local title="$2"
   shift 2
   local output
-  output=$(run_tt task create --slug "$slug" --title "$title" "$@" <<< "Task body for $title" 2>&1) || {
+  output=$(run_tt task create --slug "$slug" --title "$title" "$@" <<< "Task body for $title" 2>/dev/null) || {
     echo "FAILED: tt task create --slug $slug --title '$title' $*" >&2
-    echo "$output" >&2
     return 1
   }
-  # The last line of output should be the task ID
-  echo "$output" | tail -1
+  # stdout is the task ID
+  printf '%s' "$output"
 }
 
 # Record a command sequence for failure reporting

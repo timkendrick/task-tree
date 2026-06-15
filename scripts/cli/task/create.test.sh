@@ -39,7 +39,7 @@ test_task_create__create_with_checkout() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
 
-  task_id=$(run_tt task create --slug "mytask" --title "My Task" --checkout <<< "" | tail -1) || true
+  task_id=$(run_tt task create --slug "mytask" --title "My Task" --checkout <<< "" 2>/dev/null | tail -1) || true
   assert_success "create with --checkout succeeds" "$?"
   assert_matches "task ID format" "$task_id" "task/%mytask%"
   assert_current_task_matches "WC on new task" "task/%mytask%"
@@ -52,7 +52,7 @@ test_task_create__create_with_labels() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
 
-  task_id=$(run_tt task create --slug "lbl" --title "Labeled" --label "bug" --label "urgent" <<< "" | tail -1) || true
+  task_id=$(run_tt task create --slug "lbl" --title "Labeled" --label "bug" --label "urgent" <<< "" 2>/dev/null | tail -1) || true
   assert_task_label "has bug label" "$task_id" "bug"
   assert_task_label "has urgent label" "$task_id" "urgent"
 }
@@ -115,7 +115,7 @@ test_task_create__single_transaction_recorded() {
 
 test_task_create__project_with_target() {
   setup_workspace "create-project-target"
-  proj_id=$(run_tt task create --project --slug "proj" --title "Proj" --target "main" <<< "" | tail -1) || true
+  proj_id=$(run_tt task create --project --slug "proj" --title "Proj" --target "main" <<< "" 2>/dev/null | tail -1) || true
   assert_success "project with --target succeeds" "$?"
   assert_is_ancestor "main is ancestor of project" "main" "$proj_id"
 }
@@ -128,7 +128,7 @@ test_task_create__propagate() {
   child_a=$(create_task "child-a" "Child A") || true
   checkout_task "$proj_id" >/dev/null || true
   checkout_task "$proj_id" >/dev/null || true
-  child_b=$(run_tt task create --slug "child-b" --title "Child B" --propagate <<< "" | tail -1) || true
+  child_b=$(run_tt task create --slug "child-b" --title "Child B" --propagate <<< "" 2>/dev/null | tail -1) || true
   assert_matches "child B created" "$child_b" "task/%child-b%"
   assert_is_ancestor "child A descends from parent" "$proj_id" "$child_a"
   assert_is_ancestor "child B descends from parent" "$proj_id" "$child_b"
@@ -177,7 +177,7 @@ test_task_create__checkout_worktree_switch() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
 
-  task_id=$(run_tt task create --slug "mytask" --title "My Task" --checkout --worktree --switch <<< "" | tail -1) || true
+  task_id=$(run_tt task create --slug "mytask" --title "My Task" --checkout --worktree --switch <<< "" 2>/dev/null | tail -1) || true
   assert_success "create with --checkout --worktree --switch succeeds" "$?"
   assert_matches "task ID format" "$task_id" "task/%mytask%"
 
