@@ -1,6 +1,6 @@
 ---
 title: "Read `tt task checkin` handoff context via stdin / interactive editor"
-status: TODO
+status: IN-PROGRESS
 created: 2026-06-15T11:00:21Z
 updated: 2026-06-15T11:00:22Z
 ---
