@@ -1,6 +1,6 @@
 ---
 title: "Agentic workflows skill"
-status: IN-PROGRESS
+status: DONE
 created: 2026-06-15T12:33:57Z
 updated: 2026-06-15T12:33:58Z
 ---
