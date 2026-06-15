@@ -4,7 +4,7 @@ status: IN-PROGRESS
 created: 2026-06-14T10:03:51Z
 updated: 2026-06-14T10:03:51Z
 subtask: [x] task/select-lib-d2e0e5fc
-subtask: [ ] task/select-cli-783e99f5
+subtask: [x] task/select-cli-783e99f5
 ---
 Many `tt task` commands rely on knowing a specific task ID. This can be cumbersome as the unique task identifiers are not particularly human-friendly.
 
