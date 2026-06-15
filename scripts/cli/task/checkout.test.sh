@@ -24,7 +24,7 @@ test_task_checkout__already_in_progress_is_no_op() {
   setup_workspace "checkout-inprogress"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
-  task_id=$(run_tt task create --slug "mytask" --title "My Task" --checkout <<< "" | tail -1) || true
+  task_id=$(run_tt task create --slug "mytask" --title "My Task" --checkout <<< "" 2>/dev/null | tail -1) || true
   assert_task_status "IN-PROGRESS" "$task_id" "IN-PROGRESS"
 
   checkout_task "$proj_id" >/dev/null || true
