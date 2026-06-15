@@ -45,7 +45,7 @@ test_task_edit__delete_label() {
   setup_workspace "edit-dellabel"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
-  task_id=$(run_tt task create --slug "t" --title "T" --label "bug" --label "keep" <<< "" | tail -1) || true
+  task_id=$(run_tt task create --slug "t" --title "T" --label "bug" --label "keep" <<< "" 2>/dev/null | tail -1) || true
   checkout_task "$task_id" >/dev/null || true
 
   run_tt task edit --delete-label "bug" <<< "" >/dev/null 2>&1 || true
