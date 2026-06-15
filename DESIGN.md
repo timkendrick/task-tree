@@ -210,6 +210,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt delete-context` | `tt task context delete` |
 | `tt current` | `tt task current` |
 | `tt revset` | `tt task revset` |
+| `tt select` | `tt task select` |
 | `tt edit` | `tt task edit` |
 | `tt prompt` | `tt task prompt` |
 | `tt move` | `tt task move` |
