@@ -125,6 +125,7 @@ subtask: [x] task/tt-task-create-stdout-b4443ed9
 subtask: [x] task/tt-task-checkin-context-stdin-f0e55d66
 subtask: [x] task/agentic-workflows-skill-518d8078
 subtask: [x] task/tt-task-checkin-prompt-editor-hint-f0603a42
+subtask: [ ] task/tt-task-create-parent-branch-cfe50365
 ---
 Implement shell script implementations of all `tt` CLI commands
 
