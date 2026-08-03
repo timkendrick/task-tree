@@ -1,6 +1,6 @@
 ---
 title: "Add `--rebase` / `--merge` arguments to `tt task checkout`"
-status: TODO
+status: IN-PROGRESS
 created: 2026-08-03T16:25:08Z
 updated: 2026-08-03T16:25:09Z
 ---
