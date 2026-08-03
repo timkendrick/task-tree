@@ -2,7 +2,8 @@
 title: "Add `--rebase` / `--merge` arguments to `tt task checkout`"
 status: IN-PROGRESS
 created: 2026-08-03T16:25:08Z
-updated: 2026-08-03T16:25:09Z
+updated: 2026-08-03T16:55:43Z
+context: context/implementation-plan-a7309c0c
 ---
 Currently, checking out a task via `tt task checkout` does not pull any changes from the parent task.
 
