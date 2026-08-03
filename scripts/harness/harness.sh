@@ -283,11 +283,25 @@ bookmark_exists() {
   jj -R "$REPO" log -r "$1" --no-graph -T '' >/dev/null 2>&1
 }
 
-# Check if ANCESTOR is an ancestor of DESCENDANT in the VCS DAG.
+# Check if ANCESTOR is a strict ancestor of DESCENDANT in the VCS DAG.
+# Strict: a revision is NOT an ancestor of itself.
 # Usage: is_vcs_ancestor ANCESTOR DESCENDANT
 is_vcs_ancestor() {
   local ancestor="$1" descendant="$2"
-  jj -R "$REPO" log -r "${ancestor}::${descendant}" --no-graph -T '' >/dev/null 2>&1
+  # NOTE: the `A::B` revset is empty when A is not an ancestor of B, but `jj log`
+  # still exits 0 in that case. The emptiness of the *output* is what carries the
+  # answer, so a real template must be used and the result inspected -- checking
+  # the exit code alone would make this function unconditionally true.
+  local reachable
+  reachable="$(jj -R "$REPO" log -r "${ancestor}::${descendant}" --no-graph \
+    -T 'commit_id ++ "\n"' 2>/dev/null)" || return 1
+  [[ -n "$reachable" ]] || return 1
+
+  # `::` is inclusive at both ends, so reject the A == B case separately.
+  local a b
+  a="$(jj -R "$REPO" log -r "$ancestor" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"
+  b="$(jj -R "$REPO" log -r "$descendant" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"
+  [[ "$a" != "$b" ]]
 }
 
 # Get the list of bookmarks at a given revision.

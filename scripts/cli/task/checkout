@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task checkout — switch to a task or project branch.
 #
 # Usage:
-#   checkout <task-id> [--worktree[=<path>] [--switch]] [--force] [--repo PATH]
+#   checkout <task-id> [--worktree[=<path>] [--switch]] [--rebase | --merge] [--force] [--repo PATH]
 #
 # Options:
 #   <task-id>            Task or project ID (required)
@@ -17,6 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --switch             (only with --worktree) Also update the HEAD symlink to the new
 #                        worktree. Without this flag, HEAD is not updated when --worktree
 #                        is used.
+#   --rebase             Rebase the task onto its parent's tip before checking out.
+#   --merge              Merge the parent's tip into the task before checking out.
 #   --force              Proceed even if the target workspace has local changes.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
@@ -24,7 +26,7 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <task-id> [--worktree[=<path>] [--switch]] [--force] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <task-id> [--worktree[=<path>] [--switch]] [--rebase | --merge] [--force] [--repo PATH]
 
 Switch to the given task or project branch.
 
@@ -38,6 +40,10 @@ Options:
   --switch              (only with --worktree) Also update the HEAD symlink to the
                         new worktree. Without this flag, HEAD is not updated when
                         --worktree is used.
+  --rebase              Rebase the task onto its parent's current tip before
+                        checking out. Not valid for project branches.
+  --merge               Merge the parent's current tip into the task before
+                        checking out. Not valid for project branches.
   --force               Proceed even if the target workspace has local changes.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
@@ -46,6 +52,8 @@ Examples:
   ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --worktree
   ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --worktree --switch
   ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --worktree=/path/to/workspace
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --rebase
+  ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --merge
   ${COMMAND_NAME:-$SCRIPT_NAME} task/foo-abc12345 --force
 
 EOF
@@ -57,6 +65,7 @@ main() {
   local worktree_path=''
   local explicit_path=false
   local switch_flag=false
+  local strategy=''
   local force=false
   local repo=''
 
@@ -74,6 +83,16 @@ main() {
         ;;
       --switch)
         switch_flag=true
+        shift
+        ;;
+      --rebase)
+        [[ -n "$strategy" && "$strategy" != rebase ]] && { usage >&2; exit 1; }
+        strategy='rebase'
+        shift
+        ;;
+      --merge)
+        [[ -n "$strategy" && "$strategy" != merge ]] && { usage >&2; exit 1; }
+        strategy='merge'
         shift
         ;;
       --force)
@@ -124,6 +143,13 @@ main() {
     exit 1
   fi
 
+  # --rebase/--merge pull changes from the parent branch; project branches have no parent.
+  if [[ -n "$strategy" ]] && is_project_branch "$task_id" "$project_prefix"; then
+    log "Error: --rebase/--merge require a task branch."
+    log "  '$task_id' is a project branch and has no parent."
+    exit 1
+  fi
+
   local jj_opts=(-R "$repo")
 
   # Verify bookmark exists
@@ -140,20 +166,6 @@ main() {
     task_slug="${task_id#"$project_prefix"}"
   fi
   task_file="$(task_file_path "$task_slug")"
-
-  # Read task frontmatter from the bookmark
-  local task_file_content task_title task_status
-  task_file_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file")" || true
-  task_title="$(parse_quoted_frontmatter_field "$task_file_content" "title")"
-  task_status="$(parse_frontmatter_field "$task_file_content" "status")"
-
-  # Determine if "Begin task" commit is needed.
-  # Status TODO means the task hasn't been initialized via checkout yet.
-  # (TASK.md may exist on the branch via ancestor inheritance but point to a different task.)
-  local needs_begin=false
-  if [[ "$task_status" == "TODO" ]]; then
-    needs_begin=true
-  fi
 
   # Resolve workspace dir via .tt/workspace symlink
   local workspace_dir
@@ -252,6 +264,47 @@ main() {
 
   # Begin transaction (records before-op for undo)
   tt_begin_transaction "$repo"
+
+  # --- Optional: rebase/merge parent into this task before checking out ---
+  # Runs inside the transaction so a propagation failure rolls the whole command back.
+  if [[ -n "$strategy" ]]; then
+    local parent_bookmark
+    parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
+      local rc=$?
+      [[ $rc -eq 1 ]] && log "Error: No parent branch found containing subtask entry for '$task_id'."
+      exit 1
+    }
+
+    log "Propagating parent ($strategy) into task before checkout..."
+    "$SCRIPT_DIR/propagate" \
+      --from "$parent_bookmark" \
+      --to "$task_id" \
+      --"$strategy" \
+      --repo "$repo"
+
+    # If the working copy was clean going in, it must still be clean. Skipped under
+    # --force, where a dirty working copy was explicitly permitted up front, and for
+    # brand-new worktrees, which do not exist on disk yet.
+    if [[ "$force" != true ]] && [[ "$new_worktree" != true ]] && ! is_wc_clean "$target_worktree"; then
+      log "Error: Working copy not clean after propagation."
+      exit 1
+    fi
+  fi
+
+  # Read task frontmatter from the bookmark (after any propagation, so the values
+  # reflect the branch's current tip).
+  local task_file_content task_title task_status
+  task_file_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file")" || true
+  task_title="$(parse_quoted_frontmatter_field "$task_file_content" "title")"
+  task_status="$(parse_frontmatter_field "$task_file_content" "status")"
+
+  # Determine if "Begin task" commit is needed.
+  # Status TODO means the task hasn't been initialized via checkout yet.
+  # (TASK.md may exist on the branch via ancestor inheritance but point to a different task.)
+  local needs_begin=false
+  if [[ "$task_status" == "TODO" ]]; then
+    needs_begin=true
+  fi
 
   # Perform the checkout
   if [[ "$new_worktree" == true ]]; then
