@@ -2,7 +2,8 @@
 title: "Allow `tt task checkout` of already-completed tasks"
 status: IN-PROGRESS
 created: 2026-08-03T15:50:05Z
-updated: 2026-08-03T15:50:06Z
+updated: 2026-08-03T20:19:59Z
+context: context/implementation-plan-fb143147
 ---
 
 Currently, `tt task checkout` silently succeeds if the provided task is already completed, checking out the parent branch without changing the task status in the TASK.md frontmatter.
