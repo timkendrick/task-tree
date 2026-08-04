@@ -350,14 +350,15 @@ main() {
     exit 0
   fi
 
-  # Refuse to create a child under a completed (DONE) parent task.
+  # Detect a completed (DONE) parent task: it is reopened via `tt task checkout`
+  # before the child is created (see DESIGN.md §6.1).
+  local parent_is_done=false
   if [[ -n "$parent_task_file" ]]; then
     local parent_status
     parent_status="$(jj_show_at_revision "$repo" "$parent_bookmark" "$parent_task_file" \
       | awk '/^status:/ { print $2; exit }')"
     if [[ "$parent_status" == "DONE" ]]; then
-      log "Error: Parent task '$parent_bookmark' has status DONE. Completed tasks are immutable; create new tasks under a different parent."
-      exit 1
+      parent_is_done=true
     fi
   fi
 
@@ -388,6 +389,15 @@ main() {
 
   # Begin transaction (records before-op for undo)
   tt_begin_transaction "$repo"
+
+  # Reopen a completed parent before adding the child. `tt task checkout` creates the
+  # status -> IN-PROGRESS commit and advances the parent bookmark, so parent_rev (a
+  # commit id captured before the reopen) must be re-resolved afterwards.
+  if [[ "$parent_is_done" == true ]]; then
+    log "Parent task '$parent_bookmark' is DONE; reopening before creating child..."
+    "$SCRIPT_DIR/checkout" "$parent_bookmark" --repo "$repo" >/dev/null
+    parent_rev="$(jj "${jj_opts[@]}" log -r "$parent_bookmark" -n 1 --no-graph -T 'commit_id')"
+  fi
 
   jj "${jj_opts[@]}" new "$parent_rev" >&2
 
