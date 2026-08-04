@@ -1332,3 +1332,75 @@ tt_rollback_transaction() {
   trap - ERR
   unset _TT_TRANSACTION_OWNER
 }
+
+# ---------------------------------------------------------------------------
+# Interactive selection
+# ---------------------------------------------------------------------------
+
+# Usage: _select_value OPTION...
+# Renders the built-in minimal picker UI to stderr and reads one line from
+# /dev/tty. The raw reply is printed to stdout (validation is the caller's job).
+# Returns 1 if no interactive terminal is available or the read fails.
+_select_value() {
+  # /dev/tty exists as a device node even without a controlling terminal, so
+  # test that it can actually be opened rather than relying on [[ -e ]].
+  # Redirections are applied left to right, so stderr must be silenced *before*
+  # the /dev/tty open is attempted or bash reports the failure itself.
+  if ! : 2>/dev/null </dev/tty; then
+    echo "Error: no interactive terminal available (set TT_SELECT to use a custom picker)" >&2
+    return 1
+  fi
+
+  {
+    printf 'Select an option:\n\n'
+    printf '%s\n' "$@"
+    printf '\n> '
+  } >&2
+
+  local reply
+  IFS= read -r reply </dev/tty || return 1
+  printf '%s\n' "$reply"
+}
+
+# Usage: printf '%s\n' item... | select_value
+# Reads newline-separated options from stdin, presents a picker, and writes the
+# selected option to stdout.
+#
+# When TT_SELECT is set it is run via `sh -c` as the picker: it receives the
+# options on stdin and must write exactly one of them to stdout. Otherwise the
+# built-in picker (_select_value) is used.
+#
+# Returns 1 if no options were provided, if the picker fails, or if the picker's
+# output does not exactly match one of the provided options.
+select_value() {
+  local options=() line
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && options+=("$line")
+  done
+
+  if [[ ${#options[@]} -eq 0 ]]; then
+    echo "Error: no options provided" >&2
+    return 1
+  fi
+
+  local choice
+  if [[ -n "${TT_SELECT:-}" ]]; then
+    choice="$(printf '%s\n' "${options[@]}" | sh -c "$TT_SELECT")" || {
+      echo "Error: picker command failed: $TT_SELECT" >&2
+      return 1
+    }
+  else
+    choice="$(_select_value "${options[@]}")" || return 1
+  fi
+
+  local option
+  for option in "${options[@]}"; do
+    if [[ "$option" == "$choice" ]]; then
+      printf '%s\n' "$choice"
+      return 0
+    fi
+  done
+
+  echo "Error: invalid selection: $choice" >&2
+  return 1
+}
