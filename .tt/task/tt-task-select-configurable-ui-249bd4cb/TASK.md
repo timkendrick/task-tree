@@ -1,6 +1,6 @@
 ---
 title: "Configurable `tt task select` UI"
-status: TODO
+status: IN-PROGRESS
 created: 2026-08-04T06:57:13Z
 updated: 2026-08-04T06:57:14Z
 ---
