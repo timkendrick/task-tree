@@ -359,7 +359,7 @@ The command exits with an error if none of these resolves to a valid jj reposito
 
 - **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step. No hooks.
 
-- **`tt task select`** — Interactively select an active (non-completed) task or project. Requires an interactive terminal. Lists all task and project bookmarks, excludes DONE tasks, sorts alphabetically, and pipes the list to an interactive selector. The selected task ID is printed to stdout. Exits with code 1 if no active tasks are found or if the terminal is not interactive.
+- **`tt task select`** — Interactively select an active (non-completed) task or project. Lists all task and project bookmarks, excludes DONE tasks, sorts alphabetically, and pipes the list to a picker (see §6.13). The selected task ID is printed to stdout. Exits with code 1 if no active tasks are found, if the picker fails, or if the picker's output is not one of the offered options. No hooks.
 
 - **`tt task show [<task-id>] [--expand-context]`** — Show the metadata and direct child tasks of the current task (default) or the given task. Reads from the correct branch per the "where to read" rule (§7.1 / Appendix A step 3): merged tasks are read from the parent branch that received the checkin; ongoing tasks are read from their own branch. Output format: lowercase header block (`task`, `status`, `title`; and `parent` if the task has a parent), followed by a subtasks section, a context section (listing context file titles and IDs), and a body section, all always present and separated by `---` dividers. With `--expand-context`, additionally prints the full content of context files after the body section, each preceded by `---` and a header indicating the context file title and ID. Output to stdout only. No hooks.
 
@@ -537,7 +537,7 @@ When `--message` is not provided, `tt task checkpoint` opens an editor for the u
 
 **Editor selection:** `$TT_EDITOR` → `$GIT_EDITOR` → `$VISUAL` → `$EDITOR` → `"vi"` (first non-empty value wins). The editor executable receives the temporary file path as its only argument.
 
-**Messge editor template (written to temporary file):**
+**Message editor template (written to temporary file):**
 
 ```
 <task-title>
@@ -941,6 +941,30 @@ Running `tt history undo --force` reverts the stale in-progress transaction. Alt
 **`tt history unlock` is not itself transactional:** The unlock command does not write a new transaction entry to `.tt/history`. It only modifies the existing in-progress entry.
 
 ---
+
+### 6.13 Interactive selection (`tt task select`)
+
+`tt task select` does not implement a picker UI itself. It builds the candidate list, then delegates the choice to a **picker command** via a shared `select_value` helper.
+
+**Picker contract.** A picker reads newline-separated options from **stdin**, presents them to the user however it likes (using **stderr** for any UI output), and writes **exactly one** of the offered options to **stdout**. This is the same contract for the built-in picker and for user-supplied ones.
+
+**Picker selection.** If `$TT_SELECT` is set and non-empty, its value is run as a shell command line via `sh -c "$TT_SELECT"` (so pipes, arguments and quoting all work, e.g. `TT_SELECT='fzf --height 40%'`). Otherwise the built-in picker is used.
+
+**Built-in picker.** Deliberately minimal, built from POSIX tools. It renders the option list to stderr and reads a single line from `/dev/tty`:
+
+```
+Select an option:
+
+task/foo
+task/bar
+task/baz
+
+> 
+```
+
+The user types the desired option in full. The built-in picker requires an openable `/dev/tty`; if there is no controlling terminal it prints an error naming `TT_SELECT` and exits 1. Note that only the built-in picker requires a terminal — a custom `TT_SELECT` command may run headlessly.
+
+**Validation.** Whichever picker is used, its stdout must match one of the offered options **exactly**. Anything else — a prefix, a decorated line, empty output — is an error (`Error: invalid selection: <value>`, exit 1). A picker command that itself exits non-zero is also an error. Selection with no options provided is an error (`Error: no options provided`).
 
 ## 7. Todo list generation
 
