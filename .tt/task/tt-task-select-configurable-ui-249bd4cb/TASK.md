@@ -1,6 +1,6 @@
 ---
 title: "Configurable `tt task select` UI"
-status: IN-PROGRESS
+status: DONE
 created: 2026-08-04T06:57:13Z
 updated: 2026-08-04T07:15:33Z
 context: context/implementation-plan-6e57d555
