@@ -66,6 +66,40 @@ test_task_checkin__with_delete() {
 }
 
 
+test_task_checkin__with_complete_and_delete() {
+  # --delete requires DONE, but --complete marks the task DONE as part of the same
+  # command, so the two flags must work together.
+  setup_workspace "ci-complete-delete"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task checkin --complete --delete "$task_id" 2>&1) || exit_code=$?
+  assert_success "checkin --complete --delete succeeds" "$exit_code"
+  assert_bookmark_not_exists "bookmark deleted" "$task_id"
+  assert_no_subtask_entry "no subtask entry" "$proj_id" "$task_id"
+}
+
+
+test_task_checkin__delete_without_complete_rejected() {
+  setup_workspace "ci-delete-not-done"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task checkin --delete "$task_id" 2>&1) || exit_code=$?
+  assert_failure "--delete on non-DONE task rejected" "$exit_code"
+  assert_contains "error mentions DONE requirement" "$output" "--delete requires task status to be DONE"
+  assert_bookmark_exists "bookmark retained" "$task_id"
+}
+
+
 test_task_checkin__project_branch_rejected() {
   setup_workspace "ci-project"
   proj_id=$(create_project "proj" "Project") || true

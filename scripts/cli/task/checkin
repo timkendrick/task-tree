@@ -215,8 +215,9 @@ main() {
   task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
   task_status="$(parse_frontmatter_field "$task_content" "status")"
 
-  # Validate --delete requires DONE
-  if [[ "$delete" == true ]] && [[ "$task_status" != "DONE" ]]; then
+  # Validate --delete requires DONE. With --complete the task is marked DONE later in
+  # this command, so the check is deferred until after the complete step has run.
+  if [[ "$delete" == true ]] && [[ "$do_complete" != true ]] && [[ "$task_status" != "DONE" ]]; then
     log "Error: --delete requires task status to be DONE (current: $task_status)."
     log "  Use --complete to mark done first, or use --complete --delete together."
     exit 1
@@ -278,6 +279,21 @@ main() {
         ${task_id_arg:+"$task_id_arg"} \
         ${worktree_arg:+--worktree="$worktree_arg"} \
         ${force:+--force}
+    fi
+
+    # Re-read the task file: `complete` advanced the child bookmark, and the refreshed
+    # status drives the parent's subtask checkbox, the final log message, and the
+    # post-checkin worktree cleanup below.
+    task_content="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || {
+      log "Error: Could not read task file '$task_file' from '$child_bookmark'."
+      exit 1
+    }
+    task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
+    task_status="$(parse_frontmatter_field "$task_content" "status")"
+
+    if [[ "$delete" == true ]] && [[ "$task_status" != "DONE" ]]; then
+      log "Error: --delete requires task status to be DONE (current: $task_status)."
+      exit 1
     fi
   fi
 
