@@ -126,7 +126,7 @@ subtask: [x] task/tt-task-create-stdout-b4443ed9
 subtask: [x] task/tt-task-checkin-context-stdin-f0e55d66
 subtask: [x] task/agentic-workflows-skill-518d8078
 subtask: [x] task/tt-task-checkin-prompt-editor-hint-f0603a42
-subtask: [-] task/tt-task-checkout-completed-f90d8d12
+subtask: [x] task/tt-task-checkout-completed-f90d8d12
 subtask: [-] task/tt-task-checkout-rebase-merge-83ec3101
 subtask: [ ] task/tt-task-checkpoint-empty-c6eaa3da
 ---
