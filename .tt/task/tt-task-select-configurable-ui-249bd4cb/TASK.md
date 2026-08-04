@@ -2,7 +2,8 @@
 title: "Configurable `tt task select` UI"
 status: IN-PROGRESS
 created: 2026-08-04T06:57:13Z
-updated: 2026-08-04T06:57:14Z
+updated: 2026-08-04T07:15:33Z
+context: context/implementation-plan-6e57d555
 ---
 Currently, `tt task select` implements an opinionated list picker UI that allows the user to choose an option. This functionality is ancillary to the primary tool and should be removed from the codebase as it creates unnecessary complexity. 
 
