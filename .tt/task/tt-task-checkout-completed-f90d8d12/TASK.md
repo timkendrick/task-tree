@@ -1,6 +1,6 @@
 ---
 title: "Allow `tt task checkout` of already-completed tasks"
-status: IN-PROGRESS
+status: DONE
 created: 2026-08-03T15:50:05Z
 updated: 2026-08-03T20:19:59Z
 context: context/implementation-plan-fb143147
