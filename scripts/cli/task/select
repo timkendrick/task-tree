@@ -4,8 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
-# shellcheck source=../lib/select.sh
-. "$SCRIPT_DIR/../lib/select.sh"
 
 # tt task select — Interactively select an active task or project
 #
@@ -22,12 +20,17 @@ usage() {
   cat <<EOF
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--repo PATH]
 
-Interactively select an active (non-completed) task or project. Requires an interactive terminal.
+Interactively select an active (non-completed) task or project.
 The selected task ID is printed to stdout.
 
 Options:
   --repo PATH        Repository root (overrides TT_REPO; default: find .jj).
   -h, --help         Show this help.
+
+Environment:
+  TT_SELECT          Picker command (run via 'sh -c'). Receives the newline-separated
+                     options on stdin and must write exactly one of them to stdout.
+                     Defaults to a minimal built-in picker that requires /dev/tty.
 
 EOF
 }
@@ -49,12 +52,6 @@ main() {
   done
 
   repo="$(resolve_repo "$repo")"
-
-  # Check that /dev/tty is available (interactive terminal)
-  if ! [ -t 2 ] || ! [ -e /dev/tty ]; then
-    echo "Error: tt task select requires an interactive terminal" >&2
-    exit 1
-  fi
 
   local task_prefix project_prefix
   task_prefix="$(get_task_prefix "$repo")"
