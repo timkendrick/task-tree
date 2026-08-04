@@ -7,6 +7,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # tt task checkout — switch to a task or project branch.
 #
+# Checking out a task whose status is TODO (never checked out) or DONE (completed)
+# creates a [tt:task:<task-id>:checkout] commit setting status to IN-PROGRESS and
+# advances the task bookmark. Reopening a DONE task appends this commit to the task's
+# existing branch; no parent changes are pulled in unless --rebase/--merge is given.
+#
 # Usage:
 #   checkout <task-id> [--worktree[=<path>] [--switch]] [--rebase | --merge] [--force] [--repo PATH]
 #
@@ -298,12 +303,19 @@ main() {
   task_title="$(parse_quoted_frontmatter_field "$task_file_content" "title")"
   task_status="$(parse_frontmatter_field "$task_file_content" "status")"
 
-  # Determine if "Begin task" commit is needed.
+  # Determine if a status-updating checkout commit is needed.
   # Status TODO means the task hasn't been initialized via checkout yet.
   # (TASK.md may exist on the branch via ancestor inheritance but point to a different task.)
+  # Status DONE means the task was completed and is now being reopened: the commit returns
+  # the task to IN-PROGRESS on its existing branch. Nothing is pulled from the parent branch
+  # (use --rebase/--merge for that).
   local needs_begin=false
+  local reopening=false
   if [[ "$task_status" == "TODO" ]]; then
     needs_begin=true
+  elif [[ "$task_status" == "DONE" ]]; then
+    needs_begin=true
+    reopening=true
   fi
 
   # Perform the checkout
@@ -324,11 +336,15 @@ main() {
     jj "${jj_opts[@]}" new "$task_id" >&2
   fi
 
-  # Create "Begin task" commit if TASK.md doesn't yet exist on the branch
+  # Create the checkout commit (first checkout, or reopening a completed task)
   if [[ "$needs_begin" == true ]]; then
-    log "Initializing task: $task_id"
+    if [[ "$reopening" == true ]]; then
+      log "Reopening completed task: $task_id"
+    else
+      log "Initializing task: $task_id"
+    fi
 
-    # Create TASK.md symlink in the worktree root
+    # Create TASK.md symlink in the worktree root (idempotent when reopening)
     ln -sf ".tt/task/${task_slug}/TASK.md" "$target_worktree/TASK.md"
     log "Created TASK.md -> .tt/task/${task_slug}/TASK.md"
 
