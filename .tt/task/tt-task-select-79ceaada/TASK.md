@@ -5,7 +5,7 @@ created: 2026-06-14T10:03:51Z
 updated: 2026-06-14T10:03:51Z
 subtask: [x] task/select-lib-d2e0e5fc
 subtask: [x] task/select-cli-783e99f5
-subtask: [ ] task/tt-task-select-configurable-ui-249bd4cb
+subtask: [x] task/tt-task-select-configurable-ui-249bd4cb
 ---
 Many `tt task` commands rely on knowing a specific task ID. This can be cumbersome as the unique task identifiers are not particularly human-friendly.
 
