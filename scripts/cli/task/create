@@ -441,7 +441,7 @@ main() {
     # Create the stub and bookmark without modifying any parent; edit sets metadata.
     write_task_stub "$repo" "$task_suffix"
     jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")" >&2
-    jj "${jjOpts[@]}" new "@" >&2
+    jj "${jj_opts[@]}" new "@" >&2
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2
     # Build common args (title, labels)
     local edit_args=(--repo "$repo" --title "$title")
