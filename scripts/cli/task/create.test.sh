@@ -58,15 +58,23 @@ test_task_create__create_with_labels() {
 }
 
 
-test_task_create__completed_parent_rejected() {
+test_task_create__reopens_completed_parent() {
   setup_workspace "create-completed-parent"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "parent" "Parent Task") || true
+  checkout_task "$task_id" >/dev/null || true
   complete_task >/dev/null || true
+  assert_task_status "parent DONE before create" "$task_id" "DONE"
 
-  output="" exit_code=0
-  output=$(run_tt task create --slug "child" --title "Child" <<< "" 2>&1) || exit_code=$?
-  assert_failure "create under DONE parent rejected" "$exit_code"
+  parent_before=$(get_bookmark_commit "$task_id")
+
+  child_id=$(create_task_under "$task_id" "child" "Child") || true
+  assert_matches "child task created" "$child_id" "^task/child-"
+  assert_task_status "parent reopened" "$task_id" "IN-PROGRESS"
+  assert_neq "parent bookmark advanced" "$(get_bookmark_commit "$task_id")" "$parent_before"
+  assert_subtask_entry "child registered on parent" "$task_id" "$child_id" "[ ]"
+  assert_task_status "child is TODO" "$child_id" "TODO"
 }
 
 

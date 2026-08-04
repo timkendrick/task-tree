@@ -332,6 +332,130 @@ test_task_checkout__rebase_when_already_up_to_date_is_no_op() {
 }
 
 
+test_task_checkout__reopens_completed_task() {
+  setup_workspace "checkout-reopen"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+  checkout_task "$task_id" >/dev/null || true
+  complete_task >/dev/null || true
+  assert_task_status "DONE before reopen" "$task_id" "DONE"
+
+  checkout_task "$proj_id" >/dev/null || true
+  bm_before=$(get_bookmark_commit "$task_id")
+
+  output="" exit_code=0
+  output=$(run_tt task checkout "$task_id" 2>&1) || exit_code=$?
+  assert_success "checkout of DONE task succeeds" "$exit_code"
+  assert_task_status "IN-PROGRESS after reopen" "$task_id" "IN-PROGRESS"
+  assert_neq "task bookmark advanced" "$(get_bookmark_commit "$task_id")" "$bm_before"
+  assert_commit_message_first_line "reopen commit message" "$task_id" \
+    "[tt:task:${task_id}:checkout] My Task"
+  assert_current_task "WC on task branch" "$task_id"
+  assert_wc_clean "WC clean after reopen"
+}
+
+
+test_task_checkout__reopen_does_not_pull_parent_changes() {
+  setup_workspace "checkout-reopen-no-propagate"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+  checkout_task "$task_id" >/dev/null || true
+  complete_task >/dev/null || true
+
+  # Land a new commit on the parent after the child was completed.
+  checkout_task "$proj_id" >/dev/null || true
+  edit_file "parent-only.txt" "parent"
+  checkpoint_task "Parent edit" >/dev/null || true
+
+  bm_before=$(get_bookmark_commit "$task_id")
+
+  output="" exit_code=0
+  output=$(run_tt task checkout "$task_id" 2>&1) || exit_code=$?
+  assert_success "reopen succeeds" "$exit_code"
+  assert_task_status "IN-PROGRESS after reopen" "$task_id" "IN-PROGRESS"
+  assert_file_not_on_branch "parent change not pulled in" "$task_id" "parent-only.txt"
+  assert_is_ancestor "reopen commit builds on previous task tip" \
+    "$bm_before" "$task_id"
+}
+
+
+test_task_checkout__reopen_with_worktree() {
+  setup_workspace "checkout-reopen-worktree"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+  checkout_task "$task_id" >/dev/null || true
+  complete_task >/dev/null || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task checkout "$task_id" --worktree --switch 2>&1) || exit_code=$?
+  assert_success "reopen with --worktree succeeds" "$exit_code"
+  assert_task_status "IN-PROGRESS after reopen" "$task_id" "IN-PROGRESS"
+  assert_file_exists "worktree created" "$VIRTUAL/$task_id/TASK.md"
+}
+
+
+test_task_checkout__reopen_with_rebase_pulls_parent() {
+  setup_workspace "checkout-reopen-rebase"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+  checkout_task "$task_id" >/dev/null || true
+  complete_task >/dev/null || true
+
+  checkout_task "$proj_id" >/dev/null || true
+  edit_file "parent-only.txt" "parent"
+  checkpoint_task "Parent edit" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task checkout "$task_id" --rebase 2>&1) || exit_code=$?
+  assert_success "reopen with --rebase succeeds" "$exit_code"
+  assert_task_status "IN-PROGRESS after reopen" "$task_id" "IN-PROGRESS"
+  assert_file_on_branch "parent change pulled in" "$task_id" "parent-only.txt"
+}
+
+
+test_task_checkout__reopen_then_checkin_marks_subtask_in_progress() {
+  setup_workspace "checkout-reopen-checkin"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+  checkout_task "$task_id" >/dev/null || true
+  complete_task >/dev/null || true
+  checkin_task >/dev/null || true
+  assert_subtask_entry "subtask done after checkin" "$proj_id" "$task_id" "[x]"
+
+  checkout_task "$task_id" >/dev/null || true
+  edit_file "more-work.txt" "more"
+  checkpoint_task "More work" >/dev/null || true
+
+  # --rebase brings in the parent's earlier checkin commit; without it the stale
+  # copy of the parent task file on the child branch conflicts with the parent tip.
+  output="" exit_code=0
+  output=$(run_tt task checkin --rebase 2>&1) || exit_code=$?
+  assert_success "checkin after reopen succeeds" "$exit_code"
+  assert_subtask_entry "subtask back in progress" "$proj_id" "$task_id" "[-]"
+}
+
+
+test_task_checkout__reopens_completed_project() {
+  setup_workspace "checkout-reopen-project"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  complete_task >/dev/null || true
+  assert_task_status "DONE before reopen" "$proj_id" "DONE"
+
+  output="" exit_code=0
+  output=$(run_tt task checkout "$proj_id" 2>&1) || exit_code=$?
+  assert_success "checkout of DONE project succeeds" "$exit_code"
+  assert_task_status "IN-PROGRESS after reopen" "$proj_id" "IN-PROGRESS"
+  assert_current_task "WC on project branch" "$proj_id"
+}
+
+
 test_task_checkout__help() {
   setup_workspace "checkout-help"
   output="" exit_code=0
