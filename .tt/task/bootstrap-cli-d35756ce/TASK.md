@@ -2,7 +2,7 @@
 title: "Bootstrap CLI"
 status: IN-PROGRESS
 created: 2026-03-15T09:29:32Z
-updated: 2026-08-03T15:29:45Z
+updated: 2026-08-04T08:51:00Z
 context: context/task-tt-task-list-6638a980-d50c1e36
 context: context/context-from-2026-02-21-22-12-e533801d
 subtask: [ ] task/tt-workspace-doctor-fe9143d1
@@ -27,6 +27,7 @@ subtask: [ ] task/tt-task-checkpoint-commit-message-5e7ae39e
 subtask: [ ] task/tt-task-publish-commit-message-4062975b
 subtask: [ ] task/tt-propagate-parent-child-task-symlink-conflict-3bef09e2
 subtask: [ ] task/tt-task-create-parent-branch-cfe50365
+subtask: [ ] task/tt-task-checkpoint-empty-c6eaa3da
 subtask: [x] task/frontmatter-label-ordering-252d77b0
 subtask: [x] task/retain-crashed-editor-contents-dcd6b730
 subtask: [x] task/analyze-cross-worktree-transactions-35b7b43d
@@ -128,7 +129,6 @@ subtask: [x] task/agentic-workflows-skill-518d8078
 subtask: [x] task/tt-task-checkin-prompt-editor-hint-f0603a42
 subtask: [x] task/tt-task-checkout-completed-f90d8d12
 subtask: [x] task/tt-task-checkout-rebase-merge-83ec3101
-subtask: [ ] task/tt-task-checkpoint-empty-c6eaa3da
 ---
 Implement shell script implementations of all `tt` CLI commands
 
