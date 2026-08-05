@@ -129,6 +129,7 @@ subtask: [x] task/agentic-workflows-skill-518d8078
 subtask: [x] task/tt-task-checkin-prompt-editor-hint-f0603a42
 subtask: [x] task/tt-task-checkout-completed-f90d8d12
 subtask: [x] task/tt-task-checkout-rebase-merge-83ec3101
+subtask: [ ] task/tt-task-diff-144612f1
 ---
 Implement shell script implementations of all `tt` CLI commands
 
