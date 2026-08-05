@@ -21,6 +21,27 @@ test_task_diff__basic() {
 }
 
 
+test_task_diff__git_output_format() {
+  setup_workspace "diff-git-format"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "hello diff" > "$TT_REPO/feature.txt"
+  checkpoint_task "first commit" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task diff 2>&1) || exit_code=$?
+  assert_success "diff succeeds" "$exit_code"
+  assert_matches "git diff header" "$output" '^diff --git a/feature\.txt b/feature\.txt'
+  assert_contains "git new file mode" "$output" "new file mode"
+  assert_matches "unified hunk header" "$output" '^@@ '
+  assert_matches "added line" "$output" '^\+hello diff'
+  # jj's native format would use "Added regular file ..." headers instead.
+  assert_not_contains "not jj native format" "$output" "Added regular file"
+}
+
+
 test_task_diff__explicit_task() {
   setup_workspace "diff-explicit"
   proj_id=$(create_project "proj" "Project") || true
@@ -84,13 +105,11 @@ test_task_diff__excludes_metadata_by_default() {
   output=$(run_tt task diff 2>&1) || exit_code=$?
   assert_success "diff succeeds" "$exit_code"
   assert_contains "non-metadata file present" "$output" "source.txt"
-  # Match jj's file headers ("Modified regular file .tt/...") rather than the
-  # bare path: the TASK.md symlink's *content* is a '.tt/task/...' path, so it
-  # legitimately appears in the diff body of a non-metadata file.
+  # Both metadata files are excluded, so neither their Git diff headers nor
+  # their bodies (the TASK.md symlink's content is a '.tt/task/...' path)
+  # appear anywhere in the output.
   assert_not_contains "metadata dir excluded" "$output" ".tt/"
-  # jj reports the root symlink as e.g. "Symlink target changed at TASK.md:";
-  # anchor on the trailing colon so symlink *contents* elsewhere don't match.
-  assert_not_matches "TASK.md symlink excluded" "$output" "TASK.md"
+  assert_not_contains "TASK.md symlink excluded" "$output" "TASK.md"
 }
 
 
@@ -107,8 +126,8 @@ test_task_diff__include_metadata() {
   output=$(run_tt task diff --include-metadata 2>&1) || exit_code=$?
   assert_success "diff with --include-metadata succeeds" "$exit_code"
   assert_contains "non-metadata file present" "$output" "source.txt"
-  assert_contains "metadata dir included" "$output" "file .tt/"
-  assert_matches "TASK.md symlink included" "$output" '(^|[^/])TASK\.md:'
+  assert_contains "metadata dir included" "$output" "diff --git a/.tt/"
+  assert_matches "TASK.md symlink included" "$output" '^diff --git a/TASK\.md'
 }
 
 
