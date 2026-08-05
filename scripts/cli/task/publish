@@ -190,7 +190,7 @@ main() {
   # Task files are development-only scaffolding; they must not land on the
   # delivery branch. .tt/config.toml is kept (workspace configuration).
   rm -f "$target_ws/TASK.md"
-  rm -rf "$target_ws/.tt/task"
+  rm -rf "$target_ws/$(task_root_path)"
 
   # Commit the handoff (project bookmark does NOT advance)
   jj -R "$target_ws" commit -m "$(format_commit_message "task" "handoff" "$task_id" "$task_title")"
