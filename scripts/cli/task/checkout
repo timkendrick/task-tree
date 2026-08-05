@@ -324,8 +324,8 @@ main() {
     jj "${jj_opts[@]}" workspace add --name "$task_id" -r "$task_id" "$target_worktree" >&2
     # Plant .tt/workspace symlink in the new worktree.
     # Note: history lives in the canonical repo only.
-    mkdir -p "$target_worktree/.tt"
-    if [[ -L "$repo/.tt/workspace" ]]; then
+    mkdir -p "$target_worktree/$(tt_metadata_path)"
+    if [[ -L "$repo/$(tt_metadata_path 'workspace')" ]]; then
       set_workspace_dir "$target_worktree" "$(get_workspace_dir "$repo")"
     fi
   elif [[ "$worktree_flag" == true ]]; then
@@ -345,8 +345,10 @@ main() {
     fi
 
     # Create TASK.md symlink in the worktree root (idempotent when reopening)
-    ln -sf ".tt/task/${task_slug}/TASK.md" "$target_worktree/TASK.md"
-    log "Created TASK.md -> .tt/task/${task_slug}/TASK.md"
+    local task_file_rel
+    task_file_rel="$(task_file_path "$task_slug")"
+    ln -sf "$task_file_rel" "$target_worktree/$TT_TASK_SYMLINK_FILENAME"
+    log "Created $TT_TASK_SYMLINK_FILENAME -> $task_file_rel"
 
     # Update status to IN-PROGRESS in the task file
     local tmpfile

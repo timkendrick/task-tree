@@ -71,6 +71,47 @@ test_task_diff__uncommitted_changes() {
 }
 
 
+test_task_diff__excludes_metadata_by_default() {
+  setup_workspace "diff-metadata-default"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "source content" > "$TT_REPO/source.txt"
+  checkpoint_task "first commit" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task diff 2>&1) || exit_code=$?
+  assert_success "diff succeeds" "$exit_code"
+  assert_contains "non-metadata file present" "$output" "source.txt"
+  # Match jj's file headers ("Modified regular file .tt/...") rather than the
+  # bare path: the TASK.md symlink's *content* is a '.tt/task/...' path, so it
+  # legitimately appears in the diff body of a non-metadata file.
+  assert_not_contains "metadata dir excluded" "$output" ".tt/"
+  # jj reports the root symlink as e.g. "Symlink target changed at TASK.md:";
+  # anchor on the trailing colon so symlink *contents* elsewhere don't match.
+  assert_not_matches "TASK.md symlink excluded" "$output" "TASK.md"
+}
+
+
+test_task_diff__include_metadata() {
+  setup_workspace "diff-metadata-include"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "source content" > "$TT_REPO/source.txt"
+  checkpoint_task "first commit" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task diff --include-metadata 2>&1) || exit_code=$?
+  assert_success "diff with --include-metadata succeeds" "$exit_code"
+  assert_contains "non-metadata file present" "$output" "source.txt"
+  assert_contains "metadata dir included" "$output" "file .tt/"
+  assert_matches "TASK.md symlink included" "$output" '(^|[^/])TASK\.md:'
+}
+
+
 test_task_diff__not_on_task_branch() {
   setup_workspace "diff-no-branch"
   output="" exit_code=0
@@ -116,6 +157,7 @@ test_task_diff__help() {
   assert_usage_command_name "command name" "$output" "tt task diff"
   assert_required_usage_argument "argument: --repo" "$output" "--repo"
   assert_required_usage_argument "argument: --task" "$output" "--task"
+  assert_required_usage_argument "argument: --include-metadata" "$output" "--include-metadata"
 }
 
 

@@ -191,7 +191,7 @@ main() {
   mkdir -p "$repo_abs/.tt"
 
   # Write .tt/config.toml
-  local config_file="$repo_abs/.tt/config.toml"
+  local config_file="$repo_abs/$(tt_metadata_path 'config.toml')"
   cat > "$config_file" <<TOML
 # task-tree (tt) configuration
 
@@ -205,7 +205,7 @@ project_prefix = "${project_prefix}"
 TOML
 
   # Write .tt/.gitignore to ignore the transaction history log and workspace symlink
-  local gitignore_file="$repo_abs/.tt/.gitignore"
+  local gitignore_file="$repo_abs/$(tt_metadata_path '.gitignore')"
   printf '/history\n/workspace\n' > "$gitignore_file"
 
   # Create empty transaction history log (ignored by jj via .tt/.gitignore)

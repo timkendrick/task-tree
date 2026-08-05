@@ -151,10 +151,12 @@ emit_task_line() {
   else
     suffix="${task_id#task/}"
   fi
+  local task_path
+  task_path="$(task_file_path "$suffix")"
   if [[ -n "$current_task_id" && "$task_id" == "$current_task_id" ]]; then
-    printf '%s- %s **[%s](.tt/task/%s/TASK.md) %s**\n' "$indent" "$checkbox" "$task_id" "$suffix" "$title"
+    printf '%s- %s **[%s](%s) %s**\n' "$indent" "$checkbox" "$task_id" "$task_path" "$title"
   else
-    printf '%s- %s [%s](.tt/task/%s/TASK.md) %s\n' "$indent" "$checkbox" "$task_id" "$suffix" "$title"
+    printf '%s- %s [%s](%s) %s\n' "$indent" "$checkbox" "$task_id" "$task_path" "$title"
   fi
 }
 
