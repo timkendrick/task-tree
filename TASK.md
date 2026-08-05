@@ -1,1 +1,1 @@
-.tt/task/strip-tt-task-diff-metadata-contents-56f3485f/TASK.md
+.tt/task/tt-task-diff-144612f1/TASK.md
