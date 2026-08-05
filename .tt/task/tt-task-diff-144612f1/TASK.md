@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt task diff` CLI command"
-status: IN-PROGRESS
+status: DONE
 created: 2026-08-05T15:51:32Z
 updated: 2026-08-05T15:56:35Z
 context: context/implementation-plan-2b4273bb
