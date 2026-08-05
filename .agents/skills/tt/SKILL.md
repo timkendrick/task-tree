@@ -95,9 +95,9 @@ Print the parent task ID. `--project` walks up to find the nearest ancestor proj
 
 #### `tt task diff`  (alias: `tt diff`)
 ```
-tt task diff [--task <task-id>] [--repo PATH]
+tt task diff [--task <task-id>] [--include-metadata] [--repo PATH]
 ```
-Show the diff of all unmerged commits on a task branch since it diverged from its parent branch. Output is relayed directly from `jj diff`. Without `--task`, uses the current task and includes trailing commits and uncommitted working-copy changes.
+Show the diff of all unmerged commits on a task branch since it diverged from its parent branch. Output is relayed directly from `jj diff`. Without `--task`, uses the current task and includes trailing commits and uncommitted working-copy changes. Changes to tt metadata (the `.tt/` directory and the root `TASK.md` symlink) are omitted unless `--include-metadata` is passed.
 
 #### `tt task edit`
 ```

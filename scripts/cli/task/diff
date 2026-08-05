@@ -13,10 +13,14 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--include-metadata] [--repo PATH]
 
 Show the diff of all unmerged commits on a task branch since it diverged from
 its parent branch. Output is relayed directly from 'jj diff'.
+
+Changes to tt metadata files (the '$TT_METADATA_DIR' directory and the
+'$TT_TASK_SYMLINK_FILENAME' symlink) are omitted by default; pass
+--include-metadata to include them.
 
 Without --task, uses the current task and includes any trailing commits
 beyond the task bookmark (up to @ if working copy is non-empty, or @- if
@@ -25,21 +29,23 @@ empty).
 With --task, the diff covers only the task bookmark itself.
 
 Options:
-  --task ID    Task branch name (default: current task).
-  --repo PATH  Repository root (overrides TT_REPO; default: find .jj).
-  -h, --help   Show this help.
+  --task ID           Task branch name (default: current task).
+  --include-metadata  Include changes to tt metadata files.
+  --repo PATH         Repository root (overrides TT_REPO; default: find .jj).
+  -h, --help          Show this help.
 
 EOF
 }
 
 main() {
-  local task_id_arg='' repo=''
+  local task_id_arg='' repo='' include_metadata=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --task)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         task_id_arg="$2"; shift 2 ;;
+      --include-metadata) include_metadata=true; shift ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
@@ -61,7 +67,13 @@ main() {
   local from_rev
   from_rev="$(resolve_task_fork_point "$repo" "$parent_bookmark" "$upper_bound")" || exit 1
 
-  exec jj -R "$repo" diff --from "$from_rev" --to "$upper_bound"
+  # Filter out tt metadata files unless explicitly requested.
+  local -a fileset=()
+  if [[ "$include_metadata" == false ]]; then
+    fileset=("$(metadata_exclusion_fileset)")
+  fi
+
+  exec jj -R "$repo" diff --from "$from_rev" --to "$upper_bound" ${fileset[@]+"${fileset[@]}"}
 }
 
 main "$@"
