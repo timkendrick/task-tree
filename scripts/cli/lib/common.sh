@@ -133,19 +133,54 @@ generate_timestamp() {
 # Task/context file path helpers
 # ---------------------------------------------------------------------------
 
+# The tt metadata directory, relative to the repository root. All task files,
+# context files, configuration, hooks and history live beneath this directory.
+# Use this instead of hardcoding '.tt' so the location is defined in one place.
+TT_METADATA_DIR='.tt'
+
+# The repo-root symlink pointing at the current task's TASK.md. Although it
+# lives outside TT_METADATA_DIR it is tt metadata, not project content.
+TT_TASK_SYMLINK_FILENAME='TASK.md'
+
+# Usage: tt_metadata_path [SUBPATH]
+# Returns the repo-relative path to the tt metadata directory, optionally with
+# SUBPATH appended (e.g. tt_metadata_path "config.toml" -> ".tt/config.toml").
+tt_metadata_path() {
+  local subpath="${1:-}"
+  if [[ -z "$subpath" ]]; then
+    printf '%s' "$TT_METADATA_DIR"
+  else
+    printf '%s/%s' "$TT_METADATA_DIR" "$subpath"
+  fi
+}
+
+# Usage: task_root_path
+# Returns the canonical directory path containing all task directories.
+task_root_path() {
+  tt_metadata_path 'task'
+}
+
+# Usage: metadata_exclusion_fileset
+# Returns a jj fileset expression matching everything except tt metadata: the
+# metadata directory and the repo-root TASK.md symlink. 'root:' patterns are
+# workspace-relative, so the expression is independent of the current directory.
+metadata_exclusion_fileset() {
+  printf '~(root:"%s" | root-file:"%s")' "$TT_METADATA_DIR" "$TT_TASK_SYMLINK_FILENAME"
+}
+
 # Usage: task_file_path SUFFIX
 # Returns the canonical path to a task's TASK.md file.
 # SUFFIX is the slug-hex part (e.g. "my-task-abc12345").
 task_file_path() {
   local suffix="$1"
-  printf '.tt/task/%s/TASK.md' "$suffix"
+  printf '%s/%s/%s' "$(task_root_path)" "$suffix" "$TT_TASK_SYMLINK_FILENAME"
 }
 
 # Usage: task_dir_path SUFFIX
 # Returns the canonical directory path for a task.
 task_dir_path() {
   local suffix="$1"
-  printf '.tt/task/%s' "$suffix"
+  printf '%s/%s' "$(task_root_path)" "$suffix"
 }
 
 # Usage: task_context_path SUFFIX CTX_ID
@@ -154,7 +189,7 @@ task_dir_path() {
 task_context_path() {
   local suffix="$1"
   local ctx_id="$2"
-  printf '.tt/task/%s/%s.md' "$suffix" "$ctx_id"
+  printf '%s/%s/%s.md' "$(task_root_path)" "$suffix" "$ctx_id"
 }
 
 # ---------------------------------------------------------------------------
@@ -235,7 +270,7 @@ resolve_repo() {
 # Read task_prefix from .tt/config.toml; default "task/" if missing or unreadable.
 get_task_prefix() {
   local repo="$1"
-  local config="$repo/.tt/config.toml"
+  local config="$repo/$(tt_metadata_path 'config.toml')"
   local default_prefix='task/'
   if [[ -r "$config" ]]; then
     convfmt --from toml --to json < "$config" | jq -r '.task_prefix // "'"$default_prefix"'"'
@@ -247,7 +282,7 @@ get_task_prefix() {
 # Read project_prefix from .tt/config.toml; default "project/" if missing or unreadable.
 get_project_prefix() {
   local repo="$1"
-  local config="$repo/.tt/config.toml"
+  local config="$repo/$(tt_metadata_path 'config.toml')"
   local default_prefix='project/'
   if [[ -r "$config" ]]; then
     convfmt --from toml --to json < "$config" | jq -r '.project_prefix // "'"$default_prefix"'"'
@@ -269,7 +304,7 @@ is_task_branch() {
 # implementation detail enforced here so callers never need to think about it.
 set_workspace_dir() {
   local repo="$1" virtual_dir="$2"
-  make_absolute_symlink "$virtual_dir" "$repo/.tt/workspace"
+  make_absolute_symlink "$virtual_dir" "$repo/$(tt_metadata_path 'workspace')"
 }
 
 # Usage: init_tt_history REPO
@@ -278,7 +313,7 @@ set_workspace_dir() {
 # transaction system to record before/after jj operation IDs for `tt history undo`.
 init_tt_history() {
   local repo="$1"
-  local history_file="$repo/.tt/history"
+  local history_file="$repo/$(tt_metadata_path 'history')"
   if [[ ! -f "$history_file" ]]; then
     touch "$history_file"
   fi
@@ -288,7 +323,7 @@ init_tt_history() {
 # Always resolves to an absolute path to prevent symlink loops.
 get_workspace_dir() {
   local repo="$1"
-  local symlink="$repo/.tt/workspace"
+  local symlink="$repo/$(tt_metadata_path 'workspace')"
   if [[ -L "$symlink" ]]; then
     local ws_dir
     ws_dir="$(readlink "$symlink")"
@@ -347,7 +382,7 @@ assert_bookmark_up_to_date() {
 run_hook() {
   local repo="$1" hook_name="$2" blocking="$3" worktree_dir="$4" workspace_dir="$5"
   shift 5
-  local hook_path="$repo/.tt/hooks/$hook_name"
+  local hook_path="$repo/$(tt_metadata_path "hooks/$hook_name")"
   [[ ! -x "$hook_path" ]] && return 0
   local exit_code=0
   env TT_WORKSPACE_DIR="${workspace_dir:-}" TT_WORKTREE_DIR="$worktree_dir" "$@" "$hook_path" \
@@ -521,6 +556,86 @@ find_parent_branch() {
 
   [[ -z "$found" ]] && return 1
   printf '%s' "$found"
+}
+
+# Usage: resolve_task_range REPO [TASK_ID]
+# Resolves the revision range covering a task branch's unmerged commits since it
+# diverged from its parent branch.
+#
+# Without TASK_ID: resolves the current task branch and extends the upper bound
+# beyond the task bookmark to include trailing commits ('@' if the working copy
+# is non-empty, '@-' if it is empty).
+# With TASK_ID: the upper bound is the task bookmark itself.
+#
+# Outputs "<parent_bookmark> <upper_bound>" to stdout.
+# Exit 0: range resolved (printed to stdout).
+# Exit 1: not on a task branch, bookmark not found, or no parent found.
+# Exit 2: multiple parents found (error printed to stderr).
+resolve_task_range() {
+  local repo="$1" task_id_arg="${2:-}"
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  local task_bookmark upper_bound
+
+  if [[ -z "$task_id_arg" ]]; then
+    if ! task_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"; then
+      log "Error: Not on a task or project branch."
+      return 1
+    fi
+    if [[ -z "$task_bookmark" ]]; then
+      log "Error: Not on a task or project branch."
+      return 1
+    fi
+
+    local wc_empty
+    wc_empty="$(jj -R "$repo" log -r '@' --no-graph -T 'empty' 2>/dev/null)" || true
+    if [[ "$wc_empty" == "true" ]]; then
+      upper_bound='@-'
+    else
+      upper_bound='@'
+    fi
+  else
+    task_bookmark="$task_id_arg"
+    upper_bound="$task_bookmark"
+
+    if ! jj -R "$repo" log -r "$task_bookmark" --no-graph -T 'commit_id' >/dev/null 2>&1; then
+      log "Error: Bookmark '$task_bookmark' not found."
+      return 1
+    fi
+  fi
+
+  local parent_bookmark exit_code=0
+  parent_bookmark="$(find_parent_branch "$repo" "$task_bookmark" "$task_prefix" "$project_prefix")" || exit_code=$?
+  if [[ $exit_code -ne 0 ]]; then
+    [[ $exit_code -eq 1 ]] && log "Error: No parent found for '$task_bookmark'."
+    return $exit_code
+  fi
+
+  printf '%s %s' "$parent_bookmark" "$upper_bound"
+}
+
+# Usage: resolve_task_fork_point REPO PARENT_BOOKMARK UPPER_BOUND
+# Outputs the commit_id of the fork point between PARENT_BOOKMARK and UPPER_BOUND.
+# Exit 0: fork point resolved (printed to stdout).
+# Exit 1: fork point could not be resolved (error printed to stderr).
+resolve_task_fork_point() {
+  local repo="$1" parent_bookmark="$2" upper_bound="$3"
+
+  local fork_point
+  if ! fork_point="$(jj -R "$repo" log -r "fork_point(${parent_bookmark} | ${upper_bound})" \
+    --no-graph -T 'commit_id' 2>/dev/null)"; then
+    log "Error: Could not resolve fork point between '$parent_bookmark' and '$upper_bound'."
+    return 1
+  fi
+  if [[ -z "$fork_point" ]]; then
+    log "Error: Could not resolve fork point between '$parent_bookmark' and '$upper_bound'."
+    return 1
+  fi
+
+  printf '%s' "$fork_point"
 }
 
 # Usage: find_parent_project REPO TASK_ID TASK_PREFIX PROJECT_PREFIX
@@ -1187,7 +1302,7 @@ resolve_history_file_location() {
   local repo="$1"
   local canonical_repo
   canonical_repo="$(resolve_canonical_repo "$repo")" || return 1
-  printf '%s/.tt/history' "$canonical_repo"
+  printf '%s/%s' "$canonical_repo" "$(tt_metadata_path 'history')"
 }
 
 # Usage: tt_begin_transaction REPO

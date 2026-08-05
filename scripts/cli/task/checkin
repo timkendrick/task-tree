@@ -319,7 +319,7 @@ main() {
   local diff_output
   diff_output="$(jj -R "$repo" diff \
     -r "roots(::${child_bookmark} ~ ::${parent_bookmark})..${child_bookmark}" \
-    --name-only -- '.tt/task/' 2>/dev/null)" || true
+    --name-only -- "$(task_root_path)/" 2>/dev/null)" || true
 
   if [[ -n "$diff_output" ]]; then
     # Build the set of allowed task directories: own dir + all descendants.
@@ -386,7 +386,7 @@ main() {
   jj -R "$target_ws" new "$child_bookmark"
 
   # Rewrite TASK.md symlink to point to parent task file
-  ln -sf ".tt/task/${parent_slug}/TASK.md" "$target_ws/TASK.md"
+  ln -sf "$(task_file_path "$parent_slug")" "$target_ws/$TT_TASK_SYMLINK_FILENAME"
 
   # Build updated parent task file content
   local parent_task_content
