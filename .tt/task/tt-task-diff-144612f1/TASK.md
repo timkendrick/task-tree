@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt task diff` CLI command"
-status: TODO
+status: IN-PROGRESS
 created: 2026-08-05T15:51:32Z
 updated: 2026-08-05T15:51:33Z
 ---
