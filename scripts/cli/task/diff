@@ -16,7 +16,8 @@ usage() {
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--include-metadata] [--repo PATH]
 
 Show the diff of all unmerged commits on a task branch since it diverged from
-its parent branch. Output is relayed directly from 'jj diff'.
+its parent branch. Output is relayed directly from 'jj diff' in Git diff format,
+for consumption by other tools.
 
 Changes to tt metadata files (the '$TT_METADATA_DIR' directory and the
 '$TT_TASK_SYMLINK_FILENAME' symlink) are omitted by default; pass
@@ -73,7 +74,9 @@ main() {
     fileset=("$(metadata_exclusion_fileset)")
   fi
 
-  exec jj -R "$repo" diff --from "$from_rev" --to "$upper_bound" ${fileset[@]+"${fileset[@]}"}
+  # --git emits standard Git-format diff output, which is stable and readily
+  # parsed by other tools.
+  exec jj -R "$repo" diff --git --from "$from_rev" --to "$upper_bound" ${fileset[@]+"${fileset[@]}"}
 }
 
 main "$@"
