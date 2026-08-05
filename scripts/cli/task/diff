@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task diff — Show the diff of a task branch's unmerged commits.
+#
+# Usage: diff [--task <task-id>] [--repo PATH] [-h|--help]
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--include-metadata] [--repo PATH]
+
+Show the diff of all unmerged commits on a task branch since it diverged from
+its parent branch. Output is relayed directly from 'jj diff' in Git diff format,
+for consumption by other tools.
+
+Changes to tt metadata files (the '$TT_METADATA_DIR' directory and the
+'$TT_TASK_SYMLINK_FILENAME' symlink) are omitted by default; pass
+--include-metadata to include them.
+
+Without --task, uses the current task and includes any trailing commits
+beyond the task bookmark (up to @ if working copy is non-empty, or @- if
+empty).
+
+With --task, the diff covers only the task bookmark itself.
+
+Options:
+  --task ID           Task branch name (default: current task).
+  --include-metadata  Include changes to tt metadata files.
+  --repo PATH         Repository root (overrides TT_REPO; default: find .jj).
+  -h, --help          Show this help.
+
+EOF
+}
+
+main() {
+  local task_id_arg='' repo='' include_metadata=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        task_id_arg="$2"; shift 2 ;;
+      --include-metadata) include_metadata=true; shift ;;
+      --repo)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage >&2; exit 1 ;;
+      *)  usage >&2; exit 1 ;;
+    esac
+  done
+
+  repo="$(resolve_repo "$repo")"
+
+  local range exit_code=0
+  range="$(resolve_task_range "$repo" "$task_id_arg")" || exit_code=$?
+  [[ $exit_code -ne 0 ]] && exit $exit_code
+
+  local parent_bookmark upper_bound
+  read -r parent_bookmark upper_bound <<<"$range"
+
+  local from_rev
+  from_rev="$(resolve_task_fork_point "$repo" "$parent_bookmark" "$upper_bound")" || exit 1
+
+  # Filter out tt metadata files unless explicitly requested.
+  local -a fileset=()
+  if [[ "$include_metadata" == false ]]; then
+    fileset=("$(metadata_exclusion_fileset)")
+  fi
+
+  # --git emits standard Git-format diff output, which is stable and readily
+  # parsed by other tools.
+  exec jj -R "$repo" diff --git --from "$from_rev" --to "$upper_bound" ${fileset[@]+"${fileset[@]}"}
+}
+
+main "$@"

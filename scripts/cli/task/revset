@@ -53,57 +53,17 @@ main() {
 
   repo="$(resolve_repo "$repo")"
 
-  local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  local range exit_code=0
+  range="$(resolve_task_range "$repo" "$task_id_arg")" || exit_code=$?
+  [[ $exit_code -ne 0 ]] && exit $exit_code
 
-  local task_bookmark upper_bound
-
-  if [[ -z "$task_id_arg" ]]; then
-    # Resolve current task
-    if ! task_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"; then
-      log "Error: Not on a task or project branch."
-      exit 1
-    fi
-    if [[ -z "$task_bookmark" ]]; then
-      log "Error: Not on a task or project branch."
-      exit 1
-    fi
-
-    # Determine upper bound: @ if non-empty, @- if empty
-    local wc_empty
-    wc_empty="$(jj -R "$repo" log -r '@' --no-graph -T 'empty' 2>/dev/null)" || true
-    if [[ "$wc_empty" == "true" ]]; then
-      upper_bound='@-'
-    else
-      upper_bound='@'
-    fi
-  else
-    task_bookmark="$task_id_arg"
-    upper_bound="$task_bookmark"
-
-    # Validate bookmark exists
-    if ! jj -R "$repo" log -r "$task_bookmark" --no-graph -T 'commit_id' >/dev/null 2>&1; then
-      log "Error: Bookmark '$task_bookmark' not found."
-      exit 1
-    fi
-  fi
-
-  # Find parent branch
-  local parent_bookmark exit_code=0
-  parent_bookmark="$(find_parent_branch "$repo" "$task_bookmark" "$task_prefix" "$project_prefix")" || exit_code=$?
-  if [[ $exit_code -ne 0 ]]; then
-    [[ $exit_code -eq 1 ]] && log "Error: No parent found for '$task_bookmark'."
-    exit $exit_code
-  fi
+  local parent_bookmark upper_bound
+  read -r parent_bookmark upper_bound <<<"$range"
 
   # Build the range
   local from_rev to_rev
   if "$git_mode"; then
-    from_rev="$(jj -R "$repo" log -r "fork_point(${parent_bookmark} | ${upper_bound})" --no-graph -T 'commit_id' 2>/dev/null)" || {
-      log "Error: Could not resolve fork point between '$parent_bookmark' and '$upper_bound'."
-      exit 1
-    }
+    from_rev="$(resolve_task_fork_point "$repo" "$parent_bookmark" "$upper_bound")" || exit 1
     to_rev="$(jj -R "$repo" log -r "$upper_bound" --no-graph -T 'commit_id' 2>/dev/null)" || {
       log "Error: Could not resolve revision '$upper_bound'."
       exit 1
