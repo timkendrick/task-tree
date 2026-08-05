@@ -6,6 +6,7 @@ updated: 2026-08-05T15:56:35Z
 context: context/implementation-plan-2b4273bb
 context: context/handoff-strip-tt-metadata-file-contents-from-tt-task-diff-output-521a5cf4
 subtask: [x] task/strip-tt-task-diff-metadata-contents-56f3485f
+subtask: [ ] task/tt-task-diff-output-format-4445d329
 ---
 Let's create a new `tt task diff` command (aliased to `tt diff`), which shows the diff of the current branch's revision set since diverging from its parent branch.
 
