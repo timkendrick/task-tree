@@ -210,6 +210,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt delete-context` | `tt task context delete` |
 | `tt current` | `tt task current` |
 | `tt revset` | `tt task revset` |
+| `tt diff` | `tt task diff` |
 | `tt select` | `tt task select` |
 | `tt edit` | `tt task edit` |
 | `tt prompt` | `tt task prompt` |
@@ -356,6 +357,8 @@ The command exits with an error if none of these resolves to a valid jj reposito
 - **`tt task current`** — Print the current task or project branch name to stdout. Exits with 1 if the working copy is not on a task or project branch. No hooks.
 
 - **`tt task revset [--task <task-id>] [--git] [--repo PATH]`** — Print a revision range covering all unmerged commits on a task branch since it diverged from its parent branch. Without `--task`, uses the current task and includes any trailing commits beyond the task bookmark (up to `@` if working copy is non-empty, or `@-` if empty). With `--task`, the range covers only the task bookmark itself. Without `--git`, outputs a jj revset (`<parent-bookmark>..<upper-bound>`). With `--git`, outputs a git commit range (`<from>..<to>`) where `<from>` is the `commit_id` of the fork point between the parent bookmark and the upper bound, and `<to>` is the `commit_id` of the upper bound. Exits with an error if the task cannot be located or the bookmark does not exist. No hooks.
+
+- **`tt task diff [--task <task-id>] [--repo PATH]`** — Show the diff of all unmerged commits on a task branch since it diverged from its parent branch. Resolves the same range as `tt task revset` (without `--task`: the current task, with an upper bound of `@` if the working copy is non-empty or `@-` if empty; with `--task`: the task bookmark itself), then relays the output of `jj diff --from <fork-point> --to <upper-bound>` directly, where `<fork-point>` is the fork point between the parent bookmark and the upper bound. Exits with an error if the task cannot be located, the bookmark does not exist, or the fork point cannot be resolved. No hooks.
 
 - **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step. No hooks.
 

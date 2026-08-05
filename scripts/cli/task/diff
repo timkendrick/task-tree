@@ -5,28 +5,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt task revset — Print a revision range for a task's unmerged commits.
+# tt task diff — Show the diff of a task branch's unmerged commits.
 #
-# Usage: revset [--task <task-id>] [--git] [--repo PATH] [-h|--help]
+# Usage: diff [--task <task-id>] [--repo PATH] [-h|--help]
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--git] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--repo PATH]
 
-Print a revision range covering all unmerged commits on a task branch since
-it diverged from its parent branch.
+Show the diff of all unmerged commits on a task branch since it diverged from
+its parent branch. Output is relayed directly from 'jj diff'.
 
 Without --task, uses the current task and includes any trailing commits
 beyond the task bookmark (up to @ if working copy is non-empty, or @- if
 empty).
 
-With --task, the range covers only the task bookmark itself.
+With --task, the diff covers only the task bookmark itself.
 
 Options:
   --task ID    Task branch name (default: current task).
-  --git        Output a git commit range (<from>..<to>) instead of a jj revset.
   --repo PATH  Repository root (overrides TT_REPO; default: find .jj).
   -h, --help   Show this help.
 
@@ -34,14 +33,13 @@ EOF
 }
 
 main() {
-  local task_id_arg='' repo='' git_mode=false
+  local task_id_arg='' repo=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --task)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         task_id_arg="$2"; shift 2 ;;
-      --git) git_mode=true; shift ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
@@ -60,20 +58,10 @@ main() {
   local parent_bookmark upper_bound
   read -r parent_bookmark upper_bound <<<"$range"
 
-  # Build the range
-  local from_rev to_rev
-  if "$git_mode"; then
-    from_rev="$(resolve_task_fork_point "$repo" "$parent_bookmark" "$upper_bound")" || exit 1
-    to_rev="$(jj -R "$repo" log -r "$upper_bound" --no-graph -T 'commit_id' 2>/dev/null)" || {
-      log "Error: Could not resolve revision '$upper_bound'."
-      exit 1
-    }
-  else
-    from_rev="$parent_bookmark"
-    to_rev="$upper_bound"
-  fi
+  local from_rev
+  from_rev="$(resolve_task_fork_point "$repo" "$parent_bookmark" "$upper_bound")" || exit 1
 
-  printf '%s..%s\n' "$from_rev" "$to_rev"
+  exec jj -R "$repo" diff --from "$from_rev" --to "$upper_bound"
 }
 
 main "$@"
