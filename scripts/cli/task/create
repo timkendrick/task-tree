@@ -402,7 +402,7 @@ main() {
   jj "${jj_opts[@]}" new "$parent_rev" >&2
 
   # Ensure .tt/task exists
-  mkdir -p "$repo/.tt/task"
+  mkdir -p "$repo/$(task_root_path)"
 
   if [[ "$is_project" == true ]]; then
     # Project task: first commit creates the stub task file; second commit (via edit) sets metadata.
