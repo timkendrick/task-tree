@@ -523,6 +523,86 @@ find_parent_branch() {
   printf '%s' "$found"
 }
 
+# Usage: resolve_task_range REPO [TASK_ID]
+# Resolves the revision range covering a task branch's unmerged commits since it
+# diverged from its parent branch.
+#
+# Without TASK_ID: resolves the current task branch and extends the upper bound
+# beyond the task bookmark to include trailing commits ('@' if the working copy
+# is non-empty, '@-' if it is empty).
+# With TASK_ID: the upper bound is the task bookmark itself.
+#
+# Outputs "<parent_bookmark> <upper_bound>" to stdout.
+# Exit 0: range resolved (printed to stdout).
+# Exit 1: not on a task branch, bookmark not found, or no parent found.
+# Exit 2: multiple parents found (error printed to stderr).
+resolve_task_range() {
+  local repo="$1" task_id_arg="${2:-}"
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  local task_bookmark upper_bound
+
+  if [[ -z "$task_id_arg" ]]; then
+    if ! task_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"; then
+      log "Error: Not on a task or project branch."
+      return 1
+    fi
+    if [[ -z "$task_bookmark" ]]; then
+      log "Error: Not on a task or project branch."
+      return 1
+    fi
+
+    local wc_empty
+    wc_empty="$(jj -R "$repo" log -r '@' --no-graph -T 'empty' 2>/dev/null)" || true
+    if [[ "$wc_empty" == "true" ]]; then
+      upper_bound='@-'
+    else
+      upper_bound='@'
+    fi
+  else
+    task_bookmark="$task_id_arg"
+    upper_bound="$task_bookmark"
+
+    if ! jj -R "$repo" log -r "$task_bookmark" --no-graph -T 'commit_id' >/dev/null 2>&1; then
+      log "Error: Bookmark '$task_bookmark' not found."
+      return 1
+    fi
+  fi
+
+  local parent_bookmark exit_code=0
+  parent_bookmark="$(find_parent_branch "$repo" "$task_bookmark" "$task_prefix" "$project_prefix")" || exit_code=$?
+  if [[ $exit_code -ne 0 ]]; then
+    [[ $exit_code -eq 1 ]] && log "Error: No parent found for '$task_bookmark'."
+    return $exit_code
+  fi
+
+  printf '%s %s' "$parent_bookmark" "$upper_bound"
+}
+
+# Usage: resolve_task_fork_point REPO PARENT_BOOKMARK UPPER_BOUND
+# Outputs the commit_id of the fork point between PARENT_BOOKMARK and UPPER_BOUND.
+# Exit 0: fork point resolved (printed to stdout).
+# Exit 1: fork point could not be resolved (error printed to stderr).
+resolve_task_fork_point() {
+  local repo="$1" parent_bookmark="$2" upper_bound="$3"
+
+  local fork_point
+  if ! fork_point="$(jj -R "$repo" log -r "fork_point(${parent_bookmark} | ${upper_bound})" \
+    --no-graph -T 'commit_id' 2>/dev/null)"; then
+    log "Error: Could not resolve fork point between '$parent_bookmark' and '$upper_bound'."
+    return 1
+  fi
+  if [[ -z "$fork_point" ]]; then
+    log "Error: Could not resolve fork point between '$parent_bookmark' and '$upper_bound'."
+    return 1
+  fi
+
+  printf '%s' "$fork_point"
+}
+
 # Usage: find_parent_project REPO TASK_ID TASK_PREFIX PROJECT_PREFIX
 # Walks up the task hierarchy from TASK_ID to find the nearest ancestor project branch.
 # Outputs the project branch name to stdout.
