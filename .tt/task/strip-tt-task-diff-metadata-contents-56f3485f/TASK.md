@@ -1,6 +1,6 @@
 ---
 title: "Strip `.tt` metadata file contents from `tt task diff` output"
-status: IN-PROGRESS
+status: DONE
 created: 2026-08-05T16:03:08Z
 updated: 2026-08-05T16:03:09Z
 ---
