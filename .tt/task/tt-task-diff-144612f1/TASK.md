@@ -1,6 +1,13 @@
 ---
-title: ""
+title: "Implement `tt task diff` CLI command"
 status: TODO
 created: 2026-08-05T15:51:32Z
-updated: 2026-08-05T15:51:32Z
+updated: 2026-08-05T15:51:33Z
 ---
+Let's create a new `tt task diff` command (aliased to `tt diff`), which shows the diff of the current branch's revision set since diverging from its parent branch.
+
+Output can be relayed directly from the underlying VCS command (e.g. `jj diff`) - use context7 for API reference.
+
+Update DESIGN.md and SKILL.md to reflect the new command.
+
+See scripts/cli/task/revset for a similar existing command
