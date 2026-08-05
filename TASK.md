@@ -1,1 +1,1 @@
-.tt/task/tt-task-diff-144612f1/TASK.md
+.tt/task/tt-task-diff-output-format-4445d329/TASK.md

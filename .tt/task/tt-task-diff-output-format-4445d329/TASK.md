@@ -1,6 +1,6 @@
 ---
 title: "Use git diff output format for `tt task diff`"
-status: TODO
+status: IN-PROGRESS
 created: 2026-08-05T16:27:08Z
 updated: 2026-08-05T16:27:09Z
 ---
