@@ -1,1 +1,1 @@
-.tt/task/tt-task-diff-144612f1/TASK.md
+.tt/task/bootstrap-cli-d35756ce/TASK.md
