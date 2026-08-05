@@ -2,7 +2,8 @@
 title: "Implement `tt task diff` CLI command"
 status: IN-PROGRESS
 created: 2026-08-05T15:51:32Z
-updated: 2026-08-05T15:51:33Z
+updated: 2026-08-05T15:56:35Z
+context: context/implementation-plan-2b4273bb
 ---
 Let's create a new `tt task diff` command (aliased to `tt diff`), which shows the diff of the current branch's revision set since diverging from its parent branch.
 
