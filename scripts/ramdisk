@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# scripts/ramdisk — Create, list, and destroy macOS RAM disks for use as test roots.
+# scripts/ramdisk — Create, list, and destroy macOS RAM disks
 #
 # Usage:
 #   scripts/ramdisk create [--size <bytes>]
@@ -57,7 +57,7 @@ cmd_create() {
   local sectors=$(( size / 512 ))
 
   local device
-  device=$(hdiutil attach -nomount "ram://$sectors" 2>/dev/null | tr -d '[:space:]')
+  device=$(hdiutil attach -nomount "ram://$sectors" | tr -d '[:space:]')
 
   local volume_name
   volume_name="tt-$(openssl rand -hex 4)"
@@ -65,7 +65,7 @@ cmd_create() {
   diskutil erasevolume HFS+ "$volume_name" "$device" >/dev/null 2>&1
 
   local mountpoint="/Volumes/$volume_name"
-  log "Created $mountpoint"
+  log "Created RAM disk: $mountpoint"
   printf '%s\n' "$mountpoint"
 }
 
@@ -85,7 +85,7 @@ cmd_destroy() {
   [[ -n "$mountpoint" ]] || { log "Error: destroy requires a mountpoint argument."; usage >&2; exit 1; }
 
   hdiutil detach "$mountpoint" >/dev/null 2>&1
-  log "Destroyed $mountpoint"
+  log "Destroyed RAM disk: $mountpoint"
 }
 
 cmd_list() {
@@ -119,10 +119,10 @@ cmd_list() {
         printf '%s\t(unmounted)\n' "$dev"
       fi
     fi
-  done < <(hdiutil info 2>/dev/null)
+  done < <(hdiutil info)
 
   if [[ "$found" -eq 0 ]]; then
-    log "No RAM disks found."
+    log "No active RAM disks found."
   fi
 }
 
