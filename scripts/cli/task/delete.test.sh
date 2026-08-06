@@ -22,6 +22,38 @@ test_task_delete__delete_completed_task() {
 }
 
 
+test_task_delete__parent_body_fence_preserved() {
+  setup_workspace "del-body-fence"
+  # Parent's body documents a subtask entry inside a fenced code block. Removing
+  # the deleted task's real frontmatter entry must not touch that body line.
+  body=$(printf '%s\n' \
+    'Subtask entries look like:' \
+    '' \
+    '```markdown' \
+    '---' \
+    'subtask: [ ] task/fake-99999999 Fake' \
+    '---' \
+    '```')
+  proj_id=$(create_project "proj" "Project" "$body") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+  complete_task >/dev/null || true
+  checkin_task "$task_id" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task delete "$task_id" 2>&1) || exit_code=$?
+  assert_success "delete succeeds" "$exit_code"
+  assert_bookmark_not_exists "bookmark deleted" "$task_id"
+
+  parent_content=$(read_task_file "$proj_id" "$proj_id")
+  assert_not_contains "real entry removed" "$parent_content" "subtask: [x] $task_id"
+  assert_contains "body fence subtask line unchanged" "$parent_content" \
+    'subtask: [ ] task/fake-99999999 Fake'
+}
+
+
 test_task_delete__delete_task_with_descendants() {
   setup_workspace "del-tree"
   proj_id=$(create_project "proj" "Project") || true
