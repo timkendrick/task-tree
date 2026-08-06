@@ -145,10 +145,8 @@ main() {
   # Precondition: all subtasks must be [x] unless --force
   if [[ "$force" != true ]]; then
     local incomplete_subs
-    incomplete_subs="$(printf '%s' "$task_content" | awk '
-      /^---$/ { in_fm = !in_fm; next }
-      in_fm && /^subtask:[ \t]*\[[ -]\]/ { print; found=1 }
-    ')" || true
+    incomplete_subs="$(parse_repeated_frontmatter_field "$task_content" "subtask" \
+      | awk '/^\[[ \-]\]/ { print "subtask: " $0 }')" || true
     if [[ -n "$incomplete_subs" ]]; then
       log "Error: Not all subtasks are complete. Use --force to proceed anyway."
       log "  Incomplete subtasks:"

@@ -317,6 +317,150 @@ test_write_task_stub__has_placeholder_title() {
 }
 
 # ---------------------------------------------------------------------------
+# parse_frontmatter_fields and friends
+# ---------------------------------------------------------------------------
+
+# Helper: content whose body contains a fenced code block documenting
+# frontmatter layout. The '---', 'title:' and 'status:' lines inside the fence
+# must never be mistaken for frontmatter.
+_content_with_body_fence() {
+  printf '%s\n' \
+    '---' \
+    'title: "Real title"' \
+    'status: DONE' \
+    'subtask: [x] task/a-1 Title A' \
+    'subtask: [ ] task/b-2' \
+    '---' \
+    'The correct order should be:' \
+    '' \
+    '```markdown' \
+    '---' \
+    'title:' \
+    'status:' \
+    'subtask: [ ] task/fake-99' \
+    '---' \
+    '```'
+}
+
+test_parse_frontmatter_fields__ignores_body_fence() {
+  local out
+  out="$(parse_frontmatter_fields "$(_content_with_body_fence)" title status)"
+  assert_eq "only leading-block entries" "$out" \
+    "$(printf 'title:"Real title"\nstatus:DONE')"
+}
+
+test_parse_frontmatter_fields__preserves_file_order() {
+  local content out
+  content="$(printf '%s\n' '---' 'status: TODO' 'title: "T"' 'label: bug' '---')"
+  out="$(parse_frontmatter_fields "$content" title status label)"
+  assert_eq "fields in file order" "$out" \
+    "$(printf 'status:TODO\ntitle:"T"\nlabel:bug')"
+}
+
+test_parse_frontmatter_fields__requires_leading_delimiter() {
+  local content out
+  content="$(printf '%s\n' 'Some prose' '---' 'title: "T"' '---')"
+  out="$(parse_frontmatter_fields "$content" title)"
+  assert_eq "no frontmatter without leading delimiter" "$out" ""
+}
+
+test_parse_frontmatter_fields__empty_content() {
+  local out exit_code=0
+  out="$(parse_frontmatter_fields "" title)" || exit_code=$?
+  assert_success "empty content succeeds" "$exit_code"
+  assert_eq "empty content yields no output" "$out" ""
+}
+
+test_parse_frontmatter_fields__ignores_prefix_collision() {
+  local content out
+  content="$(printf '%s\n' '---' 'titlefoo: nope' 'title: yes' '---')"
+  out="$(parse_frontmatter_fields "$content" title)"
+  assert_eq "prefix-collision key not matched" "$out" "title:yes"
+}
+
+test_parse_frontmatter_field__first_occurrence_wins() {
+  local content
+  content="$(printf '%s\n' '---' 'title: FIRST' 'title: SECOND' '---')"
+  assert_eq "first duplicate wins" "$(parse_frontmatter_field "$content" title)" "FIRST"
+}
+
+test_parse_frontmatter_field__absent_field() {
+  local content
+  content="$(printf '%s\n' '---' 'title: T' '---')"
+  assert_eq "absent field yields nothing" "$(parse_frontmatter_field "$content" status)" ""
+}
+
+test_parse_frontmatter_field__preserves_quotes() {
+  local content
+  content="$(printf '%s\n' '---' 'title: "Quoted"' '---')"
+  assert_eq "quotes preserved" "$(parse_frontmatter_field "$content" title)" '"Quoted"'
+}
+
+test_parse_frontmatter_field__value_containing_colon() {
+  local content
+  content="$(printf '%s\n' '---' 'title: "A: colon"' '---')"
+  assert_eq "colon in value preserved" \
+    "$(parse_frontmatter_field "$content" title)" '"A: colon"'
+  assert_eq "colon in unquoted value" \
+    "$(parse_quoted_frontmatter_field "$content" title)" 'A: colon'
+}
+
+test_parse_quoted_frontmatter_field__strips_matched_pair_only() {
+  local content
+  content="$(printf '%s\n' '---' 'title: "Quoted"' 'status: "unmatched' '---')"
+  assert_eq "matched pair stripped" \
+    "$(parse_quoted_frontmatter_field "$content" title)" "Quoted"
+  assert_eq "unmatched quote left alone" \
+    "$(parse_quoted_frontmatter_field "$content" status)" '"unmatched'
+}
+
+test_parse_repeated_frontmatter_field__all_values_in_order() {
+  local out
+  out="$(parse_repeated_frontmatter_field "$(_content_with_body_fence)" subtask)"
+  assert_eq "all subtasks, body fence excluded" "$out" \
+    "$(printf '[x] task/a-1 Title A\n[ ] task/b-2')"
+}
+
+test_parse_repeated_frontmatter_field__absent_key() {
+  local content
+  content="$(printf '%s\n' '---' 'title: T' '---')"
+  assert_eq "absent repeated key yields nothing" \
+    "$(parse_repeated_frontmatter_field "$content" label)" ""
+}
+
+test_parse_task_frontmatter__ignores_body_fence() {
+  local content
+  content="$(printf '%s\n' \
+    '---' \
+    'title: "Real title"' \
+    'status: DONE' \
+    'label: bug' \
+    'context: context/notes-abc12345' \
+    'subtask: [x] task/a-1 Title A' \
+    '---' \
+    'Body:' \
+    '' \
+    '```markdown' \
+    '---' \
+    'label: fake' \
+    'context: context/fake-99' \
+    'subtask: [ ] task/fake-99' \
+    '---' \
+    '```')"
+
+  parse_task_frontmatter "$content"
+
+  assert_eq "title" "$PARSED_TITLE" "Real title"
+  assert_eq "status" "$PARSED_STATUS" "DONE"
+  assert_eq "label count" "${#PARSED_LABELS[@]}" "1"
+  assert_eq "label" "${PARSED_LABELS[0]}" "bug"
+  assert_eq "context count" "${#PARSED_CONTEXTS[@]}" "1"
+  assert_eq "context" "${PARSED_CONTEXTS[0]}" "context/notes-abc12345"
+  assert_eq "subtask count" "${#PARSED_SUBTASKS[@]}" "1"
+  assert_eq "subtask" "${PARSED_SUBTASKS[0]}" "[x] task/a-1 Title A"
+}
+
+# ---------------------------------------------------------------------------
 # select_value
 # ---------------------------------------------------------------------------
 

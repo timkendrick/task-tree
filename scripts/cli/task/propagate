@@ -121,12 +121,8 @@ get_subtask_ids() {
   local content
   content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
   [[ -z "$content" ]] && return 0
-  printf '%s' "$content" | awk '
-    /^---$/ { in_fm = !in_fm; next }
-    in_fm && /^subtask:[ \t]*\[[ x-]\]/ {
-      sub(/^subtask:[ \t]*\[[ x-]\][ \t]*/, "")
-      if ($1 != "") print $1
-    }
+  parse_repeated_frontmatter_field "$content" "subtask" | awk '
+    /^\[[ x\-]\]/ { sub(/^\[[ x\-]\][ \t]*/, ""); if ($1 != "") print $1 }
   '
 }
 
