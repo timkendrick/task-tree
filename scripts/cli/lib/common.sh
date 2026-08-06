@@ -444,27 +444,66 @@ perform_workspace_switch() {
     "TT_PREVIOUS_TASK_BRANCH=${previous_task_id}"
 }
 
-# Usage: parse_frontmatter_field CONTENT FIELD
-# Extracts the raw value of a YAML frontmatter field from multi-line content,
-# preserving any quotes that were in the original.
-parse_frontmatter_field() {
-  local content="$1" field="$2"
-  printf '%s' "$content" | awk -v field="$field" '
-    /^---$/ { n++; next }
-    n == 1 && $0 ~ ("^" field ":") {
-      sub("^" field ":[[:space:]]*", "")
-      print; exit
+# Usage: parse_frontmatter_fields CONTENT FIELD...
+# Extracts the requested frontmatter fields in a single pass, preserving file
+# order. Emits one "FIELD:VALUE" line per matching frontmatter entry, with the
+# key's leading whitespace stripped from VALUE but quotes preserved.
+#
+# The frontmatter block is strictly the leading delimited block: CONTENT must
+# begin with a '---' line, and parsing stops at the closing '---'. Any '---'
+# lines appearing later (e.g. inside a fenced code block in the body) are
+# ignored, so body content can never be mistaken for frontmatter.
+parse_frontmatter_fields() {
+  local content="$1"; shift
+  printf '%s' "$content" | awk -v fields="$*" '
+    BEGIN { n = split(fields, f, " "); for (i = 1; i <= n; i++) want[f[i]] = 1 }
+    NR == 1 && $0 != "---" { exit }
+    /^---$/ { sep++; if (sep == 2) exit; next }
+    sep == 1 {
+      key = $0
+      if (sub(/:.*$/, "", key) == 0) next
+      if (key in want) {
+        val = $0
+        sub("^" key ":[ \t]*", "", val)
+        print key ":" val
+      }
     }
   '
 }
 
+# Usage: parse_frontmatter_field CONTENT FIELD
+# Extracts the raw value of a single-valued frontmatter field, preserving any
+# quotes present in the original. If the field appears more than once, the
+# first occurrence wins. Outputs nothing if the field is absent.
+parse_frontmatter_field() {
+  local out first
+  out="$(parse_frontmatter_fields "$1" "$2")"
+  [[ -z "$out" ]] && return 0
+  first="${out%%$'\n'*}"
+  printf '%s' "${first#"$2:"}"
+}
+
 # Usage: parse_quoted_frontmatter_field CONTENT FIELD
-# Extracts the value of a YAML frontmatter field from multi-line content,
-# stripping leading and trailing quotation marks.
+# As parse_frontmatter_field, but strips a matched pair of surrounding
+# double quotes from the value.
 parse_quoted_frontmatter_field() {
   local value
   value="$(parse_frontmatter_field "$1" "$2")"
-  printf '%s' "$value" | sed 's/^"\(.*\)"$/\1/'
+  if [[ "$value" == \"*\" ]]; then
+    value="${value#\"}"
+    value="${value%\"}"
+  fi
+  printf '%s' "$value"
+}
+
+# Usage: parse_repeated_frontmatter_field CONTENT FIELD
+# Extracts every value of a repeatable frontmatter field (label, context,
+# subtask), one per line, in file order. Outputs nothing if absent.
+parse_repeated_frontmatter_field() {
+  local line
+  while IFS= read -r line; do
+    printf '%s\n' "${line#"$2:"}"
+  done < <(parse_frontmatter_fields "$1" "$2")
 }
 
 # Usage: raw=$(prompt_raw <<< "$template")
@@ -1075,19 +1114,20 @@ parse_task_frontmatter() {
 
   PARSED_LABELS=()
   while IFS= read -r lbl; do [[ -n "$lbl" ]] && PARSED_LABELS+=("$lbl"); done \
-    < <(printf '%s' "$content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^label:/{sub(/^label:[[:space:]]*/,""); print}')
+    < <(parse_repeated_frontmatter_field "$content" "label")
 
   PARSED_CONTEXTS=()
   while IFS= read -r ctx; do [[ -n "$ctx" ]] && PARSED_CONTEXTS+=("$ctx"); done \
-    < <(printf '%s' "$content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^context:/{sub(/^context:[[:space:]]*/,""); print}')
+    < <(parse_repeated_frontmatter_field "$content" "context")
 
   PARSED_SUBTASKS=()
   while IFS= read -r st; do [[ -n "$st" ]] && PARSED_SUBTASKS+=("$st"); done \
-    < <(printf '%s' "$content" | awk '/^---$/{n++; if(n==2)exit} n==1 && /^subtask:/{sub(/^subtask:[[:space:]]*/,""); print}')
+    < <(parse_repeated_frontmatter_field "$content" "subtask")
 
   # Reject unrecognized frontmatter keys
   local unknown
   unknown="$(printf '%s' "$content" | awk '
+    NR == 1 && $0 != "---" { exit }
     /^---$/ { n++; if (n==2) exit; next }
     n==1 && /^[a-zA-Z]/ {
       key=$0; sub(/:.*/, "", key)

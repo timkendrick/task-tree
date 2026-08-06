@@ -26,6 +26,34 @@ test_task_propagate__rebase_descendants_default() {
 }
 
 
+test_task_propagate__ignores_body_fence_subtask() {
+  setup_workspace "prop-body-fence"
+  # Parent's body documents a subtask entry inside a fenced code block, naming a
+  # task that does not exist. Propagation must not try to visit it.
+  body=$(printf '%s\n' \
+    'Subtask entries look like:' \
+    '' \
+    '```markdown' \
+    '---' \
+    'subtask: [ ] task/fake-99999999 Fake' \
+    '---' \
+    '```')
+  proj_id=$(create_project "proj" "Project" "$body") || true
+  checkout_task "$proj_id" >/dev/null || true
+  child=$(create_task "child" "Child") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  edit_file "parent-file.txt" "change"
+  checkpoint_task "Parent update" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$proj_id" 2>&1) || exit_code=$?
+  assert_success "propagate succeeds" "$exit_code"
+  assert_is_ancestor "parent is ancestor of child" "$proj_id" "$child"
+  assert_not_contains "fenced task ID not visited" "$output" "task/fake-99999999"
+}
+
+
 test_task_propagate__shallow_direct_children_only() {
   setup_workspace "prop-shallow"
   proj_id=$(create_project "proj" "Project") || true
