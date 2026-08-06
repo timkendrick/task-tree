@@ -41,6 +41,16 @@ Options:
 EOF
 }
 
+# Usage: _subtask_ids_from_content CONTENT
+# Outputs one subtask task ID per line, for all checkbox states ([ ], [-], [x]).
+# Outputs nothing when CONTENT is empty.
+_subtask_ids_from_content() {
+  [[ -z "$1" ]] && return 0
+  parse_repeated_frontmatter_field "$1" "subtask" | awk '
+    /^\[[ x\-]\]/ { sub(/^\[[ x\-]\][ \t]*/, ""); if ($1 != "") print $1 }
+  '
+}
+
 # Usage: collect_subtree REPO ROOT_TASK_ID PARENT_BRANCH TASK_PREFIX PROJECT_PREFIX
 # Outputs one task ID per line — all descendants of ROOT_TASK_ID.
 # For each discovered task, reads subtask lists from BOTH:
@@ -80,29 +90,13 @@ collect_subtree() {
     local own_subs=""
     local own_content
     own_content="$(jj_show_at_revision "$repo" "$current" "$own_file")" || true
-    if [[ -n "$own_content" ]]; then
-      own_subs="$(printf '%s' "$own_content" | awk '
-        /^---$/ { in_fm = !in_fm; next }
-        in_fm && /^subtask:[ \t]*\[[ x\-]\]/ {
-          sub(/^subtask:[ \t]*\[[ x\-]\][ \t]*/, "")
-          if ($1 != "") print $1
-        }
-      ')" || true
-    fi
+    own_subs="$(_subtask_ids_from_content "$own_content")" || true
 
     # Collect subtask IDs from the parent branch's copy of this task's file
     local parent_subs=""
     local parent_content
     parent_content="$(jj_show_at_revision "$repo" "$parent_branch" "$own_file")" || true
-    if [[ -n "$parent_content" ]]; then
-      parent_subs="$(printf '%s' "$parent_content" | awk '
-        /^---$/ { in_fm = !in_fm; next }
-        in_fm && /^subtask:[ \t]*\[[ x\-]\]/ {
-          sub(/^subtask:[ \t]*\[[ x\-]\][ \t]*/, "")
-          if ($1 != "") print $1
-        }
-      ')" || true
-    fi
+    parent_subs="$(_subtask_ids_from_content "$parent_content")" || true
 
     # Union: add all newly discovered subtask IDs to to_visit
     local all_subs
@@ -287,10 +281,10 @@ main() {
   # Remove subtask entry for this task from parent frontmatter
   local updated_parent_content
   updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" '
-    /^---$/ { in_fm = !in_fm; print; next }
-    in_fm && /^subtask:/ {
-      line = $0
-      rest = line
+    BEGIN { sep = 0 }
+    /^---$/ { sep++; print; next }
+    sep == 1 && /^subtask:/ {
+      rest = $0
       sub(/^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]*/, "", rest)
       split(rest, parts, /[[:space:]]/)
       if (parts[1] == id) next

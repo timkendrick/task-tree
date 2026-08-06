@@ -57,7 +57,7 @@ Only the **current** task's task file is writable by the user; all other task fi
 
 The project to-do list is a nested markdown listing of all tasks, grouped by project. Orphaned tasks (not reachable from any project's subtree) are excluded by default; with **`--detached`**, they are listed under a separate section: `Orphaned tasks:`. Within each section, the task tree is shown as nested bullets. Each bullet contains the following, separated by spaces:
 
-- A GFM checkbox: To-do `[ ]`, In progress `[-]`, Done `[x]`
+- A GFM checkbox: To-do `[ ]`, In progress `[-]`, Done `[x]`, Unknown `[?]`. An 'unknown' status denotes a task whose task file either cannot be retrieved on any candidate branch, or whose task file has no parseable `status:` field.
 - A Markdown relative link to the task file, labeled by the machine-readable branch name
 - A single-line human-readable task summary
 
@@ -93,6 +93,8 @@ Orphaned tasks:
 ### 4.2 Task file
 
 Each task file pertains to one task and holds its context. Metadata is in Markdown frontmatter: one-line summary (`title`), task status, creation and modification timestamps, labels, child tasks via `subtask:` entries, and associated context files via `context:` entries. The order of `subtask:` entries defines the display order of children in the todo list. The **body** (everything after the closing `---`) is free-form markdown used as the task description and implementation notes.
+
+**Frontmatter block delimitation.** The frontmatter is strictly the *leading* delimited block: the file must begin with a `---` line, and the block ends at the next `---` line. A file that does not begin with `---` has no frontmatter at all. Any `---` lines appearing after the closing delimiter belong to the body — for example a fenced code block documenting frontmatter layout — and are never interpreted as reopening the block. Consequently `title:`, `status:`, `label:`, `context:` and `subtask:` lines in the body are inert: they are neither read as metadata nor rewritten by commands that update frontmatter. If a key that should appear at most once is duplicated within the block, the first occurrence wins.
 
 Example — task not yet started (`.tt/task/pricing-page-cdf2d632/TASK.md`):
 
@@ -152,7 +154,7 @@ context:     (zero or more; each on its own line)
 subtask:     (zero or more; each on its own line)
 ```
 
-All tool commands that mutate task file frontmatter maintain this ordering automatically. The `write_task_file` shared helper in `scripts/cli/lib/common.sh` normalises ordering on full rewrites; `write_context_file` handles context file creation (no status/label/context/subtask fields); `append_frontmatter_context` and `append_frontmatter_subtask` insert at the correct position for incremental mutations.
+All tool commands that read task file frontmatter do so through the shared `parse_frontmatter_fields` helper in `scripts/cli/lib/common.sh` (and its `parse_frontmatter_field`, `parse_quoted_frontmatter_field` and `parse_repeated_frontmatter_field` wrappers), which implements the delimitation rules above uniformly. All tool commands that mutate task file frontmatter maintain this ordering automatically. The `write_task_file` shared helper in `scripts/cli/lib/common.sh` normalises ordering on full rewrites; `write_context_file` handles context file creation (no status/label/context/subtask fields); `append_frontmatter_context` and `append_frontmatter_subtask` insert at the correct position for incremental mutations.
 
 At merge time, the parent task's frontmatter is updated with the completed child (e.g. `subtask: [x] <task-id>`). The user may request full removal of the child task from the parent branch using `tt task delete` (or `tt task checkin --delete`, which runs the normal checkin and then delegates to `tt task delete`). This removes the child task directory and its `subtask:` entry from the parent's frontmatter entirely, making the task invisible in the todo list. If `--delete` is not used, the task directory remains in the repository and the `subtask: [x]` entry is preserved.
 
@@ -1083,7 +1085,7 @@ Multiple tasks can be checked out simultaneously; the symlinked HEAD worktree fa
 6. **Emit the markdown**
 
    - For each project section to be output, emit the project task as an unindented bullet entry, then recurse into each child's children. Under the detached section, each orphaned task is a top-level bullet nested under the detached section header (they have no parent in the discovered tree). Sibling order is always the order of `subtask:` entries in the parent task file.
-   - For each task line, output: checkbox from status (`[ ]` / `[-]` / `[x]`); link `[<prefix><slug>-<hex>](.tt/task/<slug>-<hex>/TASK.md)`; title (read from `title:` in the task file on the canonical branch, as determined in step 3). Indentation reflects hierarchy.
+   - For each task line, output: checkbox from status (`[ ]` / `[-]` / `[x]`, or `[?]` when the task file is unreadable or has no parseable `status:`); link `[<prefix><slug>-<hex>](.tt/task/<slug>-<hex>/TASK.md)`; title (read from `title:` in the task file on the canonical branch, as determined in step 3, falling back to `(no title)`). Indentation reflects hierarchy.
 
 **End-to-end summary:** Enumerate project branches → for each project traverse subtree via `subtask:` entries → for each discovered task T find where to read T's file (merged vs ongoing) → if `--detached`, find orphaned task branches and add to detached section → filter sections by `--project`/`--detached` → for each section emit header and walk tree depth-first (checkbox + link + title per task) → output markdown.
 

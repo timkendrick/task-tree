@@ -19,6 +19,30 @@ test_task_complete__complete_current_task() {
 }
 
 
+test_task_complete__body_fence_subtask_not_a_precondition() {
+  setup_workspace "done-body-fence"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  # An incomplete-looking subtask entry inside a body code fence must not block
+  # completion: the task genuinely has no subtasks.
+  body=$(printf '%s\n' \
+    'Subtask entries look like:' \
+    '' \
+    '```markdown' \
+    '---' \
+    'subtask: [ ] task/fake-99999999 Fake' \
+    '---' \
+    '```')
+  task_id=$(create_task "t" "T" "$body") || true
+  checkout_task "$task_id" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(complete_task) || exit_code=$?
+  assert_success "complete succeeds without --force" "$exit_code"
+  assert_task_status "DONE" "$task_id" "DONE"
+}
+
+
 test_task_complete__explicit_task_id_cross_branch() {
   setup_workspace "done-cross"
   proj_id=$(create_project "proj" "Project") || true
