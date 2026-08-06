@@ -68,6 +68,37 @@ test_task_tree__completed_subtask_with_x() {
 }
 
 
+test_task_tree__body_with_frontmatter_fence() {
+  setup_workspace "tree-body-fence"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  # Body documents frontmatter layout inside a fenced code block. The '---',
+  # 'title:' and 'status:' lines within it must not be parsed as frontmatter.
+  body=$(printf '%s\n' \
+    'Frontmatter should look like:' \
+    '' \
+    '```markdown' \
+    '---' \
+    'title:' \
+    'status:' \
+    '---' \
+    '```')
+  task_id=$(create_task "fenced" "Fenced Body Task" "$body") || true
+  checkout_task "$task_id" >/dev/null || true
+  complete_task >/dev/null || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task tree 2>&1) || exit_code=$?
+  assert_success "tree succeeds" "$exit_code"
+  assert_contains "real title shown" "$output" "Fenced Body Task"
+  assert_not_contains "no unknown-status checkbox" "$output" "[?]"
+  assert_not_contains "title not lost" "$output" "(no title)"
+  assert_matches "completed checkbox on fenced task" "$output" \
+    '\[x\].*Fenced Body Task'
+}
+
+
 test_task_tree__empty_project_no_subtasks() {
   setup_workspace "tree-empty"
   proj_id=$(create_project "proj" "Project") || true

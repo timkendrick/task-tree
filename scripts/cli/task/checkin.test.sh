@@ -22,6 +22,37 @@ test_task_checkin__basic_checkin_of_completed_task() {
 }
 
 
+test_task_checkin__parent_body_fence_preserved() {
+  setup_workspace "ci-body-fence"
+  # Parent's body documents a subtask entry inside a fenced code block. The
+  # rewrite of the parent's real frontmatter must leave that body line intact.
+  body=$(printf '%s\n' \
+    'Subtask entries look like:' \
+    '' \
+    '```markdown' \
+    '---' \
+    'subtask: [ ] task/fake-99999999 Fake' \
+    '---' \
+    '```')
+  proj_id=$(create_project "proj" "Project" "$body") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+  complete_task >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task checkin "$task_id" 2>&1) || exit_code=$?
+  assert_success "checkin succeeds" "$exit_code"
+  assert_subtask_entry "real entry flipped to [x]" "$proj_id" "$task_id" "[x]"
+
+  parent_content=$(read_task_file "$proj_id" "$proj_id")
+  assert_contains "body fence subtask line unchanged" "$parent_content" \
+    'subtask: [ ] task/fake-99999999 Fake'
+  assert_no_conflicts "no conflicts"
+}
+
+
 test_task_checkin__partial_in_progress() {
   setup_workspace "ci-partial"
   proj_id=$(create_project "proj" "Project") || true

@@ -399,8 +399,9 @@ main() {
   local updated_parent_content new_cb
   new_cb="$(status_to_checkbox "$task_status")"
   updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" -v cb="$new_cb" '
-    /^---$/ { in_fm = !in_fm; print; next }
-    in_fm && /^subtask:[[:space:]]*\[[ \-x]\]/ {
+    BEGIN { sep = 0 }
+    /^---$/ { sep++; print; next }
+    sep == 1 && /^subtask:[[:space:]]*\[[ \-x]\]/ {
       rest = $0
       sub(/^subtask:[[:space:]]*\[[[:space:]\-x]\][[:space:]]*/, "", rest)
       split(rest, parts, /[[:space:]]/)
