@@ -49,14 +49,6 @@ Examples:
 EOF
 }
 
-# Usage: get_suffix_from_id FULL_ID PREFIX
-# Outputs the slug-hex part (e.g. tt-task-list-6638a980) from task/tt-task-list-6638a980
-get_suffix_from_id() {
-  local id="$1"
-  local prefix="$2"
-  printf '%s' "${id#$prefix}"
-}
-
 # Parse YAML-like frontmatter: extract title, status, and subtask lines.
 # Usage: parse_frontmatter CONTENT
 # Outputs to stdout, one line per extracted value:
@@ -93,13 +85,33 @@ parse_frontmatter() {
   '
 }
 
-# Get checkbox and title from content string.
+# Usage: branch_suffix BRANCH TASK_PREFIX PROJECT_PREFIX
+# Outputs the slug-hex part of a task or project branch name.
+# Returns 1 if BRANCH is neither a task nor a project branch.
+branch_suffix() {
+  local branch="$1" task_prefix="$2" project_prefix="$3"
+  if is_task_branch "$branch" "$task_prefix"; then
+    printf '%s' "${branch#"$task_prefix"}"
+  elif is_project_branch "$branch" "$project_prefix"; then
+    printf '%s' "${branch#"$project_prefix"}"
+  else
+    return 1
+  fi
+}
+
+# Usage: get_metadata_from_content CONTENT [FALLBACK_CHECKBOX] [FALLBACK_TITLE]
+# Get checkbox and title from a task file's content string.
+# When CONTENT is empty (the task file could not be read at any revision), falls
+# back to the checkbox/title recorded in the parent's subtask: entry.
 get_metadata_from_content() {
   local content="$1"
-  local task_id="$2"
-  local merged_branch="$3"
-  local all_branches="$4"
-  local repo="$5"
+  local fallback_checkbox="${2:-}"
+  local fallback_title="${3:-}"
+
+  if [[ -z "$content" ]]; then
+    printf '%s|%s' "${fallback_checkbox:-[ ]}" "${fallback_title:-(no title)}"
+    return 0
+  fi
 
   local title=''
   local status='TODO'
@@ -145,12 +157,10 @@ emit_task_line() {
   local task_id="$3"
   local title="$4"
   local current_task_id="${5:-}"
+  local task_prefix="$6"
+  local project_prefix="$7"
   local suffix
-  if [[ "$task_id" == project/* ]]; then
-    suffix="${task_id#project/}"
-  else
-    suffix="${task_id#task/}"
-  fi
+  suffix="$(branch_suffix "$task_id" "$task_prefix" "$project_prefix")" || suffix="$task_id"
   local task_path
   task_path="$(task_file_path "$suffix")"
   if [[ -n "$current_task_id" && "$task_id" == "$current_task_id" ]]; then
@@ -172,17 +182,14 @@ emit_tree() {
   local task_prefix="$5"
   local project_prefix="$6"
   local merged_map="$7"  # newline-sep "TASK_ID:BRANCH"
-  local all_branches="$8"
-  local current_task_id="${9:-}"
-  local focus_chain="${10:-}"
-  local focus_index="${11:-0}"
+  local current_task_id="${8:-}"
+  local focus_chain="${9:-}"
+  local focus_index="${10:-0}"
+  local fallback_checkbox="${11:-}"
+  local fallback_title="${12:-}"
 
   local suffix
-  if [[ "$task_id" == project/* ]]; then
-    suffix="${task_id#project/}"
-  else
-    suffix="${task_id#task/}"
-  fi
+  suffix="$(branch_suffix "$task_id" "$task_prefix" "$project_prefix")" || suffix="$task_id"
   local path
   path="$(task_file_path "$suffix")"
 
@@ -198,11 +205,11 @@ emit_tree() {
 
   local checkbox title
   local meta
-  meta="$(get_metadata_from_content "$content" "$task_id" "${merged_line:+$source_branch}" "$all_branches" "$repo")"
+  meta="$(get_metadata_from_content "$content" "$fallback_checkbox" "$fallback_title")"
   checkbox="${meta%%|*}"
   title="${meta#*|}"
 
-  emit_task_line "$indent" "$checkbox" "$task_id" "$title" "$current_task_id"
+  emit_task_line "$indent" "$checkbox" "$task_id" "$title" "$current_task_id" "$task_prefix" "$project_prefix"
 
   local child_indent="${indent}   "
   local subs_output
@@ -228,39 +235,42 @@ emit_tree() {
     local child_merged
     child_merged="$(printf '%s' "$merged_map" | grep -E "^${sub_id}:" | head -1)" || true
     [[ -n "$child_merged" ]] && child_branch="${child_merged#*:}"
-    emit_tree "$repo" "$child_branch" "$sub_id" "$child_indent" "$task_prefix" "$project_prefix" "$merged_map" "$all_branches" "$current_task_id" "$focus_chain" "$((focus_index + 1))"
+    emit_tree "$repo" "$child_branch" "$sub_id" "$child_indent" "$task_prefix" "$project_prefix" "$merged_map" "$current_task_id" "$focus_chain" "$((focus_index + 1))" "$sub_cb" "$sub_title"
   done <<< "$subs_output" || true
 }
 
-# Build merged map: for each task T that is merged, record T:BRANCH
-build_merged_map() {
-  local repo="$1"
-  local task_ids="$2"
-  local all_branches="$3"
-  local result=''
-  for task_id in $task_ids; do
-    [[ -z "$task_id" ]] && continue
-    for branch in $all_branches; do
-      [[ -z "$branch" ]] && continue
-      local suffix
-      if [[ "$branch" == task/* ]]; then
-        suffix="${branch#task/}"
-      elif [[ "$branch" == project/* ]]; then
-        suffix="${branch#project/}"
-      else
-        continue
-      fi
-      local path
-      path="$(task_file_path "$suffix")"
-      local content
-      content="$(jj_show_at_revision "$repo" "$branch" "$path")" || true
-      if printf '%s' "$content" | grep -qE "subtask:\s*\[x\]\s+${task_id}(\s|$)"; then
-        result="${result}${task_id}:${branch}"$'\n'
-        break
-      fi
-    done
+# Usage: build_subtask_index REPO BRANCHES TASK_PREFIX PROJECT_PREFIX
+# Reads each branch's own task file exactly once and emits one line per
+# subtask: entry found, in branch order:
+#   CHILD_ID<TAB>CHECKBOX<TAB>OWNER_BRANCH
+build_subtask_index() {
+  local repo="$1" branches="$2" task_prefix="$3" project_prefix="$4"
+  local branch suffix path content
+  for branch in $branches; do
+    [[ -z "$branch" ]] && continue
+    suffix="$(branch_suffix "$branch" "$task_prefix" "$project_prefix")" || continue
+    path="$(task_file_path "$suffix")"
+    content="$(jj_show_at_revision "$repo" "$branch" "$path")" || continue
+    [[ -z "$content" ]] && continue
+    while IFS='|' read -r cb id _title; do
+      [[ -z "$id" ]] && continue
+      printf '%s\t%s\t%s\n' "$id" "$cb" "$branch"
+    done < <(get_subtask_entries "$content")
   done
-  printf '%s' "$result"
+}
+
+# Usage: merged_map_from_index SUBTASK_INDEX
+# Checked-in tasks only: the branch they were merged into is authoritative.
+# Outputs newline-separated "TASK_ID:BRANCH", first owning branch wins.
+merged_map_from_index() {
+  printf '%s\n' "$1" | awk -F'\t' '$2 == "[x]" && !seen[$1]++ { print $1 ":" $3 }'
+}
+
+# Usage: parent_map_from_index SUBTASK_INDEX
+# Any checkbox state: child -> owning parent branch, for the focus chain walk.
+# Outputs newline-separated "TASK_ID<TAB>PARENT_BRANCH", first owning branch wins.
+parent_map_from_index() {
+  printf '%s\n' "$1" | awk -F'\t' '!seen[$1]++ { print $1 "\t" $3 }'
 }
 
 # Collect all task IDs reachable from the given roots (project branches).
@@ -269,8 +279,9 @@ collect_task_ids() {
   local roots="$2"
   local seen=""
   local to_visit="$roots"
-  local all_branches="$3"
-  local merged_map="$4"
+  local merged_map="$3"
+  local task_prefix="$4"
+  local project_prefix="$5"
 
   while [[ -n "$to_visit" ]]; do
     local current
@@ -288,13 +299,7 @@ collect_task_ids() {
     [[ -n "$merged_line" ]] && source_branch="${merged_line#*:}"
 
     local suffix
-    if [[ "$current" == task/* ]]; then
-      suffix="${current#task/}"
-    elif [[ "$current" == project/* ]]; then
-      suffix="${current#project/}"
-    else
-      continue
-    fi
+    suffix="$(branch_suffix "$current" "$task_prefix" "$project_prefix")" || continue
     local path
     path="$(task_file_path "$suffix")"
     local content
@@ -373,6 +378,14 @@ main() {
   task_branches="$(printf '%s' "$task_branches" | sort -u)"
   local all_task_project_branches="${project_branches}"$'\n'"${task_branches}"
 
+  # Index every branch's subtask: entries once, then derive both maps from it.
+  # This replaces per-task-ID scans over every branch, which were quadratic.
+  local subtask_index merged_map parent_map
+  subtask_index="$(build_subtask_index "$repo" "$all_task_project_branches" \
+    "$task_prefix" "$project_prefix")"
+  merged_map="$(merged_map_from_index "$subtask_index")"
+  parent_map="$(parent_map_from_index "$subtask_index")"
+
   local current_bookmark
   current_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
   local current_task_id=''
@@ -394,42 +407,22 @@ main() {
     local chain="$current_bookmark"
     local current="$current_bookmark"
     while true; do
-      local parent=''
-      for branch in $all_task_project_branches; do
-        [[ -z "$branch" ]] && continue
-        local suffix
-        if [[ "$branch" == task/* ]]; then
-          suffix="${branch#task/}"
-        elif [[ "$branch" == project/* ]]; then
-          suffix="${branch#project/}"
-        else
-          continue
-        fi
-        local path
-        path="$(task_file_path "$suffix")"
-        local content
-        content="$(jj_show_at_revision "$repo" "$branch" "$path")" || true
-        if printf '%s' "$content" | grep -qE "subtask:\s*\[[ x\-]\]\s+${current}(\s|$)"; then
-          parent="$branch"
-          break
-        fi
-      done
-      if [[ -z "$parent" ]]; then
+      local parent
+      parent="$(printf '%s' "$parent_map" | awk -F'\t' -v id="$current" \
+        '$1 == id { print $2; exit }')"
+      [[ -z "$parent" ]] && break
+      # Guard against a cycle in malformed subtask metadata.
+      if printf '%s' "$chain" | grep -qFx "$parent"; then
+        log "Warning: Cycle detected in task hierarchy at '$parent'; stopping ancestor walk."
         break
       fi
       chain="${parent}"$'\n'"${chain}"
       current="$parent"
     done
 
-    # Build merged map for chain
-    local chain_task_ids
-    chain_task_ids="$(printf '%s' "$chain" | tr '\n' ' ')"
-    local merged_map
-    merged_map="$(build_merged_map "$repo" "$chain_task_ids" "$all_task_project_branches")"
-
     local root
     root="$(printf '%s' "$chain" | head -1)"
-    emit_tree "$repo" "$root" "$root" "" "$task_prefix" "$project_prefix" "$merged_map" "$all_task_project_branches" "$current_task_id" "$chain" "0"
+    emit_tree "$repo" "$root" "$root" "" "$task_prefix" "$project_prefix" "$merged_map" "$current_task_id" "$chain" "0"
     exit 0
   fi
 
@@ -463,13 +456,12 @@ main() {
     [[ -z "$p" ]] && continue
     reachable_ids="${reachable_ids}${p}"$'\n'
   done
-  reachable_ids="$(collect_task_ids "$repo" "$projects_to_show" "$all_task_project_branches" "")"
-  local merged_map
-  merged_map="$(build_merged_map "$repo" "$reachable_ids" "$all_task_project_branches")"
+  reachable_ids="$(collect_task_ids "$repo" "$projects_to_show" "$merged_map" \
+    "$task_prefix" "$project_prefix")"
 
   for p in $projects_to_show; do
     [[ -z "$p" ]] && continue
-    emit_tree "$repo" "$p" "$p" "" "$task_prefix" "$project_prefix" "$merged_map" "$all_task_project_branches" "$current_task_id"
+    emit_tree "$repo" "$p" "$p" "" "$task_prefix" "$project_prefix" "$merged_map" "$current_task_id"
   done
 
   if [[ "$show_detached" == true ]]; then
@@ -488,7 +480,7 @@ main() {
         o_merged="$(printf '%s' "$merged_map" | grep -E "^${o}:" | head -1)" || true
         o_merged="${o_merged#*:}"
         [[ -z "$o_merged" ]] && o_merged="$o"
-        emit_tree "$repo" "$o_merged" "$o" "" "$task_prefix" "$project_prefix" "$merged_map" "$all_task_project_branches" "$current_task_id"
+        emit_tree "$repo" "$o_merged" "$o" "" "$task_prefix" "$project_prefix" "$merged_map" "$current_task_id"
       done
     fi
   fi
