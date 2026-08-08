@@ -802,6 +802,50 @@ resolve_task_worktree() {
 #   line 2: absolute filesystem path, or empty string if the path is an error
 #            (i.e. the workspace has no recorded or resolvable path)
 # Lines with error paths look like: "name: <Error: Workspace has no recorded path: name>"
+# write_and_commit_on_branch REPO TARGET_WORKTREE BOOKMARK CURRENT_WORKTREE \
+#                            CURRENT_BOOKMARK MESSAGE WRITER_FN [WRITER_ARGS...]
+#
+# Applies filesystem mutations and commits them onto BOOKMARK, advancing the
+# bookmark. WRITER_FN is invoked with the destination worktree root as its first
+# argument, followed by any WRITER_ARGS.
+#
+#   same-branch  - BOOKMARK is checked out in TARGET_WORKTREE: write there and
+#                  commit normally.
+#   cross-branch - otherwise (the task has no worktree of its own, or the current
+#                  worktree is on a different branch): `jj edit BOOKMARK` and
+#                  `jj new`, write into REPO, commit, advance the bookmark, then
+#                  restore the working copy to its original parent. This lets
+#                  commands mutate tasks that have not been checked out.
+#
+# Must be called inside a transaction. CURRENT_BOOKMARK must be resolved by the
+# caller *before* tt_begin_transaction, since resolution can trigger a jj snapshot.
+write_and_commit_on_branch() {
+  local repo="$1" target_worktree="$2" bookmark="$3"
+  local current_worktree="$4" current_bookmark="$5" message="$6" writer_fn="$7"
+  shift 7
+
+  if [[ "$target_worktree" == "$current_worktree" && "$current_bookmark" != "$bookmark" ]]; then
+    # Cross-branch: since @ is empty (callers require a clean WC), save the parent
+    # commit_id so the working copy can be restored after committing on the target.
+    local original_parent_rev
+    original_parent_rev="$(jj -R "$repo" log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)"
+
+    jj -R "$repo" edit "$bookmark"
+    jj -R "$repo" new
+
+    "$writer_fn" "$repo" "$@"
+
+    jj -R "$repo" commit -m "$message"
+    jj -R "$repo" bookmark set "$bookmark" -r '@-'
+    jj -R "$repo" new -r "$original_parent_rev"
+  else
+    "$writer_fn" "$target_worktree" "$@"
+
+    jj -R "$target_worktree" commit -m "$message"
+    jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
+  fi
+}
+
 parse_workspace_list_line() {
   local line="$1"
   local ws_name ws_path

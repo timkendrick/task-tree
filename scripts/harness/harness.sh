@@ -164,6 +164,20 @@ checkout_task() {
   run_tt task checkout "$1" >/dev/null 2>&1
 }
 
+# Check out a task with a dedicated worktree and return the worktree path on stdout.
+# Asserts the worktree was genuinely created, so a regression in worktree creation
+# fails loudly at setup rather than silently corrupting the rest of the test.
+# Extra arguments are passed through to `tt task checkout` (e.g. --switch).
+# Usage: path=$(create_task_worktree TASK_ID [CHECKOUT_ARGS...])
+create_task_worktree() {
+  local task_id="$1"; shift
+  local path
+  path=$(run_tt task checkout "$task_id" --worktree "$@" 2>/dev/null) || path=""
+  assert_neq "worktree created for $task_id" "$path" "$REPO"
+  assert_output_not_empty "worktree path for $task_id" "$path"
+  printf '%s\n' "$path"
+}
+
 # Checkpoint the current task with a message.
 # Usage: checkpoint_task MESSAGE
 checkpoint_task() {
@@ -1202,6 +1216,8 @@ assert_tt_workspace_integrity() {
 
   local -a bookmarks=()
   while IFS= read -r bm; do
+    # `jj bookmark list` prints "<name>: <rev> …"; strip the trailing colon.
+    bm="${bm%:}"
     [[ "$bm" == task/* || "$bm" == project/* ]] && bookmarks+=("$bm")
   done < <(jj -R "$REPO" bookmark list --no-pager 2>/dev/null | awk '{print $1}')
 
