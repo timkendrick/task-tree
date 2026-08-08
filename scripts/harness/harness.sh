@@ -1216,6 +1216,8 @@ assert_tt_workspace_integrity() {
 
   local -a bookmarks=()
   while IFS= read -r bm; do
+    # `jj bookmark list` prints "<name>: <rev> …"; strip the trailing colon.
+    bm="${bm%:}"
     [[ "$bm" == task/* || "$bm" == project/* ]] && bookmarks+=("$bm")
   done < <(jj -R "$REPO" bookmark list --no-pager 2>/dev/null | awk '{print $1}')
 
