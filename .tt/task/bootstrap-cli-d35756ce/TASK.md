@@ -132,6 +132,7 @@ subtask: [x] task/tt-task-checkout-rebase-merge-83ec3101
 subtask: [x] task/tt-task-diff-144612f1
 subtask: [x] task/tt-task-tree-performance-912d6429
 subtask: [x] task/fix-frontmatter-parsing-15fba71f
+subtask: [ ] task/tt-worktree-show-strict-aba0d75f
 ---
 Implement shell script implementations of all `tt` CLI commands
 
