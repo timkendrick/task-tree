@@ -219,9 +219,10 @@ main() {
   done
 
   # Determine if the target task is the current branch in the current worktree.
-  # If not, we must commit directly on the target branch via jj edit+new, since
-  # committing in the current worktree and then moving the target bookmark sideways
-  # would be refused by jj.
+  # If not, write_and_commit_on_branch commits directly on the target branch via
+  # jj edit+new, since committing in the current worktree and then moving the
+  # target bookmark sideways would be refused by jj. Resolve this BEFORE starting
+  # the transaction, since resolve_current may trigger a jj snapshot.
   local current_bookmark
   current_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
   local cross_branch=false
@@ -238,77 +239,45 @@ main() {
   local updated
   updated="$(generate_timestamp)"
 
+  # Check for a no-op BEFORE beginning the transaction (avoids orphaned in-progress
+  # entries, and avoids writing to disk before the transaction starts which would
+  # cause a jj snapshot gap in the history chain). Compare against the current file
+  # content: from the bookmark for a cross-branch edit, from disk otherwise.
+  local tmpfile
+  tmpfile="$(mktemp)"
+  write_task_file "$tmpfile" \
+    "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
+
+  local current_file_content
   if [[ "$cross_branch" == true ]]; then
-    # Cross-branch edit: commit directly on the target branch using jj operations.
-    # Since @ is empty (is_wc_clean guarantees this), save the parent commit_id so
-    # we can restore the WC after the edit with `jj new -r <parent>`.
-    local original_parent_rev
-    original_parent_rev="$(jj -R "$repo" log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)"
-
-    # Write the task file into a temp location first to check for changes,
-    # before beginning the transaction (avoids orphaned in-progress entries on no-op).
-    local tmpfile
-    tmpfile="$(mktemp)"
-    write_task_file "$tmpfile" \
-      "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
-    local current_file_content
     current_file_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
-
-    if ! task_file_changed "$current_file_content" "$tmpfile"; then
-      rm -f "$tmpfile"
-      log "No changes to task $bookmark."
-      printf '%s\n' "$bookmark"
-      unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
-      return 0
-    fi
-    rm -f "$tmpfile"
-
-    # Begin transaction (records before-op for undo)
-    tt_begin_transaction "$repo"
-
-    # Switch WC to the target bookmark, create a new empty change on top of it,
-    # write the task file, commit, advance the bookmark, then return to the original parent.
-    jj -R "$repo" edit "$bookmark"
-    jj -R "$repo" new
-
-    # Write updated task file now that we're on the target branch
-    write_task_file "$repo/$task_file" \
-      "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
-
-    jj -R "$repo" commit -m "$(format_commit_message "task" "edit" "$bookmark" "$final_title")"
-    jj -R "$repo" bookmark set "$bookmark" -r '@-'
-
-    # Return to the original working copy position
-    jj -R "$repo" new -r "$original_parent_rev"
   else
-    # Same-branch edit: write to the target worktree filesystem and commit normally.
-    # Check for no-op BEFORE beginning the transaction (compare in-memory to avoid
-    # writing to disk before the transaction starts, which would cause a jj snapshot
-    # gap in the history chain).
-    local tmpfile
-    tmpfile="$(mktemp)"
-    write_task_file "$tmpfile" \
-      "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
-    local current_file_on_disk
-    current_file_on_disk="$(cat "$target_worktree/$task_file" 2>/dev/null)" || true
-
-    if ! task_file_changed "$current_file_on_disk" "$tmpfile"; then
-      rm -f "$tmpfile"
-      log "No changes to task $bookmark."
-      printf '%s\n' "$bookmark"
-      unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
-      return 0
-    fi
-
-    # Begin transaction (records before-op for undo) BEFORE writing to disk
-    tt_begin_transaction "$repo"
-
-    # Now write the file and commit
-    mv "$tmpfile" "$target_worktree/$task_file"
-
-    jj -R "$target_worktree" commit -m "$(format_commit_message "task" "edit" "$bookmark" "$final_title")"
-    jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
+    current_file_content="$(cat "$target_worktree/$task_file" 2>/dev/null)" || true
   fi
+
+  if ! task_file_changed "$current_file_content" "$tmpfile"; then
+    rm -f "$tmpfile"
+    log "No changes to task $bookmark."
+    printf '%s\n' "$bookmark"
+    unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
+    return 0
+  fi
+  rm -f "$tmpfile"
+
+  # Writer invoked by write_and_commit_on_branch with the destination worktree root.
+  task_edit_writer() {
+    local root="$1"
+    write_task_file "$root/$task_file" \
+      "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
+  }
+
+  # Begin transaction (records before-op for undo) BEFORE writing to disk
+  tt_begin_transaction "$repo"
+
+  write_and_commit_on_branch "$repo" "$target_worktree" "$bookmark" \
+    "$current_worktree" "$current_bookmark" \
+    "$(format_commit_message "task" "edit" "$bookmark" "$final_title")" \
+    task_edit_writer
 
   # Commit transaction (records after-op for undo)
   tt_commit_transaction "$repo"
