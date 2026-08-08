@@ -29,26 +29,37 @@ test_worktree_active__repo_flag() {
   assert_eq "output with --repo flag" "$output" "$REPO"
 }
 
-test_worktree_active__after_checkout_returns_worktree() {
+test_worktree_active__worktree_without_switch_keeps_head() {
+  setup_workspace "wt-active-no-switch"
+  proj_id=$(create_project "proj" "Project") || true
+  task_id=$(create_task "my-task" "My Task") || true
+
+  # --worktree without --switch creates the worktree but must NOT move HEAD
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+
+  assert_file_exists "dedicated worktree created" "$VIRTUAL/$task_id/TASK.md"
+
+  output="" exit_code=0
+  output=$(run_tt worktree active 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_eq "HEAD stays at repo root without --switch" "$output" "$REPO"
+}
+
+test_worktree_active__after_checkout_switch_returns_worktree() {
   setup_workspace "wt-active-checkout"
   proj_id=$(create_project "proj" "Project") || true
   task_id=$(create_task "my-task" "My Task") || true
 
-  # Check out with a dedicated worktree (updates HEAD)
-  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  # --worktree --switch creates the worktree and points HEAD at it
+  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
 
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || worktree_path=""
+  local expected_path
+  expected_path="$(realpath "$VIRTUAL/$task_id")"
 
-  if [[ -n "$worktree_path" && "$worktree_path" != "$REPO" ]]; then
-    output="" exit_code=0
-    output=$(run_tt worktree active 2>&1) || exit_code=$?
-    assert_success "exit code" "$exit_code"
-    assert_eq "HEAD points to task worktree after checkout" "$output" "$(cd "$worktree_path" && pwd -P)"
-  else
-    # No dedicated worktree created; HEAD still points to repo root
-    output=$(run_tt worktree active 2>&1)
-    assert_eq "HEAD points to repo when no dedicated worktree" "$output" "$REPO"
-  fi
+  output="" exit_code=0
+  output=$(run_tt worktree active 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_eq "HEAD points to task worktree after --switch" "$output" "$expected_path"
 }
 
 test_worktree_active__no_workspace_configured() {
