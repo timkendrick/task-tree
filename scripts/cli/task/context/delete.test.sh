@@ -26,6 +26,30 @@ test_context_delete__basic_delete() {
 }
 
 
+test_context_delete__delete_from_non_checked_out_task() {
+  setup_workspace "ctxdel-nocheckout"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "ta" "A") || true
+  task_b=$(create_task "tb" "B") || true
+  # task_b is never checked out; work continues on task_a
+  checkout_task "$task_a" >/dev/null || true
+
+  add_output=$(echo "Body for B" | run_tt task context add --title "Ctx B" --slug "ctx-b" "$task_b" 2>&1) || true
+  ctx_id=$(printf '%s' "$add_output" | grep '^context/' | tail -1)
+  assert_context_entry "context on task B" "$task_b" "$ctx_id"
+
+  output="" exit_code=0
+  output=$(run_tt task context delete "$ctx_id" --task "$task_b" 2>&1) || exit_code=$?
+  assert_success "delete from non-checked-out task" "$exit_code"
+  assert_commit_message "commit message" "$task_b" "[tt:task:$task_b:context:delete] Ctx B"
+  assert_no_context_entry "context entry removed" "$task_b" "$ctx_id"
+  assert_context_file_not_exists "context file gone" "$task_b" "$ctx_id"
+  assert_current_task "still checked out on task A" "$task_a"
+  assert_tt_workspace_integrity "workspace integrity after cross-branch context delete"
+}
+
+
 test_context_delete__non_existent_context_fails() {
   setup_workspace "ctxdel-noexist"
   proj_id=$(create_project "proj" "Project") || true
