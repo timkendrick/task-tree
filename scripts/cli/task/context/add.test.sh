@@ -30,7 +30,6 @@ test_context_add__add_to_explicit_task_id() {
   checkout_task "$proj_id" >/dev/null || true
   task_a=$(create_task "ta" "A") || true
   task_b=$(create_task "tb" "B") || true
-  # Add context while checked out on task_a (context add requires being on the branch)
   checkout_task "$task_a" >/dev/null || true
 
   output="" exit_code=0
@@ -39,6 +38,28 @@ test_context_add__add_to_explicit_task_id() {
 
   ctx_id=$(printf '%s' "$output" | grep '^context/' | tail -1)
   assert_context_entry "context on task A" "$task_a" "$ctx_id"
+}
+
+
+test_context_add__add_to_non_checked_out_task() {
+  setup_workspace "ctxadd-nocheckout"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "ta" "A") || true
+  task_b=$(create_task "tb" "B") || true
+  # task_b is never checked out; work continues on task_a
+  checkout_task "$task_a" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(echo "Body for B" | run_tt task context add --title "Ctx B" --slug "ctx-b" "$task_b" 2>&1) || exit_code=$?
+  assert_success "context add to non-checked-out task" "$exit_code"
+
+  ctx_id=$(printf '%s' "$output" | grep '^context/' | tail -1)
+  assert_context_entry "context on task B" "$task_b" "$ctx_id"
+  assert_context_file_exists "context file on task B" "$task_b" "$ctx_id"
+  assert_no_context_entry "task A untouched" "$task_a" "$ctx_id"
+  assert_current_task "still checked out on task A" "$task_a"
+  assert_tt_workspace_integrity "workspace integrity after cross-branch context add"
 }
 
 
