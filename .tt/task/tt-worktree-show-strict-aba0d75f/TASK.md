@@ -2,7 +2,8 @@
 title: "Fail `tt worktree show` when no dedicated worktree exists"
 status: IN-PROGRESS
 created: 2026-08-08T08:13:30Z
-updated: 2026-08-08T08:13:31Z
+updated: 2026-08-08T08:14:43Z
+context: context/investigation-notes-b139f7e0
 ---
 `tt worktree show --task <id>` currently falls back to printing the repository root and exiting `0` when no dedicated worktree exists for the task. This silently returns an unrelated tree instead of reporting failure, which is a design flaw: callers cannot distinguish "here is the task's worktree" from "there is no worktree, have the repo root instead".
 
