@@ -16,6 +16,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   -h, --help           Show this help.
 #
+# The task need not be checked out: if it has no worktree of its own, the deletion
+# is committed directly onto the task branch, leaving the working copy unchanged.
+#
 # Environment variables:
 #   COMMAND_NAME - Command prefix (e.g., "task context") set by parent dispatcher
 
@@ -29,6 +32,9 @@ Delete a context file from the specified task (default: current task).
 
 Removes both the context file and the corresponding 'context:' entry from
 the task's frontmatter, and updates the task's 'updated' timestamp.
+
+The task need not be checked out: if it has no worktree of its own, the deletion
+is committed directly onto the task branch, leaving the working copy unchanged.
 
 Arguments:
   <context-id>          Context ID to delete (e.g. context/foo-abc12345).
@@ -131,17 +137,17 @@ main() {
     exit 1
   fi
 
-  # Update task bookmark to current tip in target worktree
-  # This ensures any local changes (if we had --force) would be preserved
-  # but since we require clean WC, this just advances the bookmark if needed
+  # Determine whether the commit must be made cross-branch (must resolve BEFORE
+  # starting the transaction, since resolve_current may trigger a jj snapshot)
   local current_bookmark
-  current_bookmark="$(resolve_current_bookmark "$target_worktree" "$task_prefix" "$project_prefix")"
+  current_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
 
-  # Read task file content from current worktree
+  # Read the task file from the task's own branch, so tasks that are not checked
+  # out anywhere can still be edited.
   local task_file task_content
   task_file="$(task_file_path "$task_suffix")"
-  task_content="$(cat "$target_worktree/$task_file" 2>/dev/null)" || {
-    log "Error: Could not read task file '$task_file'."
+  task_content="$(jj_show_at_revision "$repo" "$branch" "$task_file")" || {
+    log "Error: Could not read task file '$task_file' from branch '$branch'."
     exit 1
   }
 
@@ -175,8 +181,8 @@ main() {
   # Read the context file to get its title for the commit message
   local ctx_file ctx_content ctx_title
   ctx_file="$(task_context_path "$task_suffix" "$ctx_id_arg")"
-  ctx_content="$(cat "$target_worktree/$ctx_file" 2>/dev/null)" || {
-    log "Error: Could not read context file '$ctx_file'."
+  ctx_content="$(jj_show_at_revision "$repo" "$branch" "$ctx_file")" || {
+    log "Error: Could not read context file '$ctx_file' from branch '$branch'."
     exit 1
   }
   ctx_title="$(parse_quoted_frontmatter_field "$ctx_content" "title")"
@@ -198,18 +204,21 @@ main() {
     { print }
   ')"
 
+  # Writer invoked by write_and_commit_on_branch with the destination worktree root.
+  ctx_delete_writer() {
+    local root="$1"
+    printf '%s\n' "$updated_task_content" > "$root/$task_file"
+    rm -f "$root/$ctx_file"
+  }
+
   # Begin transaction (records before-op for undo) BEFORE any filesystem writes,
   # so the before-op matches the previous command's after-op in the history chain.
   tt_begin_transaction "$repo"
 
-  printf '%s\n' "$updated_task_content" > "$target_worktree/$task_file"
-
-  # Remove the context file
-  rm -f "$target_worktree/$ctx_file"
-
-  # Commit the changes
-  jj -R "$target_worktree" commit -m "$(format_commit_message "task" "context:delete" "$branch" "$ctx_title")"
-  jj -R "$target_worktree" bookmark set "$branch" -r '@-'
+  write_and_commit_on_branch "$repo" "$target_worktree" "$branch" \
+    "$current_worktree" "$current_bookmark" \
+    "$(format_commit_message "task" "context:delete" "$branch" "$ctx_title")" \
+    ctx_delete_writer
 
   # Commit transaction (records after-op for undo)
   tt_commit_transaction "$repo"
