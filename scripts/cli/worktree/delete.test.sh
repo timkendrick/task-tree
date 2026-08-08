@@ -9,9 +9,8 @@ test_worktree_delete__basic_delete() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
   # Complete from within the worktree so @ is left clean (empty change on top of bookmark)
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
   run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
   assert_neq "worktree is not repo" "$worktree_path" "$REPO"
@@ -38,8 +37,7 @@ test_worktree_delete__dirty_wc_rejected() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
   # Complete from within the worktree (leaves clean @), then make WC dirty
   run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
@@ -57,9 +55,8 @@ test_worktree_delete__dirty_wc_force() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
 
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
   echo "dirty" > "$worktree_path/dirty-file.txt"
 
   output="" exit_code=0
@@ -74,8 +71,7 @@ test_worktree_delete__commits_after_bookmark_rejected() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
   # Complete from within worktree (leaves clean @ on top of bookmark); then add a new commit
   run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
@@ -94,9 +90,7 @@ test_worktree_delete__commits_after_bookmark_force() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
-
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
   echo "some work" > "$worktree_path/work.txt"
   jj -R "$worktree_path" commit -m "Some work" >/dev/null 2>&1 || true
 
@@ -112,8 +106,7 @@ test_worktree_delete__head_symlink_reset() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
   run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
   # Verify HEAD points to the worktree
@@ -136,11 +129,10 @@ test_worktree_delete__head_symlink_unchanged() {
 
   # Create two tasks with worktrees
   task_a=$(create_task "task-a" "Task A") || true
-  run_tt task checkout "$task_a" --worktree --switch >/dev/null 2>&1 || true
-  worktree_a=$(run_tt worktree show --task "$task_a" 2>/dev/null) || true
+  worktree_a=$(create_task_worktree "$task_a" --switch)
   run_tt_in_worktree "$worktree_a" task complete "$task_a" >/dev/null 2>&1 || true
   task_b=$(create_task "task-b" "Task B") || true
-  run_tt task checkout "$task_b" --worktree --switch >/dev/null 2>&1 || true
+  create_task_worktree "$task_b" --switch >/dev/null
 
   # HEAD now points to task_b's worktree. Delete task_a's worktree.
   run_tt worktree delete "$worktree_a" >/dev/null 2>&1 || true
@@ -156,8 +148,7 @@ test_worktree_delete__bookmark_preserved() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
   (cd "$worktree_path" && checkpoint_task "Work" >/dev/null 2>&1) || true
   run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
@@ -172,8 +163,7 @@ test_worktree_delete__non_done_status_rejected() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
   # Task is IN-PROGRESS after checkout; do NOT complete it
 
   output="" exit_code=0
@@ -188,10 +178,9 @@ test_worktree_delete__non_done_status_with_force() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
   # Task is IN-PROGRESS; --force bypasses the status check
 
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
 
   output="" exit_code=0
   output=$(run_tt worktree delete "$worktree_path" --force 2>&1) || exit_code=$?
@@ -205,8 +194,7 @@ test_worktree_delete__done_status_allowed() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
   run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
   output="" exit_code=0
@@ -221,8 +209,7 @@ test_worktree_delete__current_wc_rejected() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
 
   # Run delete from inside the target worktree (without --force)
   cd "$worktree_path"
@@ -242,8 +229,7 @@ test_worktree_delete__current_wc_force() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
 
   # --force bypasses the current WC check
   cd "$worktree_path"
@@ -275,8 +261,7 @@ test_worktree_delete__transaction_succeeds() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
   run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
   get_history_lines; hc_before="${#HISTORY_LINES[@]}"
@@ -299,8 +284,7 @@ test_worktree_delete__transaction_succeeds_from_worktree() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
-  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
   run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
 
   get_history_lines; hc_before="${#HISTORY_LINES[@]}"

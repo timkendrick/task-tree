@@ -5,7 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt worktree show — Output the worktree path for a given task/project ID.
+# tt worktree show — Output the dedicated worktree path for a given task/project ID.
+#
+# Only dedicated worktrees are reported: if the task has no dedicated worktree
+# (including when it is checked out in the main workspace), this exits 1.
 #
 # This is a subcommand in the worktree namespace, so the usage examples
 # should show the full command path (tt worktree show), not just show.
@@ -24,8 +27,9 @@ usage() {
   cat <<EOF
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} --task <task-id> [--repo PATH]
 
-Output the worktree path for the given task or project ID.
-Falls back to the repository root if no dedicated worktree exists for the task.
+Output the dedicated worktree path for the given task or project ID.
+Exits with an error if the task has no dedicated worktree, including when the
+task is checked out in the main workspace.
 
 Options:
   --task <task-id>  Task or project ID (e.g., task/foo-abc12345, project/bar-def12345) (required)
@@ -82,11 +86,19 @@ main() {
     exit 1
   fi
 
-  # Find the worktree for this branch; fall back to repo root if none found
+  # Find the dedicated worktree for this branch. The repo root is never a valid
+  # result: it means the task is checked out in the main workspace, not a
+  # dedicated worktree. Compare canonical paths so a symlinked repo root (e.g.
+  # /var -> /private/var on macOS) does not defeat the comparison.
   local worktree
   worktree="$(find_worktrees_for_branch "$repo" "$task_id" "$task_prefix" "$project_prefix" | head -1)"
-  if [[ -z "$worktree" ]]; then
-    worktree="$repo"
+  if [[ -n "$worktree" && -d "$worktree" ]]; then
+    worktree="$(resolve_path_symlinks "$worktree")"
+  fi
+  if [[ -z "$worktree" || "$worktree" == "$repo" ]]; then
+    log "Error: No dedicated worktree for '$task_id'"
+    log "  Run 'tt task checkout $task_id --worktree' to create one."
+    exit 1
   fi
 
   printf '%s\n' "$worktree"

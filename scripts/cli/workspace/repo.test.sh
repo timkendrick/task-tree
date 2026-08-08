@@ -26,22 +26,12 @@ test_workspace_repo__from_worktree_resolves_canonical() {
   task_id=$(create_task "my-task" "My Task") || true
 
   # Check out the task with a dedicated worktree
-  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  worktree_path=$(create_task_worktree "$task_id")
 
-  # Find the worktree path for this task
-  worktree_path=$(run_tt worktree show --task "$task_id" 2>/dev/null) || worktree_path=""
-
-  # Only run the worktree test if a dedicated worktree was actually created
-  if [[ -n "$worktree_path" && "$worktree_path" != "$REPO" ]]; then
-    output="" exit_code=0
-    output=$(run_tt_in_worktree "$worktree_path" workspace repo 2>&1) || exit_code=$?
-    assert_success "exit code from worktree" "$exit_code"
-    assert_eq "workspace repo resolves to canonical repo" "$output" "$REPO"
-  else
-    # If no dedicated worktree was created, the repo itself is the canonical root
-    output=$(run_tt workspace repo 2>&1)
-    assert_eq "root is repo" "$output" "$REPO"
-  fi
+  output="" exit_code=0
+  output=$(run_tt_in_worktree "$worktree_path" workspace repo 2>&1) || exit_code=$?
+  assert_success "exit code from worktree" "$exit_code"
+  assert_eq "workspace repo resolves to canonical repo" "$output" "$REPO"
 }
 
 test_workspace_repo__repo_flag() {
