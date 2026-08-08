@@ -1,1 +1,1 @@
-.tt/task/bootstrap-cli-d35756ce/TASK.md
+.tt/task/tt-task-checkpoint-commit-message-5e7ae39e/TASK.md
