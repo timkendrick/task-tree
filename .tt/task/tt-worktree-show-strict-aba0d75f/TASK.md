@@ -1,6 +1,6 @@
 ---
 title: "Fail `tt worktree show` when no dedicated worktree exists"
-status: TODO
+status: IN-PROGRESS
 created: 2026-08-08T08:13:30Z
 updated: 2026-08-08T08:13:31Z
 ---
