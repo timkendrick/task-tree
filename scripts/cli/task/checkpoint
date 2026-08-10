@@ -113,11 +113,29 @@ main() {
   # Derive task ID (bookmark name without prefix) for display
   local task_id="$bookmark"
 
+  # Commits strictly between the bookmark and the working copy's parent
+  # (exclusive of the bookmark, exclusive of @).
+  local intermediates="${bookmark}::@- ~ ${bookmark}"
+  local intermediate_count
+  intermediate_count="$(count_revs_in_revset "$repo" "$intermediates")"
+
   # Get message from editor if not provided
   if [[ -z "$message" ]]; then
+    # When the range since the bookmark holds exactly one commit, prefill the
+    # editor with the first line of that commit's description instead of the
+    # task title.
+    local default_message="$task_title" single_desc
+    if [[ "$intermediate_count" -eq 1 ]]; then
+      single_desc="$(get_commit_description "$repo" "$intermediates")"
+      single_desc="${single_desc%%$'\n'*}"
+      if [[ -n "$single_desc" ]]; then
+        default_message="$single_desc"
+      fi
+    fi
+
     local template
     template="$(printf '%s\n\n# Task: %s\n# An empty message cancels the checkpoint.' \
-      "$task_title" "$task_id")"
+      "$default_message" "$task_id")"
     message="$(prompt <<< "$template")" || exit 1
     if [[ -z "$message" ]]; then
       log "Checkpoint cancelled."
@@ -140,16 +158,10 @@ main() {
 
   # Create commit (works for empty or non-empty WC)
   if [[ "$squash" == true ]]; then
-    # Count commits strictly between bookmark and @- (exclusive of bookmark, exclusive of @)
-    local intermediate_count
-    intermediate_count="$(jj -R "$repo" log \
-      -r "${bookmark}::@- ~ ${bookmark}" \
-      --no-graph -T 'commit_id ++ "\n"' 2>/dev/null | wc -l | tr -d ' ')"
-
     if [[ "$intermediate_count" -gt 0 ]]; then
       # Squash all intermediate commits into @, setting the checkpoint message
       jj -R "$repo" squash \
-        --from "${bookmark}::@- ~ ${bookmark}" \
+        --from "$intermediates" \
         --into @ \
         -m "$full_msg"
       # @ now has the right content and description; just open a new WC
