@@ -86,16 +86,29 @@ main() {
     exit 1
   fi
 
-  # Find the dedicated worktree for this branch. The repo root is never a valid
-  # result: it means the task is checked out in the main workspace, not a
-  # dedicated worktree. Compare canonical paths so a symlinked repo root (e.g.
-  # /var -> /private/var on macOS) does not defeat the comparison.
+  # Find the dedicated worktree for this branch. The canonical (main) workspace
+  # root is never a valid result: it means the task is checked out in the main
+  # workspace, not a dedicated worktree.
+  #
+  # $repo is whichever workspace resolve_repo landed on, which is NOT necessarily
+  # the canonical repo: invoked from inside a dedicated worktree without TT_REPO
+  # set, find_repo_root walks up to the worktree's own .jj and returns the
+  # worktree. Comparing against $repo would then reject the task's genuine
+  # worktree, so resolve to the canonical repo before comparing.
+  #
+  # Compare canonical paths so a symlinked root (e.g. /var -> /private/var on
+  # macOS) does not defeat the comparison.
+  local canonical_repo resolved_canonical_repo
+  canonical_repo="$(resolve_canonical_repo "$repo")" || canonical_repo="$repo"
+  resolved_canonical_repo="$(resolve_path_symlinks "$canonical_repo" 2>/dev/null)" \
+    || resolved_canonical_repo="$canonical_repo"
+
   local worktree
   worktree="$(find_worktrees_for_branch "$repo" "$task_id" "$task_prefix" "$project_prefix" | head -1)"
   if [[ -n "$worktree" && -d "$worktree" ]]; then
     worktree="$(resolve_path_symlinks "$worktree")"
   fi
-  if [[ -z "$worktree" || "$worktree" == "$repo" ]]; then
+  if [[ -z "$worktree" || "$worktree" == "$resolved_canonical_repo" ]]; then
     log "Error: No dedicated worktree for '$task_id'"
     log "  Run 'tt task checkout $task_id --worktree' to create one."
     exit 1
