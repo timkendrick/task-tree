@@ -23,7 +23,7 @@ subtask: [ ] task/tt-task-checkin-reorder-766c71b4
 subtask: [ ] task/custom-merge-conflict-resolver-06dbf6a0
 subtask: [ ] task/tt-task-context-edit-550ce515
 subtask: [ ] task/transaction-commit-operation-id-dff4fe9c
-subtask: [ ] task/tt-task-checkpoint-commit-message-5e7ae39e
+subtask: [x] task/tt-task-checkpoint-commit-message-5e7ae39e
 subtask: [ ] task/tt-task-publish-commit-message-4062975b
 subtask: [ ] task/tt-propagate-parent-child-task-symlink-conflict-3bef09e2
 subtask: [ ] task/tt-task-create-parent-branch-cfe50365
