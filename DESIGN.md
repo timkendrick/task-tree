@@ -554,11 +554,13 @@ When `--message` is not provided, `tt task checkpoint` opens an editor for the u
 **Message editor template (written to temporary file):**
 
 ```
-<task-title>
+<prefilled-message>
 
 # Task: <task-title> (<task-id>)
 # An empty message cancels the checkpoint.
 ```
+
+**Prefilled message:** normally the task title. However, when the commit range since the task bookmark contains exactly one commit, the template is prefilled with the first line of that commit's description instead, so a single-commit checkpoint reuses the message the user already wrote. If that commit has no description, the task title is used. This applies regardless of the `--squash` flag, and does not affect `--message` (which skips the editor entirely).
 
 The file is opened in the resolved editor. Once the editor exits:
 
@@ -583,7 +585,7 @@ When `--squash` is passed, `tt task checkpoint` collapses all commits between th
 
 **Commit flow with `--squash`:**
 
-1. Count commits in the range `<bookmark>::@- ~ <bookmark>` (commits strictly between the bookmark and the working copy's parent). If none exist, fall back to the normal commit flow.
+1. Count commits in the range strictly between the bookmark and the working copy's parent (`<bookmark>::@- ~ <bookmark>`). If none exist, fall back to the normal commit flow.
 2. Run `jj squash --from "<bookmark>::@- ~ <bookmark>" --into @ -m "<full-message>"` to merge all intermediate commits into `@` and set its description.
 3. Run `jj new` to close `@` and open a fresh working copy.
 4. Advance the bookmark to `@-` as normal.
