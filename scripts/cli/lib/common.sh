@@ -349,6 +349,20 @@ is_project_branch() {
   [[ "$bookmark" == "$prefix"* ]] && [[ "$bookmark" =~ -[0-9a-fA-F]{8}$ ]]
 }
 
+# Usage: count_revs_in_revset REPO REVSET
+# Prints the number of commits matching REVSET (0 if REVSET fails to resolve).
+count_revs_in_revset() {
+  local repo="$1" revset="$2"
+  jj -R "$repo" log -r "$revset" --no-graph -T 'commit_id ++ "\n"' 2>/dev/null | grep -c . || true
+}
+
+# Usage: get_commit_description REPO REV
+# Prints the full description of REV (empty if it has none).
+get_commit_description() {
+  local repo="$1" rev="$2"
+  jj -R "$repo" log -r "$rev" --no-graph -T 'description'
+}
+
 # Usage: is_wc_clean REPO_OR_WORKTREE
 # Returns 0 if the working copy at REPO_OR_WORKTREE has no pending changes.
 is_wc_clean() {
