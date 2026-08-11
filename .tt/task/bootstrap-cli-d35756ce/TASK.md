@@ -2,7 +2,7 @@
 title: "Bootstrap CLI"
 status: IN-PROGRESS
 created: 2026-03-15T09:29:32Z
-updated: 2026-08-04T08:51:00Z
+updated: 2026-08-11T13:56:57Z
 context: context/task-tt-task-list-6638a980-d50c1e36
 context: context/context-from-2026-02-21-22-12-e533801d
 subtask: [ ] task/tt-workspace-doctor-fe9143d1
@@ -23,11 +23,13 @@ subtask: [ ] task/tt-task-checkin-reorder-766c71b4
 subtask: [ ] task/custom-merge-conflict-resolver-06dbf6a0
 subtask: [ ] task/tt-task-context-edit-550ce515
 subtask: [ ] task/transaction-commit-operation-id-dff4fe9c
-subtask: [x] task/tt-task-checkpoint-commit-message-5e7ae39e
 subtask: [ ] task/tt-task-publish-commit-message-4062975b
 subtask: [ ] task/tt-propagate-parent-child-task-symlink-conflict-3bef09e2
 subtask: [ ] task/tt-task-create-parent-branch-cfe50365
 subtask: [ ] task/tt-task-checkpoint-empty-c6eaa3da
+subtask: [ ] task/teardown-hook-3123762c
+subtask: [ ] task/switch-hooks-061a0a5e
+subtask: [x] task/tt-task-checkpoint-commit-message-5e7ae39e
 subtask: [x] task/frontmatter-label-ordering-252d77b0
 subtask: [x] task/retain-crashed-editor-contents-dcd6b730
 subtask: [x] task/analyze-cross-worktree-transactions-35b7b43d
@@ -134,8 +136,6 @@ subtask: [x] task/tt-task-tree-performance-912d6429
 subtask: [x] task/fix-frontmatter-parsing-15fba71f
 subtask: [x] task/tt-worktree-show-strict-aba0d75f
 subtask: [x] task/todo-task-context-963f83ea
-subtask: [ ] task/teardown-hook-3123762c
-subtask: [ ] task/switch-hooks-061a0a5e
 ---
 Implement shell script implementations of all `tt` CLI commands
 
