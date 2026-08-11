@@ -135,6 +135,7 @@ subtask: [x] task/fix-frontmatter-parsing-15fba71f
 subtask: [x] task/tt-worktree-show-strict-aba0d75f
 subtask: [x] task/todo-task-context-963f83ea
 subtask: [ ] task/teardown-hook-3123762c
+subtask: [ ] task/switch-hooks-061a0a5e
 ---
 Implement shell script implementations of all `tt` CLI commands
 
