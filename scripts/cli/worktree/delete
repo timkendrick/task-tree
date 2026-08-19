@@ -157,6 +157,12 @@ main() {
 
   # Capture HEAD symlink target BEFORE deletion, since the worktree path
   # will no longer be resolvable after forget_worktree removes the files.
+  # The reset target must be the canonical repository root rather than $repo:
+  # when delete runs from inside the worktree being removed, $repo resolves to
+  # that worktree and HEAD would be left dangling.
+  local repo_root
+  repo_root="$(resolve_canonical_repo "$repo")"
+
   local head_needs_reset=false
   if [[ -n "$workspace_dir" && -L "${workspace_dir}/HEAD" ]]; then
     local existing_head
@@ -173,9 +179,9 @@ main() {
   # Forget workspace and remove files
   forget_worktree "$repo" "$ws_name" "$canonical_worktree_path"
 
-  # If HEAD pointed to the deleted worktree, reset it to repo root
+  # If HEAD pointed to the deleted worktree, reset it to the repo root
   if [[ "$head_needs_reset" == true ]]; then
-    update_head_symlink "$workspace_dir" "$repo"
+    update_head_symlink "$workspace_dir" "$repo_root"
   fi
 
   # Commit transaction
