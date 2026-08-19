@@ -293,6 +293,11 @@ test_worktree_delete__transaction_succeeds_from_worktree() {
   assert_success "delete from worktree succeeds" "$exit_code"
   assert_file_not_exists "worktree dir removed" "$worktree_path"
   assert_bookmark_exists "bookmark preserved" "$task_id"
+  # HEAD pointed at the deleted worktree, and $repo resolves to it when the
+  # command runs from inside it; the reset must use the canonical repo root so
+  # HEAD is not left dangling.
+  assert_eq "HEAD reset to canonical repo root" \
+    "$(realpath "$(readlink "$VIRTUAL/HEAD")")" "$(realpath "$REPO")"
   get_history_lines
   assert_eq "one new entry" "$((${#HISTORY_LINES[@]} - hc_before))" "1"
   assert_history_integrity "history after delete"

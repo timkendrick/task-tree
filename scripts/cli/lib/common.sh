@@ -417,6 +417,10 @@ run_hook() {
 # TARGET_PATH must be an existing directory or file; exits 1 otherwise.
 make_absolute_symlink() {
   local target_path="$1" symlink_path="$2"
+  if [[ ! -e "$target_path" ]]; then
+    log "Error: Symlink target does not exist: $target_path"
+    return 1
+  fi
   if [[ "$target_path" != /* ]]; then
     target_path="$(resolve_path_symlinks "$target_path")"
   fi
