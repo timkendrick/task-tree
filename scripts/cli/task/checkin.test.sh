@@ -224,7 +224,7 @@ test_task_checkin__head_symlink_is_absolute() {
 test_task_checkin__head_symlink_updated_from_worktree() {
   # With --switch, running `tt task checkin` from inside a task's dedicated
   # worktree updates HEAD to point at the parent's workspace, rather than
-  # leaving it pointing at the task worktree (which is deleted below).
+  # leaving it pointing at the task worktree.
   setup_workspace "ci-head-wt-switch"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
@@ -253,16 +253,16 @@ test_task_checkin__head_symlink_updated_from_worktree() {
   assert_not_contains "HEAD no longer points to task worktree" "$head_after" "$task_id"
   assert_neq "HEAD was updated from task worktree" "$head_after" "$head_before"
   assert_file_exists "HEAD target exists" "$head_after"
-  assert_file_not_exists "child worktree deleted" "$worktree_path"
+  assert_file_exists "child worktree retained without --delete" "$worktree_path"
 }
 
 
 test_task_checkin__switch_targets_repo_root_when_parent_has_no_worktree() {
-  # Regression: a complete checkin with --switch, run from the child's own
-  # dedicated worktree while the parent task is not checked out anywhere, used
-  # to point HEAD at the child worktree (because $repo resolves to it) and then
-  # delete that worktree, leaving a dangling HEAD symlink. HEAD must instead
-  # fall back to the canonical repository root.
+  # Regression: a checkin that deletes the task, run with --switch from the
+  # child's own dedicated worktree while the parent task is not checked out
+  # anywhere, used to point HEAD at the child worktree (because $repo resolves
+  # to it) and then delete that worktree, leaving a dangling HEAD symlink.
+  # HEAD must instead fall back to the canonical repository root.
   setup_workspace "ci-switch-no-parent-wt"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
@@ -278,8 +278,8 @@ test_task_checkin__switch_targets_repo_root_when_parent_has_no_worktree() {
   jj -R "$REPO" new main >/dev/null 2>&1 || true
 
   local exit_code=0
-  output=$(run_tt_in_worktree "$worktree_path" task checkin --complete --switch 2>&1) || exit_code=$?
-  assert_success "checkin with --switch succeeds" "$exit_code"
+  output=$(run_tt_in_worktree "$worktree_path" task checkin --complete --delete --switch 2>&1) || exit_code=$?
+  assert_success "checkin with --delete --switch succeeds" "$exit_code"
 
   assert_file_not_exists "child worktree deleted" "$worktree_path"
 
@@ -316,9 +316,9 @@ test_task_checkin__head_not_switched_without_switch_flag() {
 }
 
 
-test_task_checkin__worktree_deleted_after_complete_checkin() {
-  # After a complete (DONE) checkin the task's dedicated worktree should be
-  # forgotten from jj and its files deleted from disk.
+test_task_checkin__worktree_retained_after_complete_checkin() {
+  # A complete (DONE) checkin must NOT remove the task's dedicated worktree:
+  # tearing down a worktree is an explicit step, requested with --delete.
   setup_workspace "ci-wt-cleanup"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
@@ -335,13 +335,40 @@ test_task_checkin__worktree_deleted_after_complete_checkin() {
   # Complete checkin (from main repo, with explicit task_id)
   run_tt task checkin --complete "$task_id" >/dev/null 2>&1 || true
 
-  # Worktree should be deleted
-  assert_file_not_exists "worktree deleted after complete checkin" "$worktree_path"
+  assert_file_exists "worktree retained after complete checkin" "$worktree_path"
+  local ws_list
+  ws_list="$(jj -R "$REPO" workspace list --no-pager -T 'name ++ "\n"' 2>/dev/null)" || ws_list=''
+  assert_contains "jj workspace still registered" "$ws_list" "$task_id"
+}
+
+
+test_task_checkin__worktree_deleted_with_delete() {
+  # With --delete the task is removed from the repository, so its dedicated
+  # worktree is forgotten from jj and its files deleted from disk.
+  setup_workspace "ci-wt-delete"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  assert_file_exists "worktree exists before checkin" "$worktree_path"
+
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+
+  local exit_code=0
+  output=$(run_tt task checkin --complete --delete "$task_id" 2>&1) || exit_code=$?
+  assert_success "checkin --complete --delete succeeds" "$exit_code"
+
+  assert_file_not_exists "worktree deleted with --delete" "$worktree_path"
+  local ws_list
+  ws_list="$(jj -R "$REPO" workspace list --no-pager -T 'name ++ "\n"' 2>/dev/null)" || ws_list=''
+  assert_not_contains "jj workspace forgotten" "$ws_list" "$task_id"
 }
 
 
 test_task_checkin__retain_worktree_flag() {
-  # With --retain-worktree, the worktree should NOT be deleted after checkin.
+  # --retain-worktree suppresses the worktree removal that --delete performs.
   setup_workspace "ci-retain-wt"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
@@ -353,10 +380,10 @@ test_task_checkin__retain_worktree_flag() {
 
   run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
 
-  # Checkin with --retain-worktree
-  run_tt task checkin --complete --retain-worktree "$task_id" >/dev/null 2>&1 || true
+  # Checkin with --delete --retain-worktree
+  run_tt task checkin --complete --delete --retain-worktree "$task_id" >/dev/null 2>&1 || true
 
-  # Worktree should still exist
+  # Worktree files should still exist
   assert_file_exists "worktree retained with --retain-worktree" "$worktree_path"
 }
 

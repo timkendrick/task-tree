@@ -65,7 +65,9 @@ tt task checkin [<task-id>] [--complete] [--rebase | --merge] [--force] [--delet
                 [--propagate-shallow] [--propagate-force] [--propagate-dry-run]
                 [--propagate-to <child-id>]]
 ```
-Merge a task branch into its parent. `--complete` marks it done first. `--delete` removes the task file after checkin. `--propagate` propagates the updated parent tip to sibling branches.
+Merge a task branch into its parent. `--complete` marks it done first. `--delete` removes the task file after checkin, along with the task's dedicated worktree if it has one (pass `--retain-worktree` to keep it). `--propagate` propagates the updated parent tip to sibling branches.
+
+Checkin never removes a worktree unless `--delete` is given; use `tt worktree delete` to tear one down on its own.
 
 `--switch` moves the `HEAD` worktree symlink to the parent task's worktree after the merge (falling back to the canonical repository root if the parent is not checked out anywhere). Without it, `HEAD` is left exactly where it was.
 
