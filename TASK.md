@@ -1,1 +1,1 @@
-.tt/task/tt-task-checkin-missing-parent-worktree-f984e31c/TASK.md
+.tt/task/bootstrap-cli-d35756ce/TASK.md
