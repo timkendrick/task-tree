@@ -23,7 +23,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --rebase                Rebase child onto parent before checkin.
 #   --merge                 Merge parent into child before checkin.
 #   --force                 Proceed even if conflicts occur.
-#   --delete                Remove child task file and subtask entry (requires DONE).
+#   --delete                Remove child task file and subtask entry (requires DONE),
+#                           along with the task's dedicated worktree if it has one.
+#   --retain-worktree       With --delete, keep the task's dedicated worktree.
 #   --switch                Point the HEAD symlink at the parent worktree after checkin.
 #   --worktree=<path>       Worktree to use when task has multiple worktrees.
 #   --repo PATH             Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
@@ -53,7 +55,8 @@ Options:
   --rebase                  Rebase child onto parent before checkin.
   --merge                   Merge parent into child before checkin.
   --force                   Proceed despite conflicts.
-  --delete                  Remove child task file (requires DONE status).
+  --delete                  Remove child task file (requires DONE status), along
+                            with the task's dedicated worktree if it has one.
   --switch                  Point the HEAD symlink at the parent worktree after checkin.
                             Falls back to the canonical repository root when the parent
                             task is not checked out in any worktree. Without this flag
@@ -67,7 +70,8 @@ Options:
   --propagate-force         Propagate despite conflicts.
   --propagate-dry-run       Show propagation plan without applying.
   --propagate-to CHILD_ID   Limit propagation to specific child (repeatable).
-  --retain-worktree         Skip worktree deletion after complete checkin.
+  --retain-worktree         With --delete, keep the task's dedicated worktree
+                            instead of removing it. No effect without --delete.
   -h, --help                Show this help.
 
 EOF
@@ -289,8 +293,8 @@ main() {
     fi
 
     # Re-read the task file: `complete` advanced the child bookmark, and the refreshed
-    # status drives the parent's subtask checkbox, the final log message, and the
-    # post-checkin worktree cleanup below.
+    # status drives the parent's subtask checkbox, the --delete precondition and the
+    # final log message.
     task_content="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || {
       log "Error: Could not read task file '$task_file' from '$child_bookmark'."
       exit 1
@@ -538,13 +542,14 @@ main() {
   fi
 
   # --- Post-checkin worktree cleanup ---
-  # On a complete checkin (DONE), if the child task had a dedicated worktree,
-  # forget the jj workspace and delete the files from disk.
-  # Suppressed by --retain-worktree or if status is not DONE.
+  # Only with --delete: the task is being removed from the repository, so its
+  # dedicated worktree (if any) is forgotten from jj and deleted from disk.
+  # Suppressed by --retain-worktree. A checkin without --delete never removes
+  # a worktree; use `tt worktree delete` for that.
   # IMPORTANT: This MUST be the last thing main() does. After forget_worktree,
   # the script's own files may have been deleted from disk (if the checkin
   # was run from within the child worktree), so no further commands should run.
-  if [[ "$task_status" == "DONE" ]] && [[ "$retain_worktree" != true ]]; then
+  if [[ "$delete" == true ]] && [[ "$retain_worktree" != true ]]; then
     # child_worktree is the dedicated worktree if one existed, otherwise the
     # canonical repository root. Only clean up in the former case. The
     # comparison must use the canonical root rather than $repo: when checkin
@@ -556,12 +561,18 @@ main() {
     repo_root="$(resolve_canonical_repo "$repo")"
     canon_repo="$(realpath "$repo_root" 2>/dev/null)"       || canon_repo="$repo_root"
     if [[ "$canon_child" != "$canon_repo" ]]; then
+      # The delegated `tt task delete` deregisters the jj workspaces of every
+      # task in the deleted subtree but leaves their files on disk, so the
+      # workspace name usually no longer resolves by this point; remove the
+      # files directly in that case.
       local ws_name
       if ws_name="$(resolve_workspace_name "$repo" "$child_worktree")"; then
         forget_worktree "$repo" "$ws_name" "$child_worktree"
-        # Do NOT execute any further commands after forget_worktree.
-        # The script's own files may have been deleted from disk.
+      else
+        rm -rf "$child_worktree"
       fi
+      # Do NOT execute any further commands here.
+      # The script's own files may have been deleted from disk.
     fi
   fi
 }
