@@ -195,8 +195,8 @@ test_task_checkin__head_no_symlink_loop_when_working_from_head_directory() {
   # so find_repo_root resolves $repo via `pwd` to the symlink path.
   local head_path="$VIRTUAL/HEAD"
   output="" exit_code=0
-  output=$(cd "$head_path" && unset TT_REPO && "$TT" task checkin --complete --propagate "$task_id" 2>&1) || exit_code=$?
-  assert_success "checkin --complete --propagate succeeds" "$exit_code"
+  output=$(cd "$head_path" && unset TT_REPO && "$TT" task checkin --complete --propagate --switch "$task_id" 2>&1) || exit_code=$?
+  assert_success "checkin --complete --propagate --switch succeeds" "$exit_code"
 
   local head_target
   head_target="$(readlink "$VIRTUAL/HEAD")"
@@ -213,7 +213,7 @@ test_task_checkin__head_symlink_is_absolute() {
   checkpoint_task "Work" >/dev/null || true
   complete_task >/dev/null || true
 
-  run_tt task checkin "$task_id" >/dev/null 2>&1 || true
+  run_tt task checkin --switch "$task_id" >/dev/null 2>&1 || true
 
   local head_target
   head_target="$(readlink "$VIRTUAL/HEAD")"
@@ -222,9 +222,9 @@ test_task_checkin__head_symlink_is_absolute() {
 
 
 test_task_checkin__head_symlink_updated_from_worktree() {
-  # Regression: when running `tt task checkin` from inside a task's dedicated
-  # worktree, HEAD should be updated to point to the parent's workspace, not
-  # left pointing at the task worktree.
+  # With --switch, running `tt task checkin` from inside a task's dedicated
+  # worktree updates HEAD to point at the parent's workspace, rather than
+  # leaving it pointing at the task worktree.
   setup_workspace "ci-head-wt-switch"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
@@ -244,7 +244,7 @@ test_task_checkin__head_symlink_updated_from_worktree() {
 
   # Run checkin FROM WITHIN the worktree (no TT_REPO set)
   local exit_code=0
-  output=$(run_tt_in_worktree "$worktree_path" task checkin --complete 2>&1) || exit_code=$?
+  output=$(run_tt_in_worktree "$worktree_path" task checkin --complete --switch 2>&1) || exit_code=$?
 
   assert_success "checkin from worktree succeeds" "$exit_code"
 
@@ -252,12 +252,73 @@ test_task_checkin__head_symlink_updated_from_worktree() {
   head_after="$(readlink "$VIRTUAL/HEAD")"
   assert_not_contains "HEAD no longer points to task worktree" "$head_after" "$task_id"
   assert_neq "HEAD was updated from task worktree" "$head_after" "$head_before"
+  assert_file_exists "HEAD target exists" "$head_after"
+  assert_file_exists "child worktree retained without --delete" "$worktree_path"
 }
 
 
-test_task_checkin__worktree_deleted_after_complete_checkin() {
-  # After a complete (DONE) checkin the task's dedicated worktree should be
-  # forgotten from jj and its files deleted from disk.
+test_task_checkin__switch_targets_repo_root_when_parent_has_no_worktree() {
+  # Regression: a checkin that deletes the task, run with --switch from the
+  # child's own dedicated worktree while the parent task is not checked out
+  # anywhere, used to point HEAD at the child worktree (because $repo resolves
+  # to it) and then delete that worktree, leaving a dangling HEAD symlink.
+  # HEAD must instead fall back to the canonical repository root.
+  setup_workspace "ci-switch-no-parent-wt"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  # Give the task a dedicated worktree and point HEAD at it
+  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+
+  # Move the main workspace off the project branch so the parent task is not
+  # checked out in any worktree.
+  jj -R "$REPO" new main >/dev/null 2>&1 || true
+
+  local exit_code=0
+  output=$(run_tt_in_worktree "$worktree_path" task checkin --complete --delete --switch 2>&1) || exit_code=$?
+  assert_success "checkin with --delete --switch succeeds" "$exit_code"
+
+  assert_file_not_exists "child worktree deleted" "$worktree_path"
+
+  local head_after
+  head_after="$(readlink "$VIRTUAL/HEAD")"
+  assert_eq "HEAD points at canonical repo root" "$head_after" "$REPO"
+  assert_file_exists "HEAD is not dangling" "$VIRTUAL/HEAD"
+}
+
+
+test_task_checkin__head_not_switched_without_switch_flag() {
+  # Without --switch, checkin must leave the HEAD symlink exactly as it was,
+  # even when HEAD points at the task being checked in.
+  setup_workspace "ci-head-no-flag"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+
+  local head_before
+  head_before="$(readlink "$VIRTUAL/HEAD")"
+
+  # Partial checkin, so the worktree survives and HEAD stays resolvable
+  local exit_code=0
+  output=$(run_tt_in_worktree "$worktree_path" task checkin 2>&1) || exit_code=$?
+  assert_success "checkin without --switch succeeds" "$exit_code"
+
+  local head_after
+  head_after="$(readlink "$VIRTUAL/HEAD")"
+  assert_eq "HEAD unchanged without --switch" "$head_after" "$head_before"
+}
+
+
+test_task_checkin__worktree_retained_after_complete_checkin() {
+  # A complete (DONE) checkin must NOT remove the task's dedicated worktree:
+  # tearing down a worktree is an explicit step, requested with --delete.
   setup_workspace "ci-wt-cleanup"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
@@ -274,13 +335,40 @@ test_task_checkin__worktree_deleted_after_complete_checkin() {
   # Complete checkin (from main repo, with explicit task_id)
   run_tt task checkin --complete "$task_id" >/dev/null 2>&1 || true
 
-  # Worktree should be deleted
-  assert_file_not_exists "worktree deleted after complete checkin" "$worktree_path"
+  assert_file_exists "worktree retained after complete checkin" "$worktree_path"
+  local ws_list
+  ws_list="$(jj -R "$REPO" workspace list --no-pager -T 'name ++ "\n"' 2>/dev/null)" || ws_list=''
+  assert_contains "jj workspace still registered" "$ws_list" "$task_id"
+}
+
+
+test_task_checkin__worktree_deleted_with_delete() {
+  # With --delete the task is removed from the repository, so its dedicated
+  # worktree is forgotten from jj and its files deleted from disk.
+  setup_workspace "ci-wt-delete"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  assert_file_exists "worktree exists before checkin" "$worktree_path"
+
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+
+  local exit_code=0
+  output=$(run_tt task checkin --complete --delete "$task_id" 2>&1) || exit_code=$?
+  assert_success "checkin --complete --delete succeeds" "$exit_code"
+
+  assert_file_not_exists "worktree deleted with --delete" "$worktree_path"
+  local ws_list
+  ws_list="$(jj -R "$REPO" workspace list --no-pager -T 'name ++ "\n"' 2>/dev/null)" || ws_list=''
+  assert_not_contains "jj workspace forgotten" "$ws_list" "$task_id"
 }
 
 
 test_task_checkin__retain_worktree_flag() {
-  # With --retain-worktree, the worktree should NOT be deleted after checkin.
+  # --retain-worktree suppresses the worktree removal that --delete performs.
   setup_workspace "ci-retain-wt"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
@@ -292,10 +380,10 @@ test_task_checkin__retain_worktree_flag() {
 
   run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
 
-  # Checkin with --retain-worktree
-  run_tt task checkin --complete --retain-worktree "$task_id" >/dev/null 2>&1 || true
+  # Checkin with --delete --retain-worktree
+  run_tt task checkin --complete --delete --retain-worktree "$task_id" >/dev/null 2>&1 || true
 
-  # Worktree should still exist
+  # Worktree files should still exist
   assert_file_exists "worktree retained with --retain-worktree" "$worktree_path"
 }
 
@@ -450,8 +538,8 @@ test_task_checkin__context_before_subtask_in_parent() {
 }
 
 test_task_checkin__head_not_switched_when_checkin_non_active_task() {
-  # Bug: when checking in a task that is NOT the active task (HEAD points to
-  # a different task), HEAD should be left untouched.
+  # Without --switch, checking in a task that is NOT the active task (HEAD
+  # points to a different task) leaves HEAD untouched.
   setup_workspace "ci-head-no-switch"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
@@ -483,6 +571,43 @@ test_task_checkin__head_not_switched_when_checkin_non_active_task() {
   local head_after
   head_after="$(readlink "$VIRTUAL/HEAD")"
   assert_eq "HEAD unchanged after checkin of non-active task" "$head_after" "$head_before"
+}
+
+
+test_task_checkin__switch_applies_when_checkin_non_active_task() {
+  # --switch is unconditional: it moves HEAD to the parent worktree even when
+  # HEAD currently points at an unrelated task.
+  setup_workspace "ci-head-switch-non-active"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "a" "Task A") || true
+  task_b=$(create_task "b" "Task B") || true
+
+  # Propagate parent to task A so it has task B's subtask entry (avoids conflict)
+  run_tt task propagate --from "$proj_id" --to "$task_a" >/dev/null 2>&1 || true
+
+  run_tt task checkout "$task_a" --worktree --switch >/dev/null 2>&1 || true
+  local worktree_a="$VIRTUAL/$task_a"
+  run_tt_in_worktree "$worktree_a" task checkpoint -m "Work on A" >/dev/null 2>&1 || true
+  run_tt_in_worktree "$worktree_a" task complete >/dev/null 2>&1 || true
+
+  # Give task B its own worktree and switch HEAD to it
+  run_tt task checkout "$task_b" --worktree --switch >/dev/null 2>&1 || true
+  local worktree_b="$VIRTUAL/$task_b"
+
+  local head_before
+  head_before="$(readlink "$VIRTUAL/HEAD")"
+
+  # Checkin task A by explicit ID from task B's worktree (we are NOT on task A)
+  local exit_code=0
+  output=$(run_tt_in_worktree "$worktree_b" task checkin --switch "$task_a" 2>&1) || exit_code=$?
+  assert_success "checkin of non-active task with --switch succeeds" "$exit_code"
+
+  # HEAD should have moved to the parent (project) worktree
+  local head_after
+  head_after="$(readlink "$VIRTUAL/HEAD")"
+  assert_neq "HEAD moved with --switch" "$head_after" "$head_before"
+  assert_eq "HEAD points at parent worktree" "$head_after" "$REPO"
 }
 
 test_task_checkin__context_from_stdin() {

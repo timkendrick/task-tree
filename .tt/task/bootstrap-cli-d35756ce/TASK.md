@@ -136,7 +136,7 @@ subtask: [x] task/tt-task-tree-performance-912d6429
 subtask: [x] task/fix-frontmatter-parsing-15fba71f
 subtask: [x] task/tt-worktree-show-strict-aba0d75f
 subtask: [x] task/todo-task-context-963f83ea
-subtask: [ ] task/tt-task-checkin-missing-parent-worktree-f984e31c
+subtask: [x] task/tt-task-checkin-missing-parent-worktree-f984e31c
 ---
 Implement shell script implementations of all `tt` CLI commands
 
