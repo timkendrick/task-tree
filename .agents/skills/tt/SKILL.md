@@ -60,12 +60,16 @@ Mark a task DONE. Requires all child tasks to be done, unless `--force` is given
 #### `tt task checkin`
 ```
 tt task checkin [<task-id>] [--complete] [--rebase | --merge] [--force] [--delete]
-                [--context <markdown>|-] [--retain-worktree]
+                [--context <markdown>|-] [--switch] [--retain-worktree]
                 [--propagate [--propagate-rebase | --propagate-merge]
                 [--propagate-shallow] [--propagate-force] [--propagate-dry-run]
                 [--propagate-to <child-id>]]
 ```
-Merge a task branch into its parent. `--complete` marks it done first. `--delete` removes the task file after checkin. `--propagate` propagates the updated parent tip to sibling branches.
+Merge a task branch into its parent. `--complete` marks it done first. `--delete` removes the task file after checkin, along with the task's dedicated worktree if it has one (pass `--retain-worktree` to keep it). `--propagate` propagates the updated parent tip to sibling branches.
+
+Checkin never removes a worktree unless `--delete` is given; use `tt worktree delete` to tear one down on its own.
+
+`--switch` moves the `HEAD` worktree symlink to the parent task's worktree after the merge (falling back to the canonical repository root if the parent is not checked out anywhere). Without it, `HEAD` is left exactly where it was.
 
 `--context <markdown>` provides handoff context inline. `--context -` reads context from stdin. When no `--context` is given and stdin is a TTY, an editor opens for context input (empty input = no context file created).
 
@@ -217,7 +221,7 @@ All tasks should follow the general `tt` workflow:
 
 4. **Complete the task** — Run `tt task complete [<task-id>] [--force]`. Marks the task DONE with a `Complete task:` commit. Requires all child tasks done (use `--force` to bypass). Run `tt task complete --help` for options.
 
-5. **Finish the task** — `tt task checkin [<task-id>] [--complete] [--rebase | --merge] [--delete] [--propagate]`. Merges the task into its parent. With `--complete`, runs complete first if not DONE. With `--delete`, removes the task file after checkin (requires DONE). With `--propagate`, updates sibling branches. Run `tt task checkin --help` for options.
+5. **Finish the task** — `tt task checkin [<task-id>] [--complete] [--rebase | --merge] [--delete] [--switch] [--propagate]`. Merges the task into its parent. With `--complete`, runs complete first if not DONE. With `--delete`, removes the task file after checkin (requires DONE). With `--switch`, moves `HEAD` to the parent task's worktree. With `--propagate`, updates sibling branches. Run `tt task checkin --help` for options.
 
 Note that steps 1 and 2 can be combined into a single `tt task create --checkout` command, and steps 4 and 5 can be combined into a single `tt task checkin --complete` command.
 
@@ -264,13 +268,13 @@ Work through each atomic leaf task (tasks with no incomplete children) in depend
    tt task checkpoint --message "<summary>"
    ```
 
-5. **Check in** the task and propagate to siblings:
+5. **Check in** the task and propagate to siblings, switching to the parent task afterwards:
    ```shell
-   tt task checkin --complete --propagate
+   tt task checkin --complete --propagate --switch
    ```
    If useful handoff notes exist (e.g. decisions made, API shapes chosen, caveats for dependent tasks), write a handoff document to `.agents/plans/<task-id>-handoff.md` and include them in the checkin so they propagate to sibling and parent tasks:
    ```shell
-   tt task checkin --complete --propagate --context - < .agents/plans/<task-id>-handoff.md
+   tt task checkin --complete --propagate --switch --context - < .agents/plans/<task-id>-handoff.md
    ```
 
 6. **Check in the parent** if all sibling tasks are now complete. After checking in each leaf task, inspect the parent:
@@ -306,7 +310,7 @@ Instead of implementing child tasks sequentially, spawn one agent per child task
 
 2. Each spawned agent follows the Large Tasks Phase 2 steps for its assigned child task, **with the following differences for parallel operation**:
 
-   - **Stay in the assigned worktree.** Agents must not check out other tasks or switch workspaces. Each agent is responsible only for its own task.
+   - **Stay in the assigned worktree.** Agents must not check out other tasks or switch workspaces. Each agent is responsible only for its own task. In particular, never pass `--switch` to `tt task checkin`: it would move the shared `HEAD` symlink out from under the other agents.
    - **Use the rebase-refresh idiom** when checking in, to avoid merge conflicts and stale working copies. Instead of a plain `tt task checkin`, run:
      ```shell
      tt task checkin --complete --rebase --propagate \
