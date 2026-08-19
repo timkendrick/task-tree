@@ -1,6 +1,6 @@
 ---
 title: "`tt task checkin --complete` leaves dangling `HEAD` symlink when parent task not checked out"
-status: TODO
+status: IN-PROGRESS
 created: 2026-08-19T13:11:17Z
 updated: 2026-08-19T13:11:17Z
 ---
