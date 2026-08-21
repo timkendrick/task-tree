@@ -1010,16 +1010,15 @@ Commits on that walk are classified by their description:
 
 **Title and status resolution.** These come from the task file as it exists **at the checkin commit** — the state that was checked in — rather than from the task's own branch, which may have moved on, or from the reported branch's tip, where the file may since have been deleted. A task whose file cannot be read at that revision is listed by ID alone.
 
-**Output.** Two sections, each omitted when empty, separated by a blank line that collapses along with an omitted section. Task IDs and commit IDs are written in backticks; tasks still `IN-PROGRESS` when they were checked in are flagged; each tree level is indented by two spaces; checkpoints are identified by the first eight characters of the immutable Git commit ID:
+**Output.** One line per entry, in two consecutive sections — the task tree, then the checkpoints — each omitted when it has no entries. Task IDs and commit IDs are written in backticks and separated from their description by ` - `; tasks still `IN-PROGRESS` when they were checked in are flagged; each tree level is indented by two spaces; checkpoints are identified by the first eight characters of the immutable Git commit ID:
 
 ```
 - `task/foo-abc12345` - Foo task
   - `task/foo-subtask-1-abc12345` - Foo subtask 1
   - `task/foo-subtask-2-abc12345` [IN-PROGRESS] - Foo subtask 2
 - `task/bar-abc12345` - Bar task
-
-- `abcd1234` Regenerate types
-- `cdef5678` Fix deployment issues
+- `abcd1234` - Regenerate types
+- `cdef5678` - Fix deployment issues
 ```
 
 When neither section has content the command writes nothing at all and exits successfully. The command is read-only: it runs no hooks, opens no transaction, and never snapshots the working copy.
