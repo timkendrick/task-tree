@@ -83,12 +83,12 @@ render_checkpoint() {
   printf -- '- `%s` %s\n' "${commit_id:0:8}" "$message"
 }
 
-# Usage: read_task_field REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX FIELD
-# Prints the given frontmatter field of TASK_ID's task file as it exists at REV.
-# Prints nothing when the task file cannot be read there, which happens when the
-# task was deleted or renamed as part of the checkin.
-read_task_field() {
-  local repo="$1" rev="$2" task_id="$3" task_prefix="$4" project_prefix="$5" field="$6"
+# Usage: read_task_metadata REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Prints "<status>\t<title>" for TASK_ID's task file as it exists at REV.
+# Prints nothing when the task file cannot be read there, leaving the task to be
+# reported by ID alone.
+read_task_metadata() {
+  local repo="$1" rev="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
 
   local suffix
   suffix="$(resolve_task_suffix "$task_id" "$task_prefix" "$project_prefix")"
@@ -98,10 +98,29 @@ read_task_field() {
   content="$(jj_show_at_revision "$repo" "$rev" "$(task_file_path "$suffix")")" || return 0
   [[ -z "$content" ]] && return 0
 
-  case "$field" in
-    title)  parse_quoted_frontmatter_field "$content" "$field" ;;
-    *)      parse_frontmatter_field "$content" "$field" ;;
-  esac
+  printf '%s\t%s\n' \
+    "$(parse_frontmatter_field "$content" 'status')" \
+    "$(parse_quoted_frontmatter_field "$content" 'title')"
+}
+
+# Usage: record_operation_fields RECORD OPERATION
+# Decodes a mainline commit record describing the given task operation, printing:
+#   <commit-id>\t<parent-ids>\t<entity-id>\t<description>
+# Exit 1 when RECORD is empty or does not describe that task operation.
+record_operation_fields() {
+  local record="$1" operation="$2"
+
+  local commit_id _change_id _timestamp parents description
+  IFS=$'\t' read -r commit_id _change_id _timestamp parents description <<< "$record"
+  [[ -z "$commit_id" ]] && return 1
+
+  local parsed
+  parsed="$(parse_commit_message "$description")" || return 1
+  local namespace entity record_operation text
+  IFS=$'\t' read -r namespace entity record_operation text <<< "$parsed"
+  [[ "$namespace" == 'task' && "$record_operation" == "$operation" ]] || return 1
+
+  printf '%s\t%s\t%s\t%s\n' "$commit_id" "$parents" "$entity" "$text"
 }
 
 # Usage: render_entries REPO TASK_PREFIX PROJECT_PREFIX DEPTH  (records on stdin)
@@ -122,15 +141,12 @@ render_entries() {
   # "<mainline-parent>:<merged-parent>" pairs, one per checkin.
   local -a entry_task=() entry_commits=() entry_arms=()
 
-  local commit_id _change_id _timestamp parents description
-  while IFS=$'\t' read -r commit_id _change_id _timestamp parents description; do
-    [[ -z "$commit_id" ]] && continue
-
-    local parsed
-    parsed="$(parse_commit_message "$description")" || continue
-    local namespace entity operation text
-    IFS=$'\t' read -r namespace entity operation text <<< "$parsed"
-    [[ "$namespace" == 'task' && "$operation" == 'checkin' ]] || continue
+  local record
+  while IFS= read -r record; do
+    local fields
+    fields="$(record_operation_fields "$record" 'checkin')" || continue
+    local commit_id parents entity _text
+    IFS=$'\t' read -r commit_id parents entity _text <<< "$fields"
 
     # A checkin is a merge commit whose first parent is the branch it landed on and
     # whose second parent is the handoff commit holding the work being merged in.
@@ -157,9 +173,12 @@ render_entries() {
     # from the task's own branch (which may have moved on since) or from the tip of
     # the branch being reported on (where the file may since have been deleted).
     local latest_commit="${entry_commits[$entry_index]##* }"
-    local title status
-    title="$(read_task_field "$repo" "$latest_commit" "$task_id" "$task_prefix" "$project_prefix" 'title')"
-    status="$(read_task_field "$repo" "$latest_commit" "$task_id" "$task_prefix" "$project_prefix" 'status')"
+    local metadata status='' title=''
+    metadata="$(read_task_metadata \
+      "$repo" "$latest_commit" "$task_id" "$task_prefix" "$project_prefix")"
+    if [[ -n "$metadata" ]]; then
+      IFS=$'\t' read -r status title <<< "$metadata"
+    fi
 
     render_entry "$depth" "$task_id" "$title" "$status"
 
@@ -265,14 +284,12 @@ main() {
 
   # --- Checkpoints recorded directly on the branch ---
   local -a checkpoint_lines=()
-  local commit_id _change_id _timestamp _parents description
   for record in ${records[@]+"${records[@]}"}; do
-    IFS=$'\t' read -r commit_id _change_id _timestamp _parents description <<< "$record"
-    local parsed
-    parsed="$(parse_commit_message "$description")" || continue
-    local namespace entity operation text
-    IFS=$'\t' read -r namespace entity operation text <<< "$parsed"
-    if [[ "$namespace" == 'task' && "$operation" == 'checkpoint' && "$entity" == "$task_id" ]]; then
+    local fields
+    fields="$(record_operation_fields "$record" 'checkpoint')" || continue
+    local commit_id _parents entity text
+    IFS=$'\t' read -r commit_id _parents entity text <<< "$fields"
+    if [[ "$entity" == "$task_id" ]]; then
       checkpoint_lines+=("$(render_checkpoint "$commit_id" "$text")")
     fi
   done
