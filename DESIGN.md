@@ -363,7 +363,7 @@ The command exits with an error if none of these resolves to a valid jj reposito
 
 - **`tt task diff [--task <task-id>] [--include-metadata] [--repo PATH]`** — Show the diff of all unmerged commits on a task branch since it diverged from its parent branch. Resolves the same range as `tt task revset` (without `--task`: the current task, with an upper bound of `@` if the working copy is non-empty or `@-` if empty; with `--task`: the task bookmark itself), then relays the output of `jj diff --git --from <fork-point> --to <upper-bound>` directly, where `<fork-point>` is the fork point between the parent bookmark and the upper bound. The command emits standard Git-format diff output suitable for programmatic consumption by external tools. Changes to tt metadata — the `.tt/` directory and the repo-root `TASK.md` symlink — are excluded by default via the jj fileset, so the diff shows only project content; `--include-metadata` disables this filtering. Exits with an error if the task cannot be located, the bookmark does not exist, or the fork point cannot be resolved. No hooks.
 
-- **`tt task changelog [--task <task-id>] [--since <revision>] [--repo PATH]`** — Summarize the work checked into a task branch since a reference commit: the tasks checked into it, as a tree, followed by the checkpoints recorded directly on it, as a flat list. `--task` defaults to the current task; the branch is always reported up to its bookmark, never beyond. The reference commit is the most recent common ancestor of the branch and `--since`, which defaults to the branch's parent branch. Exits with an error if the task cannot be located, the branch is not a task or project branch, the revision cannot be resolved, there is no common ancestor, or no parent branch exists and no `--since` was given. Writes nothing to stdout when no work was checked in since the reference commit. See §6.14. No hooks.
+- **`tt task changelog [--task <task-id>] [--since <revision>] [--depth <n>] [--repo PATH]`** — Summarize the work checked into a task branch since a reference commit: the tasks checked into it, as a tree, followed by the checkpoints recorded directly on it, as a flat list. `--task` defaults to the current task; the branch is always reported up to its bookmark, never beyond. The reference commit is the most recent common ancestor of the branch and `--since`, which defaults to the branch's parent branch. `--depth` limits how many levels of subtask are reported (`0` reports checkpoints only, `1` adds the tasks checked into the branch, `2` also adds the tasks checked into those, and so on); without it every level is reported. Exits with an error if the task cannot be located, the branch is not a task or project branch, the revision cannot be resolved, there is no common ancestor, no parent branch exists and no `--since` was given, or `--depth` is not a non-negative integer. Writes nothing to stdout when no work was checked in since the reference commit. See §6.14. No hooks.
 
 - **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step. No hooks.
 
@@ -1004,20 +1004,21 @@ Commits on that walk are classified by their description:
 
 **Recursion.** A checkin merge brings in everything its task had accumulated. For a checkin with mainline parent `m` and handoff parent `h`, the work it merged is the mainline of `h` excluding everything already reachable from `m`; walking that range the same way yields the tasks checked into that subtask, which are rendered as its children, and so on recursively. Excluding `m`'s ancestors is what keeps an earlier partial checkin from being reported twice.
 
+**Depth limiting.** `--depth <n>` caps how many levels of the tree are reported: `0` suppresses the tree entirely, leaving only the checkpoint section; `1` reports the tasks checked into the branch but not what was checked into them; each further level adds one more generation. Omitting `--depth` reports every level. Suppressed levels are simply absent from the output — nothing marks the truncation — and the levels that are omitted are never queried, so a shallow report costs proportionally fewer VCS operations.
+
 **Grouping.** A task checked in more than once — a partial checkin followed by a later one — appears once per parent entry: the entry holds the position of its first checkin, its title and status are resolved from its most recent checkin, and its children combine the work merged by all of them.
 
 **Title and status resolution.** These come from the task file as it exists **at the checkin commit** — the state that was checked in — rather than from the task's own branch, which may have moved on, or from the reported branch's tip, where the file may since have been deleted. A task whose file cannot be read at that revision is listed by ID alone.
 
-**Output.** Two sections, each omitted when empty, separated by a blank line that collapses along with an omitted section. Task IDs and commit IDs are written in backticks; tasks still `IN-PROGRESS` when they were checked in are flagged; each tree level is indented by two spaces; checkpoints are identified by the first eight characters of the immutable Git commit ID:
+**Output.** One line per entry, in two consecutive sections — the task tree, then the checkpoints — each omitted when it has no entries. Task IDs and commit IDs are written in backticks and separated from their description by ` - `; tasks still `IN-PROGRESS` when they were checked in are flagged; each tree level is indented by two spaces; checkpoints are identified by the first eight characters of the immutable Git commit ID:
 
 ```
 - `task/foo-abc12345` - Foo task
   - `task/foo-subtask-1-abc12345` - Foo subtask 1
   - `task/foo-subtask-2-abc12345` [IN-PROGRESS] - Foo subtask 2
 - `task/bar-abc12345` - Bar task
-
-- `abcd1234` Regenerate types
-- `cdef5678` Fix deployment issues
+- `abcd1234` - Regenerate types
+- `cdef5678` - Fix deployment issues
 ```
 
 When neither section has content the command writes nothing at all and exits successfully. The command is read-only: it runs no hooks, opens no transaction, and never snapshots the working copy.
