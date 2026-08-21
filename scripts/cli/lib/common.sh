@@ -71,6 +71,49 @@ format_commit_message() {
   fi
 }
 
+# Usage: parse_commit_message MESSAGE
+#
+# Inverse of format_commit_message: splits a tt commit message into its parts.
+# MESSAGE is a single line, e.g. the first line of a commit description.
+#
+# Outputs a single tab-separated record to stdout:
+#   <namespace>\t<entity-id>\t<operation>\t<description>
+#
+# <entity-id> is empty for messages without one (e.g. "[tt:workspace:init]").
+# Entity IDs never contain a colon but operations may (e.g. "context:add"), so a
+# tag holding three or more colon-separated fields is read as namespace, entity
+# ID, and the remaining fields rejoined as the operation.
+#
+# Exit 0: message parsed (record printed to stdout).
+# Exit 1: MESSAGE is not a tt commit message (nothing printed).
+parse_commit_message() {
+  local message="$1"
+
+  [[ "$message" == '[tt:'* ]] || return 1
+  local remainder="${message#\[tt:}"
+  [[ "$remainder" == *']'* ]] || return 1
+
+  local tag="${remainder%%\]*}"
+  local description="${remainder#*\]}"
+  description="${description# }"
+
+  # A tag without a colon carries no operation, so it is not a tt commit message.
+  [[ "$tag" == *:* ]] || return 1
+  local namespace="${tag%%:*}"
+  local rest="${tag#*:}"
+
+  local entity_id operation
+  if [[ "$rest" == *:* ]]; then
+    entity_id="${rest%%:*}"
+    operation="${rest#*:}"
+  else
+    entity_id=''
+    operation="$rest"
+  fi
+
+  printf '%s\t%s\t%s\t%s\n' "$namespace" "$entity_id" "$operation" "$description"
+}
+
 # ---------------------------------------------------------------------------
 # Shared slug / ID / timestamp helpers (used by create, edit, add-context)
 # ---------------------------------------------------------------------------
@@ -693,6 +736,29 @@ resolve_task_fork_point() {
   fi
 
   printf '%s' "$fork_point"
+}
+
+# Usage: mainline_commit_records REPO TIP BASE
+#
+# Outputs one record per commit on TIP's first-parent mainline that is not an
+# ancestor of BASE, oldest first. Records are tab-separated:
+#   <commit-id>\t<change-id>\t<timestamp>\t<parent-ids>\t<description-first-line>
+#
+# <parent-ids> is a space-separated list of full commit IDs; a merge commit lists
+# the branch it was created on first and the branch merged into it second.
+# <timestamp> is the committer timestamp in ISO 8601 UTC. The description comes
+# last so a tab inside a commit message cannot displace the structured fields.
+#
+# Following first parents only excludes commits that arrived through a merge:
+# those belong to the branch that was merged in, not to TIP's own mainline.
+#
+# Returns jj's exit code; nothing is printed if the revset cannot be resolved.
+mainline_commit_records() {
+  local repo="$1" tip="$2" base="$3"
+  jj -R "$repo" --ignore-working-copy log \
+    -r "first_ancestors($tip) ~ ::$base" --no-graph --reversed \
+    -T 'commit_id ++ "\t" ++ change_id ++ "\t" ++ committer.timestamp().utc().format("%Y-%m-%dT%H:%M:%SZ") ++ "\t" ++ parents.map(|p| p.commit_id()).join(" ") ++ "\t" ++ description.first_line() ++ "\n"' \
+    2>/dev/null
 }
 
 # Usage: find_parent_project REPO TASK_ID TASK_PREFIX PROJECT_PREFIX
