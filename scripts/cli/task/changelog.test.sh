@@ -4,12 +4,13 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
 
 
-test_task_changelog__nested_tree_and_checkpoints() {
-  setup_workspace "changelog-nested"
+# Builds a project branch holding a two-level task tree (task A, with subtask A1
+# checked into it) plus a checkpoint recorded directly on the project branch.
+# Sets proj_id, task_a and task_a1.
+_setup_two_level_tree() {
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
 
-  # Task A owns a subtask A1, so A's checkin carries A1's checkin with it.
   task_a=$(create_task "a" "Task A") || true
   checkout_task "$task_a" >/dev/null || true
   task_a1=$(create_task "a1" "Task A1") || true
@@ -21,22 +22,91 @@ test_task_changelog__nested_tree_and_checkpoints() {
   checkout_task "$task_a" >/dev/null || true
   run_tt task checkin "$task_a" --complete >/dev/null 2>&1 || true
 
-  # Work recorded directly on the project branch, after the subtask checkins.
   checkout_task "$proj_id" >/dev/null || true
   echo "p" > "$TT_REPO/p.txt"
   checkpoint_task "project work" >/dev/null || true
+}
+
+
+test_task_changelog__nested_tree_and_checkpoints() {
+  setup_workspace "changelog-nested"
+  _setup_two_level_tree
 
   output="" exit_code=0
   output=$(run_tt task changelog --since main 2>/dev/null) || exit_code=$?
   assert_success "changelog succeeds" "$exit_code"
   assert_matches "task A at top level" "$output" "^- \`${task_a}\` - Task A$"
   assert_matches "task A1 nested below A" "$output" "^  - \`${task_a1}\` - Task A1$"
-  assert_matches "checkpoint line with 8-char git id" "$output" '^- `[0-9a-f]{8}` project work$'
+  assert_matches "checkpoint line with 8-char git id" "$output" '^- `[0-9a-f]{8}` - project work$'
   assert_not_contains "no in-progress markers" "$output" "[IN-PROGRESS]"
-  # Tree section, blank separator line, checkpoint section.
-  assert_eq "sections separated by a blank line" \
-    "$(printf '%s\n' "$output" | sed -n '3p')" ""
+  # The checkpoint section follows the tree section directly, with no blank line.
+  assert_matches "checkpoint follows the tree immediately" \
+    "$(printf '%s\n' "$output" | sed -n '3p')" '^- `[0-9a-f]{8}` - project work$'
+  assert_not_matches "no blank line between sections" "$output" '^$'
   assert_line_count "one line per task plus one checkpoint" "$output" 3
+}
+
+
+test_task_changelog__depth_limits_subtask_levels() {
+  setup_workspace "changelog-depth"
+  _setup_two_level_tree
+
+  depth_0="" depth_1="" depth_2="" unlimited="" exit_code=0
+  depth_0=$(run_tt task changelog --since main --depth 0 2>/dev/null) || exit_code=$?
+  depth_1=$(run_tt task changelog --since main --depth 1 2>/dev/null) || exit_code=$?
+  depth_2=$(run_tt task changelog --since main --depth 2 2>/dev/null) || exit_code=$?
+  unlimited=$(run_tt task changelog --since main 2>/dev/null) || exit_code=$?
+  assert_success "changelog succeeds at every depth" "$exit_code"
+
+  assert_eq "depth 0 reports checkpoints only" \
+    "$depth_0" "$(printf -- '- `%s` - project work' "$(get_bookmark_commit "$proj_id" | cut -c1-8)")"
+
+  assert_matches "depth 1 reports the checked-in task" "$depth_1" "^- \`${task_a}\` - Task A$"
+  assert_not_contains "depth 1 omits its subtask" "$depth_1" "$task_a1"
+  assert_contains "depth 1 still reports checkpoints" "$depth_1" "project work"
+
+  assert_matches "depth 2 reports the nested subtask" "$depth_2" "^  - \`${task_a1}\` - Task A1$"
+  assert_eq "omitted --depth matches the deepest level" "$unlimited" "$depth_2"
+}
+
+
+test_task_changelog__depth_zero_without_checkpoints_is_silent() {
+  setup_workspace "changelog-depth-zero"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "work" > "$TT_REPO/work.txt"
+  checkpoint_task "t work" >/dev/null || true
+  run_tt task checkin "$task_id" --complete >/dev/null 2>&1 || true
+
+  output="" exit_code=0
+  output=$(run_tt task changelog --task "$proj_id" --since main --depth 0 2>/dev/null) || exit_code=$?
+  assert_success "changelog succeeds" "$exit_code"
+  assert_output_empty "no output when only subtask checkins exist" "$output"
+}
+
+
+test_task_changelog__invalid_depth_rejected() {
+  setup_workspace "changelog-depth-invalid"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  checkpoint_task "work" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task changelog --depth "abc" 2>&1) || exit_code=$?
+  assert_failure "non-numeric depth rejected" "$exit_code"
+  assert_contains "usage shown" "$output" "Usage:"
+
+  exit_code=0
+  run_tt task changelog --depth "-1" >/dev/null 2>&1 || exit_code=$?
+  assert_failure "negative depth rejected" "$exit_code"
+
+  exit_code=0
+  run_tt task changelog --depth >/dev/null 2>&1 || exit_code=$?
+  assert_failure "missing depth value rejected" "$exit_code"
 }
 
 
@@ -56,7 +126,7 @@ test_task_changelog__checkpoint_ids_are_git_commit_ids() {
   output=$(run_tt task changelog 2>/dev/null) || exit_code=$?
   assert_success "changelog succeeds" "$exit_code"
   assert_eq "checkpoint line uses the git commit id" \
-    "$output" "$(printf -- '- `%s` recorded work' "${commit_id:0:8}")"
+    "$output" "$(printf -- '- `%s` - recorded work' "${commit_id:0:8}")"
   assert_not_contains "jj change id not used" "$output" "$change_id"
 }
 
@@ -88,7 +158,7 @@ test_task_changelog__checkins_only() {
   output="" exit_code=0
   output=$(run_tt task changelog --task "$proj_id" --since main 2>/dev/null) || exit_code=$?
   assert_success "changelog succeeds" "$exit_code"
-  assert_eq "tree section alone, with no separator" \
+  assert_eq "tree section alone" \
     "$output" "$(printf -- '- `%s` - T' "$task_id")"
 }
 
@@ -205,7 +275,7 @@ test_task_changelog__explicit_task() {
   output="" exit_code=0
   output=$(run_tt task changelog --task "$task_id" 2>/dev/null) || exit_code=$?
   assert_success "changelog with --task succeeds" "$exit_code"
-  assert_matches "reports the requested branch" "$output" '^- `[0-9a-f]{8}` task work$'
+  assert_matches "reports the requested branch" "$output" '^- `[0-9a-f]{8}` - task work$'
 }
 
 
