@@ -1,6 +1,6 @@
 ---
 title: "Prompt for `tt task publish` commit message"
-status: TODO
+status: IN-PROGRESS
 created: 2026-06-02T17:02:33Z
 updated: 2026-06-02T17:02:34Z
 ---

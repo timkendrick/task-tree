@@ -1,1 +1,1 @@
-.tt/task/bootstrap-cli-d35756ce/TASK.md
+.tt/task/tt-task-publish-commit-message-4062975b/TASK.md
