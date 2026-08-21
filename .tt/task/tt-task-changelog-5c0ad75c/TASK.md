@@ -2,9 +2,10 @@
 title: "Implement `tt task changelog` CLI command"
 status: IN-PROGRESS
 created: 2026-08-21T09:33:38Z
-updated: 2026-08-21T10:47:23Z
+updated: 2026-08-21T14:50:04Z
 context: context/requirements-e3effbab
 context: context/architecture-0c5e7259
+context: context/summary-5a04030b
 ---
 Add a new `tt task changelog [--task <task-id>] [--since <revision>]` command (alias `tt changelog`) that shows all work checked into the given `<task-id>` branch (defaulting to the current task), either as subtask checkins or as checkpoints directly to the task branch, since the most recent common ancestor of the tip of the task branch and `<revision>` (defaulting to the most recent common ancestor of the task branch and its parent branch), a.k.a. the 'reference commit'.
 
