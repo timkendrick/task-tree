@@ -103,6 +103,12 @@ tt task diff [--task <task-id>] [--include-metadata] [--repo PATH]
 ```
 Show the diff of all unmerged commits on a task branch since it diverged from its parent branch. Output is written in standard Git diff format. Without `--task`, uses the current task and includes trailing commits and uncommitted working-copy changes. Changes to tt metadata (the `.tt/` directory and the root `TASK.md` symlink) are omitted unless `--include-metadata` is passed.
 
+#### `tt task changelog`  (alias: `tt changelog`)
+```
+tt task changelog [--task <task-id>] [--since <revision>] [--repo PATH]
+```
+Summarize the work checked into a task branch: a tree of the tasks checked into it, followed by a list of the checkpoints recorded directly on it. Covers everything since the most recent common ancestor of the branch and `--since` (default: the parent branch). Task titles and statuses are reported as they were when checked in, and tasks still in progress at that point are flagged `[IN-PROGRESS]`. Prints nothing when no work has been checked in.
+
 #### `tt task edit`
 ```
 tt task edit [<task-id>] [--title <title>] [--label <label>...] [--delete-label <label>...]
