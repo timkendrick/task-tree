@@ -213,6 +213,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt current` | `tt task current` |
 | `tt revset` | `tt task revset` |
 | `tt diff` | `tt task diff` |
+| `tt changelog` | `tt task changelog` |
 | `tt select` | `tt task select` |
 | `tt edit` | `tt task edit` |
 | `tt prompt` | `tt task prompt` |
@@ -361,6 +362,8 @@ The command exits with an error if none of these resolves to a valid jj reposito
 - **`tt task revset [--task <task-id>] [--git] [--repo PATH]`** — Print a revision range covering all unmerged commits on a task branch since it diverged from its parent branch. Without `--task`, uses the current task and includes any trailing commits beyond the task bookmark (up to `@` if working copy is non-empty, or `@-` if empty). With `--task`, the range covers only the task bookmark itself. Without `--git`, outputs a jj revset (`<parent-bookmark>..<upper-bound>`). With `--git`, outputs a git commit range (`<from>..<to>`) where `<from>` is the `commit_id` of the fork point between the parent bookmark and the upper bound, and `<to>` is the `commit_id` of the upper bound. Exits with an error if the task cannot be located or the bookmark does not exist. No hooks.
 
 - **`tt task diff [--task <task-id>] [--include-metadata] [--repo PATH]`** — Show the diff of all unmerged commits on a task branch since it diverged from its parent branch. Resolves the same range as `tt task revset` (without `--task`: the current task, with an upper bound of `@` if the working copy is non-empty or `@-` if empty; with `--task`: the task bookmark itself), then relays the output of `jj diff --git --from <fork-point> --to <upper-bound>` directly, where `<fork-point>` is the fork point between the parent bookmark and the upper bound. The command emits standard Git-format diff output suitable for programmatic consumption by external tools. Changes to tt metadata — the `.tt/` directory and the repo-root `TASK.md` symlink — are excluded by default via the jj fileset, so the diff shows only project content; `--include-metadata` disables this filtering. Exits with an error if the task cannot be located, the bookmark does not exist, or the fork point cannot be resolved. No hooks.
+
+- **`tt task changelog [--task <task-id>] [--since <revision>] [--repo PATH]`** — Summarize the work checked into a task branch since a reference commit: the tasks checked into it, as a tree, followed by the checkpoints recorded directly on it, as a flat list. `--task` defaults to the current task; the branch is always reported up to its bookmark, never beyond. The reference commit is the most recent common ancestor of the branch and `--since`, which defaults to the branch's parent branch. Exits with an error if the task cannot be located, the branch is not a task or project branch, the revision cannot be resolved, there is no common ancestor, or no parent branch exists and no `--since` was given. Writes nothing to stdout when no work was checked in since the reference commit. See §6.14. No hooks.
 
 - **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step. No hooks.
 
@@ -985,6 +988,39 @@ task/baz
 The user types the desired option in full. The built-in picker requires an openable `/dev/tty`; if there is no controlling terminal it prints an error naming `TT_SELECT` and exits 1. Note that only the built-in picker requires a terminal — a custom `TT_SELECT` command may run headlessly.
 
 **Validation.** Whichever picker is used, its stdout must match one of the offered options **exactly**. Anything else — a prefix, a decorated line, empty output — is an error (`Error: invalid selection: <value>`, exit 1). A picker command that itself exits non-zero is also an error. Selection with no options provided is an error (`Error: no options provided`).
+
+### 6.14 Changelog (`tt task changelog`)
+
+`tt task changelog` reports what landed on a task branch, using the commit conventions of §6.0 to distinguish work checked in from subtasks from work recorded directly on the branch.
+
+**Reference commit.** The report covers the branch tip back to a reference commit: the most recent common ancestor (fork point) of the branch and the revision given by `--since`, which defaults to the branch's parent branch. Because it is a common ancestor rather than the revision itself, `--since` may name any revision, including one on an unrelated branch.
+
+**Mainline walk.** Starting at the branch tip and following **first parents only**, the command visits every commit down to the reference commit. Following first parents is what separates the branch's own history from history merged into it: a checkin merge records the branch it landed on as its first parent and the incoming handoff commit as its second, and `tt task propagate --merge` likewise records the child's own tip first. Work merged in from elsewhere is therefore never mistaken for the branch's own.
+
+Commits on that walk are classified by their description:
+
+- `[tt:task:<task-id>:checkpoint] <message>` — where `<task-id>` is the branch being reported on — becomes a checkpoint entry.
+- `[tt:task:<subtask-id>:checkin] <title>` becomes a task entry.
+
+**Recursion.** A checkin merge brings in everything its task had accumulated. For a checkin with mainline parent `m` and handoff parent `h`, the work it merged is the mainline of `h` excluding everything already reachable from `m`; walking that range the same way yields the tasks checked into that subtask, which are rendered as its children, and so on recursively. Excluding `m`'s ancestors is what keeps an earlier partial checkin from being reported twice.
+
+**Grouping.** A task checked in more than once — a partial checkin followed by a later one — appears once per parent entry: the entry holds the position of its first checkin, its title and status are resolved from its most recent checkin, and its children combine the work merged by all of them.
+
+**Title and status resolution.** These come from the task file as it exists **at the checkin commit** — the state that was checked in — rather than from the task's own branch, which may have moved on, or from the reported branch's tip, where the file may since have been deleted. A task whose file cannot be read at that revision is listed by ID alone.
+
+**Output.** Two sections, each omitted when empty, separated by a blank line that collapses along with an omitted section. Task IDs and commit IDs are written in backticks; tasks still `IN-PROGRESS` when they were checked in are flagged; each tree level is indented by two spaces; checkpoints are identified by the first eight characters of the immutable Git commit ID:
+
+```
+- `task/foo-abc12345` - Foo task
+  - `task/foo-subtask-1-abc12345` - Foo subtask 1
+  - `task/foo-subtask-2-abc12345` [IN-PROGRESS] - Foo subtask 2
+- `task/bar-abc12345` - Bar task
+
+- `abcd1234` Regenerate types
+- `cdef5678` Fix deployment issues
+```
+
+When neither section has content the command writes nothing at all and exits successfully. The command is read-only: it runs no hooks, opens no transaction, and never snapshots the working copy.
 
 ## 7. Todo list generation
 
