@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt task changelog` CLI command"
-status: IN-PROGRESS
+status: DONE
 created: 2026-08-21T09:33:38Z
 updated: 2026-08-21T14:50:04Z
 context: context/requirements-e3effbab
