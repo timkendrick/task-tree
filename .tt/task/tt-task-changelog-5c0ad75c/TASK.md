@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt task changelog` CLI command"
-status: TODO
+status: IN-PROGRESS
 created: 2026-08-21T09:33:38Z
 updated: 2026-08-21T09:33:39Z
 ---
