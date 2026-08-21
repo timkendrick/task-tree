@@ -37,11 +37,12 @@ test_task_changelog__nested_tree_and_checkpoints() {
   assert_success "changelog succeeds" "$exit_code"
   assert_matches "task A at top level" "$output" "^- \`${task_a}\` - Task A$"
   assert_matches "task A1 nested below A" "$output" "^  - \`${task_a1}\` - Task A1$"
-  assert_matches "checkpoint line with 8-char git id" "$output" '^- `[0-9a-f]{8}` project work$'
+  assert_matches "checkpoint line with 8-char git id" "$output" '^- `[0-9a-f]{8}` - project work$'
   assert_not_contains "no in-progress markers" "$output" "[IN-PROGRESS]"
-  # Tree section, blank separator line, checkpoint section.
-  assert_eq "sections separated by a blank line" \
-    "$(printf '%s\n' "$output" | sed -n '3p')" ""
+  # The checkpoint section follows the tree section directly, with no blank line.
+  assert_matches "checkpoint follows the tree immediately" \
+    "$(printf '%s\n' "$output" | sed -n '3p')" '^- `[0-9a-f]{8}` - project work$'
+  assert_not_matches "no blank line between sections" "$output" '^$'
   assert_line_count "one line per task plus one checkpoint" "$output" 3
 }
 
@@ -58,7 +59,7 @@ test_task_changelog__depth_limits_subtask_levels() {
   assert_success "changelog succeeds at every depth" "$exit_code"
 
   assert_eq "depth 0 reports checkpoints only" \
-    "$depth_0" "$(printf -- '- `%s` project work' "$(get_bookmark_commit "$proj_id" | cut -c1-8)")"
+    "$depth_0" "$(printf -- '- `%s` - project work' "$(get_bookmark_commit "$proj_id" | cut -c1-8)")"
 
   assert_matches "depth 1 reports the checked-in task" "$depth_1" "^- \`${task_a}\` - Task A$"
   assert_not_contains "depth 1 omits its subtask" "$depth_1" "$task_a1"
@@ -125,7 +126,7 @@ test_task_changelog__checkpoint_ids_are_git_commit_ids() {
   output=$(run_tt task changelog 2>/dev/null) || exit_code=$?
   assert_success "changelog succeeds" "$exit_code"
   assert_eq "checkpoint line uses the git commit id" \
-    "$output" "$(printf -- '- `%s` recorded work' "${commit_id:0:8}")"
+    "$output" "$(printf -- '- `%s` - recorded work' "${commit_id:0:8}")"
   assert_not_contains "jj change id not used" "$output" "$change_id"
 }
 
@@ -157,7 +158,7 @@ test_task_changelog__checkins_only() {
   output="" exit_code=0
   output=$(run_tt task changelog --task "$proj_id" --since main 2>/dev/null) || exit_code=$?
   assert_success "changelog succeeds" "$exit_code"
-  assert_eq "tree section alone, with no separator" \
+  assert_eq "tree section alone" \
     "$output" "$(printf -- '- `%s` - T' "$task_id")"
 }
 
@@ -274,7 +275,7 @@ test_task_changelog__explicit_task() {
   output="" exit_code=0
   output=$(run_tt task changelog --task "$task_id" 2>/dev/null) || exit_code=$?
   assert_success "changelog with --task succeeds" "$exit_code"
-  assert_matches "reports the requested branch" "$output" '^- `[0-9a-f]{8}` task work$'
+  assert_matches "reports the requested branch" "$output" '^- `[0-9a-f]{8}` - task work$'
 }
 
 

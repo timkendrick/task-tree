@@ -22,7 +22,8 @@ usage() {
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--since <revision>] [--depth <n>] [--repo PATH]
 
 Summarize the work checked into a task branch since a reference commit: the tasks
-checked into it (as a tree) and the checkpoints made directly to it (as a list).
+checked into it (as a tree) followed by the checkpoints made directly to it (as a
+list).
 
 The reference commit is the most recent common ancestor of the task branch and
 <revision>, which defaults to the task's parent branch. Nothing is written to
@@ -86,7 +87,7 @@ render_entry() {
 # Prints one checkpoint line, identified by the 8-character Git commit ID.
 render_checkpoint() {
   local commit_id="$1" message="$2"
-  printf -- '- `%s` %s\n' "${commit_id:0:8}" "$message"
+  printf -- '- `%s` - %s\n' "${commit_id:0:8}" "$message"
 }
 
 # Usage: read_task_metadata REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
@@ -318,12 +319,9 @@ main() {
       | render_entries "$repo" "$task_prefix" "$project_prefix" 0 "$max_depth")"
   fi
 
-  # --- Emit the report, collapsing the separator around omitted sections ---
+  # --- Emit the report ---
   if [[ -n "$tree_output" ]]; then
     printf '%s\n' "$tree_output"
-    if [[ ${#checkpoint_lines[@]} -gt 0 ]]; then
-      printf '\n'
-    fi
   fi
   if [[ ${#checkpoint_lines[@]} -gt 0 ]]; then
     printf '%s\n' "${checkpoint_lines[@]}"
