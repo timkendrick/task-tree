@@ -14,9 +14,12 @@ readonly SCRIPT_NAME="${0##*/}"
 # Task status marking a task as still in progress when it was checked in.
 readonly IN_PROGRESS_STATUS='IN-PROGRESS'
 
+# Depth limit standing for "traverse every level of subtask".
+readonly DEPTH_UNLIMITED=-1
+
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--since <revision>] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--since <revision>] [--depth <n>] [--repo PATH]
 
 Summarize the work checked into a task branch since a reference commit: the tasks
 checked into it (as a tree) and the checkpoints made directly to it (as a list).
@@ -28,6 +31,9 @@ stdout when no work was checked in since that commit.
 Options:
   --task ID          Task branch name (default: current task).
   --since REVISION   Revision to measure from (default: the parent branch).
+  --depth N          Levels of subtask to report (default: every level).
+                     0 reports checkpoints only, 1 adds the tasks checked into
+                     the branch, 2 also adds the tasks checked into those, etc.
   --repo PATH        Repository root (overrides TT_REPO; default: find .jj).
   -h, --help         Show this help.
 
@@ -123,11 +129,12 @@ record_operation_fields() {
   printf '%s\t%s\t%s\t%s\n' "$commit_id" "$parents" "$entity" "$text"
 }
 
-# Usage: render_entries REPO TASK_PREFIX PROJECT_PREFIX DEPTH  (records on stdin)
+# Usage: render_entries REPO TASK_PREFIX PROJECT_PREFIX DEPTH MAX_DEPTH
+#        (records on stdin)
 #
 # Prints the task tree for one range of mainline commits: one line per task checked
 # into it, each followed by the lines for everything checked into that task, applied
-# recursively.
+# recursively until MAX_DEPTH levels have been printed ($DEPTH_UNLIMITED for all).
 #
 # Checkins of the same task are grouped, so a task checked in more than once (a
 # partial checkin followed by a later one) appears once: the entry keeps the
@@ -135,7 +142,7 @@ record_operation_fields() {
 # recent checkin, and its children are rendered from the ranges merged by all of
 # its checkins combined.
 render_entries() {
-  local repo="$1" task_prefix="$2" project_prefix="$3" depth="$4"
+  local repo="$1" task_prefix="$2" project_prefix="$3" depth="$4" max_depth="$5"
 
   # Checkins of each task, in the order they were first encountered. The arms are
   # "<mainline-parent>:<merged-parent>" pairs, one per checkin.
@@ -182,6 +189,12 @@ render_entries() {
 
     render_entry "$depth" "$task_id" "$title" "$status"
 
+    # Stop before gathering the next level's records once the limit is reached, so
+    # a shallow report costs no extra queries.
+    if [[ "$max_depth" -ne "$DEPTH_UNLIMITED" ]] && [[ $((depth + 2)) -gt "$max_depth" ]]; then
+      continue
+    fi
+
     local child_records='' arm
     for arm in ${entry_arms[$entry_index]}; do
       local arm_records
@@ -193,7 +206,7 @@ render_entries() {
 
     if [[ -n "$child_records" ]]; then
       printf '%s' "$child_records" \
-        | render_entries "$repo" "$task_prefix" "$project_prefix" "$((depth + 1))"
+        | render_entries "$repo" "$task_prefix" "$project_prefix" "$((depth + 1))" "$max_depth"
     fi
   done
 }
@@ -224,7 +237,7 @@ resolve_reference_commit() {
 }
 
 main() {
-  local task_id_arg='' since_arg='' repo=''
+  local task_id_arg='' since_arg='' repo='' max_depth="$DEPTH_UNLIMITED"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -234,6 +247,10 @@ main() {
       --since)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         since_arg="$2"; shift 2 ;;
+      --depth)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        [[ "$2" =~ ^[0-9]+$ ]] || { usage >&2; exit 1; }
+        max_depth="$2"; shift 2 ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
@@ -296,9 +313,9 @@ main() {
 
   # --- Tasks checked into the branch ---
   local tree_output=''
-  if [[ ${#records[@]} -gt 0 ]]; then
+  if [[ ${#records[@]} -gt 0 ]] && [[ "$max_depth" -ne 0 ]]; then
     tree_output="$(printf '%s\n' "${records[@]}" \
-      | render_entries "$repo" "$task_prefix" "$project_prefix" 0)"
+      | render_entries "$repo" "$task_prefix" "$project_prefix" 0 "$max_depth")"
   fi
 
   # --- Emit the report, collapsing the separator around omitted sections ---
