@@ -105,9 +105,9 @@ Show the diff of all unmerged commits on a task branch since it diverged from it
 
 #### `tt task changelog`  (alias: `tt changelog`)
 ```
-tt task changelog [--task <task-id>] [--since <revision>] [--repo PATH]
+tt task changelog [--task <task-id>] [--since <revision>] [--depth <n>] [--repo PATH]
 ```
-Summarize the work checked into a task branch: a tree of the tasks checked into it, followed by a list of the checkpoints recorded directly on it. Covers everything since the most recent common ancestor of the branch and `--since` (default: the parent branch). Task titles and statuses are reported as they were when checked in, and tasks still in progress at that point are flagged `[IN-PROGRESS]`. Prints nothing when no work has been checked in.
+Summarize the work checked into a task branch: a tree of the tasks checked into it, followed by a list of the checkpoints recorded directly on it. Covers everything since the most recent common ancestor of the branch and `--since` (default: the parent branch). `--depth` limits the subtask levels reported (`0` for checkpoints only, `1` for immediate subtasks, and so on; default: all levels). Task titles and statuses are reported as they were when checked in, and tasks still in progress at that point are flagged `[IN-PROGRESS]`. Prints nothing when no work has been checked in.
 
 #### `tt task edit`
 ```
