@@ -2,9 +2,10 @@
 title: "Prompt for `tt task publish` commit message"
 status: IN-PROGRESS
 created: 2026-06-02T17:02:33Z
-updated: 2026-08-24T16:47:42Z
+updated: 2026-08-24T17:16:36Z
 context: context/requirements-7e01e6e3
 context: context/architecture-570331ab
+context: context/summary-8a1335e2
 ---
 See scripts/cli/task/changelog
 
