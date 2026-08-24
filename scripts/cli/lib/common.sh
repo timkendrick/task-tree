@@ -593,16 +593,19 @@ prompt_raw() {
 }
 
 # Usage: message=$(prompt <<< "$template")
-# Reads template from stdin, opens editor, strips #-comment lines and trims whitespace,
-# prints cleaned text to stdout (empty string if blank after stripping).
+# Reads template from stdin, opens editor, strips #-comment lines, trims trailing
+# whitespace and surrounding blank lines, prints cleaned text to stdout (empty
+# string if blank after stripping).
+# Leading whitespace within a line is preserved, so indented content such as a
+# nested task tree survives the round trip through the editor.
 # Exits non-zero if editor exits non-zero.
 prompt() {
   local raw
   raw="$(prompt_raw)" || return 1
   local msg
-  msg="$(printf '%s' "$raw" | sed '/^#/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  msg="$(printf '%s' "$raw" | sed '/^#/d' | sed -e 's/[[:space:]]*$//')"
   # trim leading/trailing blank lines
-  msg="$(printf '%s' "$msg" | awk 'NF{found=1} found{print}' | sed -e 's/[[:space:]]*$//')"
+  msg="$(printf '%s' "$msg" | awk 'NF{found=1} found{print}')"
   printf '%s' "$msg"
 }
 
