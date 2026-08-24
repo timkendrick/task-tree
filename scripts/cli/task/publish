@@ -110,7 +110,7 @@ main() {
   local repo=''
   local message=''
   local message_provided=false
-  local changelog=false
+  local include_changelog=false
   local changelog_depth=''
 
   while [[ $# -gt 0 ]]; do
@@ -128,7 +128,7 @@ main() {
       -m|--message)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         message="$2"; message_provided=true; shift 2 ;;
-      --changelog)  changelog=true; shift ;;
+      --changelog)  include_changelog=true; shift ;;
       --changelog-depth)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         [[ "$2" =~ ^[0-9]+$ ]] || { usage >&2; exit 1; }
@@ -154,7 +154,7 @@ main() {
   fi
 
   # A depth is only meaningful when a change summary is being generated.
-  if [[ -n "$changelog_depth" && "$changelog" != true ]]; then
+  if [[ -n "$changelog_depth" && "$include_changelog" != true ]]; then
     usage >&2; exit 1
   fi
 
@@ -241,7 +241,7 @@ main() {
   # history being published, and before the transaction opens, so an empty or
   # abandoned message leaves no VCS state to unwind.
   local change_summary=''
-  if [[ "$changelog" == true ]]; then
+  if [[ "$include_changelog" == true ]]; then
     change_summary="$(build_change_summary \
       "$repo" "$child_bookmark" "$target" "$changelog_depth")" || {
       log "Error: Could not summarize '$child_bookmark' since '$target'."
