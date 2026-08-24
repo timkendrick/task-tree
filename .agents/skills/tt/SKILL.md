@@ -142,9 +142,10 @@ Rebase or merge descendant task branches onto the parent's current tip. Defaults
 
 #### `tt task publish`
 ```
-tt task publish [<project-id>] --target <branch> [--rebase | --merge] [--force]
+tt task publish [<project-id>] --target <branch> [-m <message>]
+                [--changelog [--changelog-depth <n>]] [--rebase | --merge] [--force]
 ```
-Merge a project branch into an external target branch (e.g. `main`). Removes task scaffolding files from the delivery branch. Use for projects, not tasks.
+Merge a project branch into an external target branch (e.g. `main`). Removes task scaffolding files from the delivery branch. Use for projects, not tasks. The publish commit message comes from `-m`, or from an editor when it is omitted; an empty message cancels the publish. `--changelog` prefills the message with a summary of the work since the target branch, bounded by `--changelog-depth`.
 
 #### `tt task prompt`
 ```
