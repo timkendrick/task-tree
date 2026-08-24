@@ -8,12 +8,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task publish — Merge a project branch's work into an external target branch.
 #
 # Usage:
-#   publish [<project-id>] --target <branch> [--rebase | --merge] [--force]
+#   publish [<project-id>] --target <branch> [-m <message>]
+#           [--changelog [--changelog-depth <n>]] [--rebase | --merge] [--force]
 #           [--repo PATH] [--workspace-dir PATH]
 #
 # Options:
 #   <project-id>            Project branch to publish (default: current branch).
 #   --target <branch>       Target branch to publish into (required).
+#   -m, --message <msg>     Publish commit message (skips editor prompt).
+#   --changelog             Append a change summary to the commit message.
+#   --changelog-depth <n>   Levels of subtask to summarize (requires --changelog).
 #   --rebase                Rebase project onto target before publishing.
 #   --merge                 Merge target into project before publishing.
 #   --force                 Proceed even if conflicts occur.
@@ -21,6 +25,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --workspace-dir PATH    Virtual project dir.
 
 readonly SCRIPT_NAME="${0##*/}"
+
+# Header introducing the change summary appended to the publish commit message.
+readonly CHANGE_SUMMARY_HEADER='Change summary:'
+
+# Stands in for the change summary when nothing was checked in since the target.
+readonly NO_CHANGES_PLACEHOLDER='No code changes'
 
 usage() {
   cat <<EOF
@@ -30,9 +40,17 @@ Merge a project branch's work into an external target branch (e.g. main).
 Removes task scaffolding files (.tt/task/) from the delivery branch.
 Stays on the project branch after publishing (no workspace switch).
 
+Prompts for the publish commit message in an editor unless --message is given.
+An empty message cancels the publish.
+
 Options:
   <project-id>              Project branch to publish (default: current branch).
   --target <branch>         Target branch to publish into (required).
+  -m, --message <msg>       Publish commit message (skips editor prompt).
+  --changelog               Append a summary of the changes since the target
+                            branch to the commit message.
+  --changelog-depth <n>     Levels of subtask to summarize (requires --changelog;
+                            default: every level).
   --rebase                  Rebase project onto target before publishing.
   --merge                   Merge target into project before publishing.
   --force                   Proceed despite conflicts.
@@ -43,12 +61,57 @@ Options:
 EOF
 }
 
+# Usage: build_change_summary REPO PROJECT_ID TARGET [DEPTH]
+#
+# Prints the change summary section for the work on PROJECT_ID since it last
+# diverged from TARGET: a leading blank line, the header, a blank line, then the
+# changelog ($NO_CHANGES_PLACEHOLDER when there is nothing to report).
+#
+# The leading newline is the blank line separating the section from the message
+# above it, so callers append the section to a message not ending in a newline.
+#
+# Exit 1: the changelog could not be generated.
+build_change_summary() {
+  local repo="$1" project_id="$2" target="$3" depth="${4:-}"
+
+  local -a depth_args=()
+  [[ -n "$depth" ]] && depth_args=(--depth "$depth")
+
+  local changelog
+  changelog="$("$SCRIPT_DIR/changelog" \
+    --task "$project_id" \
+    --since "$target" \
+    ${depth_args[@]+"${depth_args[@]}"} \
+    --repo "$repo")" || return 1
+
+  [[ -z "$changelog" ]] && changelog="$NO_CHANGES_PLACEHOLDER"
+
+  printf '\n%s\n\n%s\n' "$CHANGE_SUMMARY_HEADER" "$changelog"
+}
+
+# Usage: build_message_template PROJECT_ID TARGET CHANGE_SUMMARY
+#
+# Prints the editor template: an empty message area, the change summary section
+# when one was generated, then hint lines that the editor prompt strips.
+build_message_template() {
+  local project_id="$1" target="$2" change_summary="$3"
+
+  printf '\n'
+  [[ -n "$change_summary" ]] && printf '%s\n' "$change_summary"
+  printf '\n# Project: %s\n# Target: %s\n# An empty message cancels the publish.\n' \
+    "$project_id" "$target"
+}
+
 main() {
   local strategy=''
   local force=false
   local target=''
   local project_id_arg=''
   local repo=''
+  local message=''
+  local message_provided=false
+  local changelog=false
+  local changelog_depth=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -62,6 +125,14 @@ main() {
       --target)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         target="$2"; shift 2 ;;
+      -m|--message)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        message="$2"; message_provided=true; shift 2 ;;
+      --changelog)  changelog=true; shift ;;
+      --changelog-depth)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        [[ "$2" =~ ^[0-9]+$ ]] || { usage >&2; exit 1; }
+        changelog_depth="$2"; shift 2 ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
@@ -79,6 +150,11 @@ main() {
 
   # --target is required
   if [[ -z "$target" ]]; then
+    usage >&2; exit 1
+  fi
+
+  # A depth is only meaningful when a change summary is being generated.
+  if [[ -n "$changelog_depth" && "$changelog" != true ]]; then
     usage >&2; exit 1
   fi
 
@@ -160,6 +236,34 @@ main() {
     fi
   fi
 
+  # --- Resolve the publish commit message ---
+  # Resolved after any propagation, so the change summary reports exactly the
+  # history being published, and before the transaction opens, so an empty or
+  # abandoned message leaves no VCS state to unwind.
+  local change_summary=''
+  if [[ "$changelog" == true ]]; then
+    change_summary="$(build_change_summary \
+      "$repo" "$child_bookmark" "$target" "$changelog_depth")" || {
+      log "Error: Could not summarize '$child_bookmark' since '$target'."
+      exit 1
+    }
+  fi
+
+  if [[ "$message_provided" == true ]]; then
+    if [[ -n "$change_summary" ]]; then
+      message="${message}"$'\n'"${change_summary}"
+    fi
+  else
+    local template
+    template="$(build_message_template "$child_bookmark" "$target" "$change_summary")"
+    message="$(prompt <<< "$template")" || exit 1
+  fi
+
+  if [[ -z "$message" ]]; then
+    log "Publish cancelled."
+    exit 1
+  fi
+
   # Begin transaction (records before-op for undo)
   tt_begin_transaction "$repo"
 
@@ -208,7 +312,7 @@ main() {
     exit 1
   fi
 
-  jj -R "$target_ws" describe -m "$(format_commit_message "task" "publish" "$task_id" "$task_title")"
+  jj -R "$target_ws" describe -m "$(format_commit_message "task" "publish" "$task_id" "$message")"
   jj -R "$target_ws" bookmark set "$target" -r '@'
 
   # After publish, return to the project branch.
