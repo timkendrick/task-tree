@@ -501,7 +501,7 @@ Because the parent task file is modified, sibling (and descendant) branches may 
 
 **Body input:** The task body (description) is read from stdin (via pipe or redirect) if stdin is not a terminal; otherwise the existing body is preserved.
 
-**Interactive mode** (no `--title`, `--label`, or `--delete-label` given and stdin is a terminal): opens an editor pre-populated with the current body text. Comment lines (`#`-prefixed) are stripped and the result is trimmed; an empty result clears the body.
+**Interactive mode** (no `--title`, `--label`, or `--delete-label` given and stdin is a terminal): opens an editor pre-populated with the current body text. Comment lines (`#`-prefixed) are stripped, trailing whitespace is trimmed from each line, and leading and trailing blank lines are removed; indentation within a line is preserved, so nested lists and indented blocks in the body survive editing. An empty result clears the body.
 
 **Partial updates:** fields not supplied on the CLI retain their current values.
 
