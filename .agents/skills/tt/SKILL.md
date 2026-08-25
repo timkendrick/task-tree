@@ -103,6 +103,12 @@ tt task diff [--task <task-id>] [--include-metadata] [--repo PATH]
 ```
 Show the diff of all unmerged commits on a task branch since it diverged from its parent branch. Output is written in standard Git diff format. Without `--task`, uses the current task and includes trailing commits and uncommitted working-copy changes. Changes to tt metadata (the `.tt/` directory and the root `TASK.md` symlink) are omitted unless `--include-metadata` is passed.
 
+#### `tt task changelog`  (alias: `tt changelog`)
+```
+tt task changelog [--task <task-id>] [--since <revision>] [--depth <n>] [--repo PATH]
+```
+Summarize the work checked into a task branch: a tree of the tasks checked into it, followed immediately by a list of the checkpoints recorded directly on it. Covers everything since the most recent common ancestor of the branch and `--since` (default: the parent branch). `--depth` limits the subtask levels reported (`0` for checkpoints only, `1` for immediate subtasks, and so on; default: all levels). Task titles and statuses are reported as they were when checked in, and tasks still in progress at that point are flagged `[IN-PROGRESS]`. Prints nothing when no work has been checked in.
+
 #### `tt task edit`
 ```
 tt task edit [<task-id>] [--title <title>] [--label <label>...] [--delete-label <label>...]
@@ -136,9 +142,10 @@ Rebase or merge descendant task branches onto the parent's current tip. Defaults
 
 #### `tt task publish`
 ```
-tt task publish [<project-id>] --target <branch> [--rebase | --merge] [--force]
+tt task publish [<project-id>] --target <branch> [-m <message>]
+                [--changelog [--changelog-depth <n>]] [--rebase | --merge] [--force]
 ```
-Merge a project branch into an external target branch (e.g. `main`). Removes task scaffolding files from the delivery branch. Use for projects, not tasks.
+Merge a project branch into an external target branch (e.g. `main`). Removes task scaffolding files from the delivery branch. Use for projects, not tasks. The publish commit message comes from `-m`, or from an editor when it is omitted; an empty message cancels the publish. `--changelog` prefills the message with a summary of the work since the target branch, bounded by `--changelog-depth`.
 
 #### `tt task prompt`
 ```

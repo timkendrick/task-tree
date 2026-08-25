@@ -1,0 +1,331 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task changelog — Summarize the work checked into a task branch.
+#
+# Usage: changelog [--task <task-id>] [--since <revision>] [--repo PATH] [-h|--help]
+
+readonly SCRIPT_NAME="${0##*/}"
+
+# Task status marking a task as still in progress when it was checked in.
+readonly IN_PROGRESS_STATUS='IN-PROGRESS'
+
+# Depth limit standing for "traverse every level of subtask".
+readonly DEPTH_UNLIMITED=-1
+
+usage() {
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--since <revision>] [--depth <n>] [--repo PATH]
+
+Summarize the work checked into a task branch since a reference commit: the tasks
+checked into it (as a tree) followed by the checkpoints made directly to it (as a
+list).
+
+The reference commit is the most recent common ancestor of the task branch and
+<revision>, which defaults to the task's parent branch. Nothing is written to
+stdout when no work was checked in since that commit.
+
+Options:
+  --task ID          Task branch name (default: current task).
+  --since REVISION   Revision to measure from (default: the parent branch).
+  --depth N          Levels of subtask to report (default: every level).
+                     0 reports checkpoints only, 1 adds the tasks checked into
+                     the branch, 2 also adds the tasks checked into those, etc.
+  --repo PATH        Repository root (overrides TT_REPO; default: find .jj).
+  -h, --help         Show this help.
+
+EOF
+}
+
+# Usage: index_of NEEDLE [HAYSTACK...]
+# Prints the 0-based index of NEEDLE within the remaining arguments, or -1.
+index_of() {
+  local needle="$1"; shift
+  local index=0 item
+  for item in "$@"; do
+    if [[ "$item" == "$needle" ]]; then
+      printf '%s' "$index"
+      return 0
+    fi
+    index=$((index + 1))
+  done
+  printf '%s' '-1'
+}
+
+# Usage: resolve_task_suffix TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Prints the slug-hex portion of TASK_ID, or nothing if it carries neither prefix.
+resolve_task_suffix() {
+  local task_id="$1" task_prefix="$2" project_prefix="$3"
+  if is_task_branch "$task_id" "$task_prefix"; then
+    printf '%s' "${task_id#"$task_prefix"}"
+  elif is_project_branch "$task_id" "$project_prefix"; then
+    printf '%s' "${task_id#"$project_prefix"}"
+  fi
+}
+
+# Usage: render_entry DEPTH TASK_ID TITLE STATUS
+# Prints one task tree line, indented two spaces per depth level. TITLE and STATUS
+# may be empty, in which case the line carries the task ID alone.
+render_entry() {
+  local depth="$1" task_id="$2" title="$3" status="$4"
+  local line
+  line="$(printf -- '- `%s`' "$task_id")"
+  if [[ "$status" == "$IN_PROGRESS_STATUS" ]]; then
+    line="$line [$IN_PROGRESS_STATUS]"
+  fi
+  if [[ -n "$title" ]]; then
+    line="$line - $title"
+  fi
+  printf '%*s%s\n' "$((depth * 2))" '' "$line"
+}
+
+# Usage: render_checkpoint COMMIT_ID MESSAGE
+# Prints one checkpoint line, identified by the 8-character Git commit ID.
+render_checkpoint() {
+  local commit_id="$1" message="$2"
+  printf -- '- `%s` - %s\n' "${commit_id:0:8}" "$message"
+}
+
+# Usage: read_task_metadata REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Prints "<status>\t<title>" for TASK_ID's task file as it exists at REV.
+# Prints nothing when the task file cannot be read there, leaving the task to be
+# reported by ID alone.
+read_task_metadata() {
+  local repo="$1" rev="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
+
+  local suffix
+  suffix="$(resolve_task_suffix "$task_id" "$task_prefix" "$project_prefix")"
+  [[ -z "$suffix" ]] && return 0
+
+  local content
+  content="$(jj_show_at_revision "$repo" "$rev" "$(task_file_path "$suffix")")" || return 0
+  [[ -z "$content" ]] && return 0
+
+  printf '%s\t%s\n' \
+    "$(parse_frontmatter_field "$content" 'status')" \
+    "$(parse_quoted_frontmatter_field "$content" 'title')"
+}
+
+# Usage: record_operation_fields RECORD OPERATION
+# Decodes a mainline commit record describing the given task operation, printing:
+#   <commit-id>\t<parent-ids>\t<entity-id>\t<description>
+# Exit 1 when RECORD is empty or does not describe that task operation.
+record_operation_fields() {
+  local record="$1" operation="$2"
+
+  local commit_id _change_id _timestamp parents description
+  IFS=$'\t' read -r commit_id _change_id _timestamp parents description <<< "$record"
+  [[ -z "$commit_id" ]] && return 1
+
+  local parsed
+  parsed="$(parse_commit_message "$description")" || return 1
+  local namespace entity record_operation text
+  IFS=$'\t' read -r namespace entity record_operation text <<< "$parsed"
+  [[ "$namespace" == 'task' && "$record_operation" == "$operation" ]] || return 1
+
+  printf '%s\t%s\t%s\t%s\n' "$commit_id" "$parents" "$entity" "$text"
+}
+
+# Usage: render_entries REPO TASK_PREFIX PROJECT_PREFIX DEPTH MAX_DEPTH
+#        (records on stdin)
+#
+# Prints the task tree for one range of mainline commits: one line per task checked
+# into it, each followed by the lines for everything checked into that task, applied
+# recursively until MAX_DEPTH levels have been printed ($DEPTH_UNLIMITED for all).
+#
+# Checkins of the same task are grouped, so a task checked in more than once (a
+# partial checkin followed by a later one) appears once: the entry keeps the
+# position of the task's first checkin, its title and status come from its most
+# recent checkin, and its children are rendered from the ranges merged by all of
+# its checkins combined.
+render_entries() {
+  local repo="$1" task_prefix="$2" project_prefix="$3" depth="$4" max_depth="$5"
+
+  # Checkins of each task, in the order they were first encountered. The arms are
+  # "<mainline-parent>:<merged-parent>" pairs, one per checkin.
+  local -a entry_task=() entry_commits=() entry_arms=()
+
+  local record
+  while IFS= read -r record; do
+    local fields
+    fields="$(record_operation_fields "$record" 'checkin')" || continue
+    local commit_id parents entity _text
+    IFS=$'\t' read -r commit_id parents entity _text <<< "$fields"
+
+    # A checkin is a merge commit whose first parent is the branch it landed on and
+    # whose second parent is the handoff commit holding the work being merged in.
+    local mainline_parent="${parents%% *}" merged_parent="${parents##* }"
+    [[ "$mainline_parent" == "$merged_parent" ]] && continue
+
+    local index
+    index="$(index_of "$entity" ${entry_task[@]+"${entry_task[@]}"})"
+    if [[ "$index" -lt 0 ]]; then
+      entry_task+=("$entity")
+      entry_commits+=("$commit_id")
+      entry_arms+=("${mainline_parent}:${merged_parent}")
+    else
+      entry_commits[index]="${entry_commits[index]} ${commit_id}"
+      entry_arms[index]="${entry_arms[index]} ${mainline_parent}:${merged_parent}"
+    fi
+  done
+
+  local entry_index
+  for ((entry_index = 0; entry_index < ${#entry_task[@]}; entry_index++)); do
+    local task_id="${entry_task[$entry_index]}"
+
+    # Resolve the title and status from the task file as checked in, rather than
+    # from the task's own branch (which may have moved on since) or from the tip of
+    # the branch being reported on (where the file may since have been deleted).
+    local latest_commit="${entry_commits[$entry_index]##* }"
+    local metadata status='' title=''
+    metadata="$(read_task_metadata \
+      "$repo" "$latest_commit" "$task_id" "$task_prefix" "$project_prefix")"
+    if [[ -n "$metadata" ]]; then
+      IFS=$'\t' read -r status title <<< "$metadata"
+    fi
+
+    render_entry "$depth" "$task_id" "$title" "$status"
+
+    # Stop before gathering the next level's records once the limit is reached, so
+    # a shallow report costs no extra queries.
+    if [[ "$max_depth" -ne "$DEPTH_UNLIMITED" ]] && [[ $((depth + 2)) -gt "$max_depth" ]]; then
+      continue
+    fi
+
+    local child_records='' arm
+    for arm in ${entry_arms[$entry_index]}; do
+      local arm_records
+      arm_records="$(mainline_commit_records "$repo" "${arm##*:}" "${arm%%:*}")" || arm_records=''
+      if [[ -n "$arm_records" ]]; then
+        child_records="${child_records}${arm_records}"$'\n'
+      fi
+    done
+
+    if [[ -n "$child_records" ]]; then
+      printf '%s' "$child_records" \
+        | render_entries "$repo" "$task_prefix" "$project_prefix" "$((depth + 1))" "$max_depth"
+    fi
+  done
+}
+
+# Usage: resolve_reference_commit REPO TASK_ID TASK_PREFIX PROJECT_PREFIX [SINCE]
+# Prints the commit ID of the reference commit: the most recent common ancestor of
+# TASK_ID and SINCE, which defaults to TASK_ID's parent branch.
+# Exit 1: the revision, the parent branch, or the common ancestor was not found.
+resolve_reference_commit() {
+  local repo="$1" task_id="$2" task_prefix="$3" project_prefix="$4" since="${5:-}"
+
+  if [[ -z "$since" ]]; then
+    local exit_code=0
+    since="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+      if [[ $exit_code -eq 1 ]]; then
+        log "Error: No parent branch found for '$task_id'."
+        log "  Pass --since <revision> to choose the reference commit explicitly."
+      fi
+      return 1
+    fi
+  elif ! jj -R "$repo" --ignore-working-copy log -r "$since" --no-graph -T '' 2>/dev/null; then
+    log "Error: Could not resolve revision '$since'."
+    return 1
+  fi
+
+  resolve_task_fork_point "$repo" "$since" "$task_id"
+}
+
+main() {
+  local task_id_arg='' since_arg='' repo='' max_depth="$DEPTH_UNLIMITED"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        task_id_arg="$2"; shift 2 ;;
+      --since)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        since_arg="$2"; shift 2 ;;
+      --depth)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        [[ "$2" =~ ^[0-9]+$ ]] || { usage >&2; exit 1; }
+        max_depth="$2"; shift 2 ;;
+      --repo)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage >&2; exit 1 ;;
+      *)  usage >&2; exit 1 ;;
+    esac
+  done
+
+  repo="$(resolve_repo "$repo")"
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  # --- Resolve the branch to report on ---
+  local task_id
+  if [[ -n "$task_id_arg" ]]; then
+    task_id="$task_id_arg"
+    if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
+      log "Error: '$task_id' is not a task or project branch."
+      exit 1
+    fi
+  else
+    task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+    if [[ -z "$task_id" ]]; then
+      log "Error: Not on a task or project branch."
+      exit 1
+    fi
+  fi
+
+  if ! jj -R "$repo" --ignore-working-copy log -r "$task_id" --no-graph -T '' 2>/dev/null; then
+    log "Error: Bookmark '$task_id' not found."
+    exit 1
+  fi
+
+  # --- Resolve the reference commit to measure from ---
+  local reference_commit
+  reference_commit="$(resolve_reference_commit \
+    "$repo" "$task_id" "$task_prefix" "$project_prefix" "$since_arg")" || exit 1
+
+  # --- Collect the branch's own commits since the reference commit ---
+  local -a records=()
+  local record
+  while IFS= read -r record; do
+    [[ -n "$record" ]] && records+=("$record")
+  done < <(mainline_commit_records "$repo" "$task_id" "$reference_commit")
+
+  # --- Checkpoints recorded directly on the branch ---
+  local -a checkpoint_lines=()
+  for record in ${records[@]+"${records[@]}"}; do
+    local fields
+    fields="$(record_operation_fields "$record" 'checkpoint')" || continue
+    local commit_id _parents entity text
+    IFS=$'\t' read -r commit_id _parents entity text <<< "$fields"
+    if [[ "$entity" == "$task_id" ]]; then
+      checkpoint_lines+=("$(render_checkpoint "$commit_id" "$text")")
+    fi
+  done
+
+  # --- Tasks checked into the branch ---
+  local tree_output=''
+  if [[ ${#records[@]} -gt 0 ]] && [[ "$max_depth" -ne 0 ]]; then
+    tree_output="$(printf '%s\n' "${records[@]}" \
+      | render_entries "$repo" "$task_prefix" "$project_prefix" 0 "$max_depth")"
+  fi
+
+  # --- Emit the report ---
+  if [[ -n "$tree_output" ]]; then
+    printf '%s\n' "$tree_output"
+  fi
+  if [[ ${#checkpoint_lines[@]} -gt 0 ]]; then
+    printf '%s\n' "${checkpoint_lines[@]}"
+  fi
+}
+
+main "$@"
