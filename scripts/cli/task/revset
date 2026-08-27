@@ -13,7 +13,7 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--git] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--all] [--git] [--repo PATH]
 
 Print a revision range covering all unmerged commits on a task branch since
 it diverged from its parent branch.
@@ -24,23 +24,68 @@ empty).
 
 With --task, the range covers only the task bookmark itself.
 
+With --all, prints the task's complete range instead: the union of every
+prior check-in range plus the current unmerged range. Only task branches are
+supported (not project branches).
+
 Options:
   --task ID    Task branch name (default: current task).
+  --all        Print the task's complete range (all check-ins plus unmerged work).
   --git        Output a git commit range (<from>..<to>) instead of a jj revset.
+               With --all, prints one immutable range per line.
   --repo PATH  Repository root (overrides TT_REPO; default: find .jj).
   -h, --help   Show this help.
 
 EOF
 }
 
+# Usage: print_all_ranges REPO TASK_ID PARENT_BOOKMARK UPPER_BOUND GIT_MODE
+# Prints the task's complete range: a parenthesized jj union of connected
+# ranges, or (with GIT_MODE) one immutable git range per line.
+print_all_ranges() {
+  local repo="$1" task_id="$2" parent_bookmark="$3" upper_bound="$4" git_mode="$5"
+
+  local records
+  records="$(get_full_task_range_records "$repo" "$task_id" "$parent_bookmark" "$upper_bound")" || exit 1
+
+  local base tip _kind _order _ts
+  if "$git_mode"; then
+    while IFS=$'\t' read -r base tip _kind _order _ts; do
+      [[ -z "$base" ]] && continue
+      local from_rev to_rev
+      from_rev="$(jj -R "$repo" log -r "$base" --no-graph -T 'commit_id' 2>/dev/null)" || {
+        log "Error: Could not resolve revision '$base'."
+        exit 1
+      }
+      to_rev="$(jj -R "$repo" log -r "$tip" --no-graph -T 'commit_id' 2>/dev/null)" || {
+        log "Error: Could not resolve revision '$tip'."
+        exit 1
+      }
+      printf '%s..%s\n' "$from_rev" "$to_rev"
+    done <<< "$records"
+  else
+    local joined=''
+    while IFS=$'\t' read -r base tip _kind _order _ts; do
+      [[ -z "$base" ]] && continue
+      if [[ -z "$joined" ]]; then
+        joined="(${base}..${tip})"
+      else
+        joined="${joined} | (${base}..${tip})"
+      fi
+    done <<< "$records"
+    printf '%s\n' "$joined"
+  fi
+}
+
 main() {
-  local task_id_arg='' repo='' git_mode=false
+  local task_id_arg='' repo='' git_mode=false all_mode=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --task)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         task_id_arg="$2"; shift 2 ;;
+      --all) all_mode=true; shift ;;
       --git) git_mode=true; shift ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
@@ -53,12 +98,23 @@ main() {
 
   repo="$(resolve_repo "$repo")"
 
-  local range exit_code=0
-  range="$(resolve_task_range "$repo" "$task_id_arg")" || exit_code=$?
+  local context exit_code=0
+  context="$(get_task_range_context "$repo" "$task_id_arg")" || exit_code=$?
   [[ $exit_code -ne 0 ]] && exit $exit_code
 
-  local parent_bookmark upper_bound
-  read -r parent_bookmark upper_bound <<<"$range"
+  local task_id parent_bookmark upper_bound
+  IFS=$'\t' read -r task_id parent_bookmark upper_bound <<< "$context"
+
+  if "$all_mode"; then
+    local task_prefix
+    task_prefix="$(get_task_prefix "$repo")"
+    if ! is_task_branch "$task_id" "$task_prefix"; then
+      log "Error: --all does not support project branches."
+      exit 1
+    fi
+    print_all_ranges "$repo" "$task_id" "$parent_bookmark" "$upper_bound" "$git_mode"
+    exit 0
+  fi
 
   # Build the range
   local from_rev to_rev
