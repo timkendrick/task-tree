@@ -2,9 +2,10 @@
 title: "Allow entire task range in `tt revset` / `tt diff` / `tt changelog` commands"
 status: IN-PROGRESS
 created: 2026-08-27T10:16:06Z
-updated: 2026-08-27T10:33:27Z
+updated: 2026-08-27T11:20:32Z
 context: context/refined-requirements-2e6916bf
 context: context/complete-range-architecture-8b2f2475
+context: context/topology-based-complete-range-discovery-214f5912
 ---
 scripts/cli/task/revset
 scripts/cli/task/diff
