@@ -168,6 +168,116 @@ test_task_diff__alias() {
 }
 
 
+test_task_diff__all_alias() {
+  setup_workspace "diff-all-alias"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "alias content" > "$TT_REPO/alias.txt"
+  checkpoint_task "first commit" >/dev/null || true
+
+  canonical="" alias_output="" exit_code=0
+  canonical=$(run_tt task diff --task "$task_id" --all 2>&1) || true
+  alias_output=$(run_tt diff --task "$task_id" --all 2>&1) || exit_code=$?
+  assert_success "alias --all succeeds" "$exit_code"
+  assert_eq "alias output matches canonical command" "$alias_output" "$canonical"
+}
+
+test_task_diff__all_current_only() {
+  setup_workspace "diff-all-current-only"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "only change" > "$TT_REPO/only.txt"
+  checkpoint_task "first commit" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task diff --task "$task_id" --all 2>&1) || exit_code=$?
+  assert_success "diff --all succeeds" "$exit_code"
+  assert_contains "reports the only file" "$output" "only.txt"
+}
+
+test_task_diff__all_concatenates_historical_and_current() {
+  setup_workspace "diff-all-concat"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "historical" > "$TT_REPO/historical.txt"
+  checkpoint_task "w1" >/dev/null || true
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true
+
+  checkout_task "$task_id" >/dev/null || true
+  echo "current" > "$TT_REPO/current.txt"
+  checkpoint_task "w2" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task diff --task "$task_id" --all 2>&1) || exit_code=$?
+  assert_success "diff --all succeeds" "$exit_code"
+  assert_contains "reports the historical component's file" "$output" "historical.txt"
+  assert_contains "reports the current component's file" "$output" "current.txt"
+  # The historical section should appear before the current one, oldest first.
+  historical_pos=$(printf '%s\n' "$output" | grep -n 'historical.txt' | head -1 | cut -d: -f1)
+  current_pos=$(printf '%s\n' "$output" | grep -n 'current.txt' | head -1 | cut -d: -f1)
+  assert_eq "historical section precedes current section" \
+    "$([[ "$historical_pos" -lt "$current_pos" ]] && echo yes || echo no)" "yes"
+}
+
+test_task_diff__all_excludes_metadata_by_default() {
+  setup_workspace "diff-all-metadata-default"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "source" > "$TT_REPO/source.txt"
+  checkpoint_task "w1" >/dev/null || true
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true
+
+  output="" exit_code=0
+  output=$(run_tt task diff --task "$task_id" --all 2>&1) || exit_code=$?
+  assert_success "diff --all succeeds" "$exit_code"
+  assert_contains "non-metadata file present" "$output" "source.txt"
+  assert_not_contains "metadata dir excluded" "$output" ".tt/"
+}
+
+test_task_diff__all_include_metadata() {
+  setup_workspace "diff-all-metadata-include"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "source" > "$TT_REPO/source.txt"
+  checkpoint_task "w1" >/dev/null || true
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true
+
+  output="" exit_code=0
+  output=$(run_tt task diff --task "$task_id" --all --include-metadata 2>&1) || exit_code=$?
+  assert_success "diff --all --include-metadata succeeds" "$exit_code"
+  assert_contains "metadata dir included" "$output" "diff --git a/.tt/"
+}
+
+test_task_diff__all_rejects_project_branch() {
+  setup_workspace "diff-all-project-rejected"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  checkpoint_task "project work" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task diff --task "$proj_id" --all 2>&1) || exit_code=$?
+  assert_failure "diff --all rejects a project branch" "$exit_code"
+  assert_contains "error message" "$output" "Error"
+}
+
+test_task_diff__all_help() {
+  setup_workspace "diff-all-help"
+  output="" exit_code=0
+  output=$(run_tt task diff --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_required_usage_argument "argument: --all" "$output" "--all"
+}
+
 test_task_diff__help() {
   setup_workspace "diff-help"
   output="" exit_code=0
