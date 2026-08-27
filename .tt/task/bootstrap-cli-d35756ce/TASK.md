@@ -138,6 +138,7 @@ subtask: [x] task/tt-worktree-show-strict-aba0d75f
 subtask: [x] task/todo-task-context-963f83ea
 subtask: [x] task/tt-task-checkin-missing-parent-worktree-f984e31c
 subtask: [x] task/tt-task-changelog-5c0ad75c
+subtask: [ ] task/tt-revset-entire-task-range-893a9451
 ---
 Implement shell script implementations of all `tt` CLI commands
 
