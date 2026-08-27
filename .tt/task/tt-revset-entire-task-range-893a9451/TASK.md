@@ -1,6 +1,6 @@
 ---
 title: "Allow entire task range in `tt revset` / `tt diff` / `tt changelog` commands"
-status: TODO
+status: IN-PROGRESS
 created: 2026-08-27T10:16:06Z
 updated: 2026-08-27T10:16:07Z
 ---
