@@ -141,7 +141,7 @@ main() {
 
   # Resolve target worktree
   local current_worktree target_worktree
-  current_worktree="$(resolve_current_worktree "$repo")"
+  current_worktree="$(_repo__resolve_worktree_root "$repo")"
 
   # A task without its own worktree resolves to the current worktree; the commit
   # is then made cross-branch directly on the task bookmark.
@@ -151,7 +151,7 @@ main() {
   fi
 
   # Precondition: WC must be clean (we'll commit after writing the context file)
-  if ! is_wc_clean "$target_worktree"; then
+  if ! _repo__check_working_copy_clean "$target_worktree"; then
     _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
@@ -219,7 +219,7 @@ main() {
   ctx_ts="$(_string__generate_timestamp)"
 
   # Verify the task file exists on the target branch (it may not be checked out)
-  if ! jj_show_at_revision "$repo" "$bookmark" "$task_file" >/dev/null; then
+  if ! _repo__read_file_at_revision "$repo" "$bookmark" "$task_file" >/dev/null; then
     _ui__log "Error: task file not found on branch '$bookmark': $task_file"
     exit 1
   fi

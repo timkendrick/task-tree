@@ -125,7 +125,7 @@ main() {
 
   # --- Read task file ---
   local content
-  if ! content="$(jj_show_at_revision "$repo" "$branch" "$task_file")"; then
+  if ! content="$(_repo__read_file_at_revision "$repo" "$branch" "$task_file")"; then
     _ui__log "Error: Could not read task file '$task_file' from '$branch'."
     exit 1
   fi
@@ -209,7 +209,7 @@ main() {
         fi
         if [[ -n "$subtask_id_suffix" ]]; then
           subtask_file="$(_path__task_file "$subtask_id_suffix")"
-          subtask_content="$(jj_show_at_revision "$repo" "$subtask_branch" "$subtask_file" || true)"
+          subtask_content="$(_repo__read_file_at_revision "$repo" "$subtask_branch" "$subtask_file" || true)"
           subtask_status="$(_frontmatter__parse_field "$subtask_content" "status" 2>/dev/null || true)"
           subtask_title="$(_frontmatter__parse_quoted_field "$subtask_content" "title" 2>/dev/null || true)"
         fi
@@ -238,7 +238,7 @@ main() {
       local ctx_file
       ctx_file="$(_path__task_context "$task_suffix" "$ctx_id")"
       local ctx_content ctx_title
-      ctx_content="$(jj_show_at_revision "$repo" "$branch" "$ctx_file" || true)"
+      ctx_content="$(_repo__read_file_at_revision "$repo" "$branch" "$ctx_file" || true)"
       ctx_title="$(_frontmatter__parse_quoted_field "$ctx_content" "title" 2>/dev/null || true)"
       if [[ -n "$ctx_title" ]]; then
         printf -- '- %s (%s)\n' "$ctx_title" "$ctx_id"
@@ -269,7 +269,7 @@ main() {
         # Resolve context file path on the task's branch
         local ctx_file ctx_content
         ctx_file="$(_path__task_context "$task_suffix" "$ctx_id")"
-        ctx_content="$(jj_show_at_revision "$repo" "$branch" "$ctx_file" || true)"
+        ctx_content="$(_repo__read_file_at_revision "$repo" "$branch" "$ctx_file" || true)"
 
         if [[ -n "$ctx_content" ]]; then
           # Parse frontmatter fields (using raw for title to preserve formatting)

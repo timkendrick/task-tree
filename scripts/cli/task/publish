@@ -169,7 +169,7 @@ main() {
   workspace_dir="$(get_workspace_dir "$repo")" || true
 
   local current_worktree
-  current_worktree="$(resolve_current_worktree "$repo")"
+  current_worktree="$(_repo__resolve_worktree_root "$repo")"
 
   # --- Resolve project branch ---
   local child_bookmark child_slug
@@ -210,7 +210,7 @@ main() {
   fi
 
   # --- Check WC clean ---
-  if ! is_wc_clean "$current_worktree"; then
+  if ! _repo__check_working_copy_clean "$current_worktree"; then
     _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
@@ -218,7 +218,7 @@ main() {
   # --- Read task title from project branch ---
   local task_file task_content task_title
   task_file="$(_path__task_file "$child_slug")"
-  task_content="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || true
+  task_content="$(_repo__read_file_at_revision "$repo" "$child_bookmark" "$task_file")" || true
   task_title="$(_frontmatter__parse_quoted_field "$task_content" "title" 2>/dev/null)" || task_title="$child_bookmark"
 
   # --- Optional: rebase/merge propagation from target ---
@@ -230,7 +230,7 @@ main() {
       --"$strategy" \
       ${force:+--force} \
       --repo "$repo"
-    if ! is_wc_clean "$current_worktree"; then
+    if ! _repo__check_working_copy_clean "$current_worktree"; then
       _ui__log "Error: Working copy not clean after propagation."
       exit 1
     fi
@@ -307,7 +307,7 @@ main() {
   # Check for conflicts (unless --force)
   # On conflict, exit 1 triggers the ERR trap → tt_rollback_transaction →
   # jj op restore, which cleanly reverts all jj operations in this transaction.
-  if [[ "$force" != true ]] && has_conflicts "$target_ws" "@"; then
+  if [[ "$force" != true ]] && _repo__check_has_conflicts "$target_ws" "@"; then
     _ui__log "Error: Merge conflicts detected. Resolve conflicts or use --force."
     exit 1
   fi

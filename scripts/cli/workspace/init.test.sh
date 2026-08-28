@@ -13,7 +13,7 @@ test_workspace_init__basic_initialization() {
   cd "$repo"
   echo "initial" > README.md
   jj -R "$repo" commit -m "Initial commit" >/dev/null 2>&1
-  jj -R "$repo" bookmark set main >/dev/null 2>&1
+  jj -R "$repo" bookmark set main -r '@' >/dev/null 2>&1
 
   output="" exit_code=0
   output=$(run_tt workspace init "$repo" "$virtual" 2>&1) || exit_code=$?
@@ -47,7 +47,7 @@ test_workspace_init__custom_prefixes() {
   cd "$repo"
   echo "initial" > README.md
   jj -R "$repo" commit -m "Initial commit" >/dev/null 2>&1
-  jj -R "$repo" bookmark set main >/dev/null 2>&1
+  jj -R "$repo" bookmark set main -r '@' >/dev/null 2>&1
 
   output="" exit_code=0
   output=$(run_tt workspace init "$repo" "$virtual" --task-prefix "t/" --project-prefix "p/" 2>&1) || exit_code=$?
@@ -67,7 +67,7 @@ test_workspace_init__same_prefix_rejected() {
   cd "$repo"
   echo "initial" > README.md
   jj -R "$repo" commit -m "Initial commit" >/dev/null 2>&1
-  jj -R "$repo" bookmark set main >/dev/null 2>&1
+  jj -R "$repo" bookmark set main -r '@' >/dev/null 2>&1
 
   output="" exit_code=0
   output=$(run_tt workspace init "$repo" "$virtual" --task-prefix "x/" --project-prefix "x/" 2>&1) || exit_code=$?
@@ -97,7 +97,7 @@ test_workspace_init__dirty_working_copy_rejected() {
   cd "$repo"
   echo "initial" > README.md
   jj -R "$repo" commit -m "Initial commit" >/dev/null 2>&1
-  jj -R "$repo" bookmark set main >/dev/null 2>&1
+  jj -R "$repo" bookmark set main -r '@' >/dev/null 2>&1
   echo "dirty" > "$repo/untracked-file.txt"
 
   output="" exit_code=0
@@ -116,7 +116,7 @@ test_workspace_init__non_empty_virtual_dir_without_force() {
   cd "$repo"
   echo "initial" > README.md
   jj -R "$repo" commit -m "Initial commit" >/dev/null 2>&1
-  jj -R "$repo" bookmark set main >/dev/null 2>&1
+  jj -R "$repo" bookmark set main -r '@' >/dev/null 2>&1
 
   output="" exit_code=0
   output=$(run_tt workspace init "$repo" "$virtual" 2>&1) || exit_code=$?
@@ -138,7 +138,7 @@ test_workspace_init__tt_file_without_force() {
   cd "$repo"
   echo "initial" > README.md
   jj -R "$repo" commit -m "Initial commit" >/dev/null 2>&1
-  jj -R "$repo" bookmark set main >/dev/null 2>&1
+  jj -R "$repo" bookmark set main -r '@' >/dev/null 2>&1
 
   output="" exit_code=0
   output=$(run_tt workspace init "$repo" "$virtual" 2>&1) || exit_code=$?

@@ -355,7 +355,7 @@ main() {
   local parent_is_done=false
   if [[ -n "$parent_task_file" ]]; then
     local parent_status
-    parent_status="$(jj_show_at_revision "$repo" "$parent_bookmark" "$parent_task_file" \
+    parent_status="$(_repo__read_file_at_revision "$repo" "$parent_bookmark" "$parent_task_file" \
       | awk '/^status:/ { print $2; exit }')"
     if [[ "$parent_status" == "DONE" ]]; then
       parent_is_done=true
@@ -365,7 +365,7 @@ main() {
   # Capture revision user had checked out so we can restore it on success.
   # (On error, tt_rollback_transaction restores the entire jj state including WC position.)
   local original_rev
-  original_rev="$(get_worktree_current_rev "$repo")"
+  original_rev="$(_repo__get_working_copy_revision "$repo")"
   # If the working copy is currently on the parent branch (it's our closest ancestor bookmark),
   # leave it at the updated parent tip after task creation rather than restoring to the now-stale
   # original revision. Otherwise, restore as normal.
@@ -408,9 +408,9 @@ main() {
     # Project task: first commit creates the stub task file; second commit (via edit) sets metadata.
     write_task_stub "$repo" "$task_suffix"
     jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2 >&2
-    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
+    jj "${jj_opts[@]}" bookmark set "$task_id" -r '@' $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
     jj "${jj_opts[@]}" new "@" >&2
-    jj "${jj_opts[@]}" bookmark set "$task_id" >&2
+    jj "${jj_opts[@]}" bookmark set "$task_id" -r '@' >&2
     # Build common args (title, labels)
     local edit_args=(--repo "$repo" --title "$title")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
@@ -428,9 +428,9 @@ main() {
     _frontmatter__append_subtask "$parent_path" "$task_id"
     _ui__log "Added subtask to parent: $parent_task_file"
     jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2
-    jj "${jj_opts[@]}" bookmark set "$parent_bookmark" >&2
+    jj "${jj_opts[@]}" bookmark set "$parent_bookmark" -r '@' >&2
     jj "${jj_opts[@]}" new "@" >&2
-    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
+    jj "${jj_opts[@]}" bookmark set "$task_id" -r '@' $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
     # Build common args (title, labels)
     local edit_args=(--repo "$repo" --title "$title")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
@@ -442,7 +442,7 @@ main() {
     write_task_stub "$repo" "$task_suffix"
     jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2
     jj "${jj_opts[@]}" new "@" >&2
-    jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2
+    jj "${jj_opts[@]}" bookmark set "$task_id" -r '@' $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2
     # Build common args (title, labels)
     local edit_args=(--repo "$repo" --title "$title")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
