@@ -19,7 +19,7 @@ readonly DEPTH_UNLIMITED=-1
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--since <revision>] [--depth <n>] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--all] [--since <revision>] [--depth <n>] [--repo PATH]
 
 Summarize the work checked into a task branch since a reference commit: the tasks
 checked into it (as a tree) followed by the checkpoints made directly to it (as a
@@ -29,9 +29,16 @@ The reference commit is the most recent common ancestor of the task branch and
 <revision>, which defaults to the task's parent branch. Nothing is written to
 stdout when no work was checked in since that commit.
 
+With --all, summarizes the task's complete range instead: every prior
+check-in range plus the current unmerged range, combined and deduplicated
+before applying the usual tree/checkpoint rendering, depth limit, and
+--since boundary. Only task branches are supported (not project branches).
+
 Options:
   --task ID          Task branch name (default: current task).
+  --all              Summarize the task's complete range (all check-ins plus unmerged work).
   --since REVISION   Revision to measure from (default: the parent branch).
+                     With --all, records already reachable from REVISION are excluded.
   --depth N          Levels of subtask to report (default: every level).
                      0 reports checkpoints only, 1 adds the tasks checked into
                      the branch, 2 also adds the tasks checked into those, etc.
@@ -238,13 +245,14 @@ resolve_reference_commit() {
 }
 
 main() {
-  local task_id_arg='' since_arg='' repo='' max_depth="$DEPTH_UNLIMITED"
+  local task_id_arg='' since_arg='' repo='' max_depth="$DEPTH_UNLIMITED" all_mode=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --task)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         task_id_arg="$2"; shift 2 ;;
+      --all) all_mode=true; shift ;;
       --since)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         since_arg="$2"; shift 2 ;;
@@ -288,17 +296,87 @@ main() {
     exit 1
   fi
 
-  # --- Resolve the reference commit to measure from ---
-  local reference_commit
-  reference_commit="$(resolve_reference_commit \
-    "$repo" "$task_id" "$task_prefix" "$project_prefix" "$since_arg")" || exit 1
+  if "$all_mode" && ! is_task_branch "$task_id" "$task_prefix"; then
+    log "Error: --all does not support project branches."
+    exit 1
+  fi
 
-  # --- Collect the branch's own commits since the reference commit ---
+  if [[ -n "$since_arg" ]] && \
+     ! jj -R "$repo" --ignore-working-copy log -r "$since_arg" --no-graph -T '' 2>/dev/null; then
+    log "Error: Could not resolve revision '$since_arg'."
+    exit 1
+  fi
+
   local -a records=()
   local record
-  while IFS= read -r record; do
-    [[ -n "$record" ]] && records+=("$record")
-  done < <(mainline_commit_records "$repo" "$task_id" "$reference_commit")
+
+  if "$all_mode"; then
+    # --- Gather first-parent records from every connected component of the
+    # task's complete range, deduplicated by immutable commit ID. Unlike the
+    # default mode, the upper bound is always the task bookmark itself: this
+    # command never reports trailing commits beyond it. ---
+    local parent_bookmark upper_bound="$task_id" find_exit=0
+    parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || find_exit=$?
+    if [[ $find_exit -ne 0 ]]; then
+      [[ $find_exit -eq 1 ]] && log "Error: No parent branch found for '$task_id'."
+      exit $find_exit
+    fi
+
+    local range_records
+    range_records="$(get_full_task_range_records "$repo" "$task_id" "$parent_bookmark" "$upper_bound")" || exit 1
+
+    local base tip _kind _order _ts
+    local -a raw_records=()
+    while IFS=$'\t' read -r base tip _kind _order _ts; do
+      [[ -z "$base" ]] && continue
+      while IFS= read -r record; do
+        [[ -n "$record" ]] && raw_records+=("$record")
+      done < <(mainline_commit_records "$repo" "$tip" "$base")
+    done <<< "$range_records"
+
+    local -a seen_ids=()
+    for record in ${raw_records[@]+"${raw_records[@]}"}; do
+      local commit_id="${record%%$'\t'*}"
+      local idx
+      idx="$(index_of "$commit_id" ${seen_ids[@]+"${seen_ids[@]}"})"
+      if [[ "$idx" -lt 0 ]]; then
+        seen_ids+=("$commit_id")
+        records+=("$record")
+      fi
+    done
+
+    # --- Apply --since as a boundary over the complete selection ---
+    if [[ -n "$since_arg" && ${#records[@]} -gt 0 ]]; then
+      local id_union=""
+      for record in "${records[@]}"; do
+        local commit_id="${record%%$'\t'*}"
+        if [[ -z "$id_union" ]]; then id_union="$commit_id"; else id_union="${id_union} | ${commit_id}"; fi
+      done
+      local excluded
+      excluded="$(jj -R "$repo" --ignore-working-copy log --no-graph \
+        -r "(${id_union}) & ::${since_arg}" -T 'commit_id ++ "\n"' 2>/dev/null)"
+      if [[ -n "$excluded" ]]; then
+        local -a filtered=()
+        for record in "${records[@]}"; do
+          local commit_id="${record%%$'\t'*}"
+          if ! grep -qxF "$commit_id" <<< "$excluded"; then
+            filtered+=("$record")
+          fi
+        done
+        records=(${filtered[@]+"${filtered[@]}"})
+      fi
+    fi
+  else
+    # --- Resolve the reference commit to measure from ---
+    local reference_commit
+    reference_commit="$(resolve_reference_commit \
+      "$repo" "$task_id" "$task_prefix" "$project_prefix" "$since_arg")" || exit 1
+
+    # --- Collect the branch's own commits since the reference commit ---
+    while IFS= read -r record; do
+      [[ -n "$record" ]] && records+=("$record")
+    done < <(mainline_commit_records "$repo" "$task_id" "$reference_commit")
+  fi
 
   # --- Checkpoints recorded directly on the branch ---
   local -a checkpoint_lines=()
