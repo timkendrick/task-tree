@@ -1,6 +1,6 @@
 ---
 title: "Locate `tt worktree show` target by `--name` rather than `--task`"
-status: IN-PROGRESS
+status: DONE
 created: 2026-08-28T09:56:36Z
 updated: 2026-08-28T11:26:05Z
 context: context/requirements-cee1558e
