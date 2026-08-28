@@ -202,9 +202,9 @@ List all jj workspaces and their corresponding tt task/project IDs. `--quiet` pr
 
 #### `tt worktree show`
 ```
-tt worktree show --task <task-id>
+tt worktree show --name <worktree-name>
 ```
-Output the worktree path for a task or project ID. Falls back to the repo root if no dedicated worktree exists.
+Output the path of the dedicated worktree with the given jj workspace name (the `NAME` column of `tt worktree list`). Worktrees are named after the task they were created for. Errors if no worktree bears that name.
 
 #### `tt worktree delete`
 ```
