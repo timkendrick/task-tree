@@ -102,8 +102,8 @@ main() {
     exit 1
   fi
 
-  # Sort alphabetically and pipe to select_value
-  printf '%s' "$active_items" | sort | select_value
+  # Sort alphabetically and pipe to _ui__select
+  printf '%s' "$active_items" | sort | _ui__select
 }
 
 main "$@"

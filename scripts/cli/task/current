@@ -46,11 +46,11 @@ main() {
 
   local current_branch
   if ! current_branch="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"; then
-    log "Error: Not on a task or project branch."
+    _ui__log "Error: Not on a task or project branch."
     exit 1
   fi
   if [[ -z "$current_branch" ]]; then
-    log "Error: Not on a task or project branch."
+    _ui__log "Error: Not on a task or project branch."
     exit 1
   fi
 

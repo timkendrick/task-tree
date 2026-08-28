@@ -85,7 +85,7 @@ main() {
 
   # Check history file exists and has at least one entry
   if [[ ! -f "$history_file" ]] || [[ ! -s "$history_file" ]]; then
-    log "Nothing to undo: tt history is empty."
+    _ui__log "Nothing to undo: tt history is empty."
     exit 1
   fi
 
@@ -93,7 +93,7 @@ main() {
   local last_line
   last_line="$(tail -n 1 "$history_file")"
   if [[ -z "$last_line" ]]; then
-    log "Nothing to undo: tt history is empty."
+    _ui__log "Nothing to undo: tt history is empty."
     exit 1
   fi
 
@@ -103,7 +103,7 @@ main() {
 
   # Validate before_op is non-empty
   if [[ -z "$before_op" ]]; then
-    log "Error: Malformed history entry: '$last_line'"
+    _ui__log "Error: Malformed history entry: '$last_line'"
     exit 1
   fi
 
@@ -112,27 +112,27 @@ main() {
   if [[ -z "$after_op" ]]; then
     in_progress=true
     if [[ "$force" != true ]]; then
-      log "Error: A tt command is currently in progress (incomplete transaction)."
-      log "  before-op: ${before_op:0:12}..."
-      log "  This may indicate a crashed or killed tt process."
-      log "  Use --force to forcibly revert this in-progress transaction."
+      _ui__log "Error: A tt command is currently in progress (incomplete transaction)."
+      _ui__log "  before-op: ${before_op:0:12}..."
+      _ui__log "  This may indicate a crashed or killed tt process."
+      _ui__log "  Use --force to forcibly revert this in-progress transaction."
       exit 1
     fi
-    log "Warning: Reverting in-progress transaction (--force)."
+    _ui__log "Warning: Reverting in-progress transaction (--force)."
   fi
 
   # Check current jj op matches expected after-op (only for completed transactions)
   if [[ "$in_progress" != true && "$force" != true ]]; then
     local current_op
     current_op="$(get_jj_op_id "$repo")" || {
-      log "Error: Could not read current jj operation ID."
+      _ui__log "Error: Could not read current jj operation ID."
       exit 1
     }
     if [[ "$current_op" != "$after_op" ]]; then
-      log "Error: Repository has been modified outside of tt since the last recorded command."
-      log "  Expected operation: ${after_op:0:12}..."
-      log "  Current operation:  ${current_op:0:12}..."
-      log "  Use --force to undo anyway (may lose intermediate changes)."
+      _ui__log "Error: Repository has been modified outside of tt since the last recorded command."
+      _ui__log "  Expected operation: ${after_op:0:12}..."
+      _ui__log "  Current operation:  ${current_op:0:12}..."
+      _ui__log "  Use --force to undo anyway (may lose intermediate changes)."
       exit 1
     fi
   fi
@@ -140,16 +140,16 @@ main() {
   # Check working copy is clean
   if [[ "$force" != true ]]; then
     if ! is_wc_clean "$repo"; then
-      log "Error: Working copy has uncommitted changes."
-      log "  Commit or discard changes first, or use --force."
+      _ui__log "Error: Working copy has uncommitted changes."
+      _ui__log "  Commit or discard changes first, or use --force."
       exit 1
     fi
   fi
 
   # Log the outgoing operation ID for manual redo
   if [[ "$in_progress" != true && -n "$after_op" ]]; then
-    log "Outgoing jj operation (to redo manually):"
-    log "  jj op restore $after_op"
+    _ui__log "Outgoing jj operation (to redo manually):"
+    _ui__log "  jj op restore $after_op"
   fi
 
   # Capture current op ID for safety trap (in case jj op restore itself fails)
@@ -159,7 +159,7 @@ main() {
   # Set safety trap: if the undo itself fails, restore back to where we were
   # (history line is NOT removed until after successful restore)
   if [[ -n "$pre_undo_op" ]]; then
-    trap 'log "Error: undo failed; restoring to pre-undo state"; jj -R "'"$repo"'" op restore "'"$pre_undo_op"'" 2>/dev/null || true' ERR
+    trap '_ui__log "Error: undo failed; restoring to pre-undo state"; jj -R "'"$repo"'" op restore "'"$pre_undo_op"'" 2>/dev/null || true' ERR
   fi
 
   # Restore jj to before-op state (pop history line only after success)
@@ -200,7 +200,7 @@ main() {
 
   trap - ERR
 
-  log "Undone: jj repository restored to operation ${before_op:0:12}..."
+  _ui__log "Undone: jj repository restored to operation ${before_op:0:12}..."
 }
 
 main "$@"

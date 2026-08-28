@@ -105,7 +105,7 @@ resolve_parent() {
     local parent_task_id="$parent_arg"
     local parent_rev
     if ! parent_rev="$(jj "${jj_opts[@]}" log -r "$parent_task_id" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"; then
-      log "Error: Parent task not found: $parent_task_id"
+      _ui__log "Error: Parent task not found: $parent_task_id"
       exit 1
     fi
     if is_task_branch "$parent_task_id" "$task_prefix"; then
@@ -276,7 +276,7 @@ main() {
     # --project mode: fork from --target if given, else current @
     if [[ -n "$target" ]]; then
       if ! parent_rev="$(jj "${jj_opts[@]}" log -r "$target" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"; then
-        log "Error: --target revision not found: $target"
+        _ui__log "Error: --target revision not found: $target"
         exit 1
       fi
     else
@@ -285,7 +285,7 @@ main() {
   fi
 
   if [[ -n "$parent_bookmark" ]]; then
-    log "Creating task under parent: $parent_bookmark"
+    _ui__log "Creating task under parent: $parent_bookmark"
   fi
 
   if [[ -z "$title" ]]; then
@@ -299,9 +299,9 @@ main() {
 
   if [[ "$slug_explicit" == false ]]; then
     local default_slug
-    default_slug="$(title_to_slug "$title")"
+    default_slug="$(_string__to_slug "$title")"
     if [[ -z "$default_slug" ]]; then
-      log "Error: Could not generate slug from title: $title"
+      _ui__log "Error: Could not generate slug from title: $title"
       exit 1
     fi
     if [[ -t 0 ]]; then
@@ -312,7 +312,7 @@ main() {
       usage >&2; exit 1
     fi
   fi
-  if ! validate_slug "$slug"; then
+  if ! _string__validate_slug "$slug"; then
     exit 1
   fi
 
@@ -321,8 +321,8 @@ main() {
   if [[ -t 0 ]]; then
     # Interactive: open editor for body
     local raw
-    raw="$(prompt_raw </dev/null)" || {
-      log "Error: Editor exited with non-zero status."
+    raw="$(_ui__prompt_raw </dev/null)" || {
+      _ui__log "Error: Editor exited with non-zero status."
       exit 1
     }
     body="$raw"
@@ -333,20 +333,20 @@ main() {
 
   # Generate task ID
   local task_hex
-  task_hex="$(generate_hex)"
+  task_hex="$(_string__generate_hex)"
   local task_id="${active_prefix}${slug}-${task_hex}"
   local task_suffix="${slug}-${task_hex}"
   local task_file
   task_file="$(task_file_path "$task_suffix")"
 
   if [[ "$dry_run" == true ]]; then
-    log "Dry run: would create task $task_id"
-    log "  Task file: $task_file"
-    log "  Title: $title"
-    log "  Mode: $( [[ "$is_project" == true ]] && echo project || echo task )"
-    log "  Parent rev: $parent_rev"
-    [[ -n "$parent_task_file" ]] && log "  Parent task file: $parent_task_file"
-    log "  JJ bookmark: $task_id"
+    _ui__log "Dry run: would create task $task_id"
+    _ui__log "  Task file: $task_file"
+    _ui__log "  Title: $title"
+    _ui__log "  Mode: $( [[ "$is_project" == true ]] && echo project || echo task )"
+    _ui__log "  Parent rev: $parent_rev"
+    [[ -n "$parent_task_file" ]] && _ui__log "  Parent task file: $parent_task_file"
+    _ui__log "  JJ bookmark: $task_id"
     exit 0
   fi
 
@@ -380,11 +380,11 @@ main() {
   local bookmark_existed=false
   if jj "${jj_opts[@]}" log -r "$task_id" -n 1 --no-graph -T '' 2>/dev/null; then
     if [[ "$force" == false ]]; then
-      log "Error: Branch '$task_id' already exists. Use --force to overwrite."
+      _ui__log "Error: Branch '$task_id' already exists. Use --force to overwrite."
       exit 1
     fi
     bookmark_existed=true
-    log "Warning: Branch '$task_id' already exists; overwriting (--force)."
+    _ui__log "Warning: Branch '$task_id' already exists; overwriting (--force)."
   fi
 
   # Begin transaction (records before-op for undo)
@@ -394,7 +394,7 @@ main() {
   # status -> IN-PROGRESS commit and advances the parent bookmark, so parent_rev (a
   # commit id captured before the reopen) must be re-resolved afterwards.
   if [[ "$parent_is_done" == true ]]; then
-    log "Parent task '$parent_bookmark' is DONE; reopening before creating child..."
+    _ui__log "Parent task '$parent_bookmark' is DONE; reopening before creating child..."
     "$SCRIPT_DIR/checkout" "$parent_bookmark" --repo "$repo" >/dev/null
     parent_rev="$(jj "${jj_opts[@]}" log -r "$parent_bookmark" -n 1 --no-graph -T 'commit_id')"
   fi
@@ -421,12 +421,12 @@ main() {
     # the child branch's initial commit (via edit) sets title, body, and labels.
     local parent_path="$repo/$parent_task_file"
     if [[ ! -f "$parent_path" ]]; then
-      log "Error: Parent task file not found: $parent_path"
+      _ui__log "Error: Parent task file not found: $parent_path"
       exit 1
     fi
     write_task_stub "$repo" "$task_suffix"
     append_frontmatter_subtask "$parent_path" "$task_id"
-    log "Added subtask to parent: $parent_task_file"
+    _ui__log "Added subtask to parent: $parent_task_file"
     jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")" >&2
     jj "${jj_opts[@]}" bookmark set "$parent_bookmark" >&2
     jj "${jj_opts[@]}" new "@" >&2
@@ -450,7 +450,7 @@ main() {
     "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body" >&2
   fi
 
-  log "Created task $task_id (bookmark: $task_id)"
+  _ui__log "Created task $task_id (bookmark: $task_id)"
 
   if [[ "$propagate" == true ]] && [[ -n "$parent_bookmark" ]]; then
     local -a propagate_args=(--from "$parent_bookmark" --repo "$repo")
@@ -458,7 +458,7 @@ main() {
     [[ "$propagate_shallow" == true ]] && propagate_args+=(--shallow)
     [[ "$force" == true ]] && propagate_args+=(--force)
     [[ "$dry_run" == true ]] && propagate_args+=(--dry-run)
-    log "Propagating from $parent_bookmark..."
+    _ui__log "Propagating from $parent_bookmark..."
     "$SCRIPT_DIR/propagate" "${propagate_args[@]}" >&2
   fi
 

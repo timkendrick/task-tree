@@ -82,7 +82,7 @@ main() {
   if [[ -n "$task_id_arg" ]]; then
     branch="$task_id_arg"
     if ! jj -R "$repo" --ignore-working-copy log -r "$branch" --no-graph -T '' 2>/dev/null; then
-      log "Error: Branch '$branch' not found in repository."
+      _ui__log "Error: Branch '$branch' not found in repository."
       exit 1
     fi
     if is_task_branch "$branch" "$task_prefix"; then
@@ -90,13 +90,13 @@ main() {
     elif is_project_branch "$branch" "$project_prefix"; then
       task_suffix="${branch#$project_prefix}"
     else
-      log "Error: '$task_id_arg' is not a task or project branch."
+      _ui__log "Error: '$task_id_arg' is not a task or project branch."
       exit 1
     fi
   else
     branch="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$branch" ]]; then
-      log "Error: Not on a task or project branch. Use --task to specify."
+      _ui__log "Error: Not on a task or project branch. Use --task to specify."
       exit 1
     fi
     if is_task_branch "$branch" "$task_prefix"; then
@@ -109,7 +109,7 @@ main() {
   # Apply "where to read" rule: use find_branch_for_task to locate canonical branch
   local read_branch
   if ! read_branch="$(find_branch_for_task "$repo" "$branch" "$task_prefix" "$project_prefix")"; then
-    log "Error: Could not locate branch for task '$branch'."
+    _ui__log "Error: Could not locate branch for task '$branch'."
     exit 1
   fi
 
@@ -118,7 +118,7 @@ main() {
   task_file="$(task_file_path "$task_suffix")"
   local task_content
   if ! task_content="$(jj_show_at_revision "$repo" "$read_branch" "$task_file")"; then
-    log "Error: Could not read task file '$task_file' from '$read_branch'."
+    _ui__log "Error: Could not read task file '$task_file' from '$read_branch'."
     exit 1
   fi
 
@@ -136,7 +136,7 @@ main() {
   ')
 
   if [[ ${#all_ctx_ids[@]} -eq 0 ]]; then
-    log "Error: Task '$branch' has no context files."
+    _ui__log "Error: Task '$branch' has no context files."
     exit 1
   fi
 
@@ -156,10 +156,10 @@ main() {
         fi
       done
       if [[ "$found" == false ]]; then
-        log "Error: Context ID '$requested' not found in task '$branch'."
-        log "Available context IDs:"
+        _ui__log "Error: Context ID '$requested' not found in task '$branch'."
+        _ui__log "Available context IDs:"
         for known in "${all_ctx_ids[@]}"; do
-          log "  $known"
+          _ui__log "  $known"
         done
         exit 1
       fi
@@ -173,7 +173,7 @@ main() {
     ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
     local ctx_content
     if ! ctx_content="$(jj_show_at_revision "$repo" "$read_branch" "$ctx_file")"; then
-      log "Error: Could not read context file '$ctx_file' from '$read_branch'."
+      _ui__log "Error: Could not read context file '$ctx_file' from '$read_branch'."
       exit 1
     fi
     printf '%s\n' "$ctx_content"
