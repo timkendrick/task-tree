@@ -1178,6 +1178,16 @@ resolve_task_worktree() {
   esac
 }
 
+# Usage: jj_workspace_list REPO
+# Prints one line per jj workspace in REPO, formatted as "name: /absolute/path",
+# or "name: <Error: ...>" when the workspace has no resolvable path.
+# Parse each line with parse_workspace_list_line.
+jj_workspace_list() {
+  local repo="$1"
+  jj -R "$repo" --ignore-working-copy workspace list --no-pager \
+    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null
+}
+
 # Usage: parse_workspace_list_line LINE
 # Parses one line from `jj workspace list -T 'name ++ ": " ++ root ++ "\n"'`.
 # Outputs two lines to stdout:
@@ -1240,32 +1250,38 @@ parse_workspace_list_line() {
   printf '%s\n%s\n' "$ws_name" "$ws_path"
 }
 
+# Usage: list_worktree_entries REPO
+# Prints one tab-separated "name<TAB>path" record per jj workspace in REPO.
+# path is the empty string when the workspace has no resolvable path.
+# Returns 1 if the workspace list cannot be read.
+list_worktree_entries() {
+  local repo="$1"
+  local ws_raw
+  ws_raw="$(jj_workspace_list "$repo")" || return 1
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local parsed
+    parsed="$(parse_workspace_list_line "$line")"
+    printf '%s\t%s\n' \
+      "$(printf '%s' "$parsed" | sed -n '1p')" \
+      "$(printf '%s' "$parsed" | sed -n '2p')"
+  done <<< "$ws_raw"
+}
+
 # Usage: find_worktrees_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
 # Outputs one workspace root path per line for each jj workspace where
 # BOOKMARK is the current branch (resolved via resolve_current).
-# Uses jj template 'name ++ ": " ++ root ++ "\n"' to get workspace paths.
 find_worktrees_for_branch() {
   local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
-  # Get all workspace names + root paths using explicit template.
-  # Format per line: "name: /absolute/path" or "name: <Error: ...>" for missing paths.
-  local ws_list
-  ws_list="$(jj -R "$repo" --ignore-working-copy workspace list --no-pager \
-    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || return 0
-  while IFS= read -r ws_line; do
-    [[ -z "$ws_line" ]] && continue
-    local parsed ws_name ws_root
-    parsed="$(parse_workspace_list_line "$ws_line")"
-    ws_name="$(printf '%s' "$parsed" | sed -n '1p')"
-    ws_root="$(printf '%s' "$parsed" | sed -n '2p')"
-    [[ -z "$ws_root" ]] && continue
-    [[ ! -d "$ws_root" ]] && continue
-    # Resolve current bookmark in this workspace
-    local ws_bookmark
+  local entries
+  entries="$(list_worktree_entries "$repo")" || return 0
+  local ws_root ws_bookmark
+  while IFS=$'\t' read -r _ ws_root; do
+    [[ -z "$ws_root" || ! -d "$ws_root" ]] && continue
     ws_bookmark="$(resolve_current_bookmark "$ws_root" "$task_prefix" "$project_prefix" 2>/dev/null)" || continue
-    if [[ "$ws_bookmark" == "$bookmark" ]]; then
-      printf '%s\n' "$ws_root"
-    fi
-  done <<< "$ws_list"
+    [[ "$ws_bookmark" == "$bookmark" ]] && printf '%s\n' "$ws_root"
+  done <<< "$entries"
+  return 0
 }
 
 # Usage: resolve_current REPO TASK_PREFIX PROJECT_PREFIX
@@ -1345,20 +1361,31 @@ resolve_current_bookmark() {
 # Returns 0 and prints name if found, returns 1 if not found.
 resolve_workspace_name() {
   local repo="$1" worktree_path="$2"
-  local ws_list
-  ws_list="$(jj -R "$repo" --ignore-working-copy workspace list \
-    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || return 1
-  while IFS= read -r ws_line; do
-    [[ -z "$ws_line" ]] && continue
-    local parsed ws_name ws_root
-    parsed="$(parse_workspace_list_line "$ws_line")"
-    ws_name="$(printf '%s' "$parsed" | sed -n '1p')"
-    ws_root="$(printf '%s' "$parsed" | sed -n '2p')"
-    if [[ "$ws_root" == "$worktree_path" ]]; then
-      printf '%s' "$ws_name"
-      return 0
-    fi
-  done <<< "$ws_list"
+  local entries
+  entries="$(list_worktree_entries "$repo")" || return 1
+  local name path
+  while IFS=$'\t' read -r name path; do
+    [[ "$path" == "$worktree_path" ]] || continue
+    printf '%s' "$name"
+    return 0
+  done <<< "$entries"
+  return 1
+}
+
+# Usage: resolve_workspace_path REPO WS_NAME
+# Prints the recorded filesystem path of the jj workspace named WS_NAME.
+# Prints an empty string if the workspace has no recorded path.
+# Returns 0 if found, 1 if no workspace bears that name.
+resolve_workspace_path() {
+  local repo="$1" ws_name="$2"
+  local entries
+  entries="$(list_worktree_entries "$repo")" || return 1
+  local name path
+  while IFS=$'\t' read -r name path; do
+    [[ "$name" == "$ws_name" ]] || continue
+    printf '%s' "$path"
+    return 0
+  done <<< "$entries"
   return 1
 }
 
@@ -1368,23 +1395,19 @@ resolve_workspace_name() {
 # path is empty string if unavailable; task_id is empty string if unresolved.
 list_workspaces() {
   local repo="$1" task_prefix="$2" project_prefix="$3"
-  local ws_raw
-  ws_raw="$(jj -R "$repo" --ignore-working-copy workspace list \
-    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || return 0
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    local parsed ws_name ws_path
-    parsed="$(parse_workspace_list_line "$line")"
-    ws_name="$(printf '%s' "$parsed" | sed -n '1p')"
-    ws_path="$(printf '%s' "$parsed" | sed -n '2p')"
+  local entries
+  entries="$(list_worktree_entries "$repo")" || return 0
+  local ws_name ws_path task_id
+  while IFS=$'\t' read -r ws_name ws_path; do
+    [[ -z "$ws_name" ]] && continue
 
-    local task_id=''
+    task_id=''
     if [[ -n "$ws_path" && -d "$ws_path" ]]; then
       task_id="$(resolve_current_bookmark "$ws_path" "$task_prefix" "$project_prefix" 2>/dev/null)" || true
     fi
 
     printf '%s\t%s\t%s\n' "$ws_name" "$ws_path" "$task_id"
-  done <<< "$ws_raw"
+  done <<< "$entries"
 }
 
 # Usage: forget_worktree REPO WORKSPACE_NAME [WORKTREE_PATH]
@@ -1758,6 +1781,20 @@ resolve_canonical_repo() {
     # Canonical repo: .jj/repo is a directory (the actual op store)
     printf '%s' "$repo"
   fi
+}
+
+# Usage: resolve_canonical_repo_path REPO
+# Prints the symlink-resolved path of the canonical repository root for REPO.
+# REPO may be any workspace, including a dedicated worktree whose own .jj points
+# at the canonical repo. Use when the result is compared against another
+# canonicalized path, so that a symlinked root (e.g. /var -> /private/var on
+# macOS) does not defeat the comparison.
+# Returns 1 if the canonical root cannot be resolved.
+resolve_canonical_repo_path() {
+  local repo="$1"
+  local canonical_repo
+  canonical_repo="$(resolve_canonical_repo "$repo")" || return 1
+  resolve_path_symlinks "$canonical_repo" 2>/dev/null
 }
 
 # Usage: resolve_history_file_location REPO
