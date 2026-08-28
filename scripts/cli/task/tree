@@ -158,7 +158,7 @@ emit_tree() {
   fi
 
   local content
-  content="$(jj_show_at_revision "$repo" "$source_branch" "$path")" || true
+  content="$(_repo__read_file_at_revision "$repo" "$source_branch" "$path")" || true
 
   local checkbox title
   local meta
@@ -207,7 +207,7 @@ build_subtask_index() {
     [[ -z "$branch" ]] && continue
     suffix="$(branch_suffix "$branch" "$task_prefix" "$project_prefix")" || continue
     path="$(_path__task_file "$suffix")"
-    content="$(jj_show_at_revision "$repo" "$branch" "$path")" || continue
+    content="$(_repo__read_file_at_revision "$repo" "$branch" "$path")" || continue
     [[ -z "$content" ]] && continue
     while IFS='|' read -r cb id _title; do
       [[ -z "$id" ]] && continue
@@ -260,7 +260,7 @@ collect_task_ids() {
     local path
     path="$(_path__task_file "$suffix")"
     local content
-    content="$(jj_show_at_revision "$repo" "$source_branch" "$path")" || true
+    content="$(_repo__read_file_at_revision "$repo" "$source_branch" "$path")" || true
     local subs
     subs="$(get_subtask_entries "$content" | cut -d'|' -f2)"
     for sub in $subs; do

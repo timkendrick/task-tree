@@ -128,14 +128,14 @@ reorder_subtask() {
     "$current_worktree" "$worktree_arg")" || exit 1
 
   # 4. Precondition: WC must be clean
-  if ! is_wc_clean "$parent_worktree"; then
+  if ! _repo__check_working_copy_clean "$parent_worktree"; then
     _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
 
   # 5. Read parent task file from the parent branch
   local parent_content
-  parent_content="$(jj_show_at_revision "$repo" "$parent_id" "$parent_task_file")" || {
+  parent_content="$(_repo__read_file_at_revision "$repo" "$parent_id" "$parent_task_file")" || {
     _ui__log "Error: Could not read task file '$parent_task_file' from branch '$parent_id'."
     exit 1
   }
@@ -243,7 +243,7 @@ reorder_subtask() {
   else
     child_suffix="${child_id#$project_prefix}"
   fi
-  child_content="$(jj_show_at_revision "$repo" "$child_branch" "$(_path__task_file "$child_suffix")")"
+  child_content="$(_repo__read_file_at_revision "$repo" "$child_branch" "$(_path__task_file "$child_suffix")")"
   child_title="$(_frontmatter__parse_quoted_field "$child_content" "title")"
 
   # 10. Begin transaction
@@ -300,14 +300,14 @@ reorder_frontmatter() {
     "$task_prefix" "$project_prefix" "$current_worktree" "$worktree_arg")" || exit 1
 
   # 4. Precondition: WC must be clean
-  if ! is_wc_clean "$canonical_worktree"; then
+  if ! _repo__check_working_copy_clean "$canonical_worktree"; then
     _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
 
   # 5. Read task file content from the canonical branch
   local task_content
-  task_content="$(jj_show_at_revision "$repo" "$canonical_branch" "$task_file")" || {
+  task_content="$(_repo__read_file_at_revision "$repo" "$canonical_branch" "$task_file")" || {
     _ui__log "Error: Could not read task file '$task_file' from branch '$canonical_branch'."
     exit 1
   }
@@ -411,7 +411,7 @@ main() {
   project_prefix="$(get_project_prefix "$repo")"
 
   local current_worktree
-  current_worktree="$(resolve_current_worktree "$repo")"
+  current_worktree="$(_repo__resolve_worktree_root "$repo")"
 
   # Resolve default task_id if not provided
   if [[ -z "$task_id" ]]; then

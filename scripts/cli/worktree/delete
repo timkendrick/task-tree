@@ -83,7 +83,7 @@ main() {
 
   # Refuse to delete the canonical (main) repo workspace — this is always an error
   local canonical_repo
-  canonical_repo="$(resolve_canonical_repo_path "$repo")"
+  canonical_repo="$(_repo__resolve_repository_path "$repo")"
   if [[ "$canonical_worktree_path" == "$canonical_repo" ]]; then
     _ui__log "Error: Not a task worktree"
     exit 1
@@ -129,7 +129,7 @@ main() {
         task_suffix="${task_id#$project_prefix}"
       fi
       task_file="$(_path__task_file "$task_suffix")"
-      task_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file" 2>/dev/null)" || task_content=""
+      task_content="$(_repo__read_file_at_revision "$repo" "$task_id" "$task_file" 2>/dev/null)" || task_content=""
       task_status="$(_frontmatter__parse_field "$task_content" "status")"
       if [[ "$task_status" != "DONE" ]]; then
         _ui__log "Error: Task '$task_id' status is '${task_status:-unknown}' (not DONE)."
@@ -146,7 +146,7 @@ main() {
     fi
 
     # Worktree must be clean (no uncommitted changes)
-    if ! is_wc_clean "$canonical_worktree_path"; then
+    if ! _repo__check_working_copy_clean "$canonical_worktree_path"; then
       _ui__log "Error: Worktree '$worktree_path' has uncommitted changes."
       _ui__log "  Commit or discard changes first, or use --force."
       exit 1
@@ -159,7 +159,7 @@ main() {
   # when delete runs from inside the worktree being removed, $repo resolves to
   # that worktree and HEAD would be left dangling.
   local repo_root
-  repo_root="$(resolve_canonical_repo "$repo")"
+  repo_root="$(_repo__resolve_repository_root "$repo")"
 
   local head_needs_reset=false
   if [[ -n "$workspace_dir" && -L "${workspace_dir}/HEAD" ]]; then

@@ -97,7 +97,7 @@ main() {
 
   # Resolve current worktree (where the user is running from)
   local current_worktree
-  current_worktree="$(resolve_current_worktree "$repo")"
+  current_worktree="$(_repo__resolve_worktree_root "$repo")"
 
   # Resolve target worktree for the task (with multiple-worktree disambiguation)
   local target_worktree
@@ -112,7 +112,7 @@ main() {
     | grep -c . 2>/dev/null || true)"
 
   # Precondition: WC must be clean
-  if ! is_wc_clean "$target_worktree"; then
+  if ! _repo__check_working_copy_clean "$target_worktree"; then
     _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
@@ -122,12 +122,12 @@ main() {
   # switched_to_task path will abandon the current empty WC commit, making its
   # change_id unresolvable. The parent commit_id is stable.
   local original_rev original_parent_rev
-  original_rev="$(get_worktree_current_rev "$target_worktree")" || true
+  original_rev="$(_repo__get_working_copy_revision "$target_worktree")" || true
   original_parent_rev="$(jj -R "$target_worktree" log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)" || true
 
   # Read task file content from bookmark
   local task_content
-  task_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || {
+  task_content="$(_repo__read_file_at_revision "$repo" "$bookmark" "$task_file")" || {
     _ui__log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
     exit 1
   }

@@ -178,7 +178,7 @@ main() {
 
   # Resolve current worktree and bookmark for hook env vars
   local current_worktree previous_task_id previous_task_branch
-  current_worktree="$(resolve_current_worktree "$repo")"
+  current_worktree="$(_repo__resolve_worktree_root "$repo")"
   previous_task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
   previous_task_branch="$previous_task_id"
 
@@ -241,7 +241,7 @@ main() {
 
     if [[ -d "$target_worktree" && ( -d "$target_worktree/.jj" || -L "$target_worktree/.jj" ) ]]; then
       # Existing workspace: check for local changes
-      if ! is_wc_clean "$target_worktree"; then
+      if ! _repo__check_working_copy_clean "$target_worktree"; then
         if [[ "$force" != true ]]; then
           _ui__log "Error: Workspace '$target_worktree' has uncommitted changes."
           _ui__log "  Commit or discard changes first, or use --force to proceed anyway."
@@ -257,7 +257,7 @@ main() {
   else
     # No --worktree: use current workspace
     target_worktree="$current_worktree"
-    if ! is_wc_clean "$target_worktree"; then
+    if ! _repo__check_working_copy_clean "$target_worktree"; then
       if [[ "$force" != true ]]; then
         _ui__log "Error: Working copy has uncommitted changes."
         _ui__log "  Commit or discard changes first, or use --force to proceed anyway."
@@ -290,7 +290,7 @@ main() {
     # If the working copy was clean going in, it must still be clean. Skipped under
     # --force, where a dirty working copy was explicitly permitted up front, and for
     # brand-new worktrees, which do not exist on disk yet.
-    if [[ "$force" != true ]] && [[ "$new_worktree" != true ]] && ! is_wc_clean "$target_worktree"; then
+    if [[ "$force" != true ]] && [[ "$new_worktree" != true ]] && ! _repo__check_working_copy_clean "$target_worktree"; then
       _ui__log "Error: Working copy not clean after propagation."
       exit 1
     fi
@@ -299,7 +299,7 @@ main() {
   # Read task frontmatter from the bookmark (after any propagation, so the values
   # reflect the branch's current tip).
   local task_file_content task_title task_status
-  task_file_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file")" || true
+  task_file_content="$(_repo__read_file_at_revision "$repo" "$task_id" "$task_file")" || true
   task_title="$(_frontmatter__parse_quoted_field "$task_file_content" "title")"
   task_status="$(_frontmatter__parse_field "$task_file_content" "status")"
 
@@ -362,7 +362,7 @@ main() {
 
     # Describe the WC, advance the bookmark, then create a clean working WC on top
     jj -R "$target_worktree" describe -m "$(_commit__format_message "task" "checkout" "$task_id" "$task_title")" >&2
-    jj -R "$target_worktree" bookmark set "$task_id" >&2
+    jj -R "$target_worktree" bookmark set "$task_id" -r '@' >&2
     jj -R "$target_worktree" new "@" >&2
   fi
 

@@ -109,7 +109,7 @@ read_task_metadata() {
   [[ -z "$suffix" ]] && return 0
 
   local content
-  content="$(jj_show_at_revision "$repo" "$rev" "$(_path__task_file "$suffix")")" || return 0
+  content="$(_repo__read_file_at_revision "$repo" "$rev" "$(_path__task_file "$suffix")")" || return 0
   [[ -z "$content" ]] && return 0
 
   printf '%s\t%s\n' \
@@ -206,7 +206,7 @@ render_entries() {
     local child_records='' arm
     for arm in ${entry_arms[$entry_index]}; do
       local arm_records
-      arm_records="$(mainline_commit_records "$repo" "${arm##*:}" "${arm%%:*}")" || arm_records=''
+      arm_records="$(_repo__list_mainline_commits "$repo" "${arm##*:}" "${arm%%:*}")" || arm_records=''
       if [[ -n "$arm_records" ]]; then
         child_records="${child_records}${arm_records}"$'\n'
       fi
@@ -331,7 +331,7 @@ main() {
       [[ -z "$base" ]] && continue
       while IFS= read -r record; do
         [[ -n "$record" ]] && raw_records+=("$record")
-      done < <(mainline_commit_records "$repo" "$tip" "$base")
+      done < <(_repo__list_mainline_commits "$repo" "$tip" "$base")
     done <<< "$range_records"
 
     local -a seen_ids=()
@@ -375,7 +375,7 @@ main() {
     # --- Collect the branch's own commits since the reference commit ---
     while IFS= read -r record; do
       [[ -n "$record" ]] && records+=("$record")
-    done < <(mainline_commit_records "$repo" "$task_id" "$reference_commit")
+    done < <(_repo__list_mainline_commits "$repo" "$task_id" "$reference_commit")
   fi
 
   # --- Checkpoints recorded directly on the branch ---

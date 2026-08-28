@@ -58,7 +58,7 @@ main() {
   done
 
   repo="$(resolve_repo "$repo")"
-  canonical="$(resolve_canonical_repo "$repo")"
+  canonical="$(_repo__resolve_repository_root "$repo")"
   printf '%s\n' "$canonical"
 }
 

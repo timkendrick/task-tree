@@ -122,7 +122,7 @@ main() {
   fi
 
   # Check working copy is clean
-  if ! is_wc_clean "$repo"; then
+  if ! _repo__check_working_copy_clean "$repo"; then
     _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
@@ -188,7 +188,7 @@ main() {
 
   # Read task title for commit messages
   local task_content task_title
-  task_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file")" || {
+  task_content="$(_repo__read_file_at_revision "$repo" "$task_id" "$task_file")" || {
     _ui__log "Error: Could not read task file '$task_file' from '$task_id'."
     exit 1
   }
@@ -228,7 +228,7 @@ main() {
   elif [[ "$current_branch" == "$old_parent" ]]; then
     restore_to_old_parent=true  # case 2
   else
-    original_rev="$(get_worktree_current_rev "$repo")"  # case 3
+    original_rev="$(_repo__get_working_copy_revision "$repo")"  # case 3
   fi
 
   # Begin transaction (records before-op for undo)
@@ -253,7 +253,7 @@ main() {
   rm -rf "${repo:?}/$task_dir"
 
   jj -R "$repo" describe -m "$(_commit__format_message "task" "remove" "$task_id" "$task_title")"
-  jj -R "$repo" bookmark set "$old_parent"
+  jj -R "$repo" bookmark set "$old_parent" -r '@'
   jj -R "$repo" new "@"
 
   # ----------------------------------------------------------------
@@ -272,7 +272,7 @@ main() {
   local task_dir_new
   task_dir_new="$(_path__task_dir "$task_slug")"
   mkdir -p "$repo/$task_dir_new"
-  if jj_show_at_revision "$repo" "$old_parent_commit_id" "$task_file" \
+  if _repo__read_file_at_revision "$repo" "$old_parent_commit_id" "$task_file" \
        > "$repo/$task_file"; then
     _ui__log "Copied task stub from old parent to new parent: $task_file"
   else
@@ -280,7 +280,7 @@ main() {
   fi
 
   jj -R "$repo" describe -m "$(_commit__format_message "task" "move" "$task_id" "$task_title")"
-  jj -R "$repo" bookmark set "$new_parent_id"
+  jj -R "$repo" bookmark set "$new_parent_id" -r '@'
   jj -R "$repo" new "@"
 
   # ----------------------------------------------------------------

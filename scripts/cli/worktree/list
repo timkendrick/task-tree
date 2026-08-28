@@ -87,7 +87,7 @@ main() {
 
   # Determine current workspace root (to mark with *)
   local current_ws_root
-  current_ws_root="$(resolve_current_worktree "$repo")" || current_ws_root=""
+  current_ws_root="$(_repo__resolve_worktree_root "$repo")" || current_ws_root=""
 
   # Parse into parallel arrays
   local -a ws_names=()

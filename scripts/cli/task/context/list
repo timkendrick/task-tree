@@ -111,7 +111,7 @@ main() {
   local task_file
   task_file="$(_path__task_file "$task_suffix")"
   local task_content
-  if ! task_content="$(jj_show_at_revision "$repo" "$read_branch" "$task_file")"; then
+  if ! task_content="$(_repo__read_file_at_revision "$repo" "$read_branch" "$task_file")"; then
     _ui__log "Error: Could not read task file '$task_file' from '$read_branch'."
     exit 1
   fi

@@ -9,65 +9,14 @@ _TT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_TT_LIB_DIR/frontmatter.sh"
 . "$_TT_LIB_DIR/commit.sh"
 . "$_TT_LIB_DIR/hook.sh"
-
-# ---------------------------------------------------------------------------
-# VCS file-read helpers
-# ---------------------------------------------------------------------------
-
-# Usage: jj_show_at_revision REPO REV PATH
-# Reads a file at a named revision from a jj repo using a root:-relative path.
-# Always passes --ignore-working-copy since these calls never read from @.
-# Outputs file content to stdout. Returns jj's exit code (non-zero = file absent).
-jj_show_at_revision() {
-  local repo="$1" rev="$2" path="$3"
-  jj -R "$repo" --ignore-working-copy file show -r "$rev" -- "root:$path" 2>/dev/null
-}
-
-# Usage: get_jj_op_id REPO
-# Prints the current jj operation ID to stdout.
-# Returns 1 if the operation ID cannot be read.
-#
-# Runs jj in a subshell that cds into REPO first. This ensures jj can resolve
-# its CWD even when the caller's working directory has been deleted (e.g. after
-# a worktree is removed by `worktree delete`). The -R flag tells jj which repo
-# to operate on, so the cd only affects CWD resolution, not the target repo.
-get_jj_op_id() {
-  local repo="$1"
-  (cd "$repo" && jj -R "$repo" op log --no-graph -T id -n 1 2>/dev/null)
-}
-
-# Usage: jj_show_at_op REPO OP REV PATH
-# Reads a file at a specific jj operation ID and revision, using a root:-relative path.
-# Used for historical rescue (e.g. recovering pre-rename file content).
-# Outputs file content to stdout. Returns jj's exit code (non-zero = file absent).
-jj_show_at_op() {
-  local repo="$1" op="$2" rev="$3" path="$4"
-  jj -R "$repo" --at-operation "$op" file show -r "$rev" -- "root:$path" 2>/dev/null
-}
-
-# Find repo root by walking up from current directory to find .jj; return 1 if not found.
-# Uses pwd -P to resolve symlinks so that working from inside a symlinked directory
-# (e.g. /virtual/HEAD) does not produce a symlink path as the repo root.
-find_repo_root() {
-  local dir
-  dir="$(pwd -P)"
-  while [[ -n "$dir" ]]; do
-    if [[ -d "$dir/.jj" ]]; then
-      printf '%s' "$dir"
-      return 0
-    fi
-    [[ "$dir" == '/' ]] && break
-    dir="$(dirname "$dir")"
-  done
-  return 1
-}
+. "$_TT_LIB_DIR/repo.sh"
 
 # Usage: repo=$(resolve_repo "$repo_flag_value")
 #
 # Resolves the repository root using the following priority order:
 #   1. $repo_flag_value — the value passed to --repo (if non-empty)
 #   2. $TT_REPO        — the TT_REPO environment variable (if set and non-empty)
-#   3. find_repo_root  — walk up from CWD to find a .jj directory
+#   3. _repo__find_repository_root — walk up from CWD to find the enclosing repo
 #
 # Prints the resolved repo path to stdout.
 # Exits 1 with an error message if the path cannot be resolved or is not a jj repo.
@@ -81,14 +30,14 @@ resolve_repo() {
       repo="$TT_REPO"
     else
       # Priority 3: walk up from CWD
-      if ! repo="$(find_repo_root)"; then
+      if ! repo="$(_repo__find_repository_root)"; then
         _ui__log "Error: No enclosing jj repository. Use --repo or set TT_REPO."
         exit 1
       fi
     fi
   fi
 
-  if [[ ! -d "$repo/.jj" ]]; then
+  if ! _repo__check_is_repository "$repo"; then
     _ui__log "Error: Not a jj repository: $repo"
     exit 1
   fi
@@ -180,29 +129,6 @@ is_project_branch() {
   [[ "$bookmark" == "$prefix"* ]] && [[ "$bookmark" =~ -[0-9a-fA-F]{8}$ ]]
 }
 
-# Usage: count_revs_in_revset REPO REVSET
-# Prints the number of commits matching REVSET (0 if REVSET fails to resolve).
-count_revs_in_revset() {
-  local repo="$1" revset="$2"
-  jj -R "$repo" log -r "$revset" --no-graph -T 'commit_id ++ "\n"' 2>/dev/null | grep -c . || true
-}
-
-# Usage: get_commit_description REPO REV
-# Prints the full description of REV (empty if it has none).
-get_commit_description() {
-  local repo="$1" rev="$2"
-  jj -R "$repo" log -r "$rev" --no-graph -T 'description'
-}
-
-# Usage: is_wc_clean REPO_OR_WORKTREE
-# Returns 0 if the working copy at REPO_OR_WORKTREE has no pending changes.
-is_wc_clean() {
-  local r="$1"
-  local result
-  result="$(jj -R "$r" log -r '@' --no-graph -T 'empty' 2>/dev/null)" || return 1
-  [[ "$result" == "true" ]]
-}
-
 # Usage: assert_bookmark_up_to_date REPO BOOKMARK
 # Exits 1 if there are any commits between BOOKMARK and the working-copy parent
 # (@-) that are not tracked by the bookmark. Used by commands that operate on
@@ -256,16 +182,6 @@ perform_workspace_switch() {
     "TT_PREVIOUS_TASK_BRANCH=${previous_task_id}"
 }
 
-# Usage: has_conflicts REPO_OR_WORKTREE REVSET
-# Returns 0 (true) if any commit in REVSET has conflicts.
-has_conflicts() {
-  local repo="$1" revset="$2"
-  local result
-  result="$(jj -R "$repo" log -r "$revset" \
-    --no-graph -T 'if(conflict, "yes\n")' 2>/dev/null)" || true
-  [[ -n "$result" ]]
-}
-
 # Usage: find_parent_branch REPO TASK_ID TASK_PREFIX PROJECT_PREFIX
 # Scans all task/project bookmarks for one whose owner task file lists TASK_ID
 # in a subtask: entry (any checkbox state). Outputs the parent bookmark name.
@@ -294,7 +210,7 @@ find_parent_branch() {
     local path
     path="$(_path__task_file "$suffix")"
     local content
-    content="$(jj_show_at_revision "$repo" "$branch" "$path")" || continue
+    content="$(_repo__read_file_at_revision "$repo" "$branch" "$path")" || continue
     if printf '%s' "$content" | grep -qE "^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]+${task_id}([[:space:]]|$)"; then
       if [[ -n "$found" ]]; then
         _ui__log "Error: Multiple parent branches found for '$task_id': '$found' and '$branch'."
@@ -671,7 +587,7 @@ _full_range_parse_symlink_added() {
 _full_range_span_empty() {
   local repo="$1" base="$2" tip="$3"
   local count
-  count="$(count_revs_in_revset "$repo" "${base}..${tip}")"
+  count="$(_repo__count_revisions "$repo" "${base}..${tip}")"
   [[ "$count" -eq 0 ]]
 }
 
@@ -680,31 +596,8 @@ _full_range_span_empty() {
 _full_range_covered_by() {
   local repo="$1" base="$2" tip="$3" broad="$4"
   local count
-  count="$(count_revs_in_revset "$repo" "(${base}..${tip}) ~ (${broad})")"
+  count="$(_repo__count_revisions "$repo" "(${base}..${tip}) ~ (${broad})")"
   [[ "$count" -eq 0 ]]
-}
-
-# Usage: mainline_commit_records REPO TIP BASE
-#
-# Outputs one record per commit on TIP's first-parent mainline that is not an
-# ancestor of BASE, oldest first. Records are tab-separated:
-#   <commit-id>\t<change-id>\t<timestamp>\t<parent-ids>\t<description-first-line>
-#
-# <parent-ids> is a space-separated list of full commit IDs; a merge commit lists
-# the branch it was created on first and the branch merged into it second.
-# <timestamp> is the committer timestamp in ISO 8601 UTC. The description comes
-# last so a tab inside a commit message cannot displace the structured fields.
-#
-# Following first parents only excludes commits that arrived through a merge:
-# those belong to the branch that was merged in, not to TIP's own mainline.
-#
-# Returns jj's exit code; nothing is printed if the revset cannot be resolved.
-mainline_commit_records() {
-  local repo="$1" tip="$2" base="$3"
-  jj -R "$repo" --ignore-working-copy log \
-    -r "first_ancestors($tip) ~ ::$base" --no-graph --reversed \
-    -T 'commit_id ++ "\t" ++ change_id ++ "\t" ++ committer.timestamp().utc().format("%Y-%m-%dT%H:%M:%SZ") ++ "\t" ++ parents.map(|p| p.commit_id()).join(" ") ++ "\t" ++ description.first_line() ++ "\n"' \
-    2>/dev/null
 }
 
 # Usage: find_parent_project REPO TASK_ID TASK_PREFIX PROJECT_PREFIX
@@ -754,7 +647,7 @@ find_branch_for_task() {
     local path
     path="$(_path__task_file "$suffix")"
     local c
-    c="$(jj_show_at_revision "$repo" "$branch" "$path")" || continue
+    c="$(_repo__read_file_at_revision "$repo" "$branch" "$path")" || continue
     if printf '%s' "$c" | grep -qE "^subtask:[[:space:]]*\[x\][[:space:]]+${task_id}([[:space:]]|$)"; then
       printf '%s' "$branch"
       return 0
@@ -768,24 +661,6 @@ find_branch_for_task() {
   fi
 
   return 1
-}
-
-# Usage: get_worktree_current_rev WORKTREE
-# Prints the change_id of @ in the given worktree. Exits 1 on failure.
-# We return the change_id (not the commit_id) because change IDs survive
-# rebases: if @ is a descendant of a rebased branch, jj creates a new
-# commit with the same change ID, so `jj edit <change_id>` will always
-# resolve to the correct (post-rebase) version of the working-copy commit.
-get_worktree_current_rev() {
-  local worktree="$1"
-  jj -R "$worktree" log -r '@' --no-graph -T 'change_id' 2>/dev/null
-}
-
-# Usage: resolve_current_worktree REPO
-# Prints the current workspace root; falls back to REPO if not in a workspace.
-resolve_current_worktree() {
-  local repo="$1"
-  jj -R "$repo" workspace root 2>/dev/null || printf '%s' "$repo"
 }
 
 # Usage: resolve_task_worktree REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX CURRENT_WORKTREE [WORKTREE_ARG]
@@ -823,16 +698,6 @@ resolve_task_worktree() {
       return 1
       ;;
   esac
-}
-
-# Usage: jj_workspace_list REPO
-# Prints one line per jj workspace in REPO, formatted as "name: /absolute/path",
-# or "name: <Error: ...>" when the workspace has no resolvable path.
-# Parse each line with parse_workspace_list_line.
-jj_workspace_list() {
-  local repo="$1"
-  jj -R "$repo" --ignore-working-copy workspace list --no-pager \
-    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null
 }
 
 # Usage: parse_workspace_list_line LINE
@@ -904,7 +769,7 @@ parse_workspace_list_line() {
 list_worktree_entries() {
   local repo="$1"
   local ws_raw
-  ws_raw="$(jj_workspace_list "$repo")" || return 1
+  ws_raw="$(_repo__list_worktrees "$repo")" || return 1
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     local parsed
@@ -1062,7 +927,7 @@ list_workspaces() {
 # If WORKTREE_PATH is provided, also removes all files from disk.
 forget_worktree() {
   local repo="$1" ws_name="$2" worktree_path="${3:-}"
-  jj -R "$repo" workspace forget "$ws_name"
+  _repo__forget_worktree "$repo" "$ws_name"
   if [[ -n "$worktree_path" && -d "$worktree_path" ]]; then
     rm -rf "$worktree_path"
   fi
@@ -1137,7 +1002,7 @@ collect_descendant_task_dirs() {
     local tf
     tf="$(_path__task_file "$suffix")"
     local content
-    content="$(jj_show_at_revision "$repo" "$branch" "$tf")" || continue
+    content="$(_repo__read_file_at_revision "$repo" "$branch" "$tf")" || continue
 
     # Extract all subtask IDs (any checkbox state)
     while IFS= read -r subtask_id; do
@@ -1210,7 +1075,7 @@ write_task_stub() {
 # History location: the history file always lives in the **canonical** jj repo
 # root (the repo whose .jj/repo entry is a directory, not a pointer file).
 # Secondary jj workspaces have a .jj/repo *file* containing a relative path
-# back to the canonical repo's .jj/repo directory. resolve_canonical_repo
+# back to the canonical repo's .jj/repo directory. _repo__resolve_repository_root
 # follows that pointer so all workspaces share a single history file.
 #
 # Nesting: sub-commands invoked by a top-level command inherit TT_TRANSACTION_ID
@@ -1220,42 +1085,6 @@ write_task_stub() {
 # exported so sub-processes never inherit it (they are not the transaction owner).
 # ---------------------------------------------------------------------------
 
-# Usage: resolve_canonical_repo REPO
-# Returns the canonical repo root for the repository.
-# If REPO is a secondary jj workspace (.jj/repo is a pointer file),
-# follows the pointer to find the canonical repo root.
-# If REPO is already the canonical repo (.jj/repo is a directory), returns REPO.
-resolve_canonical_repo() {
-  local repo="$1"
-  local repo_entry="$repo/.jj/repo"
-  if [[ -f "$repo_entry" ]]; then
-    # Secondary workspace: .jj/repo is a file containing a relative path to
-    # the canonical repo's .jj/repo directory (e.g. "../../../../repo/.jj/repo").
-    local target
-    target="$(cd "$repo/.jj" && realpath "$(cat "$repo_entry")")" \
-      || { _ui__log "Error: Could not resolve canonical repo from $repo_entry"; return 1; }
-    # target = /path/to/canonical/.jj/repo — strip /.jj/repo to get repo root
-    dirname "$(dirname "$target")"
-  else
-    # Canonical repo: .jj/repo is a directory (the actual op store)
-    printf '%s' "$repo"
-  fi
-}
-
-# Usage: resolve_canonical_repo_path REPO
-# Prints the symlink-resolved path of the canonical repository root for REPO.
-# REPO may be any workspace, including a dedicated worktree whose own .jj points
-# at the canonical repo. Use when the result is compared against another
-# canonicalized path, so that a symlinked root (e.g. /var -> /private/var on
-# macOS) does not defeat the comparison.
-# Returns 1 if the canonical root cannot be resolved.
-resolve_canonical_repo_path() {
-  local repo="$1"
-  local canonical_repo
-  canonical_repo="$(resolve_canonical_repo "$repo")" || return 1
-  _path__resolve_symlinks "$canonical_repo" 2>/dev/null
-}
-
 # Usage: resolve_history_file_location REPO
 # Returns the path to the .tt/history file for REPO.
 # Follows .jj/repo pointer files so secondary jj workspaces resolve to the
@@ -1264,7 +1093,7 @@ resolve_canonical_repo_path() {
 resolve_history_file_location() {
   local repo="$1"
   local canonical_repo
-  canonical_repo="$(resolve_canonical_repo "$repo")" || return 1
+  canonical_repo="$(_repo__resolve_repository_root "$repo")" || return 1
   printf '%s/%s' "$canonical_repo" "$(_path__metadata 'history')"
 }
 
@@ -1290,7 +1119,7 @@ tt_begin_transaction() {
 
   # Capture current jj operation ID
   local before_op
-  before_op="$(get_jj_op_id "$repo")" || {
+  before_op="$(_repo__get_operation_id "$repo")" || {
     _ui__log "Error: Could not read jj operation ID to begin transaction"
     exit 1
   }
@@ -1342,14 +1171,14 @@ tt_commit_transaction() {
   # This is safe even if $repo (a worktree) has been deleted, since history_file
   # is always inside the canonical repo which remains on disk.
   local canonical_repo
-  canonical_repo="$(cd "$(dirname "$history_file")" && find_repo_root)" || {
+  canonical_repo="$(cd "$(dirname "$history_file")" && _repo__find_repository_root)" || {
     _ui__log "Warning: Could not derive canonical repo from history file path; history may be incomplete"
     canonical_repo="$repo"
   }
 
   # Capture current jj operation ID
   local after_op
-  after_op="$(get_jj_op_id "$canonical_repo")" || {
+  after_op="$(_repo__get_operation_id "$canonical_repo")" || {
     _ui__log "Warning: Could not read jj operation ID for transaction commit; history may be incomplete"
     after_op="unknown"
   }
@@ -1386,7 +1215,7 @@ tt_rollback_transaction() {
 
   # Derive canonical repo from the history file path (walk up from .tt/ to find .jj/).
   local canonical_repo
-  canonical_repo="$(cd "$(dirname "$history_file")" && find_repo_root)" || canonical_repo="$repo"
+  canonical_repo="$(cd "$(dirname "$history_file")" && _repo__find_repository_root)" || canonical_repo="$repo"
 
   _ui__log "Rolling back transaction (restoring jj operation: ${before_op:0:12}...)"
 

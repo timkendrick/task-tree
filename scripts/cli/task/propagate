@@ -104,7 +104,7 @@ is_partially_checked_in() {
   local task_file
   task_file="$(_path__task_file "$suffix")"
   local content status
-  content="$(jj_show_at_revision "$repo" "$child" "$task_file")" || true
+  content="$(_repo__read_file_at_revision "$repo" "$child" "$task_file")" || true
   # If the task file is unreadable (e.g. it lives at a legacy path format),
   # treat the task as complete so we never create spurious resume commits.
   [[ -z "$content" ]] && return 1
@@ -119,7 +119,7 @@ is_partially_checked_in() {
 get_subtask_ids() {
   local repo="$1" bookmark="$2" task_file="$3"
   local content
-  content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
+  content="$(_repo__read_file_at_revision "$repo" "$bookmark" "$task_file")" || true
   [[ -z "$content" ]] && return 0
   _frontmatter__parse_repeated_field "$content" "subtask" | awk '
     /^\[[ x\-]\]/ { sub(/^\[[ x\-]\][ \t]*/, ""); if ($1 != "") print $1 }
@@ -152,7 +152,7 @@ propagate_one_rebase() {
 
   jj "${jj_opts[@]}" rebase -s "roots(::${child} ~ ::${from})" -d "$from"
 
-  if [[ "$force" != true ]] && has_conflicts "$repo" "${child}::"; then
+  if [[ "$force" != true ]] && _repo__check_has_conflicts "$repo" "${child}::"; then
     _ui__log "Error: Conflicts detected in $child after rebase onto $from."
     _ui__log "  Use --force to proceed despite conflicts."
     exit 1
@@ -172,9 +172,9 @@ propagate_one_merge() {
 
   # Create a merge commit (two parents: child tip + from tip), then move child bookmark there.
   jj "${jj_opts[@]}" new "$child" "$from"
-  jj "${jj_opts[@]}" bookmark set "$child"
+  jj "${jj_opts[@]}" bookmark set "$child" -r '@'
 
-  if [[ "$force" != true ]] && has_conflicts "$repo" "$child"; then
+  if [[ "$force" != true ]] && _repo__check_has_conflicts "$repo" "$child"; then
     _ui__log "Error: Conflicts in $child after merging $from."
     _ui__log "  Use --force to proceed despite conflicts."
     exit 1
@@ -213,7 +213,7 @@ create_resume_commit() {
 
   # Child is not at destination — create a resume commit
   jj "${jj_opts[@]}" new "$destination"
-  jj "${jj_opts[@]}" bookmark set "$child"
+  jj "${jj_opts[@]}" bookmark set "$child" -r '@'
   jj "${jj_opts[@]}" edit "$original_rev" 2>/dev/null || true
 }
 
@@ -375,7 +375,7 @@ main() {
   # Capture @ to restore after merge/rebase operations move it.
   # (On error, tt_rollback_transaction restores the entire jj state including WC position.)
   local original_rev
-  original_rev="$(get_worktree_current_rev "$repo")"
+  original_rev="$(_repo__get_working_copy_revision "$repo")"
 
   propagate_from "$repo" "$from_bookmark" "$task_prefix" "$project_prefix" \
     "$strategy" "$shallow" "$force" "$dry_run" "$original_rev" 0

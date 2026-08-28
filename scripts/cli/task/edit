@@ -136,7 +136,7 @@ main() {
 
   # Resolve worktree
   local current_worktree
-  current_worktree="$(resolve_current_worktree "$repo")"
+  current_worktree="$(_repo__resolve_worktree_root "$repo")"
 
   local target_worktree
   if ! target_worktree="$(resolve_task_worktree "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
@@ -145,14 +145,14 @@ main() {
   fi
 
   # Precondition: WC must be clean
-  if ! is_wc_clean "$target_worktree"; then
+  if ! _repo__check_working_copy_clean "$target_worktree"; then
     _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
 
   # Read current task file content from bookmark
   local task_content
-  task_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || {
+  task_content="$(_repo__read_file_at_revision "$repo" "$bookmark" "$task_file")" || {
     _ui__log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
     exit 1
   }
@@ -250,7 +250,7 @@ main() {
 
   local current_file_content
   if [[ "$cross_branch" == true ]]; then
-    current_file_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
+    current_file_content="$(_repo__read_file_at_revision "$repo" "$bookmark" "$task_file")" || true
   else
     current_file_content="$(cat "$target_worktree/$task_file" 2>/dev/null)" || true
   fi
