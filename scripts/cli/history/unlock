@@ -124,7 +124,7 @@ main() {
 
   # --force: complete the transaction entry by writing the current jj op as after-op
   local current_op
-  current_op="$(get_jj_op_id "$repo")" || {
+  current_op="$(_repo__get_operation_id "$repo")" || {
     _ui__log "Error: Could not read current jj operation ID."
     exit 1
   }

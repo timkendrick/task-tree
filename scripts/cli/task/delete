@@ -89,13 +89,13 @@ collect_subtree() {
     # Collect subtask IDs from the task's own branch
     local own_subs=""
     local own_content
-    own_content="$(jj_show_at_revision "$repo" "$current" "$own_file")" || true
+    own_content="$(_repo__read_file_at_revision "$repo" "$current" "$own_file")" || true
     own_subs="$(_subtask_ids_from_content "$own_content")" || true
 
     # Collect subtask IDs from the parent branch's copy of this task's file
     local parent_subs=""
     local parent_content
-    parent_content="$(jj_show_at_revision "$repo" "$parent_branch" "$own_file")" || true
+    parent_content="$(_repo__read_file_at_revision "$repo" "$parent_branch" "$own_file")" || true
     parent_subs="$(_subtask_ids_from_content "$parent_content")" || true
 
     # Union: add all newly discovered subtask IDs to to_visit
@@ -191,7 +191,7 @@ main() {
 
   # Precondition: WC must be clean (skip with --force)
   if [[ "$force" != true ]]; then
-    if ! is_wc_clean "$repo"; then
+    if ! _repo__check_working_copy_clean "$repo"; then
       _ui__log "Error: Working copy has uncommitted changes. Commit or discard first, or use --force."
       exit 1
     fi
@@ -199,7 +199,7 @@ main() {
 
   # Read task content and check status
   local task_content task_title task_status
-  task_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file")" || {
+  task_content="$(_repo__read_file_at_revision "$repo" "$task_id" "$task_file")" || {
     _ui__log "Error: Could not read task file '$task_file' from bookmark '$task_id'."
     exit 1
   }
@@ -256,7 +256,7 @@ main() {
   esac
 
   local current_worktree
-  current_worktree="$(resolve_current_worktree "$repo")"
+  current_worktree="$(_repo__resolve_worktree_root "$repo")"
 
   # Begin transaction (records before-op for undo)
   tt_begin_transaction "$repo"
@@ -273,7 +273,7 @@ main() {
 
   # Read parent task file content
   local parent_task_content
-  parent_task_content="$(jj_show_at_revision "$target_ws" "$parent_bookmark" "$parent_task_file")" || {
+  parent_task_content="$(_repo__read_file_at_revision "$target_ws" "$parent_bookmark" "$parent_task_file")" || {
     _ui__log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
     exit 1
   }

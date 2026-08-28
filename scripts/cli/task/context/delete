@@ -124,7 +124,7 @@ main() {
 
   # Resolve target worktree
   local current_worktree target_worktree
-  current_worktree="$(resolve_current_worktree "$repo")"
+  current_worktree="$(_repo__resolve_worktree_root "$repo")"
 
   if ! target_worktree="$(resolve_task_worktree "$repo" "$branch" "$task_prefix" "$project_prefix" \
       "$current_worktree" "")"; then
@@ -132,7 +132,7 @@ main() {
   fi
 
   # Precondition: WC must be clean
-  if ! is_wc_clean "$target_worktree"; then
+  if ! _repo__check_working_copy_clean "$target_worktree"; then
     _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
@@ -146,7 +146,7 @@ main() {
   # out anywhere can still be edited.
   local task_file task_content
   task_file="$(_path__task_file "$task_suffix")"
-  task_content="$(jj_show_at_revision "$repo" "$branch" "$task_file")" || {
+  task_content="$(_repo__read_file_at_revision "$repo" "$branch" "$task_file")" || {
     _ui__log "Error: Could not read task file '$task_file' from branch '$branch'."
     exit 1
   }
@@ -181,7 +181,7 @@ main() {
   # Read the context file to get its title for the commit message
   local ctx_file ctx_content ctx_title
   ctx_file="$(_path__task_context "$task_suffix" "$ctx_id_arg")"
-  ctx_content="$(jj_show_at_revision "$repo" "$branch" "$ctx_file")" || {
+  ctx_content="$(_repo__read_file_at_revision "$repo" "$branch" "$ctx_file")" || {
     _ui__log "Error: Could not read context file '$ctx_file' from branch '$branch'."
     exit 1
   }

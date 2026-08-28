@@ -159,7 +159,7 @@ main() {
   workspace_dir="$(get_workspace_dir "$repo")" || true
 
   local current_worktree
-  current_worktree="$(resolve_current_worktree "$repo")"
+  current_worktree="$(_repo__resolve_worktree_root "$repo")"
 
   # --- Resolve branch and task file ---
   local task_file child_bookmark child_slug
@@ -206,7 +206,7 @@ main() {
     exit 1
   fi
 
-  if ! is_wc_clean "$child_worktree"; then
+  if ! _repo__check_working_copy_clean "$child_worktree"; then
     _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
@@ -219,7 +219,7 @@ main() {
 
   # --- Read current task state from bookmark ---
   local task_content task_title task_status
-  task_content="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || {
+  task_content="$(_repo__read_file_at_revision "$repo" "$child_bookmark" "$task_file")" || {
     _ui__log "Error: Could not read task file '$task_file' from '$child_bookmark'."
     exit 1
   }
@@ -281,7 +281,7 @@ main() {
   # --- Optional: run complete first ---
   if [[ "$do_complete" == true ]]; then
     local task_content_check
-    task_content_check="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || true
+    task_content_check="$(_repo__read_file_at_revision "$repo" "$child_bookmark" "$task_file")" || true
     local status_check
     status_check="$(_frontmatter__parse_field "$task_content_check" "status")"
     if [[ "$status_check" != "DONE" ]]; then
@@ -295,7 +295,7 @@ main() {
     # Re-read the task file: `complete` advanced the child bookmark, and the refreshed
     # status drives the parent's subtask checkbox, the --delete precondition and the
     # final log message.
-    task_content="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || {
+    task_content="$(_repo__read_file_at_revision "$repo" "$child_bookmark" "$task_file")" || {
       _ui__log "Error: Could not read task file '$task_file' from '$child_bookmark'."
       exit 1
     }
@@ -320,7 +320,7 @@ main() {
       ${force:+--force} \
       --repo "$repo"
     # Re-check WC is clean after propagation
-    if ! is_wc_clean "$child_worktree"; then
+    if ! _repo__check_working_copy_clean "$child_worktree"; then
       _ui__log "Error: Working copy not clean after propagation."
       exit 1
     fi
@@ -374,7 +374,7 @@ main() {
   # than $repo: when checkin runs from inside the child's own worktree, $repo
   # resolves to that worktree, which a complete checkin deletes further below.
   case "$wt_count" in
-    0) target_ws="$(resolve_canonical_repo "$repo")" ;;
+    0) target_ws="$(_repo__resolve_repository_root "$repo")" ;;
     1) target_ws="$worktrees" ;;
     *)
       _ui__log "Error: Multiple parent workspaces found for '$parent_bookmark'. Run checkin from within the task's own worktree."
@@ -392,7 +392,7 @@ main() {
 
   # --- Save original WC revision in target workspace ---
   local original_rev
-  original_rev="$(get_worktree_current_rev "$target_ws")"
+  original_rev="$(_repo__get_working_copy_revision "$target_ws")"
 
   # --- Create handoff commit in target workspace ---
 
@@ -404,7 +404,7 @@ main() {
 
   # Build updated parent task file content
   local parent_task_content
-  parent_task_content="$(jj_show_at_revision "$target_ws" "$parent_bookmark" "$parent_task_file")" || {
+  parent_task_content="$(_repo__read_file_at_revision "$target_ws" "$parent_bookmark" "$parent_task_file")" || {
     _ui__log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
     exit 1
   }
@@ -476,7 +476,7 @@ main() {
   # Check for conflicts (unless --force)
   # On conflict, exit 1 triggers the ERR trap → tt_rollback_transaction →
   # jj op restore, which cleanly reverts all jj operations in this transaction.
-  if [[ "$force" != true ]] && has_conflicts "$target_ws" "@"; then
+  if [[ "$force" != true ]] && _repo__check_has_conflicts "$target_ws" "@"; then
     _ui__log "Error: Merge conflicts detected. Resolve conflicts or use --force."
     exit 1
   fi
@@ -557,7 +557,7 @@ main() {
     # worktree and would suppress the cleanup.
     local canon_child canon_repo
     canon_child="$(realpath "$child_worktree" 2>/dev/null)" || canon_child="$child_worktree"
-    canon_repo="$(resolve_canonical_repo_path "$repo")"
+    canon_repo="$(_repo__resolve_repository_path "$repo")"
     if [[ "$canon_child" != "$canon_repo" ]]; then
       # The delegated `tt task delete` deregisters the jj workspaces of every
       # task in the deleted subtree but leaves their files on disk, so the

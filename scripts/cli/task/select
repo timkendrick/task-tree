@@ -85,7 +85,7 @@ main() {
     
     # Read task file content
     local content
-    content="$(jj_show_at_revision "$repo" "$b" "$tf")" || continue
+    content="$(_repo__read_file_at_revision "$repo" "$b" "$tf")" || continue
     
     # Check status - exclude DONE tasks
     local status

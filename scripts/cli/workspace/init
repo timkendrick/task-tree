@@ -133,7 +133,7 @@ main() {
   fi
 
   # Check working copy is clean
-  if ! is_wc_clean "$repo_abs"; then
+  if ! _repo__check_working_copy_clean "$repo_abs"; then
     _ui__log "Error: Working copy has uncommitted changes. Commit or discard changes before initializing."
     exit 1
   fi

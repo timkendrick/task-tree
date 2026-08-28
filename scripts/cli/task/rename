@@ -139,7 +139,7 @@ main() {
   fi
 
   # Check for clean working copy
-  if ! is_wc_clean "$repo"; then
+  if ! _repo__check_working_copy_clean "$repo"; then
     _ui__log "Error: Working copy is not clean. Commit or discard changes first."
     exit 1
   fi
@@ -162,7 +162,7 @@ main() {
 
   # Get task title for commit message
   local task_title
-  task_title="$(jj_show_at_revision "$repo" "$old_id" "$(_path__task_file "$suffix")" \
+  task_title="$(_repo__read_file_at_revision "$repo" "$old_id" "$(_path__task_file "$suffix")" \
     | awk '/^title:/ { for(i=2;i<=NF;i++) printf "%s ", $i; print ""; exit }')"
 
   if [[ -z "$task_title" ]]; then
@@ -208,7 +208,7 @@ main() {
       while IFS= read -r fpath; do
         local rel="${fpath#${old_rel}/}"
         mkdir -p "$saved_dir/$change_id/$(dirname "$rel")"
-        jj_show_at_op "$repo" "$pre_op" "$change_id" "$fpath" \
+        _repo__read_file_at_operation "$repo" "$pre_op" "$change_id" "$fpath" \
             > "$saved_dir/$change_id/$rel"
       done <<< "$file_list"
     fi

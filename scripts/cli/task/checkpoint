@@ -103,11 +103,11 @@ main() {
 
   # Get current worktree
   local current_worktree
-  current_worktree="$(resolve_current_worktree "$repo")"
+  current_worktree="$(_repo__resolve_worktree_root "$repo")"
 
   # Read task title from task file frontmatter
   local task_file_content task_title
-  task_file_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
+  task_file_content="$(_repo__read_file_at_revision "$repo" "$bookmark" "$task_file")" || true
   task_title="$(_frontmatter__parse_quoted_field "$task_file_content" "title")"
 
   # Derive task ID (bookmark name without prefix) for display
@@ -117,7 +117,7 @@ main() {
   # (exclusive of the bookmark, exclusive of @).
   local intermediates="${bookmark}::@- ~ ${bookmark}"
   local intermediate_count
-  intermediate_count="$(count_revs_in_revset "$repo" "$intermediates")"
+  intermediate_count="$(_repo__count_revisions "$repo" "$intermediates")"
 
   # Get message from editor if not provided
   if [[ -z "$message" ]]; then
@@ -126,7 +126,7 @@ main() {
     # task title.
     local default_message="$task_title" single_desc
     if [[ "$intermediate_count" -eq 1 ]]; then
-      single_desc="$(get_commit_description "$repo" "$intermediates")"
+      single_desc="$(_repo__get_commit_description "$repo" "$intermediates")"
       single_desc="${single_desc%%$'\n'*}"
       if [[ -n "$single_desc" ]]; then
         default_message="$single_desc"
