@@ -1,6 +1,6 @@
 ---
 title: "Locate `tt worktree show` target by `--name` rather than `--task`"
-status: TODO
+status: IN-PROGRESS
 created: 2026-08-28T09:56:36Z
 updated: 2026-08-28T09:56:37Z
 ---
