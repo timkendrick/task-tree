@@ -102,13 +102,13 @@ is_partially_checked_in() {
     return 1
   fi
   local task_file
-  task_file="$(task_file_path "$suffix")"
+  task_file="$(_path__task_file "$suffix")"
   local content status
   content="$(jj_show_at_revision "$repo" "$child" "$task_file")" || true
   # If the task file is unreadable (e.g. it lives at a legacy path format),
   # treat the task as complete so we never create spurious resume commits.
   [[ -z "$content" ]] && return 1
-  status="$(parse_frontmatter_field "$content" "status")"
+  status="$(_frontmatter__parse_field "$content" "status")"
   [[ "$status" != "DONE" ]]
 }
 
@@ -121,7 +121,7 @@ get_subtask_ids() {
   local content
   content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
   [[ -z "$content" ]] && return 0
-  parse_repeated_frontmatter_field "$content" "subtask" | awk '
+  _frontmatter__parse_repeated_field "$content" "subtask" | awk '
     /^\[[ x\-]\]/ { sub(/^\[[ x\-]\][ \t]*/, ""); if ($1 != "") print $1 }
   '
 }
@@ -243,7 +243,7 @@ propagate_from() {
   fi
 
   local task_file
-  task_file="$(task_file_path "$suffix")"
+  task_file="$(_path__task_file "$suffix")"
   local subtasks
   subtasks="$(get_subtask_ids "$repo" "$from_bookmark" "$task_file")" || true
   [[ -z "$subtasks" ]] && return 0

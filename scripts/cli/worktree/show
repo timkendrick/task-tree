@@ -71,12 +71,12 @@ main() {
   fi
 
   # An unusable path must be rejected before the repository root comparison:
-  # resolve_path_symlinks cd's into the path, so it fails on a missing directory.
+  # _path__resolve_symlinks cd's into the path, so it fails on a missing directory.
   if [[ -z "$ws_path" || ! -d "$ws_path" ]]; then
     _ui__log "Error: Worktree '$name' has an invalid path"
     exit 1
   fi
-  ws_path="$(resolve_path_symlinks "$ws_path")"
+  ws_path="$(_path__resolve_symlinks "$ws_path")"
 
   # $repo is whichever workspace resolve_repo landed on, which is NOT necessarily
   # the canonical repo: invoked from inside a dedicated worktree without TT_REPO

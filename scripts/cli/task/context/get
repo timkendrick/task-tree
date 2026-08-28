@@ -115,7 +115,7 @@ main() {
 
   # Read task file from canonical branch
   local task_file
-  task_file="$(task_file_path "$task_suffix")"
+  task_file="$(_path__task_file "$task_suffix")"
   local task_content
   if ! task_content="$(jj_show_at_revision "$repo" "$read_branch" "$task_file")"; then
     _ui__log "Error: Could not read task file '$task_file' from '$read_branch'."
@@ -170,7 +170,7 @@ main() {
   # Output each context file
   for ctx_id in "${target_ids[@]}"; do
     local ctx_file
-    ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
+    ctx_file="$(_path__task_context "$task_suffix" "$ctx_id")"
     local ctx_content
     if ! ctx_content="$(jj_show_at_revision "$repo" "$read_branch" "$ctx_file")"; then
       _ui__log "Error: Could not read context file '$ctx_file' from '$read_branch'."
