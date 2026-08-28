@@ -83,10 +83,8 @@ main() {
 
   # Refuse to delete the canonical (main) repo workspace — this is always an error
   local canonical_repo
-  canonical_repo="$(resolve_canonical_repo "$repo")"
-  local resolved_canonical_repo
-  resolved_canonical_repo="$(resolve_path_symlinks "$canonical_repo" 2>/dev/null)" || resolved_canonical_repo="$canonical_repo"
-  if [[ "$canonical_worktree_path" == "$resolved_canonical_repo" ]]; then
+  canonical_repo="$(resolve_canonical_repo_path "$repo")"
+  if [[ "$canonical_worktree_path" == "$canonical_repo" ]]; then
     log "Error: Not a task worktree"
     exit 1
   fi
