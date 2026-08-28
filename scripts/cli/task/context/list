@@ -76,7 +76,7 @@ main() {
   if [[ -n "$task_id" ]]; then
     branch="$task_id"
     if ! jj -R "$repo" --ignore-working-copy log -r "$branch" --no-graph -T '' 2>/dev/null; then
-      log "Error: Branch '$branch' not found in repository."
+      _ui__log "Error: Branch '$branch' not found in repository."
       exit 1
     fi
     if is_task_branch "$branch" "$task_prefix"; then
@@ -84,13 +84,13 @@ main() {
     elif is_project_branch "$branch" "$project_prefix"; then
       task_suffix="${branch#$project_prefix}"
     else
-      log "Error: '$task_id' is not a task or project branch."
+      _ui__log "Error: '$task_id' is not a task or project branch."
       exit 1
     fi
   else
     branch="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$branch" ]]; then
-      log "Error: Not on a task or project branch. Use --task to specify."
+      _ui__log "Error: Not on a task or project branch. Use --task to specify."
       exit 1
     fi
     if is_task_branch "$branch" "$task_prefix"; then
@@ -103,7 +103,7 @@ main() {
   # Apply "where to read" rule: use find_branch_for_task to locate canonical branch
   local read_branch
   if ! read_branch="$(find_branch_for_task "$repo" "$branch" "$task_prefix" "$project_prefix")"; then
-    log "Error: Could not locate branch for task '$branch'."
+    _ui__log "Error: Could not locate branch for task '$branch'."
     exit 1
   fi
 
@@ -112,7 +112,7 @@ main() {
   task_file="$(task_file_path "$task_suffix")"
   local task_content
   if ! task_content="$(jj_show_at_revision "$repo" "$read_branch" "$task_file")"; then
-    log "Error: Could not read task file '$task_file' from '$read_branch'."
+    _ui__log "Error: Could not read task file '$task_file' from '$read_branch'."
     exit 1
   fi
 

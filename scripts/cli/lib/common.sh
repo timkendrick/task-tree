@@ -1,6 +1,11 @@
 # Common functions for tt bootstrap CLI scripts.
 # Source this file; do not execute directly.
 
+_TT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$_TT_LIB_DIR/ui.sh"
+. "$_TT_LIB_DIR/string.sh"
+. "$_TT_LIB_DIR/format.sh"
+
 # ---------------------------------------------------------------------------
 # VCS file-read helpers
 # ---------------------------------------------------------------------------
@@ -115,64 +120,6 @@ parse_commit_message() {
 }
 
 # ---------------------------------------------------------------------------
-# Shared slug / ID / timestamp helpers (used by create, edit, add-context)
-# ---------------------------------------------------------------------------
-
-# Generate slug from title: replace non-alphanumeric with -, collapse consecutive, lowercase, trim.
-title_to_slug() {
-  local t="$1"
-  printf '%s' "$t" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | tr -s '-' | sed 's/^-//;s/-$//'
-}
-
-# Validate slug: only lowercase alphanumeric and single hyphens; no leading/trailing hyphens.
-# Returns 0 if valid, 1 and logs error if invalid.
-validate_slug() {
-  local s="$1"
-  if [[ -z "$s" ]]; then
-    log "Error: Slug cannot be empty"
-    return 1
-  fi
-  if [[ "$s" =~ [A-Z] ]]; then
-    log "Error: Slug must be lowercase: $s"
-    return 1
-  fi
-  if [[ "$s" =~ ^- ]]; then
-    log "Error: Slug cannot start with hyphen: $s"
-    return 1
-  fi
-  if [[ "$s" =~ -$ ]]; then
-    log "Error: Slug cannot end with hyphen: $s"
-    return 1
-  fi
-  if [[ "$s" =~ -- ]]; then
-    log "Error: Slug cannot contain consecutive hyphens: $s"
-    return 1
-  fi
-  if [[ "$s" =~ [^a-z0-9-] ]]; then
-    log "Error: Slug must contain only lowercase letters, digits, and hyphens: $s"
-    return 1
-  fi
-  return 0
-}
-
-# Generate an 8-character random hex string for task/context IDs.
-generate_hex() {
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 4
-  elif [[ -r /dev/urandom ]]; then
-    od -An -N4 -tx1 /dev/urandom | tr -d ' \n' | head -c 8
-  else
-    log "Error: Need openssl or /dev/urandom to generate ID"
-    exit 1
-  fi
-}
-
-# Generate an ISO 8601 UTC timestamp (e.g. 2026-03-12T23:04:57Z).
-generate_timestamp() {
-  date -u '+%Y-%m-%dT%H:%M:%SZ'
-}
-
-# ---------------------------------------------------------------------------
 # Task/context file path helpers
 # ---------------------------------------------------------------------------
 
@@ -246,10 +193,6 @@ parse_body() {
   printf '%s' "$content" | awk '/^---$/{n++; if(n==2){found=1; next}} found{print}'
 }
 
-log() {
-  printf '%s\n' "$*" >&2
-}
-
 # Resolve DIR to a canonical absolute path, following OS-level symlinks (pwd -P).
 # Exits 1 if the directory does not exist or cannot be entered.
 # Usage: resolve_path_symlinks DIR
@@ -294,14 +237,14 @@ resolve_repo() {
     else
       # Priority 3: walk up from CWD
       if ! repo="$(find_repo_root)"; then
-        log "Error: No enclosing jj repository. Use --repo or set TT_REPO."
+        _ui__log "Error: No enclosing jj repository. Use --repo or set TT_REPO."
         exit 1
       fi
     fi
   fi
 
   if [[ ! -d "$repo/.jj" ]]; then
-    log "Error: Not a jj repository: $repo"
+    _ui__log "Error: Not a jj repository: $repo"
     exit 1
   fi
 
@@ -425,10 +368,10 @@ is_wc_clean() {
 assert_bookmark_up_to_date() {
   local repo="$1" bookmark="$2"
   if ! check_bookmark_up_to_date "$repo" "$bookmark"; then
-    log "Error: There are commits since the last checkpoint that are not tracked by the task bookmark."
-    log "  Run 'tt task checkpoint' to record them before checking in."
-    log "  Alternatively, pass the task ID explicitly to skip this check:"
-    log "    tt task checkin ${bookmark}"
+    _ui__log "Error: There are commits since the last checkpoint that are not tracked by the task bookmark."
+    _ui__log "  Run 'tt task checkpoint' to record them before checking in."
+    _ui__log "  Alternatively, pass the task ID explicitly to skip this check:"
+    _ui__log "    tt task checkin ${bookmark}"
     exit 1
   fi
 }
@@ -446,10 +389,10 @@ run_hook() {
     || exit_code=$?
   if [[ $exit_code -ne 0 ]]; then
     if [[ "$blocking" == true ]]; then
-      log "Error: Hook '$hook_name' failed (exit $exit_code); aborting."
+      _ui__log "Error: Hook '$hook_name' failed (exit $exit_code); aborting."
       exit 1
     else
-      log "Warning: Hook '$hook_name' failed (exit $exit_code; non-blocking)."
+      _ui__log "Warning: Hook '$hook_name' failed (exit $exit_code; non-blocking)."
     fi
   fi
 }
@@ -461,7 +404,7 @@ run_hook() {
 make_absolute_symlink() {
   local target_path="$1" symlink_path="$2"
   if [[ ! -e "$target_path" ]]; then
-    log "Error: Symlink target does not exist: $target_path"
+    _ui__log "Error: Symlink target does not exist: $target_path"
     return 1
   fi
   if [[ "$target_path" != /* ]]; then
@@ -479,7 +422,7 @@ update_head_symlink() {
   [[ ! -d "$workspace_dir" ]] && return 0
   local head_path="$workspace_dir/HEAD"
   make_absolute_symlink "$target_path" "$head_path"
-  log "Updated HEAD -> $target_path"
+  _ui__log "Updated HEAD -> $target_path"
 }
 
 # Usage: perform_workspace_switch REPO WORKSPACE_DIR TASK_ID TARGET_WORKTREE OUTGOING_WORKTREE PREVIOUS_TASK_ID
@@ -488,7 +431,7 @@ perform_workspace_switch() {
   local repo="$1" workspace_dir="$2" task_id="$3"
   local target_worktree="$4" outgoing_worktree="$5" previous_task_id="$6"
 
-  log "Switching to $task_id"
+  _ui__log "Switching to $task_id"
 
   run_hook "$repo" "pre-checkout" true "$outgoing_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$task_id" \
@@ -567,48 +510,6 @@ parse_repeated_frontmatter_field() {
   done < <(parse_frontmatter_fields "$1" "$2")
 }
 
-# Usage: raw=$(prompt_raw <<< "$template")
-# Reads template from stdin, opens editor, returns raw file content (no stripping).
-# Exits non-zero if editor exits non-zero.
-# On editor failure, the temporary file is retained on disk and its path is
-# printed to stderr so the user can recover any unsaved edits.
-prompt_raw() {
-  local editor
-  # Note: we use `vim` rather than `vi` because to ensure POSIX compliance, when it is invoked as `vi`,
-  # vim exits with a non-zero status when an error is encountered at any point during the editing session
-  # see https://stackoverflow.com/q/46665403
-  DEFAULT_EDITOR="vim"
-  editor="${TT_EDITOR:-${GIT_EDITOR:-${VISUAL:-${EDITOR:-$DEFAULT_EDITOR}}}}"
-  local tmpfile
-  tmpfile="$(mktemp -t TT_EDITMSG)"
-  trap 'rm -f "$tmpfile"' RETURN
-  cat > "$tmpfile"
-  "$editor" "$tmpfile" </dev/tty >/dev/tty || {
-    trap - RETURN
-    log "Error: Editor exited with non-zero status."
-    log "  Editor contents: $tmpfile"
-    return 1;
-  }
-  cat "$tmpfile"
-}
-
-# Usage: message=$(prompt <<< "$template")
-# Reads template from stdin, opens editor, strips #-comment lines, trims trailing
-# whitespace and surrounding blank lines, prints cleaned text to stdout (empty
-# string if blank after stripping).
-# Leading whitespace within a line is preserved, so indented content such as a
-# nested task tree survives the round trip through the editor.
-# Exits non-zero if editor exits non-zero.
-prompt() {
-  local raw
-  raw="$(prompt_raw)" || return 1
-  local msg
-  msg="$(printf '%s' "$raw" | sed '/^#/d' | sed -e 's/[[:space:]]*$//')"
-  # trim leading/trailing blank lines
-  msg="$(printf '%s' "$msg" | awk 'NF{found=1} found{print}')"
-  printf '%s' "$msg"
-}
-
 # Usage: has_conflicts REPO_OR_WORKTREE REVSET
 # Returns 0 (true) if any commit in REVSET has conflicts.
 has_conflicts() {
@@ -650,7 +551,7 @@ find_parent_branch() {
     content="$(jj_show_at_revision "$repo" "$branch" "$path")" || continue
     if printf '%s' "$content" | grep -qE "^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]+${task_id}([[:space:]]|$)"; then
       if [[ -n "$found" ]]; then
-        log "Error: Multiple parent branches found for '$task_id': '$found' and '$branch'."
+        _ui__log "Error: Multiple parent branches found for '$task_id': '$found' and '$branch'."
         return 2
       fi
       found="$branch"
@@ -685,11 +586,11 @@ get_task_range_context() {
 
   if [[ -z "$task_id_arg" ]]; then
     if ! task_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       return 1
     fi
     if [[ -z "$task_bookmark" ]]; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       return 1
     fi
 
@@ -705,7 +606,7 @@ get_task_range_context() {
     upper_bound="$task_bookmark"
 
     if ! jj -R "$repo" log -r "$task_bookmark" --no-graph -T 'commit_id' >/dev/null 2>&1; then
-      log "Error: Bookmark '$task_bookmark' not found."
+      _ui__log "Error: Bookmark '$task_bookmark' not found."
       return 1
     fi
   fi
@@ -713,7 +614,7 @@ get_task_range_context() {
   local parent_bookmark exit_code=0
   parent_bookmark="$(find_parent_branch "$repo" "$task_bookmark" "$task_prefix" "$project_prefix")" || exit_code=$?
   if [[ $exit_code -ne 0 ]]; then
-    [[ $exit_code -eq 1 ]] && log "Error: No parent found for '$task_bookmark'."
+    [[ $exit_code -eq 1 ]] && _ui__log "Error: No parent found for '$task_bookmark'."
     return $exit_code
   fi
 
@@ -746,11 +647,11 @@ resolve_task_fork_point() {
   local fork_point
   if ! fork_point="$(jj -R "$repo" log -r "fork_point(${parent_bookmark} | ${upper_bound})" \
     --no-graph -T 'commit_id' 2>/dev/null)"; then
-    log "Error: Could not resolve fork point between '$parent_bookmark' and '$upper_bound'."
+    _ui__log "Error: Could not resolve fork point between '$parent_bookmark' and '$upper_bound'."
     return 1
   fi
   if [[ -z "$fork_point" ]]; then
-    log "Error: Could not resolve fork point between '$parent_bookmark' and '$upper_bound'."
+    _ui__log "Error: Could not resolve fork point between '$parent_bookmark' and '$upper_bound'."
     return 1
   fi
 
@@ -796,7 +697,7 @@ get_full_task_range_records() {
   project_prefix="$(get_project_prefix "$repo")"
 
   if ! is_task_branch "$task_id" "$task_prefix"; then
-    log "Error: Full task range discovery requires a task branch (got '$task_id')."
+    _ui__log "Error: Full task range discovery requires a task branch (got '$task_id')."
     return 1
   fi
 
@@ -804,7 +705,7 @@ get_full_task_range_records() {
   target_file="$(task_file_path "${task_id#"$task_prefix"}")"
   parent_file="$(_full_range_bookmark_task_file "$parent_bookmark" "$task_prefix" "$project_prefix")"
   if [[ -z "$parent_file" ]]; then
-    log "Error: '$parent_bookmark' is not a task or project branch."
+    _ui__log "Error: '$parent_bookmark' is not a task or project branch."
     return 1
   fi
 
@@ -946,7 +847,7 @@ _full_range_resolve_commit() {
   local id
   id="$(jj -R "$repo" --ignore-working-copy log -r "$rev" --no-graph -T 'commit_id' 2>/dev/null)"
   if [[ -z "$id" ]]; then
-    log "Error: Could not resolve revision '$rev'."
+    _ui__log "Error: Could not resolve revision '$rev'."
     return 1
   fi
   printf '%s' "$id"
@@ -977,7 +878,7 @@ _full_range_creation_boundary() {
   local count
   count="$(printf '%s' "$matches" | grep -c . || true)"
   if [[ "$count" -ne 1 ]]; then
-    log "Error: Could not resolve a unique creation boundary for '$task_id'."
+    _ui__log "Error: Could not resolve a unique creation boundary for '$task_id'."
     return 1
   fi
   printf '%s' "$matches"
@@ -1171,8 +1072,8 @@ resolve_task_worktree() {
         printf '%s' "$worktree_arg"
         return 0
       fi
-      log "Error: Multiple workspaces found for '$bookmark'; use --worktree=<path>:"
-      printf '%s\n' "$found" | while IFS= read -r p; do log "  $p"; done
+      _ui__log "Error: Multiple workspaces found for '$bookmark'; use --worktree=<path>:"
+      printf '%s\n' "$found" | while IFS= read -r p; do _ui__log "  $p"; done
       return 1
       ;;
   esac
@@ -1310,7 +1211,7 @@ resolve_current() {
   else
     local parent_rev
     if ! parent_rev="$(jj "${jj_opts[@]}" --ignore-working-copy log -r "$current_branch" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"; then
-      log "Error: Could not resolve current branch: $current_branch"
+      _ui__log "Error: Could not resolve current branch: $current_branch"
       exit 1
     fi
     if is_task_branch "$current_branch" "$task_prefix"; then
@@ -1450,18 +1351,6 @@ get_active_worktree() {
   fi
   resolved="$(resolve_path_symlinks "$head_target")"
   printf '%s' "$resolved"
-}
-
-# Map a task status field to a GFM checkbox string.
-# TODO -> [ ], IN-PROGRESS -> [-], DONE/Done -> [x], else [ ]
-status_to_checkbox() {
-  local s="$1"
-  case "$s" in
-    TODO)        printf '[ ]' ;;
-    IN-PROGRESS) printf '[-]' ;;
-    DONE|Done)   printf '[x]' ;;
-    *)           printf '[?]' ;;
-  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -1604,7 +1493,7 @@ parse_task_frontmatter() {
 #
 # Canonical field order: title, status, created, updated, label…, context…, subtask…
 # STATUS is omitted when empty (used for context files which have no status field).
-# Timestamps are caller-supplied; generate via generate_timestamp at the call site.
+# Timestamps are caller-supplied; generate via _string__generate_timestamp at the call site.
 # Writes to a temp file and renames for atomicity.
 write_task_file() {
   local file="$1"
@@ -1668,11 +1557,11 @@ write_task_stub() {
   local file
   file="$(task_file_path "$suffix")"
   local ts
-  ts="$(generate_timestamp)"
+  ts="$(_string__generate_timestamp)"
   mkdir -p "$repo/$dir"
   local REWRITE_LABELS=() REWRITE_CONTEXTS=() REWRITE_SUBTASKS=()
   write_task_file "$repo/$file" "" "TODO" "" "$ts" "$ts"
-  log "Created task file: $file"
+  _ui__log "Created task file: $file"
 }
 
 # _insert_frontmatter_line FILE LINE_TO_INSERT [BEFORE_PATTERN]
@@ -1774,7 +1663,7 @@ resolve_canonical_repo() {
     # the canonical repo's .jj/repo directory (e.g. "../../../../repo/.jj/repo").
     local target
     target="$(cd "$repo/.jj" && realpath "$(cat "$repo_entry")")" \
-      || { log "Error: Could not resolve canonical repo from $repo_entry"; return 1; }
+      || { _ui__log "Error: Could not resolve canonical repo from $repo_entry"; return 1; }
     # target = /path/to/canonical/.jj/repo — strip /.jj/repo to get repo root
     dirname "$(dirname "$target")"
   else
@@ -1832,7 +1721,7 @@ tt_begin_transaction() {
   # Capture current jj operation ID
   local before_op
   before_op="$(get_jj_op_id "$repo")" || {
-    log "Error: Could not read jj operation ID to begin transaction"
+    _ui__log "Error: Could not read jj operation ID to begin transaction"
     exit 1
   }
 
@@ -1843,9 +1732,9 @@ tt_begin_transaction() {
     if [[ -n "$last_line" ]]; then
       local last_after="${last_line#*:}"
       if [[ -z "$last_after" ]]; then
-        log "Error: Another tt command is in progress (incomplete transaction)."
-        log "  To revert a crashed process: tt history undo --force"
-        log "  Or to keep the current state: tt history unlock --force"
+        _ui__log "Error: Another tt command is in progress (incomplete transaction)."
+        _ui__log "  To revert a crashed process: tt history undo --force"
+        _ui__log "  Or to keep the current state: tt history unlock --force"
         exit 1
       fi
     fi
@@ -1884,14 +1773,14 @@ tt_commit_transaction() {
   # is always inside the canonical repo which remains on disk.
   local canonical_repo
   canonical_repo="$(cd "$(dirname "$history_file")" && find_repo_root)" || {
-    log "Warning: Could not derive canonical repo from history file path; history may be incomplete"
+    _ui__log "Warning: Could not derive canonical repo from history file path; history may be incomplete"
     canonical_repo="$repo"
   }
 
   # Capture current jj operation ID
   local after_op
   after_op="$(get_jj_op_id "$canonical_repo")" || {
-    log "Warning: Could not read jj operation ID for transaction commit; history may be incomplete"
+    _ui__log "Warning: Could not read jj operation ID for transaction commit; history may be incomplete"
     after_op="unknown"
   }
 
@@ -1929,14 +1818,14 @@ tt_rollback_transaction() {
   local canonical_repo
   canonical_repo="$(cd "$(dirname "$history_file")" && find_repo_root)" || canonical_repo="$repo"
 
-  log "Rolling back transaction (restoring jj operation: ${before_op:0:12}...)"
+  _ui__log "Rolling back transaction (restoring jj operation: ${before_op:0:12}...)"
 
   # Restore jj to before-op state.
   # Use a subshell to cd into the canonical repo first, so jj can resolve CWD
   # even when the caller's working directory has been deleted (e.g. after
   # worktree delete).
   (cd "$canonical_repo" && jj -R "$canonical_repo" op restore "$before_op" 2>/dev/null) || \
-    log "Warning: Could not restore jj operation state; manual recovery may be needed"
+    _ui__log "Warning: Could not restore jj operation state; manual recovery may be needed"
 
   # Remove the in-progress line from history
   if [[ -f "$history_file" ]]; then
@@ -1952,74 +1841,3 @@ tt_rollback_transaction() {
   unset _TT_TRANSACTION_OWNER
 }
 
-# ---------------------------------------------------------------------------
-# Interactive selection
-# ---------------------------------------------------------------------------
-
-# Usage: _select_value OPTION...
-# Renders the built-in minimal picker UI to stderr and reads one line from
-# /dev/tty. The raw reply is printed to stdout (validation is the caller's job).
-# Returns 1 if no interactive terminal is available or the read fails.
-_select_value() {
-  # /dev/tty exists as a device node even without a controlling terminal, so
-  # test that it can actually be opened rather than relying on [[ -e ]].
-  # Redirections are applied left to right, so stderr must be silenced *before*
-  # the /dev/tty open is attempted or bash reports the failure itself.
-  if ! : 2>/dev/null </dev/tty; then
-    echo "Error: no interactive terminal available (set TT_SELECT to use a custom picker)" >&2
-    return 1
-  fi
-
-  {
-    printf 'Select an option:\n\n'
-    printf '%s\n' "$@"
-    printf '\n> '
-  } >&2
-
-  local reply
-  IFS= read -r reply </dev/tty || return 1
-  printf '%s\n' "$reply"
-}
-
-# Usage: printf '%s\n' item... | select_value
-# Reads newline-separated options from stdin, presents a picker, and writes the
-# selected option to stdout.
-#
-# When TT_SELECT is set it is run via `sh -c` as the picker: it receives the
-# options on stdin and must write exactly one of them to stdout. Otherwise the
-# built-in picker (_select_value) is used.
-#
-# Returns 1 if no options were provided, if the picker fails, or if the picker's
-# output does not exactly match one of the provided options.
-select_value() {
-  local options=() line
-  while IFS= read -r line; do
-    [[ -n "$line" ]] && options+=("$line")
-  done
-
-  if [[ ${#options[@]} -eq 0 ]]; then
-    echo "Error: no options provided" >&2
-    return 1
-  fi
-
-  local choice
-  if [[ -n "${TT_SELECT:-}" ]]; then
-    choice="$(printf '%s\n' "${options[@]}" | sh -c "$TT_SELECT")" || {
-      echo "Error: picker command failed: $TT_SELECT" >&2
-      return 1
-    }
-  else
-    choice="$(_select_value "${options[@]}")" || return 1
-  fi
-
-  local option
-  for option in "${options[@]}"; do
-    if [[ "$option" == "$choice" ]]; then
-      printf '%s\n' "$choice"
-      return 0
-    fi
-  done
-
-  echo "Error: invalid selection: $choice" >&2
-  return 1
-}

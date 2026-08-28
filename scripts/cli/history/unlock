@@ -86,8 +86,8 @@ main() {
 
   # History file must exist (workspace must be initialized)
   if [[ ! -f "$history_file" ]]; then
-    log "Error: History file not found: $history_file"
-    log "  Has the workspace been initialized? Run: tt workspace init"
+    _ui__log "Error: History file not found: $history_file"
+    _ui__log "  Has the workspace been initialized? Run: tt workspace init"
     exit 1
   fi
 
@@ -114,18 +114,18 @@ main() {
 
   # In-progress transaction detected
   if [[ "$force" != true ]]; then
-    log "Error: In-progress transaction detected."
-    log "  before-op: ${before_op:0:12}..."
-    log "  This may indicate a crashed or killed tt process."
-    log "  Use --force to clear the lock (keeps current jj state)."
-    log "  Use 'tt history undo --force' to revert to the pre-transaction state."
+    _ui__log "Error: In-progress transaction detected."
+    _ui__log "  before-op: ${before_op:0:12}..."
+    _ui__log "  This may indicate a crashed or killed tt process."
+    _ui__log "  Use --force to clear the lock (keeps current jj state)."
+    _ui__log "  Use 'tt history undo --force' to revert to the pre-transaction state."
     exit 1
   fi
 
   # --force: complete the transaction entry by writing the current jj op as after-op
   local current_op
   current_op="$(get_jj_op_id "$repo")" || {
-    log "Error: Could not read current jj operation ID."
+    _ui__log "Error: Could not read current jj operation ID."
     exit 1
   }
 
@@ -135,9 +135,9 @@ main() {
     sed -i "$ s|^${before_op}:\$|${before_op}:${current_op}|" "$history_file"
   fi
 
-  log "Unlocked: in-progress transaction cleared (history marked complete)."
-  log "  jj repository state is unchanged."
-  log "  Transaction entry: ${before_op:0:12}:${current_op:0:12}..."
+  _ui__log "Unlocked: in-progress transaction cleared (history marked complete)."
+  _ui__log "  jj repository state is unchanged."
+  _ui__log "  Transaction entry: ${before_op:0:12}:${current_op:0:12}..."
 }
 
 main "$@"

@@ -107,7 +107,7 @@ reorder_subtask() {
   parent_id="$(find_parent_branch "$repo" "$child_id" "$task_prefix" "$project_prefix")" || {
     local ec=$?
     if [[ $ec -eq 1 ]]; then
-      log "Error: '$child_id' has no parent (parentless task — cannot reorder)."
+      _ui__log "Error: '$child_id' has no parent (parentless task — cannot reorder)."
     fi
     exit 1
   }
@@ -129,14 +129,14 @@ reorder_subtask() {
 
   # 4. Precondition: WC must be clean
   if ! is_wc_clean "$parent_worktree"; then
-    log "Error: Working copy has uncommitted changes. Commit or discard first."
+    _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
 
   # 5. Read parent task file from the parent branch
   local parent_content
   parent_content="$(jj_show_at_revision "$repo" "$parent_id" "$parent_task_file")" || {
-    log "Error: Could not read task file '$parent_task_file' from branch '$parent_id'."
+    _ui__log "Error: Could not read task file '$parent_task_file' from branch '$parent_id'."
     exit 1
   }
 
@@ -165,7 +165,7 @@ reorder_subtask() {
     fi
   done
   if [[ $child_idx -eq -1 ]]; then
-    log "Error: '$child_id' is not a subtask of '$parent_id'."
+    _ui__log "Error: '$child_id' is not a subtask of '$parent_id'."
     exit 1
   fi
 
@@ -175,7 +175,7 @@ reorder_subtask() {
   case "$modifier" in
     up)
       if [[ $child_idx -eq 0 ]]; then
-        log "Error: Cannot move up: '$child_id' is already first."
+        _ui__log "Error: Cannot move up: '$child_id' is already first."
         exit 1
       fi
       # Swap with previous
@@ -185,7 +185,7 @@ reorder_subtask() {
       ;;
     down)
       if [[ $child_idx -eq $((n-1)) ]]; then
-        log "Error: Cannot move down: '$child_id' is already last."
+        _ui__log "Error: Cannot move down: '$child_id' is already last."
         exit 1
       fi
       local tmp_elem="${subtask_lines[$((child_idx+1))]}"
@@ -193,7 +193,7 @@ reorder_subtask() {
       subtask_lines[$child_idx]="$tmp_elem"
       ;;
     before)
-      [[ "$sibling_id" == "$child_id" ]] && { log "Error: Cannot reorder relative to itself."; exit 1; }
+      [[ "$sibling_id" == "$child_id" ]] && { _ui__log "Error: Cannot reorder relative to itself."; exit 1; }
       # Find sibling index
       local sibling_idx=-1
       for i in "${!subtask_lines[@]}"; do
@@ -201,7 +201,7 @@ reorder_subtask() {
         line_id="$(printf '%s' "${subtask_lines[$i]}" | sed 's/^\[[^]]*\][[:space:]]*//')"
         if [[ "$line_id" == "$sibling_id" ]]; then sibling_idx=$i; break; fi
       done
-      [[ $sibling_idx -eq -1 ]] && { log "Error: Sibling '$sibling_id' not found in parent's subtask list."; exit 1; }
+      [[ $sibling_idx -eq -1 ]] && { _ui__log "Error: Sibling '$sibling_id' not found in parent's subtask list."; exit 1; }
       # No-op: child is already immediately before sibling
       if [[ $((child_idx + 1)) -eq $sibling_idx ]]; then exit 0; fi
       # Compute target index after removal
@@ -212,7 +212,7 @@ reorder_subtask() {
       subtask_lines_move "$child_idx" "$target_idx"
       ;;
     after)
-      [[ "$sibling_id" == "$child_id" ]] && { log "Error: Cannot reorder relative to itself."; exit 1; }
+      [[ "$sibling_id" == "$child_id" ]] && { _ui__log "Error: Cannot reorder relative to itself."; exit 1; }
       # Find sibling index
       local sibling_idx=-1
       for i in "${!subtask_lines[@]}"; do
@@ -220,7 +220,7 @@ reorder_subtask() {
         line_id="$(printf '%s' "${subtask_lines[$i]}" | sed 's/^\[[^]]*\][[:space:]]*//')"
         if [[ "$line_id" == "$sibling_id" ]]; then sibling_idx=$i; break; fi
       done
-      [[ $sibling_idx -eq -1 ]] && { log "Error: Sibling '$sibling_id' not found in parent's subtask list."; exit 1; }
+      [[ $sibling_idx -eq -1 ]] && { _ui__log "Error: Sibling '$sibling_id' not found in parent's subtask list."; exit 1; }
       # No-op: child is already immediately after sibling
       if [[ $((child_idx - 1)) -eq $sibling_idx ]]; then exit 0; fi
       # Compute target index after removal (insert at sibling_idx + 1)
@@ -235,7 +235,7 @@ reorder_subtask() {
   # 9. Read child title for commit message
   local child_branch child_suffix child_content child_title
   child_branch="$(find_branch_for_task "$repo" "$child_id" "$task_prefix" "$project_prefix")" || {
-    log "Error: Could not locate branch for '$child_id'."
+    _ui__log "Error: Could not locate branch for '$child_id'."
     exit 1
   }
   if is_task_branch "$child_id" "$task_prefix"; then
@@ -255,7 +255,7 @@ reorder_subtask() {
   export REWRITE_CONTEXTS=("${parent_contexts[@]+"${parent_contexts[@]}"}")
   export REWRITE_SUBTASKS=("${subtask_lines[@]+"${subtask_lines[@]}"}")
   local reorder_updated
-  reorder_updated="$(generate_timestamp)"
+  reorder_updated="$(_string__generate_timestamp)"
   write_task_file "$parent_worktree/$parent_task_file" \
     "$parent_title" "$parent_status" "$parent_body" "$parent_created" "$reorder_updated"
   unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
@@ -266,7 +266,7 @@ reorder_subtask() {
   tt_commit_transaction "$repo"
 
   # 13. Output
-  log "Reordered: $child_id in $parent_id"
+  _ui__log "Reordered: $child_id in $parent_id"
 }
 
 # ---------------------------------------------------------------------------
@@ -280,7 +280,7 @@ reorder_frontmatter() {
   # 1. Determine the canonical branch
   local canonical_branch
   canonical_branch="$(find_branch_for_task "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
-    log "Error: Could not locate branch for '$task_id'."
+    _ui__log "Error: Could not locate branch for '$task_id'."
     exit 1
   }
 
@@ -301,14 +301,14 @@ reorder_frontmatter() {
 
   # 4. Precondition: WC must be clean
   if ! is_wc_clean "$canonical_worktree"; then
-    log "Error: Working copy has uncommitted changes. Commit or discard first."
+    _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
 
   # 5. Read task file content from the canonical branch
   local task_content
   task_content="$(jj_show_at_revision "$repo" "$canonical_branch" "$task_file")" || {
-    log "Error: Could not read task file '$task_file' from branch '$canonical_branch'."
+    _ui__log "Error: Could not read task file '$task_file' from branch '$canonical_branch'."
     exit 1
   }
 
@@ -356,7 +356,7 @@ reorder_frontmatter() {
   export REWRITE_CONTEXTS=("${contexts[@]+"${contexts[@]}"}")
   export REWRITE_SUBTASKS=("${sorted_subtasks[@]+"${sorted_subtasks[@]}"}")
   local reorder_updated
-  reorder_updated="$(generate_timestamp)"
+  reorder_updated="$(_string__generate_timestamp)"
   write_task_file "$canonical_worktree/$task_file" "$title" "$status" "$body" "$created" "$reorder_updated"
   unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
   jj -R "$canonical_worktree" commit -m "$(format_commit_message "task" "reorder" "$task_id" "$title")" >/dev/null 2>&1
@@ -366,7 +366,7 @@ reorder_frontmatter() {
   tt_commit_transaction "$repo"
 
   # 13. Output
-  log "Tidied: $task_id"
+  _ui__log "Tidied: $task_id"
 }
 
 # ---------------------------------------------------------------------------
@@ -417,19 +417,19 @@ main() {
   if [[ -z "$task_id" ]]; then
     task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$task_id" ]]; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
   fi
 
   # Validate task_id is a known branch
   if ! jj -R "$repo" --ignore-working-copy log -r "$task_id" --no-graph -T '' 2>/dev/null; then
-    log "Error: Branch '$task_id' not found in repository."
+    _ui__log "Error: Branch '$task_id' not found in repository."
     exit 1
   fi
   if ! is_task_branch "$task_id" "$task_prefix" && \
      ! is_project_branch "$task_id" "$project_prefix"; then
-    log "Error: '$task_id' is not a task or project branch."
+    _ui__log "Error: '$task_id' is not a task or project branch."
     exit 1
   fi
 

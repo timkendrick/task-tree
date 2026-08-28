@@ -74,7 +74,7 @@ main() {
     { read -r _rev; read -r task_file; read -r bookmark; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
 
     if [[ -z "$bookmark" ]]; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
   else
@@ -85,11 +85,11 @@ main() {
     elif is_project_branch "$bookmark" "$project_prefix"; then
       suffix="${bookmark#$project_prefix}"
     else
-      log "Error: '$task_id_arg' is not a task or project branch."
+      _ui__log "Error: '$task_id_arg' is not a task or project branch."
       exit 1
     fi
     if ! jj -R "$repo" log -r "$bookmark" --no-graph -T '' 2>/dev/null; then
-      log "Error: Branch '$bookmark' not found in repository."
+      _ui__log "Error: Branch '$bookmark' not found in repository."
       exit 1
     fi
     task_file="$(task_file_path "$suffix")"
@@ -113,7 +113,7 @@ main() {
 
   # Precondition: WC must be clean
   if ! is_wc_clean "$target_worktree"; then
-    log "Error: Working copy has uncommitted changes. Commit or discard first."
+    _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
 
@@ -128,7 +128,7 @@ main() {
   # Read task file content from bookmark
   local task_content
   task_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || {
-    log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
+    _ui__log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
     exit 1
   }
 
@@ -138,7 +138,7 @@ main() {
 
   # If already DONE, nothing to do
   if [[ "$task_status" == "DONE" ]]; then
-    log "Task is already DONE: $bookmark"
+    _ui__log "Task is already DONE: $bookmark"
     exit 0
   fi
 
@@ -148,10 +148,10 @@ main() {
     incomplete_subs="$(parse_repeated_frontmatter_field "$task_content" "subtask" \
       | awk '/^\[[ \-]\]/ { print "subtask: " $0 }')" || true
     if [[ -n "$incomplete_subs" ]]; then
-      log "Error: Not all subtasks are complete. Use --force to proceed anyway."
-      log "  Incomplete subtasks:"
+      _ui__log "Error: Not all subtasks are complete. Use --force to proceed anyway."
+      _ui__log "  Incomplete subtasks:"
       printf '%s\n' "$incomplete_subs" | while IFS= read -r line; do
-        log "    $line"
+        _ui__log "    $line"
       done
       exit 1
     fi
@@ -217,7 +217,7 @@ main() {
     "TT_TASK_BRANCH=$bookmark" \
     "TT_COMMIT=${commit_id}"
 
-  log "Completed: $bookmark"
+  _ui__log "Completed: $bookmark"
 }
 
 main "$@"

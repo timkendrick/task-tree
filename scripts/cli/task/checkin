@@ -167,17 +167,17 @@ main() {
   if [[ -n "$task_id_arg" ]]; then
     child_bookmark="$task_id_arg"
     if is_project_branch "$child_bookmark" "$project_prefix"; then
-      log "Error: 'tt task checkin' requires a task branch."
-      log "  '$child_bookmark' is a project branch."
-      log "  Use 'tt task publish --target <branch>' to publish project branches."
+      _ui__log "Error: 'tt task checkin' requires a task branch."
+      _ui__log "  '$child_bookmark' is a project branch."
+      _ui__log "  Use 'tt task publish --target <branch>' to publish project branches."
       exit 1
     fi
     if ! is_task_branch "$child_bookmark" "$task_prefix"; then
-      log "Error: '$task_id_arg' is not a task branch."
+      _ui__log "Error: '$task_id_arg' is not a task branch."
       exit 1
     fi
     if ! jj -R "$repo" log -r "$child_bookmark" --no-graph -T '' 2>/dev/null; then
-      log "Error: Branch '$child_bookmark' not found in repository."
+      _ui__log "Error: Branch '$child_bookmark' not found in repository."
       exit 1
     fi
     child_slug="${child_bookmark#"$task_prefix"}"
@@ -185,13 +185,13 @@ main() {
   else
     { read -r _rev; read -r task_file; read -r child_bookmark; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$child_bookmark" ]]; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
     if is_project_branch "$child_bookmark" "$project_prefix"; then
-      log "Error: 'tt task checkin' requires a task branch."
-      log "  Current branch '$child_bookmark' is a project branch."
-      log "  Use 'tt task publish --target <branch>' to publish project branches."
+      _ui__log "Error: 'tt task checkin' requires a task branch."
+      _ui__log "  Current branch '$child_bookmark' is a project branch."
+      _ui__log "  Use 'tt task publish --target <branch>' to publish project branches."
       exit 1
     fi
     child_slug="${child_bookmark#"$task_prefix"}"
@@ -207,7 +207,7 @@ main() {
   fi
 
   if ! is_wc_clean "$child_worktree"; then
-    log "Error: Working copy has uncommitted changes. Commit or discard first."
+    _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
 
@@ -220,7 +220,7 @@ main() {
   # --- Read current task state from bookmark ---
   local task_content task_title task_status
   task_content="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || {
-    log "Error: Could not read task file '$task_file' from '$child_bookmark'."
+    _ui__log "Error: Could not read task file '$task_file' from '$child_bookmark'."
     exit 1
   }
   task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
@@ -229,8 +229,8 @@ main() {
   # Validate --delete requires DONE. With --complete the task is marked DONE later in
   # this command, so the check is deferred until after the complete step has run.
   if [[ "$delete" == true ]] && [[ "$do_complete" != true ]] && [[ "$task_status" != "DONE" ]]; then
-    log "Error: --delete requires task status to be DONE (current: $task_status)."
-    log "  Use --complete to mark done first, or use --complete --delete together."
+    _ui__log "Error: --delete requires task status to be DONE (current: $task_status)."
+    _ui__log "  Use --complete to mark done first, or use --complete --delete together."
     exit 1
   fi
 
@@ -238,7 +238,7 @@ main() {
   local parent_bookmark
   parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
     local rc=$?
-    [[ $rc -eq 1 ]] && log "Error: No parent branch found containing subtask entry for '$task_id'."
+    [[ $rc -eq 1 ]] && _ui__log "Error: No parent branch found containing subtask entry for '$task_id'."
     exit 1
   }
 
@@ -258,8 +258,8 @@ main() {
     # No --context arg, interactive session: open editor with hint
     local template
     template="$(printf '\n# Task: %s\n# Optional handoff context' "$task_id")"
-    context_text="$(prompt <<< "$template")" || {
-      log "Error: Editor exited with non-zero status."
+    context_text="$(_ui__prompt <<< "$template")" || {
+      _ui__log "Error: Editor exited with non-zero status."
       exit 1
     }
   fi
@@ -285,7 +285,7 @@ main() {
     local status_check
     status_check="$(parse_frontmatter_field "$task_content_check" "status")"
     if [[ "$status_check" != "DONE" ]]; then
-      log "Running complete for $child_bookmark..."
+      _ui__log "Running complete for $child_bookmark..."
       "$SCRIPT_DIR/complete" --repo "$repo" \
         ${task_id_arg:+"$task_id_arg"} \
         ${worktree_arg:+--worktree="$worktree_arg"} \
@@ -296,23 +296,23 @@ main() {
     # status drives the parent's subtask checkbox, the --delete precondition and the
     # final log message.
     task_content="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || {
-      log "Error: Could not read task file '$task_file' from '$child_bookmark'."
+      _ui__log "Error: Could not read task file '$task_file' from '$child_bookmark'."
       exit 1
     }
     task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
     task_status="$(parse_frontmatter_field "$task_content" "status")"
 
     if [[ "$delete" == true ]] && [[ "$task_status" != "DONE" ]]; then
-      log "Error: --delete requires task status to be DONE (current: $task_status)."
+      _ui__log "Error: --delete requires task status to be DONE (current: $task_status)."
       exit 1
     fi
   fi
 
-  log "Checking in: $child_bookmark -> $parent_bookmark"
+  _ui__log "Checking in: $child_bookmark -> $parent_bookmark"
 
   # --- Optional: rebase/merge propagation ---
   if [[ -n "$strategy" ]]; then
-    log "Propagating parent ($strategy) into child before checkin..."
+    _ui__log "Propagating parent ($strategy) into child before checkin..."
     "$SCRIPT_DIR/propagate" \
       --from "$parent_bookmark" \
       --to "$child_bookmark" \
@@ -321,7 +321,7 @@ main() {
       --repo "$repo"
     # Re-check WC is clean after propagation
     if ! is_wc_clean "$child_worktree"; then
-      log "Error: Working copy not clean after propagation."
+      _ui__log "Error: Working copy not clean after propagation."
       exit 1
     fi
   fi
@@ -356,8 +356,8 @@ main() {
         fi
       done
       if [[ "$allowed" != true ]]; then
-        log "Error: Unmerged range touches unexpected task file: $changed_path"
-        log "  Only files under descendant task directories of '$child_bookmark' may differ from parent."
+        _ui__log "Error: Unmerged range touches unexpected task file: $changed_path"
+        _ui__log "  Only files under descendant task directories of '$child_bookmark' may differ from parent."
         exit 1
       fi
     done <<< "$diff_output"
@@ -377,8 +377,8 @@ main() {
     0) target_ws="$(resolve_canonical_repo "$repo")" ;;
     1) target_ws="$worktrees" ;;
     *)
-      log "Error: Multiple parent workspaces found for '$parent_bookmark'. Run checkin from within the task's own worktree."
-      printf '%s\n' "$worktrees" | while IFS= read -r p; do log "  $p"; done
+      _ui__log "Error: Multiple parent workspaces found for '$parent_bookmark'. Run checkin from within the task's own worktree."
+      printf '%s\n' "$worktrees" | while IFS= read -r p; do _ui__log "  $p"; done
       exit 1
       ;;
   esac
@@ -405,13 +405,13 @@ main() {
   # Build updated parent task file content
   local parent_task_content
   parent_task_content="$(jj_show_at_revision "$target_ws" "$parent_bookmark" "$parent_task_file")" || {
-    log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
+    _ui__log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
     exit 1
   }
 
   # Update the subtask entry in the parent task file to reflect the child's status.
   local updated_parent_content new_cb
-  new_cb="$(status_to_checkbox "$task_status")"
+  new_cb="$(_format__status_checkbox "$task_status")"
   updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" -v cb="$new_cb" '
     BEGIN { sep = 0 }
     /^---$/ { sep++; print; next }
@@ -431,14 +431,14 @@ main() {
   if [[ -n "$context_text" ]]; then
     local ctx_title="Handoff: ${task_title}"
     local ctx_slug
-    ctx_slug="$(title_to_slug "$ctx_title")"
+    ctx_slug="$(_string__to_slug "$ctx_title")"
     local ctx_hex
-    ctx_hex="$(generate_hex)"
+    ctx_hex="$(_string__generate_hex)"
     local ctx_id="context/${ctx_slug}-${ctx_hex}"
     local ctx_file
     ctx_file="$(task_context_path "$parent_slug" "$ctx_id")"
     local ctx_ts
-    ctx_ts="$(generate_timestamp)"
+    ctx_ts="$(_string__generate_timestamp)"
 
     # Create context directory if needed
     mkdir -p "$target_ws/$(dirname "$ctx_file")"
@@ -446,7 +446,7 @@ main() {
     # Write context file
     write_context_file "$target_ws/$ctx_file" "$ctx_title" "$context_text" "$ctx_ts" "$ctx_ts"
 
-    log "Created context file: $ctx_file"
+    _ui__log "Created context file: $ctx_file"
   fi
 
   printf '%s\n' "$updated_parent_content" > "$target_ws/$parent_task_file"
@@ -477,7 +477,7 @@ main() {
   # On conflict, exit 1 triggers the ERR trap → tt_rollback_transaction →
   # jj op restore, which cleanly reverts all jj operations in this transaction.
   if [[ "$force" != true ]] && has_conflicts "$target_ws" "@"; then
-    log "Error: Merge conflicts detected. Resolve conflicts or use --force."
+    _ui__log "Error: Merge conflicts detected. Resolve conflicts or use --force."
     exit 1
   fi
 
@@ -505,9 +505,9 @@ main() {
   fi
 
   if [[ "$task_status" != "DONE" ]]; then
-    log "Partial checkin complete: $task_id -> $parent_bookmark"
+    _ui__log "Partial checkin complete: $task_id -> $parent_bookmark"
   else
-    log "Checkin complete: $task_id -> $parent_bookmark"
+    _ui__log "Checkin complete: $task_id -> $parent_bookmark"
   fi
 
   # Commit transaction now — before any worktree deletion — because the
@@ -518,7 +518,7 @@ main() {
 
   # --- Delegate --delete to tt task delete (second commit on parent branch) ---
   if [[ "$delete" == true ]]; then
-    log "Running delete for $task_id..."
+    _ui__log "Running delete for $task_id..."
     "$SCRIPT_DIR/delete" "$task_id" --force \
       --repo "$repo" \
       ${worktree_arg:+--worktree="$worktree_arg"}
@@ -526,7 +526,7 @@ main() {
 
   # --- Optional: propagate parent tip to remaining siblings ---
   if [[ "$do_propagate" == true ]]; then
-    log "Propagating from parent: $parent_bookmark"
+    _ui__log "Propagating from parent: $parent_bookmark"
     local -a propagate_args=(
       --from "$parent_bookmark"
       --repo "$repo"

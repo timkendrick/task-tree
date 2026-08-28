@@ -96,34 +96,34 @@ main() {
     task_id="$task_id_arg"
     # Validate it is a known task/project branch
     if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
-      log "Error: '$task_id' is not a recognized task or project ID"
+      _ui__log "Error: '$task_id' is not a recognized task or project ID"
       exit 1
     fi
     if ! jj -R "$repo" log -r "$task_id" --no-graph -T '' 2>/dev/null; then
-      log "Error: Task '$task_id' not found in repository"
+      _ui__log "Error: Task '$task_id' not found in repository"
       exit 1
     fi
   else
     task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$task_id" ]]; then
-      log "Error: Not on a task or project branch. Use --task to specify."
+      _ui__log "Error: Not on a task or project branch. Use --task to specify."
       exit 1
     fi
   fi
 
   # Validate new parent exists
   if ! is_task_branch "$new_parent_id" "$task_prefix" && ! is_project_branch "$new_parent_id" "$project_prefix"; then
-    log "Error: '$new_parent_id' is not a recognized task or project ID"
+    _ui__log "Error: '$new_parent_id' is not a recognized task or project ID"
     exit 1
   fi
   if ! jj -R "$repo" log -r "$new_parent_id" --no-graph -T '' 2>/dev/null; then
-    log "Error: Parent '$new_parent_id' not found in repository"
+    _ui__log "Error: Parent '$new_parent_id' not found in repository"
     exit 1
   fi
 
   # Check working copy is clean
   if ! is_wc_clean "$repo"; then
-    log "Error: Working copy has uncommitted changes. Commit or discard first."
+    _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
 
@@ -131,7 +131,7 @@ main() {
   local old_parent='' find_parent_exit=0
   old_parent="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || find_parent_exit=$?
   if [[ $find_parent_exit -eq 1 ]]; then
-    log "Error: No parent found for '$task_id'. Cannot move a parentless task."
+    _ui__log "Error: No parent found for '$task_id'. Cannot move a parentless task."
     exit 1
   elif [[ $find_parent_exit -ne 0 ]]; then
     exit $find_parent_exit
@@ -139,7 +139,7 @@ main() {
 
   # Guard: same parent is a no-op error
   if [[ "$old_parent" == "$new_parent_id" ]]; then
-    log "Error: Task '$task_id' is already a child of '$new_parent_id'."
+    _ui__log "Error: Task '$task_id' is already a child of '$new_parent_id'."
     exit 1
   fi
 
@@ -153,7 +153,7 @@ main() {
       break  # reached a root without finding task_id — no cycle
     fi
     if [[ "$p" == "$task_id" ]]; then
-      log "Error: Cannot move '$task_id' under '$new_parent_id': would create a cycle."
+      _ui__log "Error: Cannot move '$task_id' under '$new_parent_id': would create a cycle."
       exit 1
     fi
     cursor="$p"
@@ -189,7 +189,7 @@ main() {
   # Read task title for commit messages
   local task_content task_title
   task_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file")" || {
-    log "Error: Could not read task file '$task_file' from '$task_id'."
+    _ui__log "Error: Could not read task file '$task_file' from '$task_id'."
     exit 1
   }
   task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
@@ -237,7 +237,7 @@ main() {
   # ----------------------------------------------------------------
   # Step 1: Update old parent — remove subtask entry and task stub dir
   # ----------------------------------------------------------------
-  log "Updating old parent: $old_parent"
+  _ui__log "Updating old parent: $old_parent"
   jj -R "$repo" new "$old_parent"
 
   local tmpfile
@@ -259,7 +259,7 @@ main() {
   # ----------------------------------------------------------------
   # Step 2: Update new parent — add subtask entry and task stub dir
   # ----------------------------------------------------------------
-  log "Updating new parent: $new_parent_id"
+  _ui__log "Updating new parent: $new_parent_id"
   jj -R "$repo" new "$new_parent_id"
 
   append_frontmatter_subtask "$repo/$new_parent_task_file" "$task_id"
@@ -274,9 +274,9 @@ main() {
   mkdir -p "$repo/$task_dir_new"
   if jj_show_at_revision "$repo" "$old_parent_commit_id" "$task_file" \
        > "$repo/$task_file"; then
-    log "Copied task stub from old parent to new parent: $task_file"
+    _ui__log "Copied task stub from old parent to new parent: $task_file"
   else
-    log "Warning: Could not copy task stub '$task_file' from old parent; skipping."
+    _ui__log "Warning: Could not copy task stub '$task_file' from old parent; skipping."
   fi
 
   jj -R "$repo" describe -m "$(format_commit_message "task" "move" "$task_id" "$task_title")"
@@ -294,12 +294,12 @@ main() {
       --no-graph -T 'commit_id' 2>/dev/null)" || true
 
   if [[ -n "$rebase_roots" ]]; then
-    log "Rebasing $task_id onto $new_parent_id..."
+    _ui__log "Rebasing $task_id onto $new_parent_id..."
     jj -R "$repo" rebase \
         -s "roots(::${task_id} ~ ::${old_parent})" \
         -d "$new_parent_id"
   else
-    log "No unmerged commits to rebase for $task_id."
+    _ui__log "No unmerged commits to rebase for $task_id."
   fi
 
   # ----------------------------------------------------------------
@@ -319,9 +319,9 @@ main() {
   # Commit transaction (records after-op for undo)
   tt_commit_transaction "$repo"
 
-  log "Moved: $task_id"
-  log "  Old parent: $old_parent"
-  log "  New parent: $new_parent_id"
+  _ui__log "Moved: $task_id"
+  _ui__log "  Old parent: $old_parent"
+  _ui__log "  New parent: $new_parent_id"
 }
 
 main "$@"

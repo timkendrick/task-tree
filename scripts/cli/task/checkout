@@ -143,15 +143,15 @@ main() {
 
   # Validate task_id format
   if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
-    log "Error: '$task_id' is not a recognized task or project ID"
-    log "  Expected prefix '$task_prefix' or '$project_prefix' with 8-hex suffix"
+    _ui__log "Error: '$task_id' is not a recognized task or project ID"
+    _ui__log "  Expected prefix '$task_prefix' or '$project_prefix' with 8-hex suffix"
     exit 1
   fi
 
   # --rebase/--merge pull changes from the parent branch; project branches have no parent.
   if [[ -n "$strategy" ]] && is_project_branch "$task_id" "$project_prefix"; then
-    log "Error: --rebase/--merge require a task branch."
-    log "  '$task_id' is a project branch and has no parent."
+    _ui__log "Error: --rebase/--merge require a task branch."
+    _ui__log "  '$task_id' is a project branch and has no parent."
     exit 1
   fi
 
@@ -159,7 +159,7 @@ main() {
 
   # Verify bookmark exists
   if ! jj "${jj_opts[@]}" log -r "$task_id" --no-graph -T '' 2>/dev/null; then
-    log "Error: Task '$task_id' not found in repository"
+    _ui__log "Error: Task '$task_id' not found in repository"
     exit 1
   fi
 
@@ -193,17 +193,17 @@ main() {
       existing_worktrees="$(find_worktrees_for_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")"
       worktree_count="$(printf '%s' "$existing_worktrees" | grep -c . 2>/dev/null || true)"
       if [[ "$worktree_count" -gt 1 ]]; then
-        log "Error: Multiple workspaces found for '$task_id'; specify --worktree=<path>:"
-        printf '%s' "$existing_worktrees" | while IFS= read -r p; do log "  $p"; done
+        _ui__log "Error: Multiple workspaces found for '$task_id'; specify --worktree=<path>:"
+        printf '%s' "$existing_worktrees" | while IFS= read -r p; do _ui__log "  $p"; done
         exit 1
       elif [[ "$worktree_count" -eq 1 ]]; then
         worktree_path="$existing_worktrees"
-        log "Found existing workspace: $worktree_path"
+        _ui__log "Found existing workspace: $worktree_path"
       else
         # No existing workspace found; derive conventional path
         if [[ -z "$workspace_dir" ]]; then
-          log "Error: --worktree requires a workspace dir or an explicit path (--worktree=<path>)"
-          log "  Run 'tt workspace init' to create the .tt/workspace symlink."
+          _ui__log "Error: --worktree requires a workspace dir or an explicit path (--worktree=<path>)"
+          _ui__log "  Run 'tt workspace init' to create the .tt/workspace symlink."
           exit 1
         fi
         worktree_path="${workspace_dir}/${task_id}"
@@ -230,8 +230,8 @@ main() {
         if [[ "$match_found" != true ]]; then
           local first_existing
           first_existing="$(printf '%s' "$existing_wts" | head -1)"
-          log "Error: Task '$task_id' already has a workspace at '$first_existing'."
-          log "  Multiple worktrees per task are not supported."
+          _ui__log "Error: Task '$task_id' already has a workspace at '$first_existing'."
+          _ui__log "  Multiple worktrees per task are not supported."
           exit 1
         fi
       fi
@@ -243,13 +243,13 @@ main() {
       # Existing workspace: check for local changes
       if ! is_wc_clean "$target_worktree"; then
         if [[ "$force" != true ]]; then
-          log "Error: Workspace '$target_worktree' has uncommitted changes."
-          log "  Commit or discard changes first, or use --force to proceed anyway."
+          _ui__log "Error: Workspace '$target_worktree' has uncommitted changes."
+          _ui__log "  Commit or discard changes first, or use --force to proceed anyway."
           exit 1
         fi
-        log "Warning: Workspace has uncommitted changes (proceeding due to --force)."
+        _ui__log "Warning: Workspace has uncommitted changes (proceeding due to --force)."
       fi
-      log "Using existing workspace: $target_worktree"
+      _ui__log "Using existing workspace: $target_worktree"
     else
       new_worktree=true
       mkdir -p "$(dirname "$target_worktree")"
@@ -259,11 +259,11 @@ main() {
     target_worktree="$current_worktree"
     if ! is_wc_clean "$target_worktree"; then
       if [[ "$force" != true ]]; then
-        log "Error: Working copy has uncommitted changes."
-        log "  Commit or discard changes first, or use --force to proceed anyway."
+        _ui__log "Error: Working copy has uncommitted changes."
+        _ui__log "  Commit or discard changes first, or use --force to proceed anyway."
         exit 1
       fi
-      log "Warning: Working copy has uncommitted changes (proceeding due to --force)."
+      _ui__log "Warning: Working copy has uncommitted changes (proceeding due to --force)."
     fi
   fi
 
@@ -276,11 +276,11 @@ main() {
     local parent_bookmark
     parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
       local rc=$?
-      [[ $rc -eq 1 ]] && log "Error: No parent branch found containing subtask entry for '$task_id'."
+      [[ $rc -eq 1 ]] && _ui__log "Error: No parent branch found containing subtask entry for '$task_id'."
       exit 1
     }
 
-    log "Propagating parent ($strategy) into task before checkout..."
+    _ui__log "Propagating parent ($strategy) into task before checkout..."
     "$SCRIPT_DIR/propagate" \
       --from "$parent_bookmark" \
       --to "$task_id" \
@@ -291,7 +291,7 @@ main() {
     # --force, where a dirty working copy was explicitly permitted up front, and for
     # brand-new worktrees, which do not exist on disk yet.
     if [[ "$force" != true ]] && [[ "$new_worktree" != true ]] && ! is_wc_clean "$target_worktree"; then
-      log "Error: Working copy not clean after propagation."
+      _ui__log "Error: Working copy not clean after propagation."
       exit 1
     fi
   fi
@@ -320,7 +320,7 @@ main() {
 
   # Perform the checkout
   if [[ "$new_worktree" == true ]]; then
-    log "Creating workspace: $target_worktree"
+    _ui__log "Creating workspace: $target_worktree"
     jj "${jj_opts[@]}" workspace add --name "$task_id" -r "$task_id" "$target_worktree" >&2
     # Plant .tt/workspace symlink in the new worktree.
     # Note: history lives in the canonical repo only.
@@ -339,16 +339,16 @@ main() {
   # Create the checkout commit (first checkout, or reopening a completed task)
   if [[ "$needs_begin" == true ]]; then
     if [[ "$reopening" == true ]]; then
-      log "Reopening completed task: $task_id"
+      _ui__log "Reopening completed task: $task_id"
     else
-      log "Initializing task: $task_id"
+      _ui__log "Initializing task: $task_id"
     fi
 
     # Create TASK.md symlink in the worktree root (idempotent when reopening)
     local task_file_rel
     task_file_rel="$(task_file_path "$task_slug")"
     ln -sf "$task_file_rel" "$target_worktree/$TT_TASK_SYMLINK_FILENAME"
-    log "Created $TT_TASK_SYMLINK_FILENAME -> $task_file_rel"
+    _ui__log "Created $TT_TASK_SYMLINK_FILENAME -> $task_file_rel"
 
     # Update status to IN-PROGRESS in the task file
     local tmpfile
@@ -392,11 +392,11 @@ main() {
   tt_commit_transaction "$repo"
 
   if [[ -n "$previous_task_id" ]]; then
-    log "  Switched from: $previous_task_id"
+    _ui__log "  Switched from: $previous_task_id"
   fi
-  log "Checked out: $task_id"
+  _ui__log "Checked out: $task_id"
   if [[ "$worktree_flag" == true ]]; then
-    log "  Worktree: $target_worktree"
+    _ui__log "  Worktree: $target_worktree"
   fi
 
   # Print the worktree path to stdout for piping

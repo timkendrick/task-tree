@@ -61,13 +61,13 @@ main() {
 
   local ws_dir
   if ! ws_dir="$(get_workspace_dir "$repo")"; then
-    log "Error: No workspace directory configured. Run 'tt workspace init' first."
+    _ui__log "Error: No workspace directory configured. Run 'tt workspace init' first."
     exit 1
   fi
 
   local active
   if ! active="$(get_active_worktree "$ws_dir")"; then
-    log "Error: No active worktree (HEAD symlink missing or unreadable in '$ws_dir')."
+    _ui__log "Error: No active worktree (HEAD symlink missing or unreadable in '$ws_dir')."
     exit 1
   fi
 

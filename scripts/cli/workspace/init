@@ -62,7 +62,7 @@ validate_prefix() {
   local p="$1"
   local label="$2"
   if [[ -z "$p" ]] || [[ "$p" =~ [^a-z0-9/-] ]]; then
-    log "Error: $label must contain only lowercase letters, digits, hyphens, and slashes: '$p'"
+    _ui__log "Error: $label must contain only lowercase letters, digits, hyphens, and slashes: '$p'"
     return 1
   fi
   return 0
@@ -120,7 +120,7 @@ main() {
 
   # Resolve repo to absolute path
   if [[ ! -d "$repo_arg" ]]; then
-    log "Error: Repository path does not exist: $repo_arg"
+    _ui__log "Error: Repository path does not exist: $repo_arg"
     exit 1
   fi
   local repo_abs
@@ -128,13 +128,13 @@ main() {
 
   # Verify it is a jj repo
   if [[ ! -d "$repo_abs/.jj" ]]; then
-    log "Error: Not a jj repository (no .jj directory): $repo_abs"
+    _ui__log "Error: Not a jj repository (no .jj directory): $repo_abs"
     exit 1
   fi
 
   # Check working copy is clean
   if ! is_wc_clean "$repo_abs"; then
-    log "Error: Working copy has uncommitted changes. Commit or discard changes before initializing."
+    _ui__log "Error: Working copy has uncommitted changes. Commit or discard changes before initializing."
     exit 1
   fi
 
@@ -142,11 +142,11 @@ main() {
   # If .tt/ is already a directory, silently continue (mkdir -p below is a no-op).
   if [[ -e "$repo_abs/.tt" && ! -d "$repo_abs/.tt" ]]; then
     if [[ "$force" == true ]]; then
-      log "Warning: Removing existing non-directory .tt entry (--force): $repo_abs/.tt"
+      _ui__log "Warning: Removing existing non-directory .tt entry (--force): $repo_abs/.tt"
       rm -f "$repo_abs/.tt"
     else
-      log "Error: .tt exists but is not a directory: $repo_abs/.tt"
-      log "  Use --force to remove it."
+      _ui__log "Error: .tt exists but is not a directory: $repo_abs/.tt"
+      _ui__log "  Use --force to remove it."
       exit 1
     fi
   fi
@@ -155,7 +155,7 @@ main() {
   validate_prefix "$task_prefix" "--task-prefix" || exit 1
   validate_prefix "$project_prefix" "--project-prefix" || exit 1
   if [[ "$task_prefix" == "$project_prefix" ]]; then
-    log "Error: --task-prefix and --project-prefix must differ: both are '$task_prefix'"
+    _ui__log "Error: --task-prefix and --project-prefix must differ: both are '$task_prefix'"
     exit 1
   fi
 
@@ -166,8 +166,8 @@ main() {
     # Check it is empty (unless --force)
     if [[ "$force" != true ]]; then
       if [[ -n "$(ls -A "$virtual_dir" 2>/dev/null)" ]]; then
-        log "Error: Virtual folder already exists and is not empty: $virtual_dir"
-        log "  Use --force to overwrite files within it."
+        _ui__log "Error: Virtual folder already exists and is not empty: $virtual_dir"
+        _ui__log "  Use --force to overwrite files within it."
         exit 1
       fi
     fi
@@ -176,7 +176,7 @@ main() {
     local virtual_parent
     virtual_parent="$(dirname "$virtual_arg")"
     if [[ ! -d "$virtual_parent" ]]; then
-      log "Error: Parent directory of virtual folder does not exist: $virtual_parent"
+      _ui__log "Error: Parent directory of virtual folder does not exist: $virtual_parent"
       exit 1
     fi
     virtual_dir="$(cd "$virtual_parent" && pwd)/$(basename "$virtual_arg")"
@@ -213,21 +213,21 @@ TOML
 
   # Create .tt/workspace symlink pointing to the virtual project directory
   set_workspace_dir "$repo_abs" "$virtual_dir"
-  log "Created .tt/workspace -> $virtual_dir"
+  _ui__log "Created .tt/workspace -> $virtual_dir"
 
   # Create HEAD symlink in virtual folder pointing to repo (absolute path)
   make_absolute_symlink "$repo_abs" "$virtual_dir/HEAD"
-  log "Created HEAD -> $repo_abs"
+  _ui__log "Created HEAD -> $repo_abs"
 
   # Commit to jj (config.toml and .gitignore are tracked; history and workspace are ignored)
   jj -R "$repo_abs" commit -m "$(format_commit_message "workspace" "init" "" "Create workspace")"
 
-  log "Initialized workspace:"
-  log "  repo:           $repo_abs"
-  log "  config:         $config_file"
-  log "  virtual folder: $virtual_dir"
-  log "  .tt/workspace -> $virtual_dir"
-  log "  HEAD ->         $repo_abs"
+  _ui__log "Initialized workspace:"
+  _ui__log "  repo:           $repo_abs"
+  _ui__log "  config:         $config_file"
+  _ui__log "  virtual folder: $virtual_dir"
+  _ui__log "  .tt/workspace -> $virtual_dir"
+  _ui__log "  HEAD ->         $repo_abs"
 }
 
 main "$@"

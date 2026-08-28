@@ -146,15 +146,15 @@ propagate_one_rebase() {
   fi
 
   if [[ "$dry_run" == true ]]; then
-    log "  [dry-run] rebase $child onto $from"
+    _ui__log "  [dry-run] rebase $child onto $from"
     return 0
   fi
 
   jj "${jj_opts[@]}" rebase -s "roots(::${child} ~ ::${from})" -d "$from"
 
   if [[ "$force" != true ]] && has_conflicts "$repo" "${child}::"; then
-    log "Error: Conflicts detected in $child after rebase onto $from."
-    log "  Use --force to proceed despite conflicts."
+    _ui__log "Error: Conflicts detected in $child after rebase onto $from."
+    _ui__log "  Use --force to proceed despite conflicts."
     exit 1
   fi
 }
@@ -166,7 +166,7 @@ propagate_one_merge() {
   local jj_opts=(-R "$repo")
 
   if [[ "$dry_run" == true ]]; then
-    log "  [dry-run] merge $from into $child"
+    _ui__log "  [dry-run] merge $from into $child"
     return 0
   fi
 
@@ -175,8 +175,8 @@ propagate_one_merge() {
   jj "${jj_opts[@]}" bookmark set "$child"
 
   if [[ "$force" != true ]] && has_conflicts "$repo" "$child"; then
-    log "Error: Conflicts in $child after merging $from."
-    log "  Use --force to proceed despite conflicts."
+    _ui__log "Error: Conflicts in $child after merging $from."
+    _ui__log "  Use --force to proceed despite conflicts."
     exit 1
   fi
 
@@ -238,7 +238,7 @@ propagate_from() {
   elif is_project_branch "$from_bookmark" "$project_prefix"; then
     suffix="${from_bookmark#$project_prefix}"
   else
-    log "  Warning: $from_bookmark is not a task/project branch; cannot enumerate subtasks"
+    _ui__log "  Warning: $from_bookmark is not a task/project branch; cannot enumerate subtasks"
     return 0
   fi
 
@@ -270,7 +270,7 @@ propagate_from() {
 
     # Check bookmark exists in repo
     if ! jj "${jj_opts[@]}" --ignore-working-copy log -r "$child_id" --no-graph -T '' 2>/dev/null; then
-      log "  $child_id: bookmark not found in repo; skipping"
+      _ui__log "  $child_id: bookmark not found in repo; skipping"
       continue
     fi
 
@@ -282,15 +282,15 @@ propagate_from() {
       if [[ "$partial" == true ]]; then
         # Child is fully merged into parent but still IN-PROGRESS: no rebase needed,
         # but we must advance the child bookmark to the parent tip so work can resume.
-        log "  $child_id: checked in but still in progress — creating resume commit"
+        _ui__log "  $child_id: checked in but still in progress — creating resume commit"
         if [[ "$dry_run" != true ]]; then
           create_resume_commit "$repo" "$child_id" "$original_rev" "$from_bookmark"
         fi
       else
-        log "  $child_id: already up to date"
+        _ui__log "  $child_id: already up to date"
       fi
     else
-      log "  $child_id: $strategy onto $from_bookmark"
+      _ui__log "  $child_id: $strategy onto $from_bookmark"
       if [[ "$strategy" == rebase ]]; then
         propagate_one_rebase "$repo" "$child_id" "$from_bookmark" "$force" "$dry_run"
       else
@@ -298,7 +298,7 @@ propagate_from() {
       fi
 
       if [[ "$partial" == true ]] && [[ "$dry_run" != true ]]; then
-        log "  $child_id: creating resume commit"
+        _ui__log "  $child_id: creating resume commit"
         create_resume_commit "$repo" "$child_id" "$original_rev"
       fi
     fi
@@ -353,19 +353,19 @@ main() {
   if [[ -n "$from" ]]; then
     from_bookmark="$from"
     if ! jj "${jj_opts[@]}" --ignore-working-copy log -r "$from_bookmark" --no-graph -T '' 2>/dev/null; then
-      log "Error: --from '$from_bookmark' not found in repository"
+      _ui__log "Error: --from '$from_bookmark' not found in repository"
       exit 1
     fi
   else
     from_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$from_bookmark" ]]; then
-      log "Error: Not on a task or project branch. Use --from to specify the source."
+      _ui__log "Error: Not on a task or project branch. Use --from to specify the source."
       exit 1
     fi
   fi
 
-  log "Propagating from: $from_bookmark"
-  [[ "$dry_run" == true ]] && log "(dry-run: no changes will be made)"
+  _ui__log "Propagating from: $from_bookmark"
+  [[ "$dry_run" == true ]] && _ui__log "(dry-run: no changes will be made)"
 
   # Begin transaction (records before-op for undo; skip for dry-run)
   if [[ "$dry_run" != true ]]; then
@@ -392,7 +392,7 @@ main() {
     tt_commit_transaction "$repo"
   fi
 
-  log "Propagate complete."
+  _ui__log "Propagate complete."
 }
 
 main "$@"

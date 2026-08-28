@@ -61,11 +61,11 @@ main() {
   if [[ -z "$task_id_arg" ]]; then
     local current_branch
     if ! current_branch="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
     if [[ -z "$current_branch" ]]; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
     task_id="$current_branch"
@@ -77,7 +77,7 @@ main() {
     local project='' exit_code=0
     project="$(find_parent_project "$repo" "$task_id" "$task_prefix" "$project_prefix")" || exit_code=$?
     if [[ $exit_code -ne 0 ]]; then
-      [[ $exit_code -eq 1 ]] && log "Error: No ancestor project found for '$task_id'."
+      [[ $exit_code -eq 1 ]] && _ui__log "Error: No ancestor project found for '$task_id'."
       exit $exit_code
     fi
     printf '%s\n' "$project"
@@ -85,7 +85,7 @@ main() {
     local parent='' exit_code=0
     parent="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || exit_code=$?
     if [[ $exit_code -ne 0 ]]; then
-      [[ $exit_code -eq 1 ]] && log "Error: No parent found for '$task_id'."
+      [[ $exit_code -eq 1 ]] && _ui__log "Error: No parent found for '$task_id'."
       exit $exit_code
     fi
     printf '%s\n' "$parent"

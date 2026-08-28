@@ -91,13 +91,13 @@ main() {
 
   # Precondition: must be on a task or project branch
   if [[ -z "$bookmark" ]]; then
-    log "Error: not on a task or project branch."
+    _ui__log "Error: not on a task or project branch."
     exit 1
   fi
 
   # Precondition: verify bookmark exists
   if ! jj -R "$repo" log -r "$bookmark" --no-graph -T '' 2>/dev/null; then
-    log "Error: bookmark '$bookmark' not found in repository."
+    _ui__log "Error: bookmark '$bookmark' not found in repository."
     exit 1
   fi
 
@@ -136,9 +136,9 @@ main() {
     local template
     template="$(printf '%s\n\n# Task: %s\n# An empty message cancels the checkpoint.' \
       "$default_message" "$task_id")"
-    message="$(prompt <<< "$template")" || exit 1
+    message="$(_ui__prompt <<< "$template")" || exit 1
     if [[ -z "$message" ]]; then
-      log "Checkpoint cancelled."
+      _ui__log "Checkpoint cancelled."
       exit 1
     fi
   fi
@@ -184,7 +184,7 @@ main() {
   # Commit transaction (records after-op for undo)
   tt_commit_transaction "$repo"
 
-  log "Checkpoint: $bookmark → $new_commit"
+  _ui__log "Checkpoint: $bookmark → $new_commit"
 
   # Post-checkpoint hook (non-blocking)
   run_hook "$repo" "post-checkpoint" false "$current_worktree" "${workspace_dir:-}" \

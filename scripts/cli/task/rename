@@ -80,7 +80,7 @@ main() {
   fi
 
   # Validate slug format
-  if ! validate_slug "$slug"; then
+  if ! _string__validate_slug "$slug"; then
     exit 1
   fi
 
@@ -102,14 +102,14 @@ main() {
     # Use current task
     old_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$old_id" ]]; then
-      log "Error: No current task found. Use --task to specify."
+      _ui__log "Error: No current task found. Use --task to specify."
       exit 1
     fi
   fi
 
   # Validate old_id is a valid task or project branch
   if ! is_task_branch "$old_id" "$task_prefix" && ! is_project_branch "$old_id" "$project_prefix"; then
-    log "Error: Invalid task ID: $old_id"
+    _ui__log "Error: Invalid task ID: $old_id"
     exit 1
   fi
 
@@ -134,13 +134,13 @@ main() {
 
   # Pre-validate: check if new ID already exists as a bookmark
   if jj "${jj_opts[@]}" --ignore-working-copy log -r "$new_id" -n 1 --no-graph -T '' 2>/dev/null; then
-    log "Error: Task or project '$new_id' already exists. Choose a different slug."
+    _ui__log "Error: Task or project '$new_id' already exists. Choose a different slug."
     exit 1
   fi
 
   # Check for clean working copy
   if ! is_wc_clean "$repo"; then
-    log "Error: Working copy is not clean. Commit or discard changes first."
+    _ui__log "Error: Working copy is not clean. Commit or discard changes first."
     exit 1
   fi
 
@@ -221,11 +221,11 @@ main() {
   # files under <old-dir>/.
   # ---------------------------------------------------------------------------
   if [[ -n "$parent_bookmark" && -n "$parent_task_file" ]]; then
-    log "Updating parent branch..."
+    _ui__log "Updating parent branch..."
     jj "${jj_opts[@]}" edit "${parent_bookmark}"
 
     if [[ ! -d "$old_dir" ]]; then
-      log "Error: Task directory not found on parent branch: $old_dir"
+      _ui__log "Error: Task directory not found on parent branch: $old_dir"
       exit 1
     fi
 
@@ -250,7 +250,7 @@ main() {
   # ---------------------------------------------------------------------------
   # Step 2: Rename the jj bookmark.
   # ---------------------------------------------------------------------------
-  log "Renaming bookmark..."
+  _ui__log "Renaming bookmark..."
   jj "${jj_opts[@]}" bookmark rename "$old_id" "$new_id"
 
   # ---------------------------------------------------------------------------
@@ -258,7 +258,7 @@ main() {
   # back to <new-dir>/ and removing <old-dir>/. Each `jj edit` call snapshots
   # the previous commit's changes and triggers auto-rebase of descendants.
   # ---------------------------------------------------------------------------
-  log "Rewriting task branch range..."
+  _ui__log "Rewriting task branch range..."
 
   if [[ -n "$parent_bookmark" ]]; then
     range=$(jj "${jj_opts[@]}" log -r "::${new_id} ~ ::${parent_bookmark}" \
@@ -308,7 +308,7 @@ main() {
   # ---------------------------------------------------------------------------
   # Step 4: Leave the working copy as an empty child of the renamed task tip.
   # ---------------------------------------------------------------------------
-  log "Switching to renamed task..."
+  _ui__log "Switching to renamed task..."
   jj "${jj_opts[@]}" new "${new_id}"
 
   # Commit transaction (records after-op for undo)

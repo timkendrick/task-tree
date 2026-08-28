@@ -54,11 +54,11 @@ print_all_ranges() {
       [[ -z "$base" ]] && continue
       local from_rev to_rev
       from_rev="$(jj -R "$repo" log -r "$base" --no-graph -T 'commit_id' 2>/dev/null)" || {
-        log "Error: Could not resolve revision '$base'."
+        _ui__log "Error: Could not resolve revision '$base'."
         exit 1
       }
       to_rev="$(jj -R "$repo" log -r "$tip" --no-graph -T 'commit_id' 2>/dev/null)" || {
-        log "Error: Could not resolve revision '$tip'."
+        _ui__log "Error: Could not resolve revision '$tip'."
         exit 1
       }
       printf '%s..%s\n' "$from_rev" "$to_rev"
@@ -109,7 +109,7 @@ main() {
     local task_prefix
     task_prefix="$(get_task_prefix "$repo")"
     if ! is_task_branch "$task_id" "$task_prefix"; then
-      log "Error: --all does not support project branches."
+      _ui__log "Error: --all does not support project branches."
       exit 1
     fi
     print_all_ranges "$repo" "$task_id" "$parent_bookmark" "$upper_bound" "$git_mode"
@@ -121,7 +121,7 @@ main() {
   if "$git_mode"; then
     from_rev="$(resolve_task_fork_point "$repo" "$parent_bookmark" "$upper_bound")" || exit 1
     to_rev="$(jj -R "$repo" log -r "$upper_bound" --no-graph -T 'commit_id' 2>/dev/null)" || {
-      log "Error: Could not resolve revision '$upper_bound'."
+      _ui__log "Error: Could not resolve revision '$upper_bound'."
       exit 1
     }
   else

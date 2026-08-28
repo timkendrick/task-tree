@@ -113,7 +113,7 @@ main() {
     { read -r _rev; read -r task_file; read -r bookmark; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
 
     if [[ -z "$bookmark" ]]; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
   else
@@ -124,11 +124,11 @@ main() {
     elif is_project_branch "$bookmark" "$project_prefix"; then
       suffix="${bookmark#$project_prefix}"
     else
-      log "Error: '$task_id_arg' is not a task or project branch."
+      _ui__log "Error: '$task_id_arg' is not a task or project branch."
       exit 1
     fi
     if ! jj -R "$repo" log -r "$bookmark" --no-graph -T '' 2>/dev/null; then
-      log "Error: Branch '$bookmark' not found in repository."
+      _ui__log "Error: Branch '$bookmark' not found in repository."
       exit 1
     fi
     task_file="$(task_file_path "$suffix")"
@@ -146,14 +146,14 @@ main() {
 
   # Precondition: WC must be clean
   if ! is_wc_clean "$target_worktree"; then
-    log "Error: Working copy has uncommitted changes. Commit or discard first."
+    _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
 
   # Read current task file content from bookmark
   local task_content
   task_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || {
-    log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
+    _ui__log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
     exit 1
   }
 
@@ -172,7 +172,7 @@ main() {
 
   # If created is empty (old format task file), generate one now
   if [[ -z "$current_created" ]]; then
-    current_created="$(generate_timestamp)"
+    current_created="$(_string__generate_timestamp)"
   fi
 
   # Determine interactive mode: no metadata flags and stdin is a terminal → open editor
@@ -189,8 +189,8 @@ main() {
   if [[ "$interactive" == true ]]; then
     # Interactive mode with terminal stdin: open editor pre-populated with current body
     local edited_body
-    edited_body="$(printf '%s' "${current_body}" | prompt)" || {
-      log "Error: Editor exited with non-zero status."
+    edited_body="$(printf '%s' "${current_body}" | _ui__prompt)" || {
+      _ui__log "Error: Editor exited with non-zero status."
       exit 1
     }
     final_body="$edited_body"
@@ -237,7 +237,7 @@ main() {
 
   # Generate the updated timestamp once so all write calls in this invocation are consistent.
   local updated
-  updated="$(generate_timestamp)"
+  updated="$(_string__generate_timestamp)"
 
   # Check for a no-op BEFORE beginning the transaction (avoids orphaned in-progress
   # entries, and avoids writing to disk before the transaction starts which would
@@ -257,7 +257,7 @@ main() {
 
   if ! task_file_changed "$current_file_content" "$tmpfile"; then
     rm -f "$tmpfile"
-    log "No changes to task $bookmark."
+    _ui__log "No changes to task $bookmark."
     printf '%s\n' "$bookmark"
     unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
     return 0

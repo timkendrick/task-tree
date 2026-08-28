@@ -59,7 +59,7 @@ main() {
 
   local ws_dir
   if ! ws_dir="$(get_workspace_dir "$repo")"; then
-    log "Error: No workspace directory configured. Run 'tt workspace init' first."
+    _ui__log "Error: No workspace directory configured. Run 'tt workspace init' first."
     exit 1
   fi
 

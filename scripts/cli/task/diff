@@ -83,7 +83,7 @@ main() {
     local task_prefix
     task_prefix="$(get_task_prefix "$repo")"
     if ! is_task_branch "$task_id" "$task_prefix"; then
-      log "Error: --all does not support project branches."
+      _ui__log "Error: --all does not support project branches."
       exit 1
     fi
 

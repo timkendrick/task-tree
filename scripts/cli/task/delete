@@ -162,11 +162,11 @@ main() {
   if [[ -n "$task_id_arg" ]]; then
     task_id="$task_id_arg"
     if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
-      log "Error: '$task_id' is not a recognized task or project ID."
+      _ui__log "Error: '$task_id' is not a recognized task or project ID."
       exit 1
     fi
     if ! jj -R "$repo" log -r "$task_id" --no-graph -T '' 2>/dev/null; then
-      log "Error: Task '$task_id' not found in repository."
+      _ui__log "Error: Task '$task_id' not found in repository."
       exit 1
     fi
     if is_task_branch "$task_id" "$task_prefix"; then
@@ -178,7 +178,7 @@ main() {
   else
     { read -r _rev; read -r task_file; read -r task_id; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$task_id" ]]; then
-      log "Error: Not on a task or project branch. Pass a task ID explicitly."
+      _ui__log "Error: Not on a task or project branch. Pass a task ID explicitly."
       exit 1
     fi
     if is_task_branch "$task_id" "$task_prefix"; then
@@ -192,7 +192,7 @@ main() {
   # Precondition: WC must be clean (skip with --force)
   if [[ "$force" != true ]]; then
     if ! is_wc_clean "$repo"; then
-      log "Error: Working copy has uncommitted changes. Commit or discard first, or use --force."
+      _ui__log "Error: Working copy has uncommitted changes. Commit or discard first, or use --force."
       exit 1
     fi
   fi
@@ -200,7 +200,7 @@ main() {
   # Read task content and check status
   local task_content task_title task_status
   task_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file")" || {
-    log "Error: Could not read task file '$task_file' from bookmark '$task_id'."
+    _ui__log "Error: Could not read task file '$task_file' from bookmark '$task_id'."
     exit 1
   }
   task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
@@ -208,8 +208,8 @@ main() {
 
   # Precondition: top-level task must be DONE (skip with --force)
   if [[ "$force" != true ]] && [[ "$task_status" != "DONE" ]]; then
-    log "Error: Task '$task_id' is not DONE (status: $task_status)."
-    log "  Use --force to delete regardless of status."
+    _ui__log "Error: Task '$task_id' is not DONE (status: $task_status)."
+    _ui__log "  Use --force to delete regardless of status."
     exit 1
   fi
 
@@ -217,7 +217,7 @@ main() {
   local parent_bookmark
   parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
     local rc=$?
-    [[ $rc -eq 1 ]] && log "Error: No parent branch found for '$task_id'. Parentless tasks cannot be deleted with this command."
+    [[ $rc -eq 1 ]] && _ui__log "Error: No parent branch found for '$task_id'. Parentless tasks cannot be deleted with this command."
     exit 1
   }
 
@@ -247,8 +247,8 @@ main() {
     1) target_ws="$worktrees" ;;
     *)
       if [[ -z "$worktree_arg" ]]; then
-        log "Error: Multiple parent workspaces found; use --worktree=<path>:"
-        printf '%s\n' "$worktrees" | while IFS= read -r p; do log "  $p"; done
+        _ui__log "Error: Multiple parent workspaces found; use --worktree=<path>:"
+        printf '%s\n' "$worktrees" | while IFS= read -r p; do _ui__log "  $p"; done
         exit 1
       fi
       target_ws="$worktree_arg"
@@ -274,7 +274,7 @@ main() {
   # Read parent task file content
   local parent_task_content
   parent_task_content="$(jj_show_at_revision "$target_ws" "$parent_bookmark" "$parent_task_file")" || {
-    log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
+    _ui__log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
     exit 1
   }
 
@@ -324,7 +324,7 @@ main() {
     [[ -z "$del_id" ]] && continue
     if jj -R "$repo" log -r "$del_id" --no-graph -T '' 2>/dev/null; then
       jj -R "$repo" bookmark delete "$del_id" 2>/dev/null || \
-        log "Warning: Could not delete bookmark '$del_id'."
+        _ui__log "Warning: Could not delete bookmark '$del_id'."
     fi
   done <<< "$all_ids" || true
 
@@ -337,10 +337,10 @@ main() {
       ws_name="$(resolve_workspace_name "$repo" "$ws_path")" || true
       if [[ -n "$ws_name" ]]; then
         jj -R "$repo" workspace forget "$ws_name" 2>/dev/null || true
-        log "Workspace '$ws_name' ($del_id) forgotten from jj."
+        _ui__log "Workspace '$ws_name' ($del_id) forgotten from jj."
       fi
-      log "Warning: Workspace directory still exists: $ws_path"
-      log "  Files have not been removed. Clean up manually when ready."
+      _ui__log "Warning: Workspace directory still exists: $ws_path"
+      _ui__log "  Files have not been removed. Clean up manually when ready."
     fi
   done <<< "$all_ids" || true
 
@@ -354,7 +354,7 @@ main() {
     "TT_PARENT_TASK_ID=$parent_bookmark" \
     "TT_PARENT_TASK_BRANCH=$parent_bookmark"
 
-  log "Deleted: $task_id from $parent_bookmark"
+  _ui__log "Deleted: $task_id from $parent_bookmark"
 }
 
 main "$@"

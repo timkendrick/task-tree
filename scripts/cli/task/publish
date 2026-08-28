@@ -177,25 +177,25 @@ main() {
   if [[ -n "$project_id_arg" ]]; then
     child_bookmark="$project_id_arg"
     if ! is_project_branch "$child_bookmark" "$project_prefix"; then
-      log "Error: '$project_id_arg' is not a project branch."
-      log "  Use 'tt task checkin' to check in task branches."
+      _ui__log "Error: '$project_id_arg' is not a project branch."
+      _ui__log "  Use 'tt task checkin' to check in task branches."
       exit 1
     fi
     if ! jj -R "$repo" log -r "$child_bookmark" --no-graph -T '' 2>/dev/null; then
-      log "Error: Branch '$child_bookmark' not found in repository."
+      _ui__log "Error: Branch '$child_bookmark' not found in repository."
       exit 1
     fi
     child_slug="${child_bookmark#"$project_prefix"}"
   else
     child_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$child_bookmark" ]]; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
     if ! is_project_branch "$child_bookmark" "$project_prefix"; then
-      log "Error: 'tt task publish' requires a project branch."
-      log "  Current branch '$child_bookmark' is a task branch."
-      log "  Use 'tt task checkin' to check in task branches."
+      _ui__log "Error: 'tt task publish' requires a project branch."
+      _ui__log "  Current branch '$child_bookmark' is a task branch."
+      _ui__log "  Use 'tt task checkin' to check in task branches."
       exit 1
     fi
     child_slug="${child_bookmark#"$project_prefix"}"
@@ -205,13 +205,13 @@ main() {
 
   # --- Validate target branch exists ---
   if ! jj -R "$repo" log -r "$target" --no-graph -T '' 2>/dev/null; then
-    log "Error: --target '$target' not found in repository."
+    _ui__log "Error: --target '$target' not found in repository."
     exit 1
   fi
 
   # --- Check WC clean ---
   if ! is_wc_clean "$current_worktree"; then
-    log "Error: Working copy has uncommitted changes. Commit or discard first."
+    _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
 
@@ -223,7 +223,7 @@ main() {
 
   # --- Optional: rebase/merge propagation from target ---
   if [[ -n "$strategy" ]]; then
-    log "Propagating target ($strategy) into project before publishing..."
+    _ui__log "Propagating target ($strategy) into project before publishing..."
     "$SCRIPT_DIR/propagate" \
       --from "$target" \
       --to "$child_bookmark" \
@@ -231,7 +231,7 @@ main() {
       ${force:+--force} \
       --repo "$repo"
     if ! is_wc_clean "$current_worktree"; then
-      log "Error: Working copy not clean after propagation."
+      _ui__log "Error: Working copy not clean after propagation."
       exit 1
     fi
   fi
@@ -244,7 +244,7 @@ main() {
   if [[ "$include_changelog" == true ]]; then
     change_summary="$(build_change_summary \
       "$repo" "$child_bookmark" "$target" "$changelog_depth")" || {
-      log "Error: Could not summarize '$child_bookmark' since '$target'."
+      _ui__log "Error: Could not summarize '$child_bookmark' since '$target'."
       exit 1
     }
   fi
@@ -256,18 +256,18 @@ main() {
   else
     local template
     template="$(build_message_template "$child_bookmark" "$target" "$change_summary")"
-    message="$(prompt <<< "$template")" || exit 1
+    message="$(_ui__prompt <<< "$template")" || exit 1
   fi
 
   if [[ -z "$message" ]]; then
-    log "Publish cancelled."
+    _ui__log "Publish cancelled."
     exit 1
   fi
 
   # Begin transaction (records before-op for undo)
   tt_begin_transaction "$repo"
 
-  log "Publishing: $child_bookmark -> $target"
+  _ui__log "Publishing: $child_bookmark -> $target"
 
   # --- Determine target workspace ---
   local target_ws
@@ -280,8 +280,8 @@ main() {
     0) target_ws="$repo" ;;
     1) target_ws="$worktrees" ;;
     *)
-      log "Error: Multiple workspaces found for target '$target'."
-      printf '%s\n' "$worktrees" | while IFS= read -r p; do log "  $p"; done
+      _ui__log "Error: Multiple workspaces found for target '$target'."
+      printf '%s\n' "$worktrees" | while IFS= read -r p; do _ui__log "  $p"; done
       exit 1
       ;;
   esac
@@ -308,7 +308,7 @@ main() {
   # On conflict, exit 1 triggers the ERR trap → tt_rollback_transaction →
   # jj op restore, which cleanly reverts all jj operations in this transaction.
   if [[ "$force" != true ]] && has_conflicts "$target_ws" "@"; then
-    log "Error: Merge conflicts detected. Resolve conflicts or use --force."
+    _ui__log "Error: Merge conflicts detected. Resolve conflicts or use --force."
     exit 1
   fi
 
@@ -321,7 +321,7 @@ main() {
   # Commit transaction (records after-op for undo)
   tt_commit_transaction "$repo"
 
-  log "Published: $child_bookmark -> $target"
+  _ui__log "Published: $child_bookmark -> $target"
 }
 
 main "$@"
