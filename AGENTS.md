@@ -4,7 +4,9 @@
 
 ## Design Documentation
 
-A design document for this project exists at `DESIGN.md`. Make sure to keep this up-to-date whenever making changes that affect user-facing features.
+A developer-facing design document for this project exists at `DESIGN.md`, and an agent-facing skill exists at `.agents/skills/tt/SKILL.md`.
+
+**IMPORTANT:** Make sure to keep DESIGN.md and .agents/skills/tt/SKILL.md up-to-date whenever making changes that affect user-facing features.
 
 ## Task / VCS Management
 
@@ -12,7 +14,7 @@ Use the **bootstrap** `./scripts/cli/tt` CLI for task and VCS management. This b
 
 To see an overview of the current task, run `tt task show`.
 
-**Important:** The bootstrap CLI operates directly on this repository. Commands like `tt task checkout` will change the currently checked-out repository contents (switching branches/worktrees), which can be disorienting mid-session. Always run both `jj log` and `tt task tree` before and after running any bootstrap CLI commands so you know exactly where you are and what changed.
+**IMPORTANT:** The bootstrap CLI operates directly on this repository. Commands like `tt task checkout` will change the currently checked-out repository contents (switching branches/worktrees), which can be disorienting mid-session. Always run both `jj log` and `tt task tree` before and after running any bootstrap CLI commands so you know exactly where you are and what changed.
 
 For documentation on `tt` commands, run one of the following:
 
@@ -24,11 +26,11 @@ tt <command> <subcommand> --help
 
 ## Workflow
 
-Use the `rapid-workflow` skill for all non-trivial changes.
-
 Use the `tt` skill for task management.
 
-Make sure to add test scenarios for all features and bugfixes, and to run any relevant test suites when making changes. See test harness instructions in `./DEVELOPER.md`.
+Make sure to add test scenarios for all features and bugfixes, and to run any relevant test suites when making changes.
+
+**IMPORTANT:** Read test harness instructions in `./DEVELOPER.md` before running tests.
 
 ## Version Control
 
@@ -65,5 +67,3 @@ This state can then be restored via:
 ```shell
 jj op restore <operation-id>
 ```
-
----
