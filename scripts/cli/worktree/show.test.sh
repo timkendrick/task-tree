@@ -4,34 +4,6 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
 
 
-test_worktree_show__no_dedicated_worktree_errors() {
-  setup_workspace "worktree-default"
-  proj_id=$(create_project "proj" "Project") || true
-  checkout_task "$proj_id" >/dev/null || true
-  task_id=$(create_task "my-task" "My Task") || true
-
-  output="" exit_code=0
-  output=$(run_tt worktree show --task "$task_id" 2>&1) || exit_code=$?
-  assert_failure "worktree lookup fails" "$exit_code"
-  assert_contains "mentions task ID" "$output" "$task_id"
-  assert_contains "mentions missing worktree" "$output" "No dedicated worktree"
-}
-
-
-test_worktree_show__main_workspace_checkout_errors() {
-  setup_workspace "worktree-main-ws"
-  proj_id=$(create_project "proj" "Project") || true
-  checkout_task "$proj_id" >/dev/null || true
-  task_id=$(create_task "my-task" "My Task") || true
-  checkout_task "$task_id" || true
-
-  output="" exit_code=0
-  output=$(run_tt worktree show --task "$task_id" 2>&1) || exit_code=$?
-  assert_failure "main-workspace checkout is not a dedicated worktree" "$exit_code"
-  assert_contains "mentions missing worktree" "$output" "No dedicated worktree"
-}
-
-
 test_worktree_show__dedicated_worktree_returned() {
   setup_workspace "worktree-dedicated"
   proj_id=$(create_project "proj" "Project") || true
@@ -40,16 +12,39 @@ test_worktree_show__dedicated_worktree_returned() {
   worktree_path=$(create_task_worktree "$task_id")
 
   output="" exit_code=0
-  output=$(run_tt worktree show --task "$task_id" 2>&1) || exit_code=$?
+  output=$(run_tt worktree show --name "$task_id" 2>&1) || exit_code=$?
   assert_success "worktree lookup succeeds" "$exit_code"
   assert_eq "output is the dedicated worktree" "$output" "$worktree_path"
 }
 
 
+test_worktree_show__unknown_name_errors() {
+  setup_workspace "worktree-unknown"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "my-task" "My Task") || true
+
+  output="" exit_code=0
+  output=$(run_tt worktree show --name "$task_id" 2>&1) || exit_code=$?
+  assert_failure "unnamed workspace rejected" "$exit_code"
+  assert_contains "mentions the name" "$output" "$task_id"
+  assert_contains "reports no such worktree" "$output" "No worktree named"
+}
+
+
+test_worktree_show__repository_root_errors() {
+  setup_workspace "worktree-root"
+  output="" exit_code=0
+  output=$(run_tt worktree show --name "default" 2>&1) || exit_code=$?
+  assert_failure "repository root rejected" "$exit_code"
+  assert_contains "reports the repository root" "$output" "is the repository root"
+}
+
+
 # Regression: invoked from inside a dedicated worktree with no TT_REPO set,
 # resolve_repo walks up to the worktree's own .jj and returns the worktree, not
-# the canonical repo. Comparing the match against that path rejected the task's
-# genuine worktree. The strict check must use the canonical repo root.
+# the canonical repo. Comparing the match against that path rejected the
+# worktree. The repository root check must use the canonical repo root.
 test_worktree_show__from_inside_worktree_returns_own_worktree() {
   setup_workspace "wt-show-inside-own"
   proj_id=$(create_project "proj" "Project") || true
@@ -58,7 +53,7 @@ test_worktree_show__from_inside_worktree_returns_own_worktree() {
   worktree_path=$(create_task_worktree "$task_id")
 
   output="" exit_code=0
-  output=$(run_tt_in_worktree "$worktree_path" worktree show --task "$task_id" 2>&1) || exit_code=$?
+  output=$(run_tt_in_worktree "$worktree_path" worktree show --name "$task_id" 2>&1) || exit_code=$?
   assert_success "lookup from inside own worktree succeeds" "$exit_code"
   assert_eq "returns own worktree" "$output" "$worktree_path"
 }
@@ -74,37 +69,48 @@ test_worktree_show__from_inside_worktree_returns_other_worktree() {
   worktree_b=$(create_task_worktree "$task_b")
 
   output="" exit_code=0
-  output=$(run_tt_in_worktree "$worktree_a" worktree show --task "$task_b" 2>&1) || exit_code=$?
+  output=$(run_tt_in_worktree "$worktree_a" worktree show --name "$task_b" 2>&1) || exit_code=$?
   assert_success "cross-worktree lookup succeeds" "$exit_code"
-  assert_eq "returns the other task's worktree" "$output" "$worktree_b"
+  assert_eq "returns the other worktree" "$output" "$worktree_b"
 }
 
 
-# Strict semantics must still hold when $repo is a secondary workspace: a task
-# checked out in the main workspace is not a dedicated worktree, so looking it up
-# from inside another worktree must still fail.
-test_worktree_show__from_inside_worktree_main_checkout_errors() {
-  setup_workspace "wt-show-inside-main"
+# The workspace name is fixed when the worktree is created and does not track
+# subsequent checkouts, so a worktree is found by its own name even while a
+# different task is checked out in it.
+test_worktree_show__name_independent_of_checked_out_task() {
+  setup_workspace "wt-show-other-task"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_a=$(create_task "task-a" "Task A") || true
   task_b=$(create_task "task-b" "Task B") || true
   worktree_a=$(create_task_worktree "$task_a")
-  checkout_task "$task_b" || true
+  run_tt_in_worktree "$worktree_a" task checkout "$task_b" >/dev/null 2>&1 || true
 
   output="" exit_code=0
-  output=$(run_tt_in_worktree "$worktree_a" worktree show --task "$task_b" 2>&1) || exit_code=$?
-  assert_failure "main-workspace checkout still rejected from a worktree" "$exit_code"
-  assert_contains "mentions missing worktree" "$output" "No dedicated worktree"
+  output=$(run_tt worktree show --name "$task_a" 2>&1) || exit_code=$?
+  assert_success "worktree found by its own name" "$exit_code"
+  assert_eq "returns the worktree" "$output" "$worktree_a"
+
+  output="" exit_code=0
+  output=$(run_tt worktree show --name "$task_b" 2>&1) || exit_code=$?
+  assert_failure "checked-out task is not a workspace name" "$exit_code"
+  assert_contains "reports no such worktree" "$output" "No worktree named"
 }
 
 
-test_worktree_show__non_existent_bookmark() {
-  setup_workspace "worktree-noexist"
+test_worktree_show__missing_directory_errors() {
+  setup_workspace "wt-show-missing-dir"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "my-task" "My Task") || true
+  worktree_path=$(create_task_worktree "$task_id")
+  rm -rf "$worktree_path"
+
   output="" exit_code=0
-  output=$(run_tt worktree show --task "task/nonexistent-00000000" 2>&1) || exit_code=$?
-  assert_failure "non-existent bookmark rejected" "$exit_code"
-  assert_contains "distinct not-found error" "$output" "not found in repository"
+  output=$(run_tt worktree show --name "$task_id" 2>&1) || exit_code=$?
+  assert_failure "workspace without a usable path rejected" "$exit_code"
+  assert_contains "reports an invalid path" "$output" "has an invalid path"
 }
 
 
@@ -123,7 +129,7 @@ test_worktree_show__help() {
   output=$(run_tt worktree show --help 2>&1) || exit_code=$?
   assert_success "exit code" "$exit_code"
   assert_usage_command_name "command name" "$output" "tt worktree show"
-  assert_required_usage_argument "argument: --task" "$output" "--task"
+  assert_required_usage_argument "argument: --name" "$output" "--name"
   assert_required_usage_argument "argument: --repo" "$output" "--repo"
 }
 
