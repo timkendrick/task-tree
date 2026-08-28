@@ -191,7 +191,7 @@ main() {
   mkdir -p "$repo_abs/.tt"
 
   # Write .tt/config.toml
-  local config_file="$repo_abs/$(tt_metadata_path 'config.toml')"
+  local config_file="$repo_abs/$(_path__metadata 'config.toml')"
   cat > "$config_file" <<TOML
 # task-tree (tt) configuration
 
@@ -205,7 +205,7 @@ project_prefix = "${project_prefix}"
 TOML
 
   # Write .tt/.gitignore to ignore the transaction history log and workspace symlink
-  local gitignore_file="$repo_abs/$(tt_metadata_path '.gitignore')"
+  local gitignore_file="$repo_abs/$(_path__metadata '.gitignore')"
   printf '/history\n/workspace\n' > "$gitignore_file"
 
   # Create empty transaction history log (ignored by jj via .tt/.gitignore)
@@ -216,11 +216,11 @@ TOML
   _ui__log "Created .tt/workspace -> $virtual_dir"
 
   # Create HEAD symlink in virtual folder pointing to repo (absolute path)
-  make_absolute_symlink "$repo_abs" "$virtual_dir/HEAD"
+  _path__make_absolute_symlink "$repo_abs" "$virtual_dir/HEAD"
   _ui__log "Created HEAD -> $repo_abs"
 
   # Commit to jj (config.toml and .gitignore are tracked; history and workspace are ignored)
-  jj -R "$repo_abs" commit -m "$(format_commit_message "workspace" "init" "" "Create workspace")"
+  jj -R "$repo_abs" commit -m "$(_commit__format_message "workspace" "init" "" "Create workspace")"
 
   _ui__log "Initialized workspace:"
   _ui__log "  repo:           $repo_abs"

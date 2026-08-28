@@ -74,9 +74,24 @@ main() {
   IFS=$'\t' read -r task_id parent_bookmark upper_bound <<< "$context"
 
   # Filter out tt metadata files unless explicitly requested.
+  # FIXME: fileset assembly belongs in the VCS backend; replaced when diff moves to the backend interface
   local -a fileset=()
   if [[ "$include_metadata" == false ]]; then
-    fileset=("$(metadata_exclusion_fileset)")
+    local exclusion_terms='' kind path term
+    while IFS=$'\t' read -r kind path; do
+      [[ -z "$kind" ]] && continue
+      case "$kind" in
+        dir)  term="root:\"$path\"" ;;
+        file) term="root-file:\"$path\"" ;;
+        *)    continue ;;
+      esac
+      if [[ -z "$exclusion_terms" ]]; then
+        exclusion_terms="$term"
+      else
+        exclusion_terms="$exclusion_terms | $term"
+      fi
+    done < <(_path__metadata_exclusions)
+    fileset=("~($exclusion_terms)")
   fi
 
   if "$all_mode"; then

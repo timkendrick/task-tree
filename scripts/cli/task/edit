@@ -131,7 +131,7 @@ main() {
       _ui__log "Error: Branch '$bookmark' not found in repository."
       exit 1
     fi
-    task_file="$(task_file_path "$suffix")"
+    task_file="$(_path__task_file "$suffix")"
   fi
 
   # Resolve worktree
@@ -158,7 +158,7 @@ main() {
   }
 
   # Parse current values from frontmatter
-  parse_task_frontmatter "$task_content"
+  _frontmatter__parse_task "$task_content"
   local current_title="$PARSED_TITLE"
   local current_status="$PARSED_STATUS"
   local current_created="$PARSED_CREATED"
@@ -230,7 +230,7 @@ main() {
     cross_branch=true
   fi
 
-  # Export arrays for write_task_file
+  # Export arrays for _frontmatter__write_task_file
   export REWRITE_LABELS=("${final_labels[@]+"${final_labels[@]}"}")
   export REWRITE_SUBTASKS=("${current_subtasks[@]+"${current_subtasks[@]}"}")
   export REWRITE_CONTEXTS=("${current_contexts[@]+"${current_contexts[@]}"}")
@@ -245,7 +245,7 @@ main() {
   # content: from the bookmark for a cross-branch edit, from disk otherwise.
   local tmpfile
   tmpfile="$(mktemp)"
-  write_task_file "$tmpfile" \
+  _frontmatter__write_task_file "$tmpfile" \
     "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
 
   local current_file_content
@@ -267,7 +267,7 @@ main() {
   # Writer invoked by write_and_commit_on_branch with the destination worktree root.
   task_edit_writer() {
     local root="$1"
-    write_task_file "$root/$task_file" \
+    _frontmatter__write_task_file "$root/$task_file" \
       "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
   }
 
@@ -276,7 +276,7 @@ main() {
 
   write_and_commit_on_branch "$repo" "$target_worktree" "$bookmark" \
     "$current_worktree" "$current_bookmark" \
-    "$(format_commit_message "task" "edit" "$bookmark" "$final_title")" \
+    "$(_commit__format_message "task" "edit" "$bookmark" "$final_title")" \
     task_edit_writer
 
   # Commit transaction (records after-op for undo)

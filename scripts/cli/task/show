@@ -113,7 +113,7 @@ main() {
       exit 1
     fi
     task_suffix="$suffix"
-    task_file="$(task_file_path "$suffix")"
+    task_file="$(_path__task_file "$suffix")"
   fi
 
   # --- Find worktree ---
@@ -132,13 +132,13 @@ main() {
 
   # --- Parse fields ---
   local title status
-  title="$(parse_quoted_frontmatter_field "$content" "title")"
-  status="$(parse_frontmatter_field "$content" "status")"
+  title="$(_frontmatter__parse_quoted_field "$content" "title")"
+  status="$(_frontmatter__parse_field "$content" "status")"
   [[ -z "$status" ]] && status="TODO"
 
   # Body is everything after the second ---
   local body
-  body="$(parse_body "$content")"
+  body="$(_frontmatter__parse_body "$content")"
   # Trim leading/trailing blank lines from body
   body="$(printf '%s' "$body" | awk 'NF{found=1} found{print}' | sed -e 's/[[:space:]]*$//')"
 
@@ -208,10 +208,10 @@ main() {
           subtask_id_suffix=""
         fi
         if [[ -n "$subtask_id_suffix" ]]; then
-          subtask_file="$(task_file_path "$subtask_id_suffix")"
+          subtask_file="$(_path__task_file "$subtask_id_suffix")"
           subtask_content="$(jj_show_at_revision "$repo" "$subtask_branch" "$subtask_file" || true)"
-          subtask_status="$(parse_frontmatter_field "$subtask_content" "status" 2>/dev/null || true)"
-          subtask_title="$(parse_quoted_frontmatter_field "$subtask_content" "title" 2>/dev/null || true)"
+          subtask_status="$(_frontmatter__parse_field "$subtask_content" "status" 2>/dev/null || true)"
+          subtask_title="$(_frontmatter__parse_quoted_field "$subtask_content" "title" 2>/dev/null || true)"
         fi
       fi
       [[ -z "$subtask_status" ]] && subtask_status="TODO"
@@ -236,10 +236,10 @@ main() {
       [[ -z "$ctx_id" ]] && continue
       # Resolve context file path on the task's branch
       local ctx_file
-      ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
+      ctx_file="$(_path__task_context "$task_suffix" "$ctx_id")"
       local ctx_content ctx_title
       ctx_content="$(jj_show_at_revision "$repo" "$branch" "$ctx_file" || true)"
-      ctx_title="$(parse_quoted_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
+      ctx_title="$(_frontmatter__parse_quoted_field "$ctx_content" "title" 2>/dev/null || true)"
       if [[ -n "$ctx_title" ]]; then
         printf -- '- %s (%s)\n' "$ctx_title" "$ctx_id"
       else
@@ -268,16 +268,16 @@ main() {
         [[ -z "$ctx_id" ]] && continue
         # Resolve context file path on the task's branch
         local ctx_file ctx_content
-        ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
+        ctx_file="$(_path__task_context "$task_suffix" "$ctx_id")"
         ctx_content="$(jj_show_at_revision "$repo" "$branch" "$ctx_file" || true)"
 
         if [[ -n "$ctx_content" ]]; then
           # Parse frontmatter fields (using raw for title to preserve formatting)
           local ctx_title ctx_created ctx_updated ctx_body
-          ctx_title="$(parse_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
-          ctx_created="$(parse_frontmatter_field "$ctx_content" "created" 2>/dev/null || true)"
-          ctx_updated="$(parse_frontmatter_field "$ctx_content" "updated" 2>/dev/null || true)"
-          ctx_body="$(parse_body "$ctx_content")"
+          ctx_title="$(_frontmatter__parse_field "$ctx_content" "title" 2>/dev/null || true)"
+          ctx_created="$(_frontmatter__parse_field "$ctx_content" "created" 2>/dev/null || true)"
+          ctx_updated="$(_frontmatter__parse_field "$ctx_content" "updated" 2>/dev/null || true)"
+          ctx_body="$(_frontmatter__parse_body "$ctx_content")"
 
           # Output synthetic frontmatter with context id
           printf -- '---\n'

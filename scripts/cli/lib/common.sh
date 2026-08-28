@@ -5,6 +5,10 @@ _TT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_TT_LIB_DIR/ui.sh"
 . "$_TT_LIB_DIR/string.sh"
 . "$_TT_LIB_DIR/format.sh"
+. "$_TT_LIB_DIR/path.sh"
+. "$_TT_LIB_DIR/frontmatter.sh"
+. "$_TT_LIB_DIR/commit.sh"
+. "$_TT_LIB_DIR/hook.sh"
 
 # ---------------------------------------------------------------------------
 # VCS file-read helpers
@@ -39,165 +43,6 @@ get_jj_op_id() {
 jj_show_at_op() {
   local repo="$1" op="$2" rev="$3" path="$4"
   jj -R "$repo" --at-operation "$op" file show -r "$rev" -- "root:$path" 2>/dev/null
-}
-
-# ---------------------------------------------------------------------------
-# Commit message formatting
-# ---------------------------------------------------------------------------
-
-# Usage: format_commit_message NAMESPACE OPERATION ENTITY_ID DESCRIPTION
-#
-# Constructs a standardized tt commit message:
-#   [tt:<namespace>:<entity-id>:<operation>] <description>
-#
-# When ENTITY_ID is empty (e.g. workspace operations), uses:
-#   [tt:<namespace>:<operation>] <description>
-#
-# DESCRIPTION may be multi-line for checkpoint commits.
-#
-# Arguments:
-#   NAMESPACE   — the command namespace, e.g. "workspace", "task"
-#   OPERATION   — the operation name, e.g. "create", "edit", "checkpoint", etc.
-#   ENTITY_ID   — the full task ID, e.g. "task/foo-ab123456" or "project/my-ab123456"
-#                 (empty string for workspace-level operations)
-#   DESCRIPTION — human-readable description (title, user message, etc.)
-#
-# Outputs the formatted commit message to stdout.
-format_commit_message() {
-  local namespace="$1"
-  local operation="$2"
-  local entity_id="$3"
-  local description="$4"
-
-  if [[ -z "$entity_id" ]]; then
-    printf '[tt:%s:%s] %s' "$namespace" "$operation" "$description"
-  else
-    printf '[tt:%s:%s:%s] %s' "$namespace" "$entity_id" "$operation" "$description"
-  fi
-}
-
-# Usage: parse_commit_message MESSAGE
-#
-# Inverse of format_commit_message: splits a tt commit message into its parts.
-# MESSAGE is a single line, e.g. the first line of a commit description.
-#
-# Outputs a single tab-separated record to stdout:
-#   <namespace>\t<entity-id>\t<operation>\t<description>
-#
-# <entity-id> is empty for messages without one (e.g. "[tt:workspace:init]").
-# Entity IDs never contain a colon but operations may (e.g. "context:add"), so a
-# tag holding three or more colon-separated fields is read as namespace, entity
-# ID, and the remaining fields rejoined as the operation.
-#
-# Exit 0: message parsed (record printed to stdout).
-# Exit 1: MESSAGE is not a tt commit message (nothing printed).
-parse_commit_message() {
-  local message="$1"
-
-  [[ "$message" == '[tt:'* ]] || return 1
-  local remainder="${message#\[tt:}"
-  [[ "$remainder" == *']'* ]] || return 1
-
-  local tag="${remainder%%\]*}"
-  local description="${remainder#*\]}"
-  description="${description# }"
-
-  # A tag without a colon carries no operation, so it is not a tt commit message.
-  [[ "$tag" == *:* ]] || return 1
-  local namespace="${tag%%:*}"
-  local rest="${tag#*:}"
-
-  local entity_id operation
-  if [[ "$rest" == *:* ]]; then
-    entity_id="${rest%%:*}"
-    operation="${rest#*:}"
-  else
-    entity_id=''
-    operation="$rest"
-  fi
-
-  printf '%s\t%s\t%s\t%s\n' "$namespace" "$entity_id" "$operation" "$description"
-}
-
-# ---------------------------------------------------------------------------
-# Task/context file path helpers
-# ---------------------------------------------------------------------------
-
-# The tt metadata directory, relative to the repository root. All task files,
-# context files, configuration, hooks and history live beneath this directory.
-# Use this instead of hardcoding '.tt' so the location is defined in one place.
-TT_METADATA_DIR='.tt'
-
-# The repo-root symlink pointing at the current task's TASK.md. Although it
-# lives outside TT_METADATA_DIR it is tt metadata, not project content.
-TT_TASK_SYMLINK_FILENAME='TASK.md'
-
-# Usage: tt_metadata_path [SUBPATH]
-# Returns the repo-relative path to the tt metadata directory, optionally with
-# SUBPATH appended (e.g. tt_metadata_path "config.toml" -> ".tt/config.toml").
-tt_metadata_path() {
-  local subpath="${1:-}"
-  if [[ -z "$subpath" ]]; then
-    printf '%s' "$TT_METADATA_DIR"
-  else
-    printf '%s/%s' "$TT_METADATA_DIR" "$subpath"
-  fi
-}
-
-# Usage: task_root_path
-# Returns the canonical directory path containing all task directories.
-task_root_path() {
-  tt_metadata_path 'task'
-}
-
-# Usage: metadata_exclusion_fileset
-# Returns a jj fileset expression matching everything except tt metadata: the
-# metadata directory and the repo-root TASK.md symlink. 'root:' patterns are
-# workspace-relative, so the expression is independent of the current directory.
-metadata_exclusion_fileset() {
-  printf '~(root:"%s" | root-file:"%s")' "$TT_METADATA_DIR" "$TT_TASK_SYMLINK_FILENAME"
-}
-
-# Usage: task_file_path SUFFIX
-# Returns the canonical path to a task's TASK.md file.
-# SUFFIX is the slug-hex part (e.g. "my-task-abc12345").
-task_file_path() {
-  local suffix="$1"
-  printf '%s/%s/%s' "$(task_root_path)" "$suffix" "$TT_TASK_SYMLINK_FILENAME"
-}
-
-# Usage: task_dir_path SUFFIX
-# Returns the canonical directory path for a task.
-task_dir_path() {
-  local suffix="$1"
-  printf '%s/%s' "$(task_root_path)" "$suffix"
-}
-
-# Usage: task_context_path SUFFIX CTX_ID
-# Returns the canonical path to a context file.
-# CTX_ID is "context/<ctx-slug>-<ctx-hex>" (without .md).
-task_context_path() {
-  local suffix="$1"
-  local ctx_id="$2"
-  printf '%s/%s/%s.md' "$(task_root_path)" "$suffix" "$ctx_id"
-}
-
-# ---------------------------------------------------------------------------
-# Body parsing helper
-# ---------------------------------------------------------------------------
-
-# Usage: parse_body CONTENT
-# Outputs everything after the second "---" line (the frontmatter closing delimiter).
-parse_body() {
-  local content="$1"
-  printf '%s' "$content" | awk '/^---$/{n++; if(n==2){found=1; next}} found{print}'
-}
-
-# Resolve DIR to a canonical absolute path, following OS-level symlinks (pwd -P).
-# Exits 1 if the directory does not exist or cannot be entered.
-# Usage: resolve_path_symlinks DIR
-resolve_path_symlinks() {
-  (cd "$1" && pwd -P)
 }
 
 # Find repo root by walking up from current directory to find .jj; return 1 if not found.
@@ -249,14 +94,14 @@ resolve_repo() {
   fi
 
   # Canonicalize to match jj's own path representation (e.g. /var → /private/var on macOS)
-  repo="$(resolve_path_symlinks "$repo")"
+  repo="$(_path__resolve_symlinks "$repo")"
   printf '%s' "$repo"
 }
 
 # Read task_prefix from .tt/config.toml; default "task/" if missing or unreadable.
 get_task_prefix() {
   local repo="$1"
-  local config="$repo/$(tt_metadata_path 'config.toml')"
+  local config="$repo/$(_path__metadata 'config.toml')"
   local default_prefix='task/'
   if [[ -r "$config" ]]; then
     convfmt --from toml --to json < "$config" | jq -r '.task_prefix // "'"$default_prefix"'"'
@@ -268,7 +113,7 @@ get_task_prefix() {
 # Read project_prefix from .tt/config.toml; default "project/" if missing or unreadable.
 get_project_prefix() {
   local repo="$1"
-  local config="$repo/$(tt_metadata_path 'config.toml')"
+  local config="$repo/$(_path__metadata 'config.toml')"
   local default_prefix='project/'
   if [[ -r "$config" ]]; then
     convfmt --from toml --to json < "$config" | jq -r '.project_prefix // "'"$default_prefix"'"'
@@ -290,7 +135,7 @@ is_task_branch() {
 # implementation detail enforced here so callers never need to think about it.
 set_workspace_dir() {
   local repo="$1" virtual_dir="$2"
-  make_absolute_symlink "$virtual_dir" "$repo/$(tt_metadata_path 'workspace')"
+  _path__make_absolute_symlink "$virtual_dir" "$repo/$(_path__metadata 'workspace')"
 }
 
 # Usage: init_tt_history REPO
@@ -299,7 +144,7 @@ set_workspace_dir() {
 # transaction system to record before/after jj operation IDs for `tt history undo`.
 init_tt_history() {
   local repo="$1"
-  local history_file="$repo/$(tt_metadata_path 'history')"
+  local history_file="$repo/$(_path__metadata 'history')"
   if [[ ! -f "$history_file" ]]; then
     touch "$history_file"
   fi
@@ -309,7 +154,7 @@ init_tt_history() {
 # Always resolves to an absolute path to prevent symlink loops.
 get_workspace_dir() {
   local repo="$1"
-  local symlink="$repo/$(tt_metadata_path 'workspace')"
+  local symlink="$repo/$(_path__metadata 'workspace')"
   if [[ -L "$symlink" ]]; then
     local ws_dir
     ws_dir="$(readlink "$symlink")"
@@ -317,9 +162,9 @@ get_workspace_dir() {
       # Resolve relative targets against the symlink's parent directory,
       # then canonicalise to strip OS-level symlinks (e.g. /var -> /private/var).
       if [[ "$ws_dir" != /* ]]; then
-        ws_dir="$(resolve_path_symlinks "$(cd "$(dirname "$symlink")" && cd "$ws_dir" && pwd)")"
+        ws_dir="$(_path__resolve_symlinks "$(cd "$(dirname "$symlink")" && cd "$ws_dir" && pwd)")"
       else
-        ws_dir="$(resolve_path_symlinks "$ws_dir")"
+        ws_dir="$(_path__resolve_symlinks "$ws_dir")"
       fi
       printf '%s' "$ws_dir"
       return 0
@@ -376,43 +221,6 @@ assert_bookmark_up_to_date() {
   fi
 }
 
-# Usage: run_hook REPO HOOK_NAME BLOCKING WORKTREE_DIR WORKSPACE_DIR [VAR=val ...]
-# Runs .tt/hooks/<hook-name> with TT_WORKSPACE_DIR and TT_WORKTREE_DIR set,
-# plus any additional VAR=val pairs. Blocking hooks abort on non-zero exit.
-run_hook() {
-  local repo="$1" hook_name="$2" blocking="$3" worktree_dir="$4" workspace_dir="$5"
-  shift 5
-  local hook_path="$repo/$(tt_metadata_path "hooks/$hook_name")"
-  [[ ! -x "$hook_path" ]] && return 0
-  local exit_code=0
-  env TT_WORKSPACE_DIR="${workspace_dir:-}" TT_WORKTREE_DIR="$worktree_dir" "$@" "$hook_path" 1>&2 \
-    || exit_code=$?
-  if [[ $exit_code -ne 0 ]]; then
-    if [[ "$blocking" == true ]]; then
-      _ui__log "Error: Hook '$hook_name' failed (exit $exit_code); aborting."
-      exit 1
-    else
-      _ui__log "Warning: Hook '$hook_name' failed (exit $exit_code; non-blocking)."
-    fi
-  fi
-}
-
-# Usage: make_absolute_symlink TARGET_PATH SYMLINK_PATH
-# Creates or replaces SYMLINK_PATH pointing at TARGET_PATH, always using an
-# absolute path for the target to prevent symlink loops (e.g. HEAD -> ./HEAD).
-# TARGET_PATH must be an existing directory or file; exits 1 otherwise.
-make_absolute_symlink() {
-  local target_path="$1" symlink_path="$2"
-  if [[ ! -e "$target_path" ]]; then
-    _ui__log "Error: Symlink target does not exist: $target_path"
-    return 1
-  fi
-  if [[ "$target_path" != /* ]]; then
-    target_path="$(resolve_path_symlinks "$target_path")"
-  fi
-  ln -snf "$target_path" "$symlink_path"
-}
-
 # Usage: update_head_symlink WORKSPACE_DIR TARGET_PATH
 # Updates <workspace-dir>/HEAD to point at TARGET_PATH using an absolute path
 # to prevent symlink loops.
@@ -421,7 +229,7 @@ update_head_symlink() {
   [[ -z "$workspace_dir" ]] && return 0
   [[ ! -d "$workspace_dir" ]] && return 0
   local head_path="$workspace_dir/HEAD"
-  make_absolute_symlink "$target_path" "$head_path"
+  _path__make_absolute_symlink "$target_path" "$head_path"
   _ui__log "Updated HEAD -> $target_path"
 }
 
@@ -433,7 +241,7 @@ perform_workspace_switch() {
 
   _ui__log "Switching to $task_id"
 
-  run_hook "$repo" "pre-checkout" true "$outgoing_worktree" "${workspace_dir:-}" \
+  _hook__run "$repo" "pre-checkout" true "$outgoing_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$task_id" \
     "TT_TASK_BRANCH=$task_id" \
     "TT_PREVIOUS_TASK_ID=${previous_task_id}" \
@@ -441,73 +249,11 @@ perform_workspace_switch() {
 
   update_head_symlink "$workspace_dir" "$target_worktree"
 
-  run_hook "$repo" "post-checkout" false "$target_worktree" "${workspace_dir:-}" \
+  _hook__run "$repo" "post-checkout" false "$target_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$task_id" \
     "TT_TASK_BRANCH=$task_id" \
     "TT_PREVIOUS_TASK_ID=${previous_task_id}" \
     "TT_PREVIOUS_TASK_BRANCH=${previous_task_id}"
-}
-
-# Usage: parse_frontmatter_fields CONTENT FIELD...
-# Extracts the requested frontmatter fields in a single pass, preserving file
-# order. Emits one "FIELD:VALUE" line per matching frontmatter entry, with the
-# key's leading whitespace stripped from VALUE but quotes preserved.
-#
-# The frontmatter block is strictly the leading delimited block: CONTENT must
-# begin with a '---' line, and parsing stops at the closing '---'. Any '---'
-# lines appearing later (e.g. inside a fenced code block in the body) are
-# ignored, so body content can never be mistaken for frontmatter.
-parse_frontmatter_fields() {
-  local content="$1"; shift
-  printf '%s' "$content" | awk -v fields="$*" '
-    BEGIN { n = split(fields, f, " "); for (i = 1; i <= n; i++) want[f[i]] = 1 }
-    NR == 1 && $0 != "---" { exit }
-    /^---$/ { sep++; if (sep == 2) exit; next }
-    sep == 1 {
-      key = $0
-      if (sub(/:.*$/, "", key) == 0) next
-      if (key in want) {
-        val = $0
-        sub("^" key ":[ \t]*", "", val)
-        print key ":" val
-      }
-    }
-  '
-}
-
-# Usage: parse_frontmatter_field CONTENT FIELD
-# Extracts the raw value of a single-valued frontmatter field, preserving any
-# quotes present in the original. If the field appears more than once, the
-# first occurrence wins. Outputs nothing if the field is absent.
-parse_frontmatter_field() {
-  local out first
-  out="$(parse_frontmatter_fields "$1" "$2")"
-  [[ -z "$out" ]] && return 0
-  first="${out%%$'\n'*}"
-  printf '%s' "${first#"$2:"}"
-}
-
-# Usage: parse_quoted_frontmatter_field CONTENT FIELD
-# As parse_frontmatter_field, but strips a matched pair of surrounding
-# double quotes from the value.
-parse_quoted_frontmatter_field() {
-  local value
-  value="$(parse_frontmatter_field "$1" "$2")"
-  if [[ "$value" == \"*\" ]]; then
-    value="${value#\"}"
-    value="${value%\"}"
-  fi
-  printf '%s' "$value"
-}
-
-# Usage: parse_repeated_frontmatter_field CONTENT FIELD
-# Extracts every value of a repeatable frontmatter field (label, context,
-# subtask), one per line, in file order. Outputs nothing if absent.
-parse_repeated_frontmatter_field() {
-  local line
-  while IFS= read -r line; do
-    printf '%s\n' "${line#"$2:"}"
-  done < <(parse_frontmatter_fields "$1" "$2")
 }
 
 # Usage: has_conflicts REPO_OR_WORKTREE REVSET
@@ -546,7 +292,7 @@ find_parent_branch() {
       suffix="${branch#$project_prefix}"
     fi
     local path
-    path="$(task_file_path "$suffix")"
+    path="$(_path__task_file "$suffix")"
     local content
     content="$(jj_show_at_revision "$repo" "$branch" "$path")" || continue
     if printf '%s' "$content" | grep -qE "^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]+${task_id}([[:space:]]|$)"; then
@@ -702,7 +448,7 @@ get_full_task_range_records() {
   fi
 
   local target_file parent_file
-  target_file="$(task_file_path "${task_id#"$task_prefix"}")"
+  target_file="$(_path__task_file "${task_id#"$task_prefix"}")"
   parent_file="$(_full_range_bookmark_task_file "$parent_bookmark" "$task_prefix" "$project_prefix")"
   if [[ -z "$parent_file" ]]; then
     _ui__log "Error: '$parent_bookmark' is not a task or project branch."
@@ -859,9 +605,9 @@ _full_range_resolve_commit() {
 _full_range_bookmark_task_file() {
   local bookmark="$1" task_prefix="$2" project_prefix="$3"
   if is_task_branch "$bookmark" "$task_prefix"; then
-    task_file_path "${bookmark#"$task_prefix"}"
+    _path__task_file "${bookmark#"$task_prefix"}"
   elif is_project_branch "$bookmark" "$project_prefix"; then
-    task_file_path "${bookmark#"$project_prefix"}"
+    _path__task_file "${bookmark#"$project_prefix"}"
   fi
 }
 
@@ -1006,7 +752,7 @@ find_branch_for_task() {
       suffix="${branch#$project_prefix}"
     fi
     local path
-    path="$(task_file_path "$suffix")"
+    path="$(_path__task_file "$suffix")"
     local c
     c="$(jj_show_at_revision "$repo" "$branch" "$path")" || continue
     if printf '%s' "$c" | grep -qE "^subtask:[[:space:]]*\[x\][[:space:]]+${task_id}([[:space:]]|$)"; then
@@ -1215,9 +961,9 @@ resolve_current() {
       exit 1
     fi
     if is_task_branch "$current_branch" "$task_prefix"; then
-      printf '%s\n%s\n%s\n' "$parent_rev" "$(task_file_path "${current_branch#$task_prefix}")" "$current_branch"
+      printf '%s\n%s\n%s\n' "$parent_rev" "$(_path__task_file "${current_branch#$task_prefix}")" "$current_branch"
     elif is_project_branch "$current_branch" "$project_prefix"; then
-      printf '%s\n%s\n%s\n' "$parent_rev" "$(task_file_path "${current_branch#$project_prefix}")" "$current_branch"
+      printf '%s\n%s\n%s\n' "$parent_rev" "$(_path__task_file "${current_branch#$project_prefix}")" "$current_branch"
     else
       printf '%s\n\n\n' "$parent_rev"
     fi
@@ -1349,7 +1095,7 @@ get_active_worktree() {
   if [[ "$head_target" != /* ]]; then
     head_target="${workspace_dir}/${head_target}"
   fi
-  resolved="$(resolve_path_symlinks "$head_target")"
+  resolved="$(_path__resolve_symlinks "$head_target")"
   printf '%s' "$resolved"
 }
 
@@ -1389,7 +1135,7 @@ collect_descendant_task_dirs() {
     fi
 
     local tf
-    tf="$(task_file_path "$suffix")"
+    tf="$(_path__task_file "$suffix")"
     local content
     content="$(jj_show_at_revision "$repo" "$branch" "$tf")" || continue
 
@@ -1415,7 +1161,7 @@ collect_descendant_task_dirs() {
       else
         continue
       fi
-      task_dir_path "$sub_suffix"
+      _path__task_dir "$sub_suffix"
       printf '\n'
 
       # Enqueue for further traversal
@@ -1430,119 +1176,6 @@ collect_descendant_task_dirs() {
   done
 }
 
-# ---------------------------------------------------------------------------
-# Task frontmatter parsing
-# ---------------------------------------------------------------------------
-
-# parse_task_frontmatter CONTENT
-#
-# Populates global variables from task frontmatter:
-#   PARSED_TITLE, PARSED_STATUS, PARSED_CREATED, PARSED_UPDATED, PARSED_BODY
-#   PARSED_LABELS (array), PARSED_CONTEXTS (array), PARSED_SUBTASKS (array)
-#
-# Exits 1 with an error message if any unrecognized frontmatter key is found.
-# Known keys: title, status, created, updated, label, context, subtask
-parse_task_frontmatter() {
-  local content="$1"
-
-  PARSED_TITLE="$(parse_quoted_frontmatter_field "$content" "title")"
-  PARSED_STATUS="$(parse_frontmatter_field "$content" "status")"
-  PARSED_CREATED="$(parse_frontmatter_field "$content" "created")"
-  PARSED_UPDATED="$(parse_frontmatter_field "$content" "updated")"
-  PARSED_BODY="$(parse_body "$content")"
-
-  PARSED_LABELS=()
-  while IFS= read -r lbl; do [[ -n "$lbl" ]] && PARSED_LABELS+=("$lbl"); done \
-    < <(parse_repeated_frontmatter_field "$content" "label")
-
-  PARSED_CONTEXTS=()
-  while IFS= read -r ctx; do [[ -n "$ctx" ]] && PARSED_CONTEXTS+=("$ctx"); done \
-    < <(parse_repeated_frontmatter_field "$content" "context")
-
-  PARSED_SUBTASKS=()
-  while IFS= read -r st; do [[ -n "$st" ]] && PARSED_SUBTASKS+=("$st"); done \
-    < <(parse_repeated_frontmatter_field "$content" "subtask")
-
-  # Reject unrecognized frontmatter keys
-  local unknown
-  unknown="$(printf '%s' "$content" | awk '
-    NR == 1 && $0 != "---" { exit }
-    /^---$/ { n++; if (n==2) exit; next }
-    n==1 && /^[a-zA-Z]/ {
-      key=$0; sub(/:.*/, "", key)
-      if (key != "title" && key != "status" && key != "created" && key != "updated" \
-          && key != "label" && key != "context" && key != "subtask")
-        print key
-    }
-  ')"
-  if [[ -n "$unknown" ]]; then
-    printf 'Error: Unrecognized frontmatter field(s):\n%s\n' "$unknown" >&2
-    return 1
-  fi
-}
-
-# ---------------------------------------------------------------------------
-# Frontmatter mutation helpers
-# ---------------------------------------------------------------------------
-
-# write_task_file FILE TITLE STATUS BODY CREATED UPDATED
-#
-# Writes FILE with canonical frontmatter followed by BODY.
-# Arrays REWRITE_LABELS, REWRITE_CONTEXTS, REWRITE_SUBTASKS must be set by
-# the caller as environment variables before calling this function.
-#
-# Canonical field order: title, status, created, updated, label…, context…, subtask…
-# STATUS is omitted when empty (used for context files which have no status field).
-# Timestamps are caller-supplied; generate via _string__generate_timestamp at the call site.
-# Writes to a temp file and renames for atomicity.
-write_task_file() {
-  local file="$1"
-  local title="$2"
-  local status="$3"
-  local body="$4"
-  local created="$5"
-  local updated="$6"
-
-  local tmpfile
-  tmpfile="$(mktemp)"
-  {
-    echo '---'
-    echo "title: \"${title//\"/\\\"}\""
-    [[ -n "$status" ]] && echo "status: $status"
-    echo "created: $created"
-    echo "updated: $updated"
-    for lbl in "${REWRITE_LABELS[@]+"${REWRITE_LABELS[@]}"}"; do
-      echo "label: $lbl"
-    done
-    for ctx in "${REWRITE_CONTEXTS[@]+"${REWRITE_CONTEXTS[@]}"}"; do
-      echo "context: $ctx"
-    done
-    for st in "${REWRITE_SUBTASKS[@]+"${REWRITE_SUBTASKS[@]}"}"; do
-      echo "subtask: $st"
-    done
-    echo '---'
-    if [[ -n "$body" ]]; then
-      printf '%s\n' "$body"
-    fi
-  } > "$tmpfile"
-  mv "$tmpfile" "$file"
-}
-
-# write_context_file FILE TITLE BODY CREATED UPDATED
-#
-# Writes a context file with title, created, updated, and body.
-# Context files have no status, label, context, or subtask fields.
-# Delegates to write_task_file with empty status and empty arrays.
-write_context_file() {
-  local file="$1"
-  local title="$2"
-  local body="$3"
-  local created="$4"
-  local updated="$5"
-  local REWRITE_LABELS=() REWRITE_CONTEXTS=() REWRITE_SUBTASKS=()
-  write_task_file "$file" "$title" "" "$body" "$created" "$updated"
-}
-
 # write_task_stub REPO TASK_SUFFIX
 #
 # Writes a minimal task file stub at .tt/task/<suffix>/TASK.md.
@@ -1553,78 +1186,15 @@ write_task_stub() {
   local repo="$1"
   local suffix="$2"
   local dir
-  dir="$(task_dir_path "$suffix")"
+  dir="$(_path__task_dir "$suffix")"
   local file
-  file="$(task_file_path "$suffix")"
+  file="$(_path__task_file "$suffix")"
   local ts
   ts="$(_string__generate_timestamp)"
   mkdir -p "$repo/$dir"
   local REWRITE_LABELS=() REWRITE_CONTEXTS=() REWRITE_SUBTASKS=()
-  write_task_file "$repo/$file" "" "TODO" "" "$ts" "$ts"
+  _frontmatter__write_task_file "$repo/$file" "" "TODO" "" "$ts" "$ts"
   _ui__log "Created task file: $file"
-}
-
-# _insert_frontmatter_line FILE LINE_TO_INSERT [BEFORE_PATTERN]
-#
-# Shared implementation for inserting a line into YAML frontmatter.
-# Inserts LINE_TO_INSERT at the correct position:
-#   - If BEFORE_PATTERN is given: before the first line matching that pattern
-#     within the frontmatter block.
-#   - If omitted: before the closing --- separator.
-# Uses temp file + mv for atomicity.
-_insert_frontmatter_line() {
-  local file="$1" line="$2" before="${3:-}"
-  local tmpfile
-  tmpfile="$(mktemp)"
-  awk -v ins="$line" -v bef="$before" '
-    BEGIN { sep=0; inserted=0 }
-    /^---$/ {
-      sep++
-      if (sep == 2 && !inserted) { print ins; inserted=1 }
-      print; next
-    }
-    sep == 1 && bef != "" && !inserted && $0 ~ bef {
-      print ins; inserted=1
-    }
-    { print }
-  ' "$file" > "$tmpfile"
-  mv "$tmpfile" "$file"
-}
-
-# append_frontmatter_context FILE CTX_ID
-#
-# Appends a 'context: CTX_ID' line before the first 'subtask:' line
-# (or before the closing '---' if no subtask entries exist).
-# Does not update the 'updated:' timestamp — call update_frontmatter_timestamp
-# separately if needed.
-append_frontmatter_context() {
-  _insert_frontmatter_line "$1" "context: $2" "^subtask:"
-}
-
-# append_frontmatter_subtask FILE TASK_ID
-#
-# Appends a 'subtask: [ ] TASK_ID' line before the closing '---' separator
-# (after any existing context: or subtask: entries).
-append_frontmatter_subtask() {
-  _insert_frontmatter_line "$1" "subtask: [ ] $2" ""
-}
-
-# update_frontmatter_timestamp FILE TIMESTAMP
-#
-# Updates the 'updated:' field in the frontmatter of FILE to TIMESTAMP.
-# Uses temp file + mv for atomicity.
-update_frontmatter_timestamp() {
-  local file="$1"
-  local ts="$2"
-  local tmpfile
-  tmpfile="$(mktemp)"
-  awk -v ts="$ts" '
-    BEGIN { sep=0 }
-    /^---$/ { sep++; print; next }
-    sep == 1 && /^updated:/ { print "updated: " ts; next }
-    { print }
-  ' "$file" > "$tmpfile"
-  mv "$tmpfile" "$file"
 }
 
 # ---------------------------------------------------------------------------
@@ -1683,7 +1253,7 @@ resolve_canonical_repo_path() {
   local repo="$1"
   local canonical_repo
   canonical_repo="$(resolve_canonical_repo "$repo")" || return 1
-  resolve_path_symlinks "$canonical_repo" 2>/dev/null
+  _path__resolve_symlinks "$canonical_repo" 2>/dev/null
 }
 
 # Usage: resolve_history_file_location REPO
@@ -1695,7 +1265,7 @@ resolve_history_file_location() {
   local repo="$1"
   local canonical_repo
   canonical_repo="$(resolve_canonical_repo "$repo")" || return 1
-  printf '%s/%s' "$canonical_repo" "$(tt_metadata_path 'history')"
+  printf '%s/%s' "$canonical_repo" "$(_path__metadata 'history')"
 }
 
 # Usage: tt_begin_transaction REPO

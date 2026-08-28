@@ -181,7 +181,7 @@ main() {
       exit 1
     fi
     child_slug="${child_bookmark#"$task_prefix"}"
-    task_file="$(task_file_path "$child_slug")"
+    task_file="$(_path__task_file "$child_slug")"
   else
     { read -r _rev; read -r task_file; read -r child_bookmark; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$child_bookmark" ]]; then
@@ -223,8 +223,8 @@ main() {
     _ui__log "Error: Could not read task file '$task_file' from '$child_bookmark'."
     exit 1
   }
-  task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
-  task_status="$(parse_frontmatter_field "$task_content" "status")"
+  task_title="$(_frontmatter__parse_quoted_field "$task_content" "title")"
+  task_status="$(_frontmatter__parse_field "$task_content" "status")"
 
   # Validate --delete requires DONE. With --complete the task is marked DONE later in
   # this command, so the check is deferred until after the complete step has run.
@@ -249,7 +249,7 @@ main() {
   else
     parent_slug="${parent_bookmark#"$project_prefix"}"
   fi
-  parent_task_file="$(task_file_path "$parent_slug")"
+  parent_task_file="$(_path__task_file "$parent_slug")"
 
   # Resolve context: stdin or interactive editor
   if [[ "$context_mode" == 'stdin' ]]; then
@@ -283,7 +283,7 @@ main() {
     local task_content_check
     task_content_check="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || true
     local status_check
-    status_check="$(parse_frontmatter_field "$task_content_check" "status")"
+    status_check="$(_frontmatter__parse_field "$task_content_check" "status")"
     if [[ "$status_check" != "DONE" ]]; then
       _ui__log "Running complete for $child_bookmark..."
       "$SCRIPT_DIR/complete" --repo "$repo" \
@@ -299,8 +299,8 @@ main() {
       _ui__log "Error: Could not read task file '$task_file' from '$child_bookmark'."
       exit 1
     }
-    task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
-    task_status="$(parse_frontmatter_field "$task_content" "status")"
+    task_title="$(_frontmatter__parse_quoted_field "$task_content" "title")"
+    task_status="$(_frontmatter__parse_field "$task_content" "status")"
 
     if [[ "$delete" == true ]] && [[ "$task_status" != "DONE" ]]; then
       _ui__log "Error: --delete requires task status to be DONE (current: $task_status)."
@@ -330,12 +330,12 @@ main() {
   local diff_output
   diff_output="$(jj -R "$repo" diff \
     -r "roots(::${child_bookmark} ~ ::${parent_bookmark})..${child_bookmark}" \
-    --name-only -- "$(task_root_path)/" 2>/dev/null)" || true
+    --name-only -- "$(_path__task_root)/" 2>/dev/null)" || true
 
   if [[ -n "$diff_output" ]]; then
     # Build the set of allowed task directories: own dir + all descendants.
     local task_dir
-    task_dir="$(task_dir_path "$child_slug")"
+    task_dir="$(_path__task_dir "$child_slug")"
 
     local -a allowed_dirs=("$task_dir")
     local descendant_dirs
@@ -384,7 +384,7 @@ main() {
   esac
 
   # --- Run pre-checkin hook ---
-  run_hook "$repo" "pre-checkin" true "$current_worktree" "${workspace_dir:-}" \
+  _hook__run "$repo" "pre-checkin" true "$current_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$task_id" \
     "TT_TASK_BRANCH=$task_id" \
     "TT_PARENT_TASK_ID=$parent_bookmark" \
@@ -400,7 +400,7 @@ main() {
   jj -R "$target_ws" new "$child_bookmark"
 
   # Rewrite TASK.md symlink to point to parent task file
-  ln -sf "$(task_file_path "$parent_slug")" "$target_ws/$TT_TASK_SYMLINK_FILENAME"
+  ln -sf "$(_path__task_file "$parent_slug")" "$target_ws/$TT_TASK_SYMLINK_FILENAME"
 
   # Build updated parent task file content
   local parent_task_content
@@ -436,7 +436,7 @@ main() {
     ctx_hex="$(_string__generate_hex)"
     local ctx_id="context/${ctx_slug}-${ctx_hex}"
     local ctx_file
-    ctx_file="$(task_context_path "$parent_slug" "$ctx_id")"
+    ctx_file="$(_path__task_context "$parent_slug" "$ctx_id")"
     local ctx_ts
     ctx_ts="$(_string__generate_timestamp)"
 
@@ -444,7 +444,7 @@ main() {
     mkdir -p "$target_ws/$(dirname "$ctx_file")"
 
     # Write context file
-    write_context_file "$target_ws/$ctx_file" "$ctx_title" "$context_text" "$ctx_ts" "$ctx_ts"
+    _frontmatter__write_context_file "$target_ws/$ctx_file" "$ctx_title" "$context_text" "$ctx_ts" "$ctx_ts"
 
     _ui__log "Created context file: $ctx_file"
   fi
@@ -454,16 +454,16 @@ main() {
   # Insert context entry in the correct position (after any existing context:
   # entries, before the first subtask: entry) now that the file is on disk.
   if [[ -n "${ctx_id:-}" ]]; then
-    append_frontmatter_context "$target_ws/$parent_task_file" "$ctx_id"
+    _frontmatter__append_context "$target_ws/$parent_task_file" "$ctx_id"
   fi
 
   # Commit the handoff (child bookmark does NOT advance)
-  jj -R "$target_ws" commit -m "$(format_commit_message "task" "handoff" "$task_id" "$task_title")"
+  jj -R "$target_ws" commit -m "$(_commit__format_message "task" "handoff" "$task_id" "$task_title")"
   local handoff_commit
   handoff_commit="$(jj -R "$target_ws" log -r '@-' --no-graph -T 'commit_id')"
 
   # --- Run pre-receive hook ---
-  run_hook "$repo" "pre-receive" true "$target_ws" "${workspace_dir:-}" \
+  _hook__run "$repo" "pre-receive" true "$target_ws" "${workspace_dir:-}" \
     "TT_TASK_ID=$parent_bookmark" \
     "TT_TASK_BRANCH=$parent_bookmark" \
     "TT_INCOMING_TASK_ID=$task_id" \
@@ -481,14 +481,14 @@ main() {
     exit 1
   fi
 
-  jj -R "$target_ws" describe -m "$(format_commit_message "task" "checkin" "$task_id" "$task_title")"
+  jj -R "$target_ws" describe -m "$(_commit__format_message "task" "checkin" "$task_id" "$task_title")"
   jj -R "$target_ws" bookmark set "$parent_bookmark" -r '@'
 
   # Leave a clean open WC in target_ws
   jj -R "$target_ws" new '@'
 
   # --- Run post-receive hook ---
-  run_hook "$repo" "post-receive" false "$target_ws" "${workspace_dir:-}" \
+  _hook__run "$repo" "post-receive" false "$target_ws" "${workspace_dir:-}" \
     "TT_TASK_ID=$parent_bookmark" \
     "TT_TASK_BRANCH=$parent_bookmark" \
     "TT_INCOMING_TASK_ID=$task_id" \

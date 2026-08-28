@@ -81,7 +81,7 @@ main() {
       _ui__log "Error: could not detect current worktree from working directory"
       exit 1
     }
-    detected="$(resolve_path_symlinks "$detected" 2>/dev/null)" || detected="$detected"
+    detected="$(_path__resolve_symlinks "$detected" 2>/dev/null)" || detected="$detected"
     worktree_path="$detected"
   fi
 
@@ -89,7 +89,7 @@ main() {
 
   # Canonicalize the path for comparison with jj workspace list
   local canonical_worktree_path
-  canonical_worktree_path="$(resolve_path_symlinks "$worktree_path" 2>/dev/null)" || canonical_worktree_path="$worktree_path"
+  canonical_worktree_path="$(_path__resolve_symlinks "$worktree_path" 2>/dev/null)" || canonical_worktree_path="$worktree_path"
 
   # Validate that the path is a valid jj workspace
   local ws_name
