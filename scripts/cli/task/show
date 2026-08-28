@@ -84,7 +84,7 @@ main() {
     { read -r _rev; read -r task_file; read -r branch; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
 
     if [[ -z "$branch" ]]; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
     task_id="$branch"
@@ -100,7 +100,7 @@ main() {
     # branch (the one that received the checkin).  The task *file path* is
     # always derived from task_id_arg, not from the canonical branch.
     if ! branch="$(find_branch_for_task "$repo" "$task_id_arg" "$task_prefix" "$project_prefix")"; then
-      log "Error: Could not locate branch for task '$task_id_arg'."
+      _ui__log "Error: Could not locate branch for task '$task_id_arg'."
       exit 1
     fi
     local suffix
@@ -109,7 +109,7 @@ main() {
     elif is_project_branch "$task_id_arg" "$project_prefix"; then
       suffix="${task_id_arg#$project_prefix}"
     else
-      log "Error: Cannot derive task file path for '$task_id_arg'."
+      _ui__log "Error: Cannot derive task file path for '$task_id_arg'."
       exit 1
     fi
     task_suffix="$suffix"
@@ -126,7 +126,7 @@ main() {
   # --- Read task file ---
   local content
   if ! content="$(jj_show_at_revision "$repo" "$branch" "$task_file")"; then
-    log "Error: Could not read task file '$task_file' from '$branch'."
+    _ui__log "Error: Could not read task file '$task_file' from '$branch'."
     exit 1
   fi
 
@@ -215,7 +215,7 @@ main() {
         fi
       fi
       [[ -z "$subtask_status" ]] && subtask_status="TODO"
-      checkbox="$(status_to_checkbox "$subtask_status")"
+      checkbox="$(_format__status_checkbox "$subtask_status")"
       if [[ -n "$subtask_title" ]]; then
         printf -- '- %s %s  %s\n' "$checkbox" "$subtask_id" "$subtask_title"
       else

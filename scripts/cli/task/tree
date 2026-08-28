@@ -86,7 +86,7 @@ get_metadata_from_content() {
   title="${title#"${title%%[![:space:]]*}"}"
   title="${title%"${title##*[![:space:]]}"}"
   [[ -z "$title" ]] && title='(no title)'
-  printf '%s|%s' "$(status_to_checkbox "$status")" "$title"
+  printf '%s|%s' "$(_format__status_checkbox "$status")" "$title"
 }
 
 # Usage: get_subtask_entries CONTENT
@@ -352,11 +352,11 @@ main() {
 
   if [[ "$focus" == true ]]; then
     if [[ -z "$current_bookmark" ]]; then
-      log "Error: Not on a task or project branch. Cannot show focused list."
+      _ui__log "Error: Not on a task or project branch. Cannot show focused list."
       exit 1
     fi
     if ! is_task_branch "$current_bookmark" "$task_prefix" && ! is_project_branch "$current_bookmark" "$project_prefix"; then
-      log "Error: Current branch '$current_bookmark' is not a task or project branch. Cannot show focused list."
+      _ui__log "Error: Current branch '$current_bookmark' is not a task or project branch. Cannot show focused list."
       exit 1
     fi
 
@@ -370,7 +370,7 @@ main() {
       [[ -z "$parent" ]] && break
       # Guard against a cycle in malformed subtask metadata.
       if printf '%s' "$chain" | grep -qFx "$parent"; then
-        log "Warning: Cycle detected in task hierarchy at '$parent'; stopping ancestor walk."
+        _ui__log "Warning: Cycle detected in task hierarchy at '$parent'; stopping ancestor walk."
         break
       fi
       chain="${parent}"$'\n'"${chain}"
@@ -399,12 +399,12 @@ main() {
   fi
 
   if [[ -z "$projects_to_show" ]] && [[ ${#filter_projects[@]} -eq 0 ]]; then
-    log "No projects found."
+    _ui__log "No projects found."
     exit 0
   fi
 
   if [[ -z "$projects_to_show" ]] && [[ ${#filter_projects[@]} -gt 0 ]]; then
-    log "No matching projects found."
+    _ui__log "No matching projects found."
     exit 0
   fi
 

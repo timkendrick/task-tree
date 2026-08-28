@@ -231,13 +231,13 @@ resolve_reference_commit() {
     since="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || exit_code=$?
     if [[ $exit_code -ne 0 ]]; then
       if [[ $exit_code -eq 1 ]]; then
-        log "Error: No parent branch found for '$task_id'."
-        log "  Pass --since <revision> to choose the reference commit explicitly."
+        _ui__log "Error: No parent branch found for '$task_id'."
+        _ui__log "  Pass --since <revision> to choose the reference commit explicitly."
       fi
       return 1
     fi
   elif ! jj -R "$repo" --ignore-working-copy log -r "$since" --no-graph -T '' 2>/dev/null; then
-    log "Error: Could not resolve revision '$since'."
+    _ui__log "Error: Could not resolve revision '$since'."
     return 1
   fi
 
@@ -280,30 +280,30 @@ main() {
   if [[ -n "$task_id_arg" ]]; then
     task_id="$task_id_arg"
     if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
-      log "Error: '$task_id' is not a task or project branch."
+      _ui__log "Error: '$task_id' is not a task or project branch."
       exit 1
     fi
   else
     task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$task_id" ]]; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
   fi
 
   if ! jj -R "$repo" --ignore-working-copy log -r "$task_id" --no-graph -T '' 2>/dev/null; then
-    log "Error: Bookmark '$task_id' not found."
+    _ui__log "Error: Bookmark '$task_id' not found."
     exit 1
   fi
 
   if "$all_mode" && ! is_task_branch "$task_id" "$task_prefix"; then
-    log "Error: --all does not support project branches."
+    _ui__log "Error: --all does not support project branches."
     exit 1
   fi
 
   if [[ -n "$since_arg" ]] && \
      ! jj -R "$repo" --ignore-working-copy log -r "$since_arg" --no-graph -T '' 2>/dev/null; then
-    log "Error: Could not resolve revision '$since_arg'."
+    _ui__log "Error: Could not resolve revision '$since_arg'."
     exit 1
   fi
 
@@ -318,7 +318,7 @@ main() {
     local parent_bookmark upper_bound="$task_id" find_exit=0
     parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || find_exit=$?
     if [[ $find_exit -ne 0 ]]; then
-      [[ $find_exit -eq 1 ]] && log "Error: No parent branch found for '$task_id'."
+      [[ $find_exit -eq 1 ]] && _ui__log "Error: No parent branch found for '$task_id'."
       exit $find_exit
     fi
 

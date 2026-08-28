@@ -66,14 +66,14 @@ main() {
 
   local ws_path
   if ! ws_path="$(resolve_workspace_path "$repo" "$name")"; then
-    log "Error: No worktree named '$name'"
+    _ui__log "Error: No worktree named '$name'"
     exit 1
   fi
 
   # An unusable path must be rejected before the repository root comparison:
   # resolve_path_symlinks cd's into the path, so it fails on a missing directory.
   if [[ -z "$ws_path" || ! -d "$ws_path" ]]; then
-    log "Error: Worktree '$name' has an invalid path"
+    _ui__log "Error: Worktree '$name' has an invalid path"
     exit 1
   fi
   ws_path="$(resolve_path_symlinks "$ws_path")"
@@ -84,12 +84,12 @@ main() {
   # worktree. Resolve to the canonical repo before comparing.
   local canonical_repo
   if ! canonical_repo="$(resolve_canonical_repo_path "$repo")"; then
-    log "Error: Could not resolve the repository root for '$repo'"
+    _ui__log "Error: Could not resolve the repository root for '$repo'"
     exit 1
   fi
 
   if [[ "$ws_path" == "$canonical_repo" ]]; then
-    log "Error: Worktree '$name' is the repository root, not a dedicated worktree"
+    _ui__log "Error: Worktree '$name' is the repository root, not a dedicated worktree"
     exit 1
   fi
 
