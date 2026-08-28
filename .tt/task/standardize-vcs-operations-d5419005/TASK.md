@@ -2,8 +2,9 @@
 title: "Standardize VCS operations"
 status: IN-PROGRESS
 created: 2026-04-07T09:11:15Z
-updated: 2026-08-28T13:54:20Z
+updated: 2026-08-28T14:09:01Z
 context: context/jj-command-audit-c79dfc51
+context: context/tmp-tt-audit-py-60f69cd6
 ---
 Currently, underlying VCS operations are heavily interspersed with app business logic.
 
