@@ -2,9 +2,10 @@
 title: "Locate `tt worktree show` target by `--name` rather than `--task`"
 status: IN-PROGRESS
 created: 2026-08-28T09:56:36Z
-updated: 2026-08-28T10:16:04Z
+updated: 2026-08-28T11:26:05Z
 context: context/requirements-cee1558e
 context: context/architecture-93395bd2
+context: context/implementation-summary-c3a071fb
 ---
 `tt worktree show` currently locates the target workspace via the currently-checked-out `--task` name.
 
