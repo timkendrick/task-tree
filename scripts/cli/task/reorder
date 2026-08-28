@@ -120,7 +120,7 @@ reorder_subtask() {
     parent_suffix="${parent_id#$project_prefix}"
   fi
   local parent_task_file
-  parent_task_file="$(task_file_path "$parent_suffix")"
+  parent_task_file="$(_path__task_file "$parent_suffix")"
 
   # 3. Resolve parent worktree
   local parent_worktree
@@ -141,7 +141,7 @@ reorder_subtask() {
   }
 
   # 6. Parse all parent frontmatter fields
-  parse_task_frontmatter "$parent_content"
+  _frontmatter__parse_task "$parent_content"
   local parent_title="$PARSED_TITLE"
   local parent_status="$PARSED_STATUS"
   local parent_created="$PARSED_CREATED"
@@ -243,8 +243,8 @@ reorder_subtask() {
   else
     child_suffix="${child_id#$project_prefix}"
   fi
-  child_content="$(jj_show_at_revision "$repo" "$child_branch" "$(task_file_path "$child_suffix")")"
-  child_title="$(parse_quoted_frontmatter_field "$child_content" "title")"
+  child_content="$(jj_show_at_revision "$repo" "$child_branch" "$(_path__task_file "$child_suffix")")"
+  child_title="$(_frontmatter__parse_quoted_field "$child_content" "title")"
 
   # 10. Begin transaction
   tt_begin_transaction "$repo"
@@ -256,10 +256,10 @@ reorder_subtask() {
   export REWRITE_SUBTASKS=("${subtask_lines[@]+"${subtask_lines[@]}"}")
   local reorder_updated
   reorder_updated="$(_string__generate_timestamp)"
-  write_task_file "$parent_worktree/$parent_task_file" \
+  _frontmatter__write_task_file "$parent_worktree/$parent_task_file" \
     "$parent_title" "$parent_status" "$parent_body" "$parent_created" "$reorder_updated"
   unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
-  jj -R "$parent_worktree" commit -m "$(format_commit_message "task" "reorder" "$parent_id" "$parent_title")" >/dev/null 2>&1
+  jj -R "$parent_worktree" commit -m "$(_commit__format_message "task" "reorder" "$parent_id" "$parent_title")" >/dev/null 2>&1
   jj -R "$parent_worktree" bookmark set "$parent_id" -r '@-' >/dev/null 2>&1
 
   # 12. Commit transaction
@@ -292,7 +292,7 @@ reorder_frontmatter() {
     task_suffix="${task_id#$project_prefix}"
   fi
   local task_file
-  task_file="$(task_file_path "$task_suffix")"
+  task_file="$(_path__task_file "$task_suffix")"
 
   # 3. Resolve the worktree to operate in
   local canonical_worktree
@@ -313,7 +313,7 @@ reorder_frontmatter() {
   }
 
   # 6. Parse all frontmatter fields
-  parse_task_frontmatter "$task_content"
+  _frontmatter__parse_task "$task_content"
   local title="$PARSED_TITLE" status="$PARSED_STATUS"
   local created="$PARSED_CREATED" body="$PARSED_BODY"
   local -a labels=("${PARSED_LABELS[@]+"${PARSED_LABELS[@]}"}")
@@ -357,9 +357,9 @@ reorder_frontmatter() {
   export REWRITE_SUBTASKS=("${sorted_subtasks[@]+"${sorted_subtasks[@]}"}")
   local reorder_updated
   reorder_updated="$(_string__generate_timestamp)"
-  write_task_file "$canonical_worktree/$task_file" "$title" "$status" "$body" "$created" "$reorder_updated"
+  _frontmatter__write_task_file "$canonical_worktree/$task_file" "$title" "$status" "$body" "$created" "$reorder_updated"
   unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
-  jj -R "$canonical_worktree" commit -m "$(format_commit_message "task" "reorder" "$task_id" "$title")" >/dev/null 2>&1
+  jj -R "$canonical_worktree" commit -m "$(_commit__format_message "task" "reorder" "$task_id" "$title")" >/dev/null 2>&1
   jj -R "$canonical_worktree" bookmark set "$canonical_branch" -r '@-' >/dev/null 2>&1
 
   # 12. Commit transaction

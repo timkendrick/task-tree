@@ -182,9 +182,9 @@ main() {
   fi
 
   local task_file old_parent_task_file new_parent_task_file
-  task_file="$(task_file_path "$task_slug")"
-  old_parent_task_file="$(task_file_path "$old_parent_slug")"
-  new_parent_task_file="$(task_file_path "$new_parent_slug")"
+  task_file="$(_path__task_file "$task_slug")"
+  old_parent_task_file="$(_path__task_file "$old_parent_slug")"
+  new_parent_task_file="$(_path__task_file "$new_parent_slug")"
 
   # Read task title for commit messages
   local task_content task_title
@@ -192,7 +192,7 @@ main() {
     _ui__log "Error: Could not read task file '$task_file' from '$task_id'."
     exit 1
   }
-  task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
+  task_title="$(_frontmatter__parse_quoted_field "$task_content" "title")"
 
   # Capture the old parent's commit ID now, before Step 1 advances its bookmark.
   # We use commit_id (not change_id) so the reference remains stable even after the
@@ -249,10 +249,10 @@ main() {
   # Remove the task's stub directory from the old parent, mirroring how
   # tt task create places the stub on the parent branch in the first place.
   local task_dir
-  task_dir="$(task_dir_path "$task_slug")"
+  task_dir="$(_path__task_dir "$task_slug")"
   rm -rf "${repo:?}/$task_dir"
 
-  jj -R "$repo" describe -m "$(format_commit_message "task" "remove" "$task_id" "$task_title")"
+  jj -R "$repo" describe -m "$(_commit__format_message "task" "remove" "$task_id" "$task_title")"
   jj -R "$repo" bookmark set "$old_parent"
   jj -R "$repo" new "@"
 
@@ -262,7 +262,7 @@ main() {
   _ui__log "Updating new parent: $new_parent_id"
   jj -R "$repo" new "$new_parent_id"
 
-  append_frontmatter_subtask "$repo/$new_parent_task_file" "$task_id"
+  _frontmatter__append_subtask "$repo/$new_parent_task_file" "$task_id"
 
   # Copy the task's stub file from the old parent commit onto the new parent, using
   # the commit_id captured before Step 1 moved the bookmark.  This makes the new
@@ -270,7 +270,7 @@ main() {
   # "theirs == base" for the stub and cleanly takes "ours" (the task branch's
   # updated TASK.md) without producing a conflict during the rebase in Step 3.
   local task_dir_new
-  task_dir_new="$(task_dir_path "$task_slug")"
+  task_dir_new="$(_path__task_dir "$task_slug")"
   mkdir -p "$repo/$task_dir_new"
   if jj_show_at_revision "$repo" "$old_parent_commit_id" "$task_file" \
        > "$repo/$task_file"; then
@@ -279,7 +279,7 @@ main() {
     _ui__log "Warning: Could not copy task stub '$task_file' from old parent; skipping."
   fi
 
-  jj -R "$repo" describe -m "$(format_commit_message "task" "move" "$task_id" "$task_title")"
+  jj -R "$repo" describe -m "$(_commit__format_message "task" "move" "$task_id" "$task_title")"
   jj -R "$repo" bookmark set "$new_parent_id"
   jj -R "$repo" new "@"
 

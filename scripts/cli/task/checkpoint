@@ -108,7 +108,7 @@ main() {
   # Read task title from task file frontmatter
   local task_file_content task_title
   task_file_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
-  task_title="$(parse_quoted_frontmatter_field "$task_file_content" "title")"
+  task_title="$(_frontmatter__parse_quoted_field "$task_file_content" "title")"
 
   # Derive task ID (bookmark name without prefix) for display
   local task_id="$bookmark"
@@ -145,13 +145,13 @@ main() {
 
   # Build full commit message
   local full_msg
-  full_msg="$(format_commit_message "task" "checkpoint" "$bookmark" "$message")"
+  full_msg="$(_commit__format_message "task" "checkpoint" "$bookmark" "$message")"
 
   # Pre-checkpoint hook (blocking)
   # Begin transaction (records before-op for undo)
   tt_begin_transaction "$repo"
 
-  run_hook "$repo" "pre-checkpoint" true "$current_worktree" "${workspace_dir:-}" \
+  _hook__run "$repo" "pre-checkpoint" true "$current_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$bookmark" \
     "TT_TASK_BRANCH=$bookmark" \
     "TT_MESSAGE=${message}"
@@ -187,7 +187,7 @@ main() {
   _ui__log "Checkpoint: $bookmark → $new_commit"
 
   # Post-checkpoint hook (non-blocking)
-  run_hook "$repo" "post-checkpoint" false "$current_worktree" "${workspace_dir:-}" \
+  _hook__run "$repo" "post-checkpoint" false "$current_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$bookmark" \
     "TT_TASK_BRANCH=$bookmark" \
     "TT_MESSAGE=${message}" \

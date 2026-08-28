@@ -217,9 +217,9 @@ main() {
 
   # --- Read task title from project branch ---
   local task_file task_content task_title
-  task_file="$(task_file_path "$child_slug")"
+  task_file="$(_path__task_file "$child_slug")"
   task_content="$(jj_show_at_revision "$repo" "$child_bookmark" "$task_file")" || true
-  task_title="$(parse_quoted_frontmatter_field "$task_content" "title" 2>/dev/null)" || task_title="$child_bookmark"
+  task_title="$(_frontmatter__parse_quoted_field "$task_content" "title" 2>/dev/null)" || task_title="$child_bookmark"
 
   # --- Optional: rebase/merge propagation from target ---
   if [[ -n "$strategy" ]]; then
@@ -294,10 +294,10 @@ main() {
   # Task files are development-only scaffolding; they must not land on the
   # delivery branch. .tt/config.toml is kept (workspace configuration).
   rm -f "$target_ws/TASK.md"
-  rm -rf "$target_ws/$(task_root_path)"
+  rm -rf "$target_ws/$(_path__task_root)"
 
   # Commit the handoff (project bookmark does NOT advance)
-  jj -R "$target_ws" commit -m "$(format_commit_message "task" "handoff" "$task_id" "$task_title")"
+  jj -R "$target_ws" commit -m "$(_commit__format_message "task" "handoff" "$task_id" "$task_title")"
   local handoff_commit
   handoff_commit="$(jj -R "$target_ws" log -r '@-' --no-graph -T 'commit_id')"
 
@@ -312,7 +312,7 @@ main() {
     exit 1
   fi
 
-  jj -R "$target_ws" describe -m "$(format_commit_message "task" "publish" "$task_id" "$message")"
+  jj -R "$target_ws" describe -m "$(_commit__format_message "task" "publish" "$task_id" "$message")"
   jj -R "$target_ws" bookmark set "$target" -r '@'
 
   # After publish, return to the project branch.

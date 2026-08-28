@@ -157,12 +157,12 @@ main() {
     else
       parent_suffix="${parent_bookmark#$project_prefix}"
     fi
-    parent_task_file="$(task_file_path "$parent_suffix")"
+    parent_task_file="$(_path__task_file "$parent_suffix")"
   fi
 
   # Get task title for commit message
   local task_title
-  task_title="$(jj_show_at_revision "$repo" "$old_id" "$(task_file_path "$suffix")" \
+  task_title="$(jj_show_at_revision "$repo" "$old_id" "$(_path__task_file "$suffix")" \
     | awk '/^title:/ { for(i=2;i<=NF;i++) printf "%s ", $i; print ""; exit }')"
 
   if [[ -z "$task_title" ]]; then
@@ -171,9 +171,9 @@ main() {
     task_title="${task_title% }"  # Remove trailing space
   fi
 
-  local old_dir="${repo}/$(task_dir_path "$suffix")"
-  local new_dir="${repo}/$(task_dir_path "${slug}-${old_hex}")"
-  local old_rel="$(task_dir_path "$suffix")"
+  local old_dir="${repo}/$(_path__task_dir "$suffix")"
+  local new_dir="${repo}/$(_path__task_dir "${slug}-${old_hex}")"
+  local old_rel="$(_path__task_dir "$suffix")"
 
   # Begin transaction (records before-op for undo)
   tt_begin_transaction "$repo"
@@ -242,7 +242,7 @@ main() {
     fi
 
     # Commit: jj snapshots the mv automatically; use standardized rename message
-    jj "${jj_opts[@]}" commit -m "$(format_commit_message "task" "rename" "$new_id" "$task_title")"
+    jj "${jj_opts[@]}" commit -m "$(_commit__format_message "task" "rename" "$new_id" "$task_title")"
     jj "${jj_opts[@]}" bookmark set "${parent_bookmark}" -r @-
     jj "${jj_opts[@]}" new "${parent_bookmark}"
   fi

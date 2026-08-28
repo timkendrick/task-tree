@@ -125,7 +125,7 @@ main() {
       exit 1
     fi
     task_suffix="$suffix"
-    task_file="$(task_file_path "$suffix")"
+    task_file="$(_path__task_file "$suffix")"
   else
     { read -r _rev; read -r task_file; read -r bookmark; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$bookmark" ]]; then
@@ -214,7 +214,7 @@ main() {
   ctx_hex="$(_string__generate_hex)"
   local ctx_id="context/${ctx_slug}-${ctx_hex}"
   local ctx_file
-  ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
+  ctx_file="$(_path__task_context "$task_suffix" "$ctx_id")"
   local ctx_ts
   ctx_ts="$(_string__generate_timestamp)"
 
@@ -233,10 +233,10 @@ main() {
   ctx_add_writer() {
     local root="$1"
     mkdir -p "$(dirname "$root/$ctx_file")"
-    write_context_file "$root/$ctx_file" "$ctx_title" "$body" "$ctx_ts" "$ctx_ts"
+    _frontmatter__write_context_file "$root/$ctx_file" "$ctx_title" "$body" "$ctx_ts" "$ctx_ts"
     # Add context reference to task file frontmatter and update 'updated' timestamp
-    append_frontmatter_context "$root/$task_file" "$ctx_id"
-    update_frontmatter_timestamp "$root/$task_file" "$ctx_ts"
+    _frontmatter__append_context "$root/$task_file" "$ctx_id"
+    _frontmatter__update_timestamp "$root/$task_file" "$ctx_ts"
   }
 
   # Begin transaction (records before-op for undo) BEFORE any filesystem writes,
@@ -245,7 +245,7 @@ main() {
 
   write_and_commit_on_branch "$repo" "$target_worktree" "$bookmark" \
     "$current_worktree" "$current_bookmark" \
-    "$(format_commit_message "task" "context:add" "$bookmark" "$ctx_title")" \
+    "$(_commit__format_message "task" "context:add" "$bookmark" "$ctx_title")" \
     ctx_add_writer
 
   # Commit transaction (records after-op for undo)

@@ -110,10 +110,10 @@ resolve_parent() {
     fi
     if is_task_branch "$parent_task_id" "$task_prefix"; then
       local suffix="${parent_task_id#$task_prefix}"
-      printf '%s\n%s\n%s\n' "$parent_rev" "$(task_file_path "$suffix")" "$parent_task_id"
+      printf '%s\n%s\n%s\n' "$parent_rev" "$(_path__task_file "$suffix")" "$parent_task_id"
     elif is_project_branch "$parent_task_id" "$project_prefix"; then
       local suffix="${parent_task_id#$project_prefix}"
-      printf '%s\n%s\n%s\n' "$parent_rev" "$(task_file_path "$suffix")" "$parent_task_id"
+      printf '%s\n%s\n%s\n' "$parent_rev" "$(_path__task_file "$suffix")" "$parent_task_id"
     else
       printf '%s\n\n\n' "$parent_rev"
     fi
@@ -337,7 +337,7 @@ main() {
   local task_id="${active_prefix}${slug}-${task_hex}"
   local task_suffix="${slug}-${task_hex}"
   local task_file
-  task_file="$(task_file_path "$task_suffix")"
+  task_file="$(_path__task_file "$task_suffix")"
 
   if [[ "$dry_run" == true ]]; then
     _ui__log "Dry run: would create task $task_id"
@@ -402,12 +402,12 @@ main() {
   jj "${jj_opts[@]}" new "$parent_rev" >&2
 
   # Ensure .tt/task exists
-  mkdir -p "$repo/$(task_root_path)"
+  mkdir -p "$repo/$(_path__task_root)"
 
   if [[ "$is_project" == true ]]; then
     # Project task: first commit creates the stub task file; second commit (via edit) sets metadata.
     write_task_stub "$repo" "$task_suffix"
-    jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")" >&2 >&2
+    jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2 >&2
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
     jj "${jj_opts[@]}" new "@" >&2
     jj "${jj_opts[@]}" bookmark set "$task_id" >&2
@@ -425,9 +425,9 @@ main() {
       exit 1
     fi
     write_task_stub "$repo" "$task_suffix"
-    append_frontmatter_subtask "$parent_path" "$task_id"
+    _frontmatter__append_subtask "$parent_path" "$task_id"
     _ui__log "Added subtask to parent: $parent_task_file"
-    jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")" >&2
+    jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2
     jj "${jj_opts[@]}" bookmark set "$parent_bookmark" >&2
     jj "${jj_opts[@]}" new "@" >&2
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
@@ -440,7 +440,7 @@ main() {
     # Child task with no identifiable parent task file (e.g. branching from a non-task bookmark).
     # Create the stub and bookmark without modifying any parent; edit sets metadata.
     write_task_stub "$repo" "$task_suffix"
-    jj "${jj_opts[@]}" describe -m "$(format_commit_message "task" "create" "$task_id" "$title")" >&2
+    jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2
     jj "${jj_opts[@]}" new "@" >&2
     jj "${jj_opts[@]}" bookmark set "$task_id" $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2
     # Build common args (title, labels)

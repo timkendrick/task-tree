@@ -145,7 +145,7 @@ main() {
   # Read the task file from the task's own branch, so tasks that are not checked
   # out anywhere can still be edited.
   local task_file task_content
-  task_file="$(task_file_path "$task_suffix")"
+  task_file="$(_path__task_file "$task_suffix")"
   task_content="$(jj_show_at_revision "$repo" "$branch" "$task_file")" || {
     _ui__log "Error: Could not read task file '$task_file' from branch '$branch'."
     exit 1
@@ -180,12 +180,12 @@ main() {
 
   # Read the context file to get its title for the commit message
   local ctx_file ctx_content ctx_title
-  ctx_file="$(task_context_path "$task_suffix" "$ctx_id_arg")"
+  ctx_file="$(_path__task_context "$task_suffix" "$ctx_id_arg")"
   ctx_content="$(jj_show_at_revision "$repo" "$branch" "$ctx_file")" || {
     _ui__log "Error: Could not read context file '$ctx_file' from branch '$branch'."
     exit 1
   }
-  ctx_title="$(parse_quoted_frontmatter_field "$ctx_content" "title")"
+  ctx_title="$(_frontmatter__parse_quoted_field "$ctx_content" "title")"
 
   if [[ -z "$ctx_title" ]]; then
     ctx_title="(untitled)"
@@ -217,7 +217,7 @@ main() {
 
   write_and_commit_on_branch "$repo" "$target_worktree" "$branch" \
     "$current_worktree" "$current_bookmark" \
-    "$(format_commit_message "task" "context:delete" "$branch" "$ctx_title")" \
+    "$(_commit__format_message "task" "context:delete" "$branch" "$ctx_title")" \
     ctx_delete_writer
 
   # Commit transaction (records after-op for undo)

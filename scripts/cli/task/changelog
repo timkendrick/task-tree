@@ -109,12 +109,12 @@ read_task_metadata() {
   [[ -z "$suffix" ]] && return 0
 
   local content
-  content="$(jj_show_at_revision "$repo" "$rev" "$(task_file_path "$suffix")")" || return 0
+  content="$(jj_show_at_revision "$repo" "$rev" "$(_path__task_file "$suffix")")" || return 0
   [[ -z "$content" ]] && return 0
 
   printf '%s\t%s\n' \
-    "$(parse_frontmatter_field "$content" 'status')" \
-    "$(parse_quoted_frontmatter_field "$content" 'title')"
+    "$(_frontmatter__parse_field "$content" 'status')" \
+    "$(_frontmatter__parse_quoted_field "$content" 'title')"
 }
 
 # Usage: record_operation_fields RECORD OPERATION
@@ -129,7 +129,7 @@ record_operation_fields() {
   [[ -z "$commit_id" ]] && return 1
 
   local parsed
-  parsed="$(parse_commit_message "$description")" || return 1
+  parsed="$(_commit__parse_message "$description")" || return 1
   local namespace entity record_operation text
   IFS=$'\t' read -r namespace entity record_operation text <<< "$parsed"
   [[ "$namespace" == 'task' && "$record_operation" == "$operation" ]] || return 1
