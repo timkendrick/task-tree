@@ -557,9 +557,7 @@ main() {
     # worktree and would suppress the cleanup.
     local canon_child canon_repo
     canon_child="$(realpath "$child_worktree" 2>/dev/null)" || canon_child="$child_worktree"
-    local repo_root
-    repo_root="$(resolve_canonical_repo "$repo")"
-    canon_repo="$(realpath "$repo_root" 2>/dev/null)"       || canon_repo="$repo_root"
+    canon_repo="$(resolve_canonical_repo_path "$repo")"
     if [[ "$canon_child" != "$canon_repo" ]]; then
       # The delegated `tt task delete` deregisters the jj workspaces of every
       # task in the deleted subtree but leaves their files on disk, so the

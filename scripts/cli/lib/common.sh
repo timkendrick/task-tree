@@ -661,20 +661,20 @@ find_parent_branch() {
   printf '%s' "$found"
 }
 
-# Usage: resolve_task_range REPO [TASK_ID]
-# Resolves the revision range covering a task branch's unmerged commits since it
-# diverged from its parent branch.
+# Usage: get_task_range_context REPO [TASK_ID]
+# Resolves the task ID together with the revision range covering that task
+# branch's unmerged commits since it diverged from its parent branch.
 #
 # Without TASK_ID: resolves the current task branch and extends the upper bound
 # beyond the task bookmark to include trailing commits ('@' if the working copy
 # is non-empty, '@-' if it is empty).
 # With TASK_ID: the upper bound is the task bookmark itself.
 #
-# Outputs "<parent_bookmark> <upper_bound>" to stdout.
+# Outputs "<task-id>\t<parent-bookmark>\t<upper-bound>" to stdout.
 # Exit 0: range resolved (printed to stdout).
 # Exit 1: not on a task branch, bookmark not found, or no parent found.
 # Exit 2: multiple parents found (error printed to stderr).
-resolve_task_range() {
+get_task_range_context() {
   local repo="$1" task_id_arg="${2:-}"
 
   local task_prefix project_prefix
@@ -717,6 +717,22 @@ resolve_task_range() {
     return $exit_code
   fi
 
+  printf '%s\t%s\t%s' "$task_bookmark" "$parent_bookmark" "$upper_bound"
+}
+
+# Usage: resolve_task_range REPO [TASK_ID]
+# Compatibility wrapper over get_task_range_context that outputs only the
+# range endpoints: "<parent_bookmark> <upper_bound>".
+# Exit codes match get_task_range_context.
+resolve_task_range() {
+  local repo="$1" task_id_arg="${2:-}"
+
+  local context
+  context="$(get_task_range_context "$repo" "$task_id_arg")" || return $?
+
+  local task_bookmark parent_bookmark upper_bound
+  IFS=$'\t' read -r task_bookmark parent_bookmark upper_bound <<< "$context"
+
   printf '%s %s' "$parent_bookmark" "$upper_bound"
 }
 
@@ -739,6 +755,286 @@ resolve_task_fork_point() {
   fi
 
   printf '%s' "$fork_point"
+}
+
+# ---------------------------------------------------------------------------
+# Full task range discovery
+#
+# A task's "full" range (the --all mode of revset/diff/changelog) is the union
+# of every commit attributable to it across its retained lifecycle: commits
+# made directly on the task branch, task-management operations performed on
+# the task itself, and creation/checkin/deletion of its direct children --
+# both already checked into its current parent and still unmerged on its own
+# branch. See DESIGN.md for the conceptual model.
+# ---------------------------------------------------------------------------
+
+# Usage: get_full_task_range_records REPO TASK_ID PARENT_BOOKMARK UPPER_BOUND
+#
+# Discovers every connected component of commits attributable to TASK_ID,
+# oldest first. Records are tab-separated:
+#   <base-id>\t<tip-id>\t<kind>\t<ordering-id>\t<timestamp>
+#
+# <kind> is one of:
+#   historical — a prior check-in of TASK_ID into PARENT_BOOKMARK
+#   child      — a direct child of TASK_ID checked into it
+#   path       — a single commit that edited TASK_ID's own task file directly
+#                (a task-management operation, or a direct-child create/delete)
+#   current    — the task's current unmerged range (PARENT_BOOKMARK..UPPER_BOUND)
+#
+# Each component's revset is "<base-id>..<tip-id>" (base excluded, tip
+# included), except for "current", whose base/tip may be bookmark names or
+# '@'/'@-' rather than immutable commit IDs, matching resolve_task_range.
+#
+# Only supports task branches (not project branches).
+# Exit 1: TASK_ID is not a task branch, or a required revision could not be
+# resolved (error printed to stderr).
+get_full_task_range_records() {
+  local repo="$1" task_id="$2" parent_bookmark="$3" upper_bound="$4"
+
+  local task_prefix project_prefix
+  task_prefix="$(get_task_prefix "$repo")"
+  project_prefix="$(get_project_prefix "$repo")"
+
+  if ! is_task_branch "$task_id" "$task_prefix"; then
+    log "Error: Full task range discovery requires a task branch (got '$task_id')."
+    return 1
+  fi
+
+  local target_file parent_file
+  target_file="$(task_file_path "${task_id#"$task_prefix"}")"
+  parent_file="$(_full_range_bookmark_task_file "$parent_bookmark" "$task_prefix" "$project_prefix")"
+  if [[ -z "$parent_file" ]]; then
+    log "Error: '$parent_bookmark' is not a task or project branch."
+    return 1
+  fi
+
+  local target_commit parent_commit upper_commit
+  target_commit="$(_full_range_resolve_commit "$repo" "$task_id")" || return 1
+  parent_commit="$(_full_range_resolve_commit "$repo" "$parent_bookmark")" || return 1
+  upper_commit="$(_full_range_resolve_commit "$repo" "$upper_bound")" || return 1
+
+  local creation_boundary
+  creation_boundary="$(_full_range_creation_boundary \
+    "$repo" "$task_id" "$target_file" "$target_commit" "$parent_commit")" || return 1
+
+  local bounded="${creation_boundary}:: & ::(${target_commit} | ${parent_commit})"
+
+  # --- Read scalar waypoint fields for every commit that may participate in the
+  # range: commit-id, ordered parent ids, timestamp, and whether it changed the
+  # target task file. ---
+  local -a wp_id=() wp_parents=() wp_ts=() wp_changed=()
+  local commit_id parents ts changed
+  while IFS=$'\t' read -r commit_id parents ts changed; do
+    [[ -z "$commit_id" ]] && continue
+    wp_id+=("$commit_id")
+    wp_parents+=("$parents")
+    wp_ts+=("$ts")
+    wp_changed+=("$changed")
+  done < <(_full_range_query_waypoints "$repo" "$bounded" "$target_file")
+
+  # --- Classify two-parent merge candidates as check-ins by the topology of
+  # their second (handoff) parent's TASK.md symlink transition. ---
+  local -a comp_base=() comp_tip=() comp_kind=() comp_order=() comp_ts=()
+  local i
+  for ((i = 0; i < ${#wp_id[@]}; i++)); do
+    local commit_parents="${wp_parents[$i]}"
+    [[ "$commit_parents" == *' '* ]] || continue
+    local first_parent="${commit_parents%% *}" second_parent="${commit_parents#* }"
+    [[ "$second_parent" == *' '* ]] && continue   # more than 2 parents: not a check-in merge
+
+    local handoff_index=-1 j
+    for ((j = 0; j < ${#wp_id[@]}; j++)); do
+      if [[ "${wp_id[$j]}" == "$second_parent" ]]; then
+        handoff_index=$j
+        break
+      fi
+    done
+    [[ $handoff_index -lt 0 ]] && continue
+    local handoff_parent="${wp_parents[$handoff_index]}"
+    [[ -z "$handoff_parent" || "$handoff_parent" == *' '* ]] && continue  # handoff must have exactly one parent
+
+    local symlink_diff removed added
+    symlink_diff="$(_full_range_symlink_diff "$repo" "${wp_id[$handoff_index]}")"
+    removed="$(_full_range_parse_symlink_removed "$symlink_diff")"
+    added="$(_full_range_parse_symlink_added "$symlink_diff")"
+    [[ -z "$removed" || -z "$added" ]] && continue
+
+    if [[ "$removed" == "$target_file" && "$added" == "$parent_file" ]]; then
+      comp_base+=("$first_parent"); comp_tip+=("$handoff_parent"); comp_kind+=("historical")
+      comp_order+=("${wp_id[$i]}"); comp_ts+=("${wp_ts[$i]}")
+    elif [[ "$added" == "$target_file" && "$removed" != "$target_file" ]]; then
+      comp_base+=("$first_parent"); comp_tip+=("${wp_id[$i]}"); comp_kind+=("child")
+      comp_order+=("${wp_id[$i]}"); comp_ts+=("${wp_ts[$i]}")
+    fi
+  done
+
+  # --- Single-commit path waypoints: direct edits to the target task file that
+  # are not part of a check-in merge (task-management operations, and
+  # direct-child create/delete commits recorded on whichever branch currently
+  # owns the target's retained files). ---
+  local -a path_base=() path_tip=() path_order=() path_ts=()
+  for ((i = 0; i < ${#wp_id[@]}; i++)); do
+    [[ "${wp_changed[$i]}" == "1" ]] || continue
+    local commit_parents="${wp_parents[$i]}"
+    [[ -z "$commit_parents" || "$commit_parents" == *' '* ]] && continue  # root or merge: not a path waypoint
+    [[ "${wp_id[$i]}" == "$creation_boundary" ]] && continue
+    path_base+=("$commit_parents"); path_tip+=("${wp_id[$i]}")
+    path_order+=("${wp_id[$i]}"); path_ts+=("${wp_ts[$i]}")
+  done
+
+  # --- Current unmerged component, and the broad-component union used to drop
+  # covered child/path candidates. ---
+  local current_base="$parent_bookmark" current_tip="$upper_bound"
+  local broad_union="(${parent_bookmark}..${upper_bound})"
+  for ((i = 0; i < ${#comp_base[@]}; i++)); do
+    if [[ "${comp_kind[$i]}" == "historical" ]]; then
+      broad_union="${broad_union} | (${comp_base[$i]}..${comp_tip[$i]})"
+    fi
+  done
+
+  local -a final_base=() final_tip=() final_kind=() final_order=() final_ts=()
+  for ((i = 0; i < ${#comp_base[@]}; i++)); do
+    _full_range_span_empty "$repo" "${comp_base[$i]}" "${comp_tip[$i]}" && continue
+    if [[ "${comp_kind[$i]}" == "child" ]]; then
+      _full_range_covered_by "$repo" "${comp_base[$i]}" "${comp_tip[$i]}" "$broad_union" && continue
+    fi
+    final_base+=("${comp_base[$i]}"); final_tip+=("${comp_tip[$i]}")
+    final_kind+=("${comp_kind[$i]}"); final_order+=("${comp_order[$i]}"); final_ts+=("${comp_ts[$i]}")
+  done
+  for ((i = 0; i < ${#path_base[@]}; i++)); do
+    _full_range_span_empty "$repo" "${path_base[$i]}" "${path_tip[$i]}" && continue
+    _full_range_covered_by "$repo" "${path_base[$i]}" "${path_tip[$i]}" "$broad_union" && continue
+    final_base+=("${path_base[$i]}"); final_tip+=("${path_tip[$i]}")
+    final_kind+=("path"); final_order+=("${path_order[$i]}"); final_ts+=("${path_ts[$i]}")
+  done
+
+  # --- Order historical/child/path components by ancestry, then append the
+  # current unmerged component last. ---
+  if [[ ${#final_base[@]} -gt 0 ]]; then
+    local order_ids=""
+    for ((i = 0; i < ${#final_order[@]}; i++)); do
+      if [[ -z "$order_ids" ]]; then order_ids="${final_order[$i]}"; else order_ids="${order_ids} | ${final_order[$i]}"; fi
+    done
+    local ordered order_commit
+    ordered="$(jj -R "$repo" --ignore-working-copy log --no-graph --reversed \
+      -r "(${bounded}) & (${order_ids})" -T 'commit_id ++ "\n"' 2>/dev/null)"
+    while IFS= read -r order_commit; do
+      [[ -z "$order_commit" ]] && continue
+      for ((i = 0; i < ${#final_order[@]}; i++)); do
+        if [[ "${final_order[$i]}" == "$order_commit" ]]; then
+          printf '%s\t%s\t%s\t%s\t%s\n' \
+            "${final_base[$i]}" "${final_tip[$i]}" "${final_kind[$i]}" "${final_order[$i]}" "${final_ts[$i]}"
+          break
+        fi
+      done
+    done <<< "$ordered"
+  fi
+
+  if ! _full_range_span_empty "$repo" "$current_base" "$current_tip"; then
+    local current_ts
+    current_ts="$(jj -R "$repo" --ignore-working-copy log --no-graph -r "$upper_commit" \
+      -T 'committer.timestamp().utc().format("%Y-%m-%dT%H:%M:%SZ")' 2>/dev/null)"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$current_base" "$current_tip" "current" "$upper_commit" "$current_ts"
+  fi
+}
+
+# Usage: _full_range_resolve_commit REPO REV
+# Prints the immutable commit ID of REV. Exit 1 with an error if REV cannot be
+# resolved.
+_full_range_resolve_commit() {
+  local repo="$1" rev="$2"
+  local id
+  id="$(jj -R "$repo" --ignore-working-copy log -r "$rev" --no-graph -T 'commit_id' 2>/dev/null)"
+  if [[ -z "$id" ]]; then
+    log "Error: Could not resolve revision '$rev'."
+    return 1
+  fi
+  printf '%s' "$id"
+}
+
+# Usage: _full_range_bookmark_task_file BOOKMARK TASK_PREFIX PROJECT_PREFIX
+# Prints the canonical task file path owned by BOOKMARK, or nothing if
+# BOOKMARK is neither a task nor a project branch.
+_full_range_bookmark_task_file() {
+  local bookmark="$1" task_prefix="$2" project_prefix="$3"
+  if is_task_branch "$bookmark" "$task_prefix"; then
+    task_file_path "${bookmark#"$task_prefix"}"
+  elif is_project_branch "$bookmark" "$project_prefix"; then
+    task_file_path "${bookmark#"$project_prefix"}"
+  fi
+}
+
+# Usage: _full_range_creation_boundary REPO TASK_ID TARGET_FILE TARGET_COMMIT PARENT_COMMIT
+# Prints the immutable commit ID of the unique commit that created TARGET_FILE
+# within the combined ancestry of TARGET_COMMIT and PARENT_COMMIT. Exit 1 with
+# an error if no such commit, or more than one, is found.
+_full_range_creation_boundary() {
+  local repo="$1" task_id="$2" target_file="$3" target_commit="$4" parent_commit="$5"
+  local matches
+  matches="$(jj -R "$repo" --ignore-working-copy log --no-graph -r \
+    "roots(files(root-file:\"${target_file}\") & ::(${target_commit} | ${parent_commit}))" \
+    -T 'commit_id ++ "\n"' 2>/dev/null)" || true
+  local count
+  count="$(printf '%s' "$matches" | grep -c . || true)"
+  if [[ "$count" -ne 1 ]]; then
+    log "Error: Could not resolve a unique creation boundary for '$task_id'."
+    return 1
+  fi
+  printf '%s' "$matches"
+}
+
+# Usage: _full_range_query_waypoints REPO BOUNDED_REVSET TARGET_FILE
+# Prints one tab-separated line per commit, oldest first, for every commit
+# within BOUNDED_REVSET that changes TARGET_FILE, changes the root TASK.md
+# symlink, or is a merge with a parent that changes the root TASK.md symlink:
+#   <commit-id>\t<parent-ids space-separated>\t<timestamp>\t<target-changed 0|1>
+_full_range_query_waypoints() {
+  local repo="$1" bounded="$2" target_file="$3"
+  local target_changes="files(root-file:\"${target_file}\")"
+  local symlink_changes="files(root-file:\"${TT_TASK_SYMLINK_FILENAME}\")"
+  local merge_candidates="merges() & children(${symlink_changes})"
+  jj -R "$repo" --ignore-working-copy log --no-graph --reversed \
+    -r "(${bounded}) & (${target_changes} | ${symlink_changes} | ${merge_candidates})" \
+    -T 'commit_id ++ "\t" ++ parents.map(|p| p.commit_id()).join(" ") ++ "\t" ++ committer.timestamp().utc().format("%Y-%m-%dT%H:%M:%SZ") ++ "\t" ++ if(self.diff("root-file:\"'"${target_file}"'\"").files().len() > 0, "1", "0") ++ "\n"' \
+    2>/dev/null
+}
+
+# Usage: _full_range_symlink_diff REPO REV
+# Prints the Git-format diff of the root TASK.md symlink at REV.
+_full_range_symlink_diff() {
+  local repo="$1" rev="$2"
+  jj -R "$repo" --ignore-working-copy log --no-graph -r "$rev" \
+    -T 'self.diff("root-file:\"'"${TT_TASK_SYMLINK_FILENAME}"'\"").git()' 2>/dev/null
+}
+
+# Usage: _full_range_parse_symlink_removed DIFF_TEXT
+# Prints the removed symlink target from a Git-format TASK.md diff, or nothing.
+_full_range_parse_symlink_removed() {
+  printf '%s\n' "$1" | grep -E '^-[^-]' | head -1 | cut -c2-
+}
+
+# Usage: _full_range_parse_symlink_added DIFF_TEXT
+# Prints the added symlink target from a Git-format TASK.md diff, or nothing.
+_full_range_parse_symlink_added() {
+  printf '%s\n' "$1" | grep -E '^\+[^+]' | head -1 | cut -c2-
+}
+
+# Usage: _full_range_span_empty REPO BASE TIP
+# Returns 0 (true) if the revset "BASE..TIP" contains no commits.
+_full_range_span_empty() {
+  local repo="$1" base="$2" tip="$3"
+  local count
+  count="$(count_revs_in_revset "$repo" "${base}..${tip}")"
+  [[ "$count" -eq 0 ]]
+}
+
+# Usage: _full_range_covered_by REPO BASE TIP BROAD_REVSET
+# Returns 0 (true) if every commit in "BASE..TIP" is already in BROAD_REVSET.
+_full_range_covered_by() {
+  local repo="$1" base="$2" tip="$3" broad="$4"
+  local count
+  count="$(count_revs_in_revset "$repo" "(${base}..${tip}) ~ (${broad})")"
+  [[ "$count" -eq 0 ]]
 }
 
 # Usage: mainline_commit_records REPO TIP BASE
@@ -882,6 +1178,16 @@ resolve_task_worktree() {
   esac
 }
 
+# Usage: jj_workspace_list REPO
+# Prints one line per jj workspace in REPO, formatted as "name: /absolute/path",
+# or "name: <Error: ...>" when the workspace has no resolvable path.
+# Parse each line with parse_workspace_list_line.
+jj_workspace_list() {
+  local repo="$1"
+  jj -R "$repo" --ignore-working-copy workspace list --no-pager \
+    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null
+}
+
 # Usage: parse_workspace_list_line LINE
 # Parses one line from `jj workspace list -T 'name ++ ": " ++ root ++ "\n"'`.
 # Outputs two lines to stdout:
@@ -944,32 +1250,38 @@ parse_workspace_list_line() {
   printf '%s\n%s\n' "$ws_name" "$ws_path"
 }
 
+# Usage: list_worktree_entries REPO
+# Prints one tab-separated "name<TAB>path" record per jj workspace in REPO.
+# path is the empty string when the workspace has no resolvable path.
+# Returns 1 if the workspace list cannot be read.
+list_worktree_entries() {
+  local repo="$1"
+  local ws_raw
+  ws_raw="$(jj_workspace_list "$repo")" || return 1
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local parsed
+    parsed="$(parse_workspace_list_line "$line")"
+    printf '%s\t%s\n' \
+      "$(printf '%s' "$parsed" | sed -n '1p')" \
+      "$(printf '%s' "$parsed" | sed -n '2p')"
+  done <<< "$ws_raw"
+}
+
 # Usage: find_worktrees_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
 # Outputs one workspace root path per line for each jj workspace where
 # BOOKMARK is the current branch (resolved via resolve_current).
-# Uses jj template 'name ++ ": " ++ root ++ "\n"' to get workspace paths.
 find_worktrees_for_branch() {
   local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
-  # Get all workspace names + root paths using explicit template.
-  # Format per line: "name: /absolute/path" or "name: <Error: ...>" for missing paths.
-  local ws_list
-  ws_list="$(jj -R "$repo" --ignore-working-copy workspace list --no-pager \
-    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || return 0
-  while IFS= read -r ws_line; do
-    [[ -z "$ws_line" ]] && continue
-    local parsed ws_name ws_root
-    parsed="$(parse_workspace_list_line "$ws_line")"
-    ws_name="$(printf '%s' "$parsed" | sed -n '1p')"
-    ws_root="$(printf '%s' "$parsed" | sed -n '2p')"
-    [[ -z "$ws_root" ]] && continue
-    [[ ! -d "$ws_root" ]] && continue
-    # Resolve current bookmark in this workspace
-    local ws_bookmark
+  local entries
+  entries="$(list_worktree_entries "$repo")" || return 0
+  local ws_root ws_bookmark
+  while IFS=$'\t' read -r _ ws_root; do
+    [[ -z "$ws_root" || ! -d "$ws_root" ]] && continue
     ws_bookmark="$(resolve_current_bookmark "$ws_root" "$task_prefix" "$project_prefix" 2>/dev/null)" || continue
-    if [[ "$ws_bookmark" == "$bookmark" ]]; then
-      printf '%s\n' "$ws_root"
-    fi
-  done <<< "$ws_list"
+    [[ "$ws_bookmark" == "$bookmark" ]] && printf '%s\n' "$ws_root"
+  done <<< "$entries"
+  return 0
 }
 
 # Usage: resolve_current REPO TASK_PREFIX PROJECT_PREFIX
@@ -1049,20 +1361,31 @@ resolve_current_bookmark() {
 # Returns 0 and prints name if found, returns 1 if not found.
 resolve_workspace_name() {
   local repo="$1" worktree_path="$2"
-  local ws_list
-  ws_list="$(jj -R "$repo" --ignore-working-copy workspace list \
-    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || return 1
-  while IFS= read -r ws_line; do
-    [[ -z "$ws_line" ]] && continue
-    local parsed ws_name ws_root
-    parsed="$(parse_workspace_list_line "$ws_line")"
-    ws_name="$(printf '%s' "$parsed" | sed -n '1p')"
-    ws_root="$(printf '%s' "$parsed" | sed -n '2p')"
-    if [[ "$ws_root" == "$worktree_path" ]]; then
-      printf '%s' "$ws_name"
-      return 0
-    fi
-  done <<< "$ws_list"
+  local entries
+  entries="$(list_worktree_entries "$repo")" || return 1
+  local name path
+  while IFS=$'\t' read -r name path; do
+    [[ "$path" == "$worktree_path" ]] || continue
+    printf '%s' "$name"
+    return 0
+  done <<< "$entries"
+  return 1
+}
+
+# Usage: resolve_workspace_path REPO WS_NAME
+# Prints the recorded filesystem path of the jj workspace named WS_NAME.
+# Prints an empty string if the workspace has no recorded path.
+# Returns 0 if found, 1 if no workspace bears that name.
+resolve_workspace_path() {
+  local repo="$1" ws_name="$2"
+  local entries
+  entries="$(list_worktree_entries "$repo")" || return 1
+  local name path
+  while IFS=$'\t' read -r name path; do
+    [[ "$name" == "$ws_name" ]] || continue
+    printf '%s' "$path"
+    return 0
+  done <<< "$entries"
   return 1
 }
 
@@ -1072,23 +1395,19 @@ resolve_workspace_name() {
 # path is empty string if unavailable; task_id is empty string if unresolved.
 list_workspaces() {
   local repo="$1" task_prefix="$2" project_prefix="$3"
-  local ws_raw
-  ws_raw="$(jj -R "$repo" --ignore-working-copy workspace list \
-    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)" || return 0
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    local parsed ws_name ws_path
-    parsed="$(parse_workspace_list_line "$line")"
-    ws_name="$(printf '%s' "$parsed" | sed -n '1p')"
-    ws_path="$(printf '%s' "$parsed" | sed -n '2p')"
+  local entries
+  entries="$(list_worktree_entries "$repo")" || return 0
+  local ws_name ws_path task_id
+  while IFS=$'\t' read -r ws_name ws_path; do
+    [[ -z "$ws_name" ]] && continue
 
-    local task_id=''
+    task_id=''
     if [[ -n "$ws_path" && -d "$ws_path" ]]; then
       task_id="$(resolve_current_bookmark "$ws_path" "$task_prefix" "$project_prefix" 2>/dev/null)" || true
     fi
 
     printf '%s\t%s\t%s\n' "$ws_name" "$ws_path" "$task_id"
-  done <<< "$ws_raw"
+  done <<< "$entries"
 }
 
 # Usage: forget_worktree REPO WORKSPACE_NAME [WORKTREE_PATH]
@@ -1462,6 +1781,20 @@ resolve_canonical_repo() {
     # Canonical repo: .jj/repo is a directory (the actual op store)
     printf '%s' "$repo"
   fi
+}
+
+# Usage: resolve_canonical_repo_path REPO
+# Prints the symlink-resolved path of the canonical repository root for REPO.
+# REPO may be any workspace, including a dedicated worktree whose own .jj points
+# at the canonical repo. Use when the result is compared against another
+# canonicalized path, so that a symlinked root (e.g. /var -> /private/var on
+# macOS) does not defeat the comparison.
+# Returns 1 if the canonical root cannot be resolved.
+resolve_canonical_repo_path() {
+  local repo="$1"
+  local canonical_repo
+  canonical_repo="$(resolve_canonical_repo "$repo")" || return 1
+  resolve_path_symlinks "$canonical_repo" 2>/dev/null
 }
 
 # Usage: resolve_history_file_location REPO

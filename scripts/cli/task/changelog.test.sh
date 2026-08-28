@@ -375,4 +375,147 @@ test_task_changelog__project_branch_without_parent_requires_since() {
 }
 
 
+test_task_changelog__all_alias() {
+  setup_workspace "changelog-all-alias"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  checkpoint_task "aliased work" >/dev/null || true
+
+  canonical="" alias_output="" exit_code=0
+  canonical=$(run_tt task changelog --task "$task_id" --all 2>/dev/null) || true
+  alias_output=$(run_tt changelog --task "$task_id" --all 2>/dev/null) || exit_code=$?
+  assert_success "alias --all succeeds" "$exit_code"
+  assert_eq "alias output matches canonical command" "$alias_output" "$canonical"
+}
+
+test_task_changelog__all_matches_default_when_never_checked_in() {
+  setup_workspace "changelog-all-default-match"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  checkpoint_task "work" >/dev/null || true
+
+  without_all="" with_all="" exit_code=0
+  without_all=$(run_tt task changelog --task "$task_id" 2>/dev/null) || true
+  with_all=$(run_tt task changelog --task "$task_id" --all 2>/dev/null) || exit_code=$?
+  assert_success "changelog --all succeeds" "$exit_code"
+  assert_eq "identical output when no prior check-ins exist" "$without_all" "$with_all"
+}
+
+test_task_changelog__all_combines_historical_and_current_checkpoints() {
+  setup_workspace "changelog-all-combines"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo w1 > "$TT_REPO/w1.txt"
+  checkpoint_task "historical work" >/dev/null || true
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true
+
+  checkout_task "$task_id" >/dev/null || true
+  echo w2 > "$TT_REPO/w2.txt"
+  checkpoint_task "current work" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task changelog --task "$task_id" --all 2>/dev/null) || exit_code=$?
+  assert_success "changelog --all succeeds" "$exit_code"
+  assert_contains "reports the historical checkpoint" "$output" "historical work"
+  assert_contains "reports the current checkpoint" "$output" "current work"
+
+  historical_pos=$(printf '%s\n' "$output" | grep -n 'historical work' | head -1 | cut -d: -f1)
+  current_pos=$(printf '%s\n' "$output" | grep -n 'current work' | head -1 | cut -d: -f1)
+  assert_eq "historical checkpoint ordered before current checkpoint" \
+    "$([[ "$historical_pos" -lt "$current_pos" ]] && echo yes || echo no)" "yes"
+}
+
+test_task_changelog__all_since_filters_complete_selection() {
+  setup_workspace "changelog-all-since"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo w1 > "$TT_REPO/w1.txt"
+  checkpoint_task "early historical work" >/dev/null || true
+  boundary=$(get_bookmark_commit "$task_id")
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true
+
+  checkout_task "$task_id" >/dev/null || true
+  echo w2 > "$TT_REPO/w2.txt"
+  checkpoint_task "late current work" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task changelog --task "$task_id" --all --since "$boundary" 2>/dev/null) || exit_code=$?
+  assert_success "changelog --all --since succeeds" "$exit_code"
+  assert_contains "includes work after the boundary" "$output" "late current work"
+  assert_not_contains "excludes work at or before the boundary" "$output" "early historical work"
+}
+
+test_task_changelog__all_direct_child_checked_in_reported() {
+  setup_workspace "changelog-all-child"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true   # partial checkin, so a later current component exists
+
+  checkout_task "$task_id" >/dev/null || true
+  child_id=$(create_task "c" "C") || true
+  checkout_task "$child_id" >/dev/null || true
+  echo cw > "$TT_REPO/cw.txt"
+  checkpoint_task "child work" >/dev/null || true
+  run_tt task checkin "$child_id" --complete >/dev/null 2>&1 || true
+
+  output="" exit_code=0
+  output=$(run_tt task changelog --task "$task_id" --all 2>/dev/null) || exit_code=$?
+  assert_success "changelog --all succeeds" "$exit_code"
+  assert_matches "reports the direct child that was checked in" "$output" "^- \`${child_id}\` - C\$"
+}
+
+test_task_changelog__all_depth_still_applies() {
+  setup_workspace "changelog-all-depth"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo w1 > "$TT_REPO/w1.txt"
+  checkpoint_task "tree-hidden checkpoint" >/dev/null || true
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true
+
+  checkout_task "$task_id" >/dev/null || true
+  child_id=$(create_task "c" "C") || true
+  checkout_task "$child_id" >/dev/null || true
+  echo cw > "$TT_REPO/cw.txt"
+  checkpoint_task "child work" >/dev/null || true
+  run_tt task checkin "$child_id" --complete >/dev/null 2>&1 || true
+
+  output="" exit_code=0
+  output=$(run_tt task changelog --task "$task_id" --all --depth 0 2>/dev/null) || exit_code=$?
+  assert_success "changelog --all --depth 0 succeeds" "$exit_code"
+  assert_not_contains "tree suppressed at depth 0" "$output" "$child_id"
+  assert_contains "checkpoints still reported at depth 0" "$output" "tree-hidden checkpoint"
+}
+
+test_task_changelog__all_rejects_project_branch() {
+  setup_workspace "changelog-all-project-rejected"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  checkpoint_task "project work" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task changelog --task "$proj_id" --all 2>&1) || exit_code=$?
+  assert_failure "changelog --all rejects a project branch" "$exit_code"
+  assert_contains "error message" "$output" "Error"
+}
+
+test_task_changelog__all_help() {
+  setup_workspace "changelog-all-help"
+  output="" exit_code=0
+  output=$(run_tt task changelog --help 2>&1) || exit_code=$?
+  assert_success "exit code" "$exit_code"
+  assert_required_usage_argument "argument: --all" "$output" "--all"
+}
+
 run_tests "tt task changelog"
