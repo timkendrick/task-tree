@@ -61,8 +61,7 @@ test__history__transaction__rollback_restores_op_and_removes_entry() {
   )
 
   local descriptions
-  descriptions="$(jj -R "$REPO" log -r 'all()' --no-graph \
-    -T 'description.first_line() ++ "\n"' 2>/dev/null)"
+  descriptions="$(get_commit_message 'all()')"
   assert_not_contains "rolled-back commit is gone from the op state" \
     "$descriptions" "history txn rollback"
   assert_history_count "in-progress line removed from history" 0

@@ -173,11 +173,10 @@ _history__rollback_transaction() {
 
   _ui__log "Rolling back transaction (restoring jj operation: ${before_op:0:12}...)"
 
-  # Restore jj to before-op state.
-  # Use a subshell to cd into the canonical repo first, so jj can resolve CWD
-  # even when the caller's working directory has been deleted (e.g. after
+  # Restore the VCS to the before-op state. The backend operation works even
+  # when the caller's working directory has been deleted (e.g. after
   # worktree delete).
-  (cd "$canonical_repo" && jj -R "$canonical_repo" op restore "$before_op" 2>/dev/null) || \
+  _repo__restore_operation "$canonical_repo" "$before_op" || \
     _ui__log "Warning: Could not restore jj operation state; manual recovery may be needed"
 
   # Remove the in-progress line from history

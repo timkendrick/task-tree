@@ -9,12 +9,13 @@ set -euo pipefail
 # Unit tests for workspace resolution and configuration in lib/workspace.sh
 # ---------------------------------------------------------------------------
 
-# Create a second, plain jj repo beside the setup_workspace one and print its
-# canonicalized path.
+# Create a second, plain repository directory beside the setup_workspace one
+# and print its canonicalized path. Workspace resolution only inspects the
+# on-disk repository marker directory, so an empty marker is a sufficient
+# stand-in for a full repository here.
 _make_other_repo() {
   local dir="$1"
-  mkdir -p "$dir"
-  jj git init "$dir" >/dev/null 2>&1
+  mkdir -p "$dir/.jj"
   (cd "$dir" && pwd -P)
 }
 

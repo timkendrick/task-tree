@@ -152,7 +152,7 @@ propagate_one_rebase() {
 
   jj "${jj_opts[@]}" rebase -s "roots(::${child} ~ ::${from})" -d "$from"
 
-  if [[ "$force" != true ]] && _repo__check_has_conflicts "$repo" "${child}::"; then
+  if [[ "$force" != true ]] && _repo__check_descendants_have_conflicts "$repo" "$child"; then
     _ui__log "Error: Conflicts detected in $child after rebase onto $from."
     _ui__log "  Use --force to proceed despite conflicts."
     exit 1
