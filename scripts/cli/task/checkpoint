@@ -75,15 +75,15 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Resolve workspace dir via .tt/workspace symlink
   local workspace_dir
-  workspace_dir="$(get_workspace_dir "$repo")" || true
+  workspace_dir="$(_workspace__get_dir "$repo")" || true
 
   # Resolve current branch
   local current_rev task_file bookmark
@@ -149,7 +149,7 @@ main() {
 
   # Pre-checkpoint hook (blocking)
   # Begin transaction (records before-op for undo)
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
   _hook__run "$repo" "pre-checkpoint" true "$current_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$bookmark" \
@@ -182,7 +182,7 @@ main() {
   jj -R "$repo" bookmark set "$bookmark" -r '@-'
 
   # Commit transaction (records after-op for undo)
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
 
   _ui__log "Checkpoint: $bookmark → $new_commit"
 

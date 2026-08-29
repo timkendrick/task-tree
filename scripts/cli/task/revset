@@ -96,7 +96,7 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local context exit_code=0
   context="$(get_task_range_context "$repo" "$task_id_arg")" || exit_code=$?
@@ -107,7 +107,7 @@ main() {
 
   if "$all_mode"; then
     local task_prefix
-    task_prefix="$(get_task_prefix "$repo")"
+    task_prefix="$(_workspace__get_task_prefix "$repo")"
     if ! is_task_branch "$task_id" "$task_prefix"; then
       _ui__log "Error: --all does not support project branches."
       exit 1

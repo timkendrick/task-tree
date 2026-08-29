@@ -96,15 +96,15 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Resolve workspace dir via .tt/workspace symlink
   local workspace_dir
-  workspace_dir="$(get_workspace_dir "$repo")" || true
+  workspace_dir="$(_workspace__get_dir "$repo")" || true
 
   # Resolve current branch and task file
   local task_file task_suffix bookmark
@@ -145,7 +145,7 @@ main() {
 
   # A task without its own worktree resolves to the current worktree; the commit
   # is then made cross-branch directly on the task bookmark.
-  if ! target_worktree="$(resolve_task_worktree "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
+  if ! target_worktree="$(_worktree__resolve_for_task "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
       "$current_worktree" "$worktree_arg")"; then
     exit 1
   fi
@@ -241,7 +241,7 @@ main() {
 
   # Begin transaction (records before-op for undo) BEFORE any filesystem writes,
   # so the before-op matches the previous command's after-op in the history chain.
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
   write_and_commit_on_branch "$repo" "$target_worktree" "$bookmark" \
     "$current_worktree" "$current_bookmark" \
@@ -249,7 +249,7 @@ main() {
     ctx_add_writer
 
   # Commit transaction (records after-op for undo)
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
 
   _ui__log "Added context: $ctx_id ($bookmark)"
   printf '%s\n' "$ctx_id"

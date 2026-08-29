@@ -84,14 +84,14 @@ main() {
     exit 1
   fi
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local -a jj_opts=(-R "$repo")
 
   # Resolve task prefix and project prefix from config
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Resolve target task
   local old_id old_slug old_hex
@@ -176,7 +176,7 @@ main() {
   local old_rel="$(_path__task_dir "$suffix")"
 
   # Begin transaction (records before-op for undo)
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
   # ---------------------------------------------------------------------------
   # Step 0: Pre-save all file content under <old-dir>/ for every commit in the
@@ -312,7 +312,7 @@ main() {
   jj "${jj_opts[@]}" new "${new_id}"
 
   # Commit transaction (records after-op for undo)
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
 
   # Success message
   printf 'Task renamed: %s > %s\n' "$old_id" "$new_id"

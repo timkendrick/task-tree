@@ -71,15 +71,15 @@ main() {
     usage >&2; exit 1
   fi
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   # Canonicalize the path for comparison with jj workspace list
   local canonical_worktree_path
   canonical_worktree_path="$(_path__resolve_symlinks "$worktree_path" 2>/dev/null)" || canonical_worktree_path="$worktree_path"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Refuse to delete the canonical (main) repo workspace — this is always an error
   local canonical_repo
@@ -91,11 +91,11 @@ main() {
 
   # Resolve workspace dir via .tt/workspace symlink
   local workspace_dir
-  workspace_dir="$(get_workspace_dir "$repo")" || true
+  workspace_dir="$(_workspace__get_dir "$repo")" || true
 
   # Resolve jj workspace name — validates the path is a known jj workspace
   local ws_name
-  ws_name="$(resolve_workspace_name "$repo" "$canonical_worktree_path")" || {
+  ws_name="$(_worktree__resolve_name "$repo" "$canonical_worktree_path")" || {
     _ui__log "Error: Could not resolve jj workspace name for '$worktree_path'"
     exit 1
   }
@@ -154,7 +154,7 @@ main() {
   fi
 
   # Capture HEAD symlink target BEFORE deletion, since the worktree path
-  # will no longer be resolvable after forget_worktree removes the files.
+  # will no longer be resolvable after _worktree__delete removes the files.
   # The reset target must be the canonical repository root rather than $repo:
   # when delete runs from inside the worktree being removed, $repo resolves to
   # that worktree and HEAD would be left dangling.
@@ -164,7 +164,7 @@ main() {
   local head_needs_reset=false
   if [[ -n "$workspace_dir" && -L "${workspace_dir}/HEAD" ]]; then
     local existing_head
-    if existing_head="$(get_active_worktree "$workspace_dir")"; then
+    if existing_head="$(_workspace__get_active_worktree "$workspace_dir")"; then
       if [[ "$existing_head" == "$canonical_worktree_path" ]]; then
         head_needs_reset=true
       fi
@@ -172,18 +172,18 @@ main() {
   fi
 
   # Begin transaction
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
   # Forget workspace and remove files
-  forget_worktree "$repo" "$ws_name" "$canonical_worktree_path"
+  _worktree__delete "$repo" "$ws_name" "$canonical_worktree_path"
 
   # If HEAD pointed to the deleted worktree, reset it to the repo root
   if [[ "$head_needs_reset" == true ]]; then
-    update_head_symlink "$workspace_dir" "$repo_root"
+    _workspace__update_head "$workspace_dir" "$repo_root"
   fi
 
   # Commit transaction
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
 
   _ui__log "Deleted worktree: $worktree_path"
   if [[ -n "$task_id" ]]; then

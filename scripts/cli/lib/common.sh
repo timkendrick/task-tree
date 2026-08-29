@@ -10,116 +10,15 @@ _TT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_TT_LIB_DIR/commit.sh"
 . "$_TT_LIB_DIR/hook.sh"
 . "$_TT_LIB_DIR/repo.sh"
-
-# Usage: repo=$(resolve_repo "$repo_flag_value")
-#
-# Resolves the repository root using the following priority order:
-#   1. $repo_flag_value — the value passed to --repo (if non-empty)
-#   2. $TT_REPO        — the TT_REPO environment variable (if set and non-empty)
-#   3. _repo__find_repository_root — walk up from CWD to find the enclosing repo
-#
-# Prints the resolved repo path to stdout.
-# Exits 1 with an error message if the path cannot be resolved or is not a jj repo.
-resolve_repo() {
-  local repo="${1:-}"
-
-  # Priority 1: explicit --repo flag (already in $repo if set)
-  if [[ -z "$repo" ]]; then
-    # Priority 2: TT_REPO environment variable
-    if [[ -n "${TT_REPO:-}" ]]; then
-      repo="$TT_REPO"
-    else
-      # Priority 3: walk up from CWD
-      if ! repo="$(_repo__find_repository_root)"; then
-        _ui__log "Error: No enclosing jj repository. Use --repo or set TT_REPO."
-        exit 1
-      fi
-    fi
-  fi
-
-  if ! _repo__check_is_repository "$repo"; then
-    _ui__log "Error: Not a jj repository: $repo"
-    exit 1
-  fi
-
-  # Canonicalize to match jj's own path representation (e.g. /var → /private/var on macOS)
-  repo="$(_path__resolve_symlinks "$repo")"
-  printf '%s' "$repo"
-}
-
-# Read task_prefix from .tt/config.toml; default "task/" if missing or unreadable.
-get_task_prefix() {
-  local repo="$1"
-  local config="$repo/$(_path__metadata 'config.toml')"
-  local default_prefix='task/'
-  if [[ -r "$config" ]]; then
-    convfmt --from toml --to json < "$config" | jq -r '.task_prefix // "'"$default_prefix"'"'
-  else
-    printf '%s' "$default_prefix"
-  fi
-}
-
-# Read project_prefix from .tt/config.toml; default "project/" if missing or unreadable.
-get_project_prefix() {
-  local repo="$1"
-  local config="$repo/$(_path__metadata 'config.toml')"
-  local default_prefix='project/'
-  if [[ -r "$config" ]]; then
-    convfmt --from toml --to json < "$config" | jq -r '.project_prefix // "'"$default_prefix"'"'
-  else
-    printf '%s' "$default_prefix"
-  fi
-}
+. "$_TT_LIB_DIR/history.sh"
+. "$_TT_LIB_DIR/workspace.sh"
+. "$_TT_LIB_DIR/worktree.sh"
 
 # Return true if bookmark name matches task ID pattern (<prefix><slug>-<hex>).
 is_task_branch() {
   local bookmark="$1"
   local prefix="$2"
   [[ "$bookmark" == "$prefix"* ]] && [[ "$bookmark" =~ -[0-9a-fA-F]{8}$ ]]
-}
-
-# Usage: set_workspace_dir REPO VIRTUAL_DIR
-# Creates or replaces the <repo>/.tt/workspace symlink pointing at VIRTUAL_DIR.
-# Always uses an absolute target path; the absolute-path guarantee is an
-# implementation detail enforced here so callers never need to think about it.
-set_workspace_dir() {
-  local repo="$1" virtual_dir="$2"
-  _path__make_absolute_symlink "$virtual_dir" "$repo/$(_path__metadata 'workspace')"
-}
-
-# Usage: init_tt_history REPO
-# Creates an empty .tt/history file in REPO if it does not already exist.
-# The history file is gitignored (via .tt/.gitignore) and used by the
-# transaction system to record before/after jj operation IDs for `tt history undo`.
-init_tt_history() {
-  local repo="$1"
-  local history_file="$repo/$(_path__metadata 'history')"
-  if [[ ! -f "$history_file" ]]; then
-    touch "$history_file"
-  fi
-}
-
-# Read workspace dir from .tt/workspace symlink; returns 1 if not configured.
-# Always resolves to an absolute path to prevent symlink loops.
-get_workspace_dir() {
-  local repo="$1"
-  local symlink="$repo/$(_path__metadata 'workspace')"
-  if [[ -L "$symlink" ]]; then
-    local ws_dir
-    ws_dir="$(readlink "$symlink")"
-    if [[ -n "$ws_dir" ]]; then
-      # Resolve relative targets against the symlink's parent directory,
-      # then canonicalise to strip OS-level symlinks (e.g. /var -> /private/var).
-      if [[ "$ws_dir" != /* ]]; then
-        ws_dir="$(_path__resolve_symlinks "$(cd "$(dirname "$symlink")" && cd "$ws_dir" && pwd)")"
-      else
-        ws_dir="$(_path__resolve_symlinks "$ws_dir")"
-      fi
-      printf '%s' "$ws_dir"
-      return 0
-    fi
-  fi
-  return 1
 }
 
 # Return true if bookmark name matches project ID pattern (<prefix><slug>-<hex>).
@@ -145,41 +44,6 @@ assert_bookmark_up_to_date() {
     _ui__log "    tt task checkin ${bookmark}"
     exit 1
   fi
-}
-
-# Usage: update_head_symlink WORKSPACE_DIR TARGET_PATH
-# Updates <workspace-dir>/HEAD to point at TARGET_PATH using an absolute path
-# to prevent symlink loops.
-update_head_symlink() {
-  local workspace_dir="$1" target_path="$2"
-  [[ -z "$workspace_dir" ]] && return 0
-  [[ ! -d "$workspace_dir" ]] && return 0
-  local head_path="$workspace_dir/HEAD"
-  _path__make_absolute_symlink "$target_path" "$head_path"
-  _ui__log "Updated HEAD -> $target_path"
-}
-
-# Usage: perform_workspace_switch REPO WORKSPACE_DIR TASK_ID TARGET_WORKTREE OUTGOING_WORKTREE PREVIOUS_TASK_ID
-# Fires pre-checkout hook, updates HEAD symlink, fires post-checkout hook.
-perform_workspace_switch() {
-  local repo="$1" workspace_dir="$2" task_id="$3"
-  local target_worktree="$4" outgoing_worktree="$5" previous_task_id="$6"
-
-  _ui__log "Switching to $task_id"
-
-  _hook__run "$repo" "pre-checkout" true "$outgoing_worktree" "${workspace_dir:-}" \
-    "TT_TASK_ID=$task_id" \
-    "TT_TASK_BRANCH=$task_id" \
-    "TT_PREVIOUS_TASK_ID=${previous_task_id}" \
-    "TT_PREVIOUS_TASK_BRANCH=${previous_task_id}"
-
-  update_head_symlink "$workspace_dir" "$target_worktree"
-
-  _hook__run "$repo" "post-checkout" false "$target_worktree" "${workspace_dir:-}" \
-    "TT_TASK_ID=$task_id" \
-    "TT_TASK_BRANCH=$task_id" \
-    "TT_PREVIOUS_TASK_ID=${previous_task_id}" \
-    "TT_PREVIOUS_TASK_BRANCH=${previous_task_id}"
 }
 
 # Usage: find_parent_branch REPO TASK_ID TASK_PREFIX PROJECT_PREFIX
@@ -241,8 +105,8 @@ get_task_range_context() {
   local repo="$1" task_id_arg="${2:-}"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   local task_bookmark upper_bound
 
@@ -355,8 +219,8 @@ get_full_task_range_records() {
   local repo="$1" task_id="$2" parent_bookmark="$3" upper_bound="$4"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   if ! is_task_branch "$task_id" "$task_prefix"; then
     _ui__log "Error: Full task range discovery requires a task branch (got '$task_id')."
@@ -663,50 +527,6 @@ find_branch_for_task() {
   return 1
 }
 
-# Usage: resolve_task_worktree REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX CURRENT_WORKTREE [WORKTREE_ARG]
-#
-# Resolves which worktree to operate on for BOOKMARK:
-#   0 matches → use CURRENT_WORKTREE (fallback)
-#   1 match   → use that worktree
-#   multiple  → if CURRENT_WORKTREE is one of them, use it;
-#               else if WORKTREE_ARG is given, use it;
-#               else error and list candidates
-#
-# Prints the resolved worktree path to stdout. Exits 1 on unresolvable ambiguity.
-resolve_task_worktree() {
-  local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
-  local current_worktree="$5" worktree_arg="${6:-}"
-
-  local found wt_count
-  found="$(find_worktrees_for_branch "$repo" "$bookmark" "$task_prefix" "$project_prefix")"
-  wt_count="$(printf '%s' "$found" | grep -c . 2>/dev/null || true)"
-
-  case "$wt_count" in
-    0) printf '%s' "$current_worktree" ;;
-    1) printf '%s' "$found" ;;
-    *)
-      if printf '%s\n' "$found" | grep -qxF "$current_worktree"; then
-        printf '%s' "$current_worktree"
-        return 0
-      fi
-      if [[ -n "$worktree_arg" ]]; then
-        printf '%s' "$worktree_arg"
-        return 0
-      fi
-      _ui__log "Error: Multiple workspaces found for '$bookmark'; use --worktree=<path>:"
-      printf '%s\n' "$found" | while IFS= read -r p; do _ui__log "  $p"; done
-      return 1
-      ;;
-  esac
-}
-
-# Usage: parse_workspace_list_line LINE
-# Parses one line from `jj workspace list -T 'name ++ ": " ++ root ++ "\n"'`.
-# Outputs two lines to stdout:
-#   line 1: workspace name
-#   line 2: absolute filesystem path, or empty string if the path is an error
-#            (i.e. the workspace has no recorded or resolvable path)
-# Lines with error paths look like: "name: <Error: Workspace has no recorded path: name>"
 # write_and_commit_on_branch REPO TARGET_WORKTREE BOOKMARK CURRENT_WORKTREE \
 #                            CURRENT_BOOKMARK MESSAGE WRITER_FN [WRITER_ARGS...]
 #
@@ -723,7 +543,7 @@ resolve_task_worktree() {
 #                  commands mutate tasks that have not been checked out.
 #
 # Must be called inside a transaction. CURRENT_BOOKMARK must be resolved by the
-# caller *before* tt_begin_transaction, since resolution can trigger a jj snapshot.
+# caller *before* _history__begin_transaction, since resolution can trigger a jj snapshot.
 write_and_commit_on_branch() {
   local repo="$1" target_worktree="$2" bookmark="$3"
   local current_worktree="$4" current_bookmark="$5" message="$6" writer_fn="$7"
@@ -749,51 +569,6 @@ write_and_commit_on_branch() {
     jj -R "$target_worktree" commit -m "$message"
     jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
   fi
-}
-
-parse_workspace_list_line() {
-  local line="$1"
-  local ws_name ws_path
-  ws_name="$(printf '%s' "$line" | sed 's/: .*//')"
-  ws_path="$(printf '%s' "$line" | sed 's/^[^:]*: //')"
-  if [[ "$ws_path" == '<Error:'* ]]; then
-    ws_path=''
-  fi
-  printf '%s\n%s\n' "$ws_name" "$ws_path"
-}
-
-# Usage: list_worktree_entries REPO
-# Prints one tab-separated "name<TAB>path" record per jj workspace in REPO.
-# path is the empty string when the workspace has no resolvable path.
-# Returns 1 if the workspace list cannot be read.
-list_worktree_entries() {
-  local repo="$1"
-  local ws_raw
-  ws_raw="$(_repo__list_worktrees "$repo")" || return 1
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    local parsed
-    parsed="$(parse_workspace_list_line "$line")"
-    printf '%s\t%s\n' \
-      "$(printf '%s' "$parsed" | sed -n '1p')" \
-      "$(printf '%s' "$parsed" | sed -n '2p')"
-  done <<< "$ws_raw"
-}
-
-# Usage: find_worktrees_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
-# Outputs one workspace root path per line for each jj workspace where
-# BOOKMARK is the current branch (resolved via resolve_current).
-find_worktrees_for_branch() {
-  local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
-  local entries
-  entries="$(list_worktree_entries "$repo")" || return 0
-  local ws_root ws_bookmark
-  while IFS=$'\t' read -r _ ws_root; do
-    [[ -z "$ws_root" || ! -d "$ws_root" ]] && continue
-    ws_bookmark="$(resolve_current_bookmark "$ws_root" "$task_prefix" "$project_prefix" 2>/dev/null)" || continue
-    [[ "$ws_bookmark" == "$bookmark" ]] && printf '%s\n' "$ws_root"
-  done <<< "$entries"
-  return 0
 }
 
 # Usage: resolve_current REPO TASK_PREFIX PROJECT_PREFIX
@@ -868,71 +643,6 @@ resolve_current_bookmark() {
   printf '%s' "$resolve_output" | sed -n '3p'
 }
 
-# Usage: resolve_workspace_name REPO WORKTREE_PATH
-# Prints the jj workspace name for the workspace at WORKTREE_PATH.
-# Returns 0 and prints name if found, returns 1 if not found.
-resolve_workspace_name() {
-  local repo="$1" worktree_path="$2"
-  local entries
-  entries="$(list_worktree_entries "$repo")" || return 1
-  local name path
-  while IFS=$'\t' read -r name path; do
-    [[ "$path" == "$worktree_path" ]] || continue
-    printf '%s' "$name"
-    return 0
-  done <<< "$entries"
-  return 1
-}
-
-# Usage: resolve_workspace_path REPO WS_NAME
-# Prints the recorded filesystem path of the jj workspace named WS_NAME.
-# Prints an empty string if the workspace has no recorded path.
-# Returns 0 if found, 1 if no workspace bears that name.
-resolve_workspace_path() {
-  local repo="$1" ws_name="$2"
-  local entries
-  entries="$(list_worktree_entries "$repo")" || return 1
-  local name path
-  while IFS=$'\t' read -r name path; do
-    [[ "$name" == "$ws_name" ]] || continue
-    printf '%s' "$path"
-    return 0
-  done <<< "$entries"
-  return 1
-}
-
-# Usage: list_workspaces REPO TASK_PREFIX PROJECT_PREFIX
-# Prints tab-separated workspace data, one line per workspace:
-#   name\tpath\ttask_id
-# path is empty string if unavailable; task_id is empty string if unresolved.
-list_workspaces() {
-  local repo="$1" task_prefix="$2" project_prefix="$3"
-  local entries
-  entries="$(list_worktree_entries "$repo")" || return 0
-  local ws_name ws_path task_id
-  while IFS=$'\t' read -r ws_name ws_path; do
-    [[ -z "$ws_name" ]] && continue
-
-    task_id=''
-    if [[ -n "$ws_path" && -d "$ws_path" ]]; then
-      task_id="$(resolve_current_bookmark "$ws_path" "$task_prefix" "$project_prefix" 2>/dev/null)" || true
-    fi
-
-    printf '%s\t%s\t%s\n' "$ws_name" "$ws_path" "$task_id"
-  done <<< "$entries"
-}
-
-# Usage: forget_worktree REPO WORKSPACE_NAME [WORKTREE_PATH]
-# Forgets the jj workspace from the repository model.
-# If WORKTREE_PATH is provided, also removes all files from disk.
-forget_worktree() {
-  local repo="$1" ws_name="$2" worktree_path="${3:-}"
-  _repo__forget_worktree "$repo" "$ws_name"
-  if [[ -n "$worktree_path" && -d "$worktree_path" ]]; then
-    rm -rf "$worktree_path"
-  fi
-}
-
 # Usage: check_bookmark_up_to_date REPO BOOKMARK
 # Returns 0 if there are no commits between BOOKMARK and the working-copy parent
 # (@-) that are not tracked by the bookmark. Returns 1 if commits exist.
@@ -943,25 +653,6 @@ check_bookmark_up_to_date() {
     -r "(::@- & ~::${bookmark})" \
     --no-graph -T 'change_id ++ "\n"' 2>/dev/null)" || return 0
   [[ -z "$ahead_commits" ]]
-}
-
-
-# Read the active worktree path from <workspace-dir>/HEAD.
-# Returns 1 if the HEAD symlink is absent or unreadable; never falls back.
-# Always returns a canonicalised absolute path (pwd -P).
-get_active_worktree() {
-  local workspace_dir="$1"
-  local head_path="$workspace_dir/HEAD"
-  [[ -L "$head_path" ]] || return 1
-  local head_target
-  head_target="$(readlink "$head_path")" || return 1
-  [[ -n "$head_target" ]] || return 1
-  # Resolve relative symlink
-  if [[ "$head_target" != /* ]]; then
-    head_target="${workspace_dir}/${head_target}"
-  fi
-  resolved="$(_path__resolve_symlinks "$head_target")"
-  printf '%s' "$resolved"
 }
 
 # ---------------------------------------------------------------------------
@@ -1061,182 +752,3 @@ write_task_stub() {
   _frontmatter__write_task_file "$repo/$file" "" "TODO" "" "$ts" "$ts"
   _ui__log "Created task file: $file"
 }
-
-# ---------------------------------------------------------------------------
-# Transaction management
-#
-# A "transaction" records the jj operation ID before and after a mutating tt
-# command, enabling `tt history undo` to restore the repository state.
-#
-# Log file: <canonical-repo>/.tt/history
-# Format:   one line per transaction: <before-op-id>:<after-op-id>
-#           An in-progress transaction has an empty after-op-id: <before-op-id>:
-#
-# History location: the history file always lives in the **canonical** jj repo
-# root (the repo whose .jj/repo entry is a directory, not a pointer file).
-# Secondary jj workspaces have a .jj/repo *file* containing a relative path
-# back to the canonical repo's .jj/repo directory. _repo__resolve_repository_root
-# follows that pointer so all workspaces share a single history file.
-#
-# Nesting: sub-commands invoked by a top-level command inherit TT_TRANSACTION_ID
-# via the environment. tt_begin_transaction is a no-op when TT_TRANSACTION_ID is
-# already set. The internal (non-exported) _TT_TRANSACTION_OWNER variable
-# stores the resolved history file path for the owning process; it is not
-# exported so sub-processes never inherit it (they are not the transaction owner).
-# ---------------------------------------------------------------------------
-
-# Usage: resolve_history_file_location REPO
-# Returns the path to the .tt/history file for REPO.
-# Follows .jj/repo pointer files so secondary jj workspaces resolve to the
-# canonical repo's history file rather than a per-worktree copy.
-# Canonical repos return <repo>/.tt/history directly.
-resolve_history_file_location() {
-  local repo="$1"
-  local canonical_repo
-  canonical_repo="$(_repo__resolve_repository_root "$repo")" || return 1
-  printf '%s/%s' "$canonical_repo" "$(_path__metadata 'history')"
-}
-
-# Usage: tt_begin_transaction REPO
-# Begins a tt transaction. No-op if TT_TRANSACTION_ID is already set (nested call).
-# Captures the current jj operation ID, checks for in-progress transactions,
-# appends "<before-op-id>:" to .tt/history, exports TT_TRANSACTION_ID, and sets
-# an ERR trap to auto-rollback on failure.
-#
-# Resolves and caches the canonical history file path in _TT_TRANSACTION_OWNER
-# at begin time (while the repo/worktree still exists on disk), so that
-# tt_commit_transaction and tt_rollback_transaction can use it even if the
-# worktree has been deleted by the time they run (e.g. worktree delete).
-tt_begin_transaction() {
-  local repo="$1"
-  # No-op when nested (parent command already began a transaction)
-  if [[ -n "${TT_TRANSACTION_ID:-}" ]]; then
-    return 0
-  fi
-
-  local history_file
-  history_file="$(resolve_history_file_location "$repo")" || exit 1
-
-  # Capture current jj operation ID
-  local before_op
-  before_op="$(_repo__get_operation_id "$repo")" || {
-    _ui__log "Error: Could not read jj operation ID to begin transaction"
-    exit 1
-  }
-
-  # Check for in-progress transaction (last line has empty after-op-id)
-  if [[ -f "$history_file" && -s "$history_file" ]]; then
-    local last_line
-    last_line="$(tail -n 1 "$history_file" 2>/dev/null)" || true
-    if [[ -n "$last_line" ]]; then
-      local last_after="${last_line#*:}"
-      if [[ -z "$last_after" ]]; then
-        _ui__log "Error: Another tt command is in progress (incomplete transaction)."
-        _ui__log "  To revert a crashed process: tt history undo --force"
-        _ui__log "  Or to keep the current state: tt history unlock --force"
-        exit 1
-      fi
-    fi
-  fi
-
-  # Append in-progress entry to history log
-  printf '%s:\n' "$before_op" >> "$history_file"
-
-  # Export for sub-commands (nested tt_begin_transaction calls will be no-ops)
-  export TT_TRANSACTION_ID="$before_op"
-  # Store resolved history file path for commit/rollback (not exported — sub-processes
-  # are not the transaction owner). Using the file path rather than `true` means we
-  # avoid re-resolving at commit/rollback time, which may fail if the worktree has
-  # been deleted by then (e.g. worktree delete).
-  _TT_TRANSACTION_OWNER="$history_file"
-
-  # Set ERR trap to auto-rollback on failure
-  trap 'tt_rollback_transaction "'"$repo"'"' ERR
-}
-
-# Usage: tt_commit_transaction REPO
-# Finalizes the transaction by writing the after-op-id into .tt/history.
-# No-op when called from a nested sub-command (not the transaction owner).
-tt_commit_transaction() {
-  local repo="$1"
-  # Only the owning process commits the transaction
-  if [[ -z "${_TT_TRANSACTION_OWNER:-}" ]]; then
-    return 0
-  fi
-
-  local history_file="${_TT_TRANSACTION_OWNER}"
-  local before_op="${TT_TRANSACTION_ID}"
-
-  # Derive canonical repo from the history file path (walk up from .tt/ to find .jj/).
-  # This is safe even if $repo (a worktree) has been deleted, since history_file
-  # is always inside the canonical repo which remains on disk.
-  local canonical_repo
-  canonical_repo="$(cd "$(dirname "$history_file")" && _repo__find_repository_root)" || {
-    _ui__log "Warning: Could not derive canonical repo from history file path; history may be incomplete"
-    canonical_repo="$repo"
-  }
-
-  # Capture current jj operation ID
-  local after_op
-  after_op="$(_repo__get_operation_id "$canonical_repo")" || {
-    _ui__log "Warning: Could not read jj operation ID for transaction commit; history may be incomplete"
-    after_op="unknown"
-  }
-
-  # Replace the last line (in-progress: "<before>:") with the completed entry ("<before>:<after>")
-  if [[ "$(uname)" == "Darwin" ]]; then
-    sed -i '' "$ s|^${before_op}:\$|${before_op}:${after_op}|" "$history_file"
-  else
-    sed -i "$ s|^${before_op}:\$|${before_op}:${after_op}|" "$history_file"
-  fi
-
-  # Clear ERR trap and ownership flag
-  trap - ERR
-  unset _TT_TRANSACTION_OWNER
-}
-
-# Usage: tt_rollback_transaction REPO
-# Rolls back the transaction by restoring jj to the before-op state and
-# removing the in-progress line from .tt/history.
-# No-op when called from a nested sub-command (not the transaction owner).
-tt_rollback_transaction() {
-  local repo="$1"
-  # Only the owning process rolls back
-  if [[ -z "${_TT_TRANSACTION_OWNER:-}" ]]; then
-    return 0
-  fi
-
-  local before_op="${TT_TRANSACTION_ID:-}"
-  if [[ -z "$before_op" ]]; then
-    return 0
-  fi
-
-  local history_file="${_TT_TRANSACTION_OWNER}"
-
-  # Derive canonical repo from the history file path (walk up from .tt/ to find .jj/).
-  local canonical_repo
-  canonical_repo="$(cd "$(dirname "$history_file")" && _repo__find_repository_root)" || canonical_repo="$repo"
-
-  _ui__log "Rolling back transaction (restoring jj operation: ${before_op:0:12}...)"
-
-  # Restore jj to before-op state.
-  # Use a subshell to cd into the canonical repo first, so jj can resolve CWD
-  # even when the caller's working directory has been deleted (e.g. after
-  # worktree delete).
-  (cd "$canonical_repo" && jj -R "$canonical_repo" op restore "$before_op" 2>/dev/null) || \
-    _ui__log "Warning: Could not restore jj operation state; manual recovery may be needed"
-
-  # Remove the in-progress line from history
-  if [[ -f "$history_file" ]]; then
-    if [[ "$(uname)" == "Darwin" ]]; then
-      sed -i '' "/^${before_op}:\$/d" "$history_file"
-    else
-      sed -i "/^${before_op}:\$/d" "$history_file"
-    fi
-  fi
-
-  # Clear ERR trap and ownership flag
-  trap - ERR
-  unset _TT_TRANSACTION_OWNER
-}
-

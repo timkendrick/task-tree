@@ -58,15 +58,15 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Resolve workspace dir via .tt/workspace symlink
   local workspace_dir
-  workspace_dir="$(get_workspace_dir "$repo")" || true
+  workspace_dir="$(_workspace__get_dir "$repo")" || true
 
   local bookmark task_file
 
@@ -101,14 +101,14 @@ main() {
 
   # Resolve target worktree for the task (with multiple-worktree disambiguation)
   local target_worktree
-  if ! target_worktree="$(resolve_task_worktree "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
+  if ! target_worktree="$(_worktree__resolve_for_task "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
       "$current_worktree" "$worktree_arg")"; then
     exit 1
   fi
 
   # Count how many worktrees exist for this task (needed for restore logic)
   local wt_count
-  wt_count="$(find_worktrees_for_branch "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
+  wt_count="$(_worktree__find_for_branch "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
     | grep -c . 2>/dev/null || true)"
 
   # Precondition: WC must be clean
@@ -158,7 +158,7 @@ main() {
   fi
 
   # Begin transaction (records before-op for undo)
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
   # Run pre-complete hook (blocking)
   _hook__run "$repo" "pre-complete" true "$target_worktree" "${workspace_dir:-}" \
@@ -209,7 +209,7 @@ main() {
   fi
 
   # Commit transaction (records after-op for undo)
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
 
   # Run post-complete hook (non-blocking)
   _hook__run "$repo" "post-complete" false "$target_worktree" "${workspace_dir:-}" \

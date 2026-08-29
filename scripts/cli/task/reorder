@@ -124,7 +124,7 @@ reorder_subtask() {
 
   # 3. Resolve parent worktree
   local parent_worktree
-  parent_worktree="$(resolve_task_worktree "$repo" "$parent_id" "$task_prefix" "$project_prefix" \
+  parent_worktree="$(_worktree__resolve_for_task "$repo" "$parent_id" "$task_prefix" "$project_prefix" \
     "$current_worktree" "$worktree_arg")" || exit 1
 
   # 4. Precondition: WC must be clean
@@ -247,7 +247,7 @@ reorder_subtask() {
   child_title="$(_frontmatter__parse_quoted_field "$child_content" "title")"
 
   # 10. Begin transaction
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
   # 11. Write to parent worktree and commit
   jj -R "$parent_worktree" new "$parent_id" >/dev/null 2>&1
@@ -263,7 +263,7 @@ reorder_subtask() {
   jj -R "$parent_worktree" bookmark set "$parent_id" -r '@-' >/dev/null 2>&1
 
   # 12. Commit transaction
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
 
   # 13. Output
   _ui__log "Reordered: $child_id in $parent_id"
@@ -296,7 +296,7 @@ reorder_frontmatter() {
 
   # 3. Resolve the worktree to operate in
   local canonical_worktree
-  canonical_worktree="$(resolve_task_worktree "$repo" "$canonical_branch" \
+  canonical_worktree="$(_worktree__resolve_for_task "$repo" "$canonical_branch" \
     "$task_prefix" "$project_prefix" "$current_worktree" "$worktree_arg")" || exit 1
 
   # 4. Precondition: WC must be clean
@@ -348,7 +348,7 @@ reorder_frontmatter() {
   fi
 
   # 10. Begin transaction
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
   # 11. Write to canonical worktree and commit
   jj -R "$canonical_worktree" new "$canonical_branch" >/dev/null 2>&1
@@ -363,7 +363,7 @@ reorder_frontmatter() {
   jj -R "$canonical_worktree" bookmark set "$canonical_branch" -r '@-' >/dev/null 2>&1
 
   # 12. Commit transaction
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
 
   # 13. Output
   _ui__log "Tidied: $task_id"
@@ -404,11 +404,11 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   local current_worktree
   current_worktree="$(_repo__resolve_worktree_root "$repo")"
