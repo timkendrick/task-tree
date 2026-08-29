@@ -101,21 +101,21 @@ main() {
       _ui__log "Error: Branch '$branch' not found in repository."
       exit 1
     fi
-    if is_task_branch "$branch" "$task_prefix"; then
+    if _task__check_is_task_branch "$branch" "$task_prefix"; then
       task_suffix="${branch#$task_prefix}"
-    elif is_project_branch "$branch" "$project_prefix"; then
+    elif _task__check_is_project_branch "$branch" "$project_prefix"; then
       task_suffix="${branch#$project_prefix}"
     else
       _ui__log "Error: '$task_id_arg' is not a task or project branch."
       exit 1
     fi
   else
-    branch="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+    branch="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$branch" ]]; then
       _ui__log "Error: Not on a task or project branch. Use --task to specify."
       exit 1
     fi
-    if is_task_branch "$branch" "$task_prefix"; then
+    if _task__check_is_task_branch "$branch" "$task_prefix"; then
       task_suffix="${branch#$task_prefix}"
     else
       task_suffix="${branch#$project_prefix}"
@@ -138,9 +138,9 @@ main() {
   fi
 
   # Determine whether the commit must be made cross-branch (must resolve BEFORE
-  # starting the transaction, since resolve_current may trigger a jj snapshot)
+  # starting the transaction, since _task__resolve_current may trigger a jj snapshot)
   local current_bookmark
-  current_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+  current_bookmark="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
 
   # Read the task file from the task's own branch, so tasks that are not checked
   # out anywhere can still be edited.
@@ -204,7 +204,7 @@ main() {
     { print }
   ')"
 
-  # Writer invoked by write_and_commit_on_branch with the destination worktree root.
+  # Writer invoked by _task__write_and_commit_on_branch with the destination worktree root.
   ctx_delete_writer() {
     local root="$1"
     printf '%s\n' "$updated_task_content" > "$root/$task_file"
@@ -215,7 +215,7 @@ main() {
   # so the before-op matches the previous command's after-op in the history chain.
   _history__begin_transaction "$repo"
 
-  write_and_commit_on_branch "$repo" "$target_worktree" "$branch" \
+  _task__write_and_commit_on_branch "$repo" "$target_worktree" "$branch" \
     "$current_worktree" "$current_bookmark" \
     "$(_commit__format_message "task" "context:delete" "$branch" "$ctx_title")" \
     ctx_delete_writer

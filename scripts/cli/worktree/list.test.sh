@@ -37,7 +37,7 @@ test_worktree_list__shows_task_id_for_task_workspace() {
 
 test_worktree_list__task_inferred_from_ancestry() {
   # The workspace working copy has a plain jj commit on top of the task bookmark tip.
-  # resolve_current should still find the task bookmark in the ancestry.
+  # _task__resolve_current should still find the task bookmark in the ancestry.
   setup_workspace "list-ancestry"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true

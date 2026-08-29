@@ -46,7 +46,7 @@ print_all_ranges() {
   local repo="$1" task_id="$2" parent_bookmark="$3" upper_bound="$4" git_mode="$5"
 
   local records
-  records="$(get_full_task_range_records "$repo" "$task_id" "$parent_bookmark" "$upper_bound")" || exit 1
+  records="$(_task__get_full_range_records "$repo" "$task_id" "$parent_bookmark" "$upper_bound")" || exit 1
 
   local base tip _kind _order _ts
   if "$git_mode"; then
@@ -99,7 +99,7 @@ main() {
   repo="$(_workspace__resolve_repo "$repo")"
 
   local context exit_code=0
-  context="$(get_task_range_context "$repo" "$task_id_arg")" || exit_code=$?
+  context="$(_task__get_range_context "$repo" "$task_id_arg")" || exit_code=$?
   [[ $exit_code -ne 0 ]] && exit $exit_code
 
   local task_id parent_bookmark upper_bound
@@ -108,7 +108,7 @@ main() {
   if "$all_mode"; then
     local task_prefix
     task_prefix="$(_workspace__get_task_prefix "$repo")"
-    if ! is_task_branch "$task_id" "$task_prefix"; then
+    if ! _task__check_is_task_branch "$task_id" "$task_prefix"; then
       _ui__log "Error: --all does not support project branches."
       exit 1
     fi
@@ -119,7 +119,7 @@ main() {
   # Build the range
   local from_rev to_rev
   if "$git_mode"; then
-    from_rev="$(resolve_task_fork_point "$repo" "$parent_bookmark" "$upper_bound")" || exit 1
+    from_rev="$(_task__resolve_fork_point "$repo" "$parent_bookmark" "$upper_bound")" || exit 1
     to_rev="$(jj -R "$repo" log -r "$upper_bound" --no-graph -T 'commit_id' 2>/dev/null)" || {
       _ui__log "Error: Could not resolve revision '$upper_bound'."
       exit 1

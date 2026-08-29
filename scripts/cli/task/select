@@ -69,13 +69,13 @@ main() {
     [[ -z "$b" ]] && continue
     
     # Check if this is a task or project branch
-    if ! is_task_branch "$b" "$task_prefix" && ! is_project_branch "$b" "$project_prefix"; then
+    if ! _task__check_is_task_branch "$b" "$task_prefix" && ! _task__check_is_project_branch "$b" "$project_prefix"; then
       continue
     fi
     
     # Get task file path
     local suffix
-    if is_task_branch "$b" "$task_prefix"; then
+    if _task__check_is_task_branch "$b" "$task_prefix"; then
       suffix="${b#$task_prefix}"
     else
       suffix="${b#$project_prefix}"

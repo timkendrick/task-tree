@@ -45,7 +45,7 @@ main() {
   project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   local current_branch
-  if ! current_branch="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"; then
+  if ! current_branch="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"; then
     _ui__log "Error: Not on a task or project branch."
     exit 1
   fi
