@@ -54,8 +54,17 @@ _history__resolve_file() {
 # Usage: _history__begin_transaction REPO
 # Begins a tt transaction. No-op if TT_TRANSACTION_ID is already set (nested call).
 # Captures the current jj operation ID, checks for in-progress transactions,
-# appends "<before-op-id>:" to .tt/history, exports TT_TRANSACTION_ID, and sets
-# an ERR trap to auto-rollback on failure.
+# appends "<before-op-id>:" to .tt/history, exports TT_TRANSACTION_ID, sets an
+# ERR trap to auto-rollback on failure, and finally snapshots the current
+# worktree's working copy so pending on-disk changes are captured as part of
+# the transaction. The ordering is deliberate: the before-op ID is recorded
+# first, so the operation created by the snapshot falls inside the transaction
+# and `tt history undo` reverts it along with everything else.
+#
+# The bookmark-on-@ precondition (_worktree__ensure_working_copy) is NOT
+# checked here: it needs branch-model knowledge this module does not have, so
+# commands that write to branches must check it themselves before beginning
+# the transaction.
 #
 # Resolves and caches the canonical history file path in _TT_TRANSACTION_OWNER
 # at begin time (while the repo/worktree still exists on disk), so that
@@ -106,6 +115,14 @@ _history__begin_transaction() {
 
   # Set ERR trap to auto-rollback on failure
   trap '_history__rollback_transaction "'"$repo"'"' ERR
+
+  # Capture pending working-copy changes into the working-copy commit. This
+  # must run AFTER the before-op ID is recorded above so that undoing the
+  # transaction also reverts the snapshot. A failure here rolls the
+  # transaction back via the ERR trap just installed.
+  local snapshot_worktree
+  snapshot_worktree="$(_repo__resolve_worktree_root "$repo")"
+  _repo__snapshot_worktree "$snapshot_worktree"
 }
 
 # Usage: _history__commit_transaction REPO
@@ -153,6 +170,19 @@ _history__commit_transaction() {
 # Rolls back the transaction by restoring jj to the before-op state and
 # removing the in-progress line from .tt/history.
 # No-op when called from a nested sub-command (not the transaction owner).
+#
+# Working-copy preservation: restoring an operation also resets the on-disk
+# working copy, which would strip the changes captured by the transaction's
+# begin-time snapshot (and any captured later) from disk. To keep the user's
+# uncommitted work, the files changed in the working-copy commit are copied
+# aside before the restore and copied back afterwards (deletions are
+# likewise re-applied), but only when the restore lands on the same change —
+# i.e. the transaction never moved the working copy; when it did, the plain
+# restore semantics stand and the pre-transaction position wins. The
+# preserved files end up exactly as they were before the transaction: on
+# disk, not yet captured, picked up by the next snapshot. Preservation is
+# best-effort: every step degrades to a plain restore (e.g. when the
+# worktree has been deleted mid-transaction).
 _history__rollback_transaction() {
   local repo="$1"
   # Only the owning process rolls back
@@ -173,11 +203,66 @@ _history__rollback_transaction() {
 
   _ui__log "Rolling back transaction (restoring jj operation: ${before_op:0:12}...)"
 
+  # Copy the working-copy commit's changed files aside before the restore so
+  # they can be re-applied afterwards (see the header comment). Best-effort:
+  # failures simply skip preservation.
+  local wc_worktree='' wc_change_before='' preserve_dir='' rel
+  wc_worktree="$(_repo__resolve_worktree_root "$repo")" || wc_worktree=''
+  if [[ -n "$wc_worktree" && -d "$wc_worktree" ]]; then
+    _repo__snapshot_worktree "$wc_worktree" || true
+    wc_change_before="$(_repo__resolve_change "$wc_worktree" '@')" || wc_change_before=''
+    local changed_files=''
+    changed_files="$(_repo__list_changed_files "$wc_worktree" '@')" || changed_files=''
+    if [[ -n "$changed_files" ]]; then
+      preserve_dir="$(mktemp -d)" || preserve_dir=''
+    fi
+    if [[ -n "$preserve_dir" ]]; then
+      while IFS= read -r rel; do
+        [[ -z "$rel" ]] && continue
+        if [[ -e "$wc_worktree/$rel" || -L "$wc_worktree/$rel" ]]; then
+          mkdir -p "$preserve_dir/files/$(dirname "$rel")" 2>/dev/null || continue
+          cp -pRP "$wc_worktree/$rel" "$preserve_dir/files/$rel" 2>/dev/null || true
+        else
+          # The working-copy change is a deletion: remember it so the file
+          # the restore re-creates can be deleted again.
+          printf '%s\n' "$rel" >> "$preserve_dir/deleted"
+        fi
+      done <<< "$changed_files"
+    fi
+  fi
+
   # Restore the VCS to the before-op state. The backend operation works even
   # when the caller's working directory has been deleted (e.g. after
   # worktree delete).
   _repo__restore_operation "$canonical_repo" "$before_op" || \
     _ui__log "Warning: Could not restore jj operation state; manual recovery may be needed"
+
+  # Re-apply the preserved working-copy changes when the restore landed on
+  # the same change (i.e. the transaction never moved the working copy).
+  if [[ -n "$preserve_dir" ]]; then
+    local wc_change_after=''
+    wc_change_after="$(_repo__resolve_change "$wc_worktree" '@')" || wc_change_after=''
+    if [[ -n "$wc_change_before" && "$wc_change_after" == "$wc_change_before" ]]; then
+      if [[ -d "$preserve_dir/files" ]]; then
+        ( cd "$preserve_dir/files" && find . \( -type f -o -type l \) -print ) 2>/dev/null \
+          | while IFS= read -r rel; do
+              rel="${rel#./}"
+              [[ -z "$rel" ]] && continue
+              mkdir -p "$wc_worktree/$(dirname "$rel")" 2>/dev/null || continue
+              rm -f "$wc_worktree/$rel" 2>/dev/null
+              cp -pRP "$preserve_dir/files/$rel" "$wc_worktree/$rel" 2>/dev/null || \
+                _ui__log "Warning: Could not preserve uncommitted change to $rel; recover it with: jj op log"
+            done
+      fi
+      if [[ -f "$preserve_dir/deleted" ]]; then
+        while IFS= read -r rel; do
+          [[ -z "$rel" ]] && continue
+          rm -f "$wc_worktree/$rel" 2>/dev/null || true
+        done < "$preserve_dir/deleted"
+      fi
+    fi
+    rm -rf "$preserve_dir"
+  fi
 
   # Remove the in-progress line from history
   if [[ -f "$history_file" ]]; then

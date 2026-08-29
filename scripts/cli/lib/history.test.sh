@@ -67,6 +67,44 @@ test__history__transaction__rollback_restores_op_and_removes_entry() {
   assert_history_count "in-progress line removed from history" 0
 }
 
+test__history__transaction__begin_snapshots_working_copy() {
+  setup_workspace "history-snapshot"
+
+  # Capture the op ID BEFORE creating the pending file: the harness helper
+  # itself snapshots the working copy, so calling it with the file already on
+  # disk would fold the file into a snapshot op of its own.
+  local before_op
+  before_op="$(get_jj_op)"
+  # A file jj has never snapshotted: only the transaction's own snapshot can
+  # capture it into the working-copy commit.
+  edit_file "$REPO/pending.txt" "pending"
+
+  (
+    unset TT_TRANSACTION_ID
+    _history__begin_transaction "$REPO"
+    # The before-op ID must be recorded ahead of the snapshot, so that
+    # undoing the transaction also reverts the snapshot operation.
+    get_history_lines
+    assert_eq "before-op recorded is the pre-snapshot op" \
+      "$(history_before_op "${HISTORY_LINES[${#HISTORY_LINES[@]}-1]}")" \
+      "$before_op"
+    assert_neq "snapshot advanced the op log inside the transaction" \
+      "$(get_jj_op)" "$before_op"
+    assert_contains "pending file captured in the working-copy commit" \
+      "$(jj -R "$REPO" --ignore-working-copy diff -r '@' --name-only 2>/dev/null)" \
+      "pending.txt"
+    _history__rollback_transaction "$REPO" 2>/dev/null
+  )
+
+  # Rollback restores the pre-transaction state, but the user's uncommitted
+  # work survives: the file stays on disk (re-applied onto the restored
+  # working-copy commit rather than stripped by the operation restore).
+  assert_file_exists "pending file still on disk after rollback" "$REPO/pending.txt"
+  assert_eq "pending content intact after rollback" \
+    "$(cat "$REPO/pending.txt")" "pending"
+  assert_history_count "in-progress line removed by rollback" 0
+}
+
 test__history__transaction__nested_begin_is_noop() {
   setup_workspace "history-nested"
 

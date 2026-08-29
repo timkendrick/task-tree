@@ -57,6 +57,8 @@ _repo__get_working_copy_parent()   { _jj__get_working_copy_parent "$@"; }
 _repo__set_working_copy_revision() { _jj__set_working_copy_revision "$@"; }
 _repo__new_working_copy_child()    { _jj__new_working_copy_child "$@"; }
 _repo__commit_working_copy()       { _jj__commit_working_copy "$@"; }
+_repo__snapshot_worktree()         { _jj__snapshot_worktree "$@"; }
+_repo__reattach_worktree()         { _jj__reattach_worktree "$@"; }
 
 # --- Mutations (bare; no working copy involved) ---
 _repo__commit_changeset()          { _jj__commit_changeset "$@"; }
@@ -88,5 +90,6 @@ _repo__read_file_at_operation()    { _jj__read_file_at_operation "$@"; }
 _repo__check_file_exists_at_revision() { _jj__check_file_exists_at_revision "$@"; }
 _repo__list_files_at_revision()    { _jj__list_files_at_revision "$@"; }
 _repo__list_files_at_operation()   { _jj__list_files_at_operation "$@"; }
+_repo__list_changed_files()        { _jj__list_changed_files "$@"; }
 _repo__get_file_diff()             { _jj__get_file_diff "$@"; }
 _repo__show_diff()                 { _jj__show_diff "$@"; }

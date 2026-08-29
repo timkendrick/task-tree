@@ -53,6 +53,8 @@
 #     _jj__set_working_copy_revision — point the working copy at a revision
 #     _jj__new_working_copy_child    — start a new working-copy commit
 #     _jj__commit_working_copy       — commit the working copy with a message
+#     _jj__snapshot_worktree         — capture on-disk changes into the working-copy commit
+#     _jj__reattach_worktree         — rebase the working-copy commit onto a destination
 #   Mutations (bare; no working copy involved):
 #     _jj__commit_changeset          — build a commit in the backing Git store from a staged tree
 #     _jj__create_merge_commit       — create a merge commit of two or more parents
@@ -80,6 +82,7 @@
 #     _jj__check_file_exists_at_revision — whether a file exists at a revision
 #     _jj__list_files_at_revision    — tracked files at a revision
 #     _jj__list_files_at_operation   — tracked files at an operation + revision
+#     _jj__list_changed_files        — files a revision changes relative to its parents
 #     _jj__get_file_diff             — Git-format diff of one file at a revision
 #     _jj__show_diff                 — Git-format diff between two revisions
 
@@ -276,10 +279,15 @@ _jj__check_backend_supported() {
 # Prints the current jj operation ID to stdout.
 # Returns 1 if the operation ID cannot be read.
 # Uses the subshell-cd runner so the read works even when the caller's working
-# directory has been deleted.
+# directory has been deleted. Passes --ignore-working-copy because this must
+# be a pure read: without it, jj snapshots the working copy before printing
+# the op ID, so the "current" operation would be a snapshot created by the
+# read itself. Transaction bookkeeping depends on the purity — the before-op
+# recorded at transaction begin must precede the transaction's own working-
+# copy snapshot so that undoing the transaction reverts the snapshot too.
 _jj__get_operation_id() {
   local repo="$1"
-  __jj__run_cd "$repo" op log --no-graph -T id -n 1
+  __jj__run_cd "$repo" --ignore-working-copy op log --no-graph -T id -n 1
 }
 
 # Usage: _jj__restore_operation REPO OP_ID
@@ -635,6 +643,30 @@ _jj__commit_working_copy() {
   __jj__run_quiet "$worktree" commit -m "$message"
 }
 
+# Usage: _jj__snapshot_worktree WORKTREE
+# Captures WORKTREE's on-disk changes into its working-copy commit. This is
+# the deliberate-snapshot exception to the module's --ignore-working-copy
+# convention: the whole point of the call is jj's side effect of snapshotting
+# the working copy whenever a command loads it without --ignore-working-copy,
+# so a cheap no-output log read is issued WITHOUT that flag. A clean working
+# copy makes this a no-op. Status only; never logs, never exits.
+_jj__snapshot_worktree() {
+  local worktree="$1"
+  __jj__run_quiet "$worktree" log -r '@' --no-graph -T ''
+}
+
+# Usage: _jj__reattach_worktree WORKTREE FROM_CHANGE DEST_REV
+# Rebases WORKTREE's working-copy commit — addressed by its stable change ID
+# FROM_CHANGE, which survives rebases where a commit ID would go stale —
+# onto DEST_REV, together with any descendants. Runs against WORKTREE
+# WITHOUT --ignore-working-copy, deliberately: jj then snapshots any pending
+# on-disk changes into the working-copy commit before rebasing it, and
+# updates WORKTREE's on-disk files to the rebased commit in the same step.
+# Status only; never logs, never exits.
+_jj__reattach_worktree() {
+  local worktree="$1" from_change="$2" dest_rev="$3"
+  __jj__run_quiet "$worktree" rebase -s "$from_change" -d "$dest_rev"
+}
 # ---------------------------------------------------------------------------
 # Mutations (bare)
 #
@@ -1046,6 +1078,17 @@ _jj__list_files_at_revision() {
   else
     __jj__run_cd "$repo" --ignore-working-copy file list -r "$rev"
   fi
+}
+
+# Usage: _jj__list_changed_files REPO REV
+# Prints the repo-relative paths of the files that REV changes relative to
+# its parents (added, modified or deleted), one per line. Passes
+# --ignore-working-copy: when REV is @ and pending on-disk changes should be
+# included, callers must snapshot first. Uses the subshell-cd runner so the
+# printed paths are always repo-relative. Returns jj's exit code.
+_jj__list_changed_files() {
+  local repo="$1" rev="$2"
+  __jj__run_cd "$repo" --ignore-working-copy diff -r "$rev" --name-only
 }
 
 # Usage: _jj__list_files_at_operation REPO OP REV [PREFIX]
