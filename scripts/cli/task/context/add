@@ -8,18 +8,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task context add — Create a standalone context file for a task.
 #
 # Usage:
-#   add [<task-id>] [--title <title>] [--slug <slug>]
-#       [--worktree=<path>] [--repo PATH]
+#   add [<task-id>] [--title <title>] [--slug <slug>] [--repo PATH]
 #
 # Options:
 #   <task-id>            Task branch to add context to (default: current branch).
 #   --title TITLE        Context file title (prompted if missing and interactive).
 #   --slug SLUG          Context slug (derived from title if not given).
-#   --worktree=<path>    Worktree to use when task has multiple worktrees.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #
-# The task need not be checked out: if it has no worktree of its own, the context
-# is committed directly onto the task branch, leaving the working copy unchanged.
+# The task need not be checked out: the context is committed directly onto the
+# task branch, leaving the working copy unchanged.
 #
 # Environment variables:
 #   COMMAND_NAME - Command prefix (e.g., "task context") set by parent dispatcher
@@ -29,7 +27,7 @@ readonly SCRIPT_NAME="${COMMAND_NAME:+$COMMAND_NAME }${0##*/}"
 usage() {
   cat <<EOF
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [--title TITLE] [--slug SLUG]
-                      [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]
+                      [--repo PATH] [--workspace-dir PATH]
 
 Create a standalone context file for the current task (or <task-id>).
 
@@ -37,8 +35,8 @@ A context file is a dated freeform markdown file stored alongside the task
 at .tt/task/<task-slug>/context/<ctx-slug>-<hex>.md. It is referenced in the
 task's frontmatter via a "context: context/<ctx-slug>-<hex>" entry.
 
-The task need not be checked out: if it has no worktree of its own, the context
-is committed directly onto the task branch, leaving the working copy unchanged.
+The task need not be checked out: the context is committed directly onto the
+task branch, leaving the working copy unchanged.
 
 Context body is read from stdin (via pipe or redirect) if stdin is not a terminal;
 otherwise an editor is opened for body input.
@@ -47,7 +45,6 @@ Options:
   <task-id>             Task branch to add context to (default: current branch).
   --title TITLE         Context file title (prompted if missing and interactive).
   --slug SLUG           Context file slug (derived from title if not given).
-  --worktree=<path>     Worktree to use when task has multiple worktrees.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
   --workspace-dir PATH  Virtual project dir. Overrides workspace_dir in .tt/config.toml.
 
@@ -68,7 +65,6 @@ main() {
   local ctx_title=''
   local ctx_slug=''
   local task_id_arg=''
-  local worktree_arg=''
   local repo=''
 
   while [[ $# -gt 0 ]]; do
@@ -79,7 +75,6 @@ main() {
       --slug)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         ctx_slug="$2"; shift 2 ;;
-      --worktree=*) worktree_arg="${1#--worktree=}"; shift ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
@@ -120,7 +115,7 @@ main() {
       _ui__log "Error: '$task_id_arg' is not a task or project branch."
       exit 1
     fi
-    if ! jj -R "$repo" log -r "$bookmark" --no-graph -T '' 2>/dev/null; then
+    if ! _task__check_branch_exists "$repo" "$bookmark"; then
       _ui__log "Error: Branch '$bookmark' not found in repository."
       exit 1
     fi
@@ -139,22 +134,8 @@ main() {
     fi
   fi
 
-  # Resolve target worktree
-  local current_worktree target_worktree
-  current_worktree="$(_repo__resolve_worktree_root "$repo")"
-
-  # A task without its own worktree resolves to the current worktree; the commit
-  # is then made cross-branch directly on the task bookmark.
-  if ! target_worktree="$(_worktree__resolve_for_task "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
-      "$current_worktree" "$worktree_arg")"; then
-    exit 1
-  fi
-
-  # Precondition: WC must be clean (we'll commit after writing the context file)
-  if ! _repo__check_working_copy_clean "$target_worktree"; then
-    _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
-    exit 1
-  fi
+  # Precondition: the working-copy commit must not carry a bookmark
+  _worktree__ensure_working_copy "$repo" || exit 1
 
   # Prompt for title if not provided
   if [[ -z "$ctx_title" ]]; then
@@ -219,17 +200,13 @@ main() {
   ctx_ts="$(_string__generate_timestamp)"
 
   # Verify the task file exists on the target branch (it may not be checked out)
-  if ! _repo__read_file_at_revision "$repo" "$bookmark" "$task_file" >/dev/null; then
+  if ! _task__read_file "$repo" "$bookmark" "$task_file" >/dev/null; then
     _ui__log "Error: task file not found on branch '$bookmark': $task_file"
     exit 1
   fi
 
-  # Determine if we need a cross-branch commit (must resolve BEFORE starting
-  # the transaction, since _task__resolve_current may trigger a jj snapshot)
-  local current_bookmark
-  current_bookmark="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
-
-  # Writer invoked by _task__write_and_commit_on_branch with the destination worktree root.
+  # Writer invoked by _task__commit_on_branch with the staging root: writes the
+  # new context file and records it in the task file's frontmatter.
   ctx_add_writer() {
     local root="$1"
     mkdir -p "$(dirname "$root/$ctx_file")"
@@ -239,17 +216,17 @@ main() {
     _frontmatter__update_timestamp "$root/$task_file" "$ctx_ts"
   }
 
-  # Begin transaction (records before-op for undo) BEFORE any filesystem writes,
-  # so the before-op matches the previous command's after-op in the history chain.
+  # Begin transaction (records before-op for undo)
   _history__begin_transaction "$repo"
 
-  _task__write_and_commit_on_branch "$repo" "$target_worktree" "$bookmark" \
-    "$current_worktree" "$current_bookmark" \
+  _task__commit_on_branch "$repo" "$bookmark" \
     "$(_commit__format_message "task" "context:add" "$bookmark" "$ctx_title")" \
-    ctx_add_writer
+    --modify "$task_file" -- ctx_add_writer >/dev/null
 
   # Commit transaction (records after-op for undo)
   _history__commit_transaction "$repo"
+
+  _worktree__report_unsynced "$repo" "$bookmark"
 
   _ui__log "Added context: $ctx_id ($bookmark)"
   printf '%s\n' "$ctx_id"

@@ -76,7 +76,7 @@ test_context_add__empty_body_rejected() {
 }
 
 
-test_context_add__dirty_wc_rejected() {
+test_context_add__dirty_wc_preserved_not_absorbed() {
   setup_workspace "ctxadd-dirty"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
@@ -86,7 +86,67 @@ test_context_add__dirty_wc_rejected() {
 
   output="" exit_code=0
   output=$(echo "Body" | run_tt task context add --title "Ctx" --slug "ctx" 2>&1) || exit_code=$?
-  assert_failure "dirty WC rejected" "$exit_code"
+  assert_success "context add succeeds with dirty WC" "$exit_code"
+  ctx_id=$(printf '%s' "$output" | grep '^context/' | tail -1)
+  assert_context_entry "task has context entry" "$task_id" "$ctx_id"
+  assert_file_exists "dirty file still on disk" "$REPO/dirty.txt"
+  assert_wc_dirty "WC still dirty"
+  modified=$(get_modified_files "$task_id")
+  assert_not_contains "dirty file not in context commit" "$modified" "dirty.txt"
+  assert_file_not_on_branch "dirty file not on branch" "$task_id" "dirty.txt"
+}
+
+
+test_context_add__refuses_bookmark_on_working_copy() {
+  setup_workspace "ctxadd-bm-refusal"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+
+  # Clean working copy carrying the task's own bookmark
+  jj -R "$REPO" bookmark set "$task_id" -r '@' >/dev/null 2>&1
+  output="" exit_code=0
+  output=$(echo "Body" | run_tt task context add --title "Ctx" --slug "ctx" 2>&1) || exit_code=$?
+  assert_failure "own bookmark on @ refused" "$exit_code"
+  assert_contains "error names the bookmark" "$output" "tip of bookmark"
+  assert_context_count "no context added" "$task_id" "0"
+
+  # Bookmark unrelated to the target task (explicit task-id, so the
+  # working-copy guard itself is what refuses)
+  jj -R "$REPO" bookmark set "$task_id" -r '@-' --allow-backwards >/dev/null 2>&1
+  jj -R "$REPO" bookmark set unrelated -r '@' >/dev/null 2>&1
+  exit_code=0
+  output=$(echo "Body" | run_tt task context add --title "Ctx" --slug "ctx" "$task_id" 2>&1) || exit_code=$?
+  assert_failure "unrelated bookmark on @ refused" "$exit_code"
+  assert_contains "error names the unrelated bookmark" "$output" "unrelated"
+  assert_context_count "still no context added" "$task_id" "0"
+}
+
+
+test_context_add__working_copy_commit_stays_put() {
+  setup_workspace "ctxadd-wc-stays"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "ta" "A") || true
+  task_b=$(create_task "tb" "B") || true
+  checkout_task "$task_a" >/dev/null || true
+
+  # Same-branch context add: @ keeps its change ID and sits on the new branch tip
+  change_before=$(get_wc_change_id)
+  echo "Body A" | run_tt task context add --title "Ctx A" --slug "ctx-a" >/dev/null 2>&1 || true
+  change_after=$(get_wc_change_id)
+  assert_eq "same WC change after same-branch context add" "$change_after" "$change_before"
+  parent_commit=$(jj -R "$REPO" log -r '@-' --no-graph -T 'commit_id.short(8)' 2>/dev/null)
+  assert_eq "@ parent is new branch tip" "$parent_commit" "$(get_bookmark_commit "$task_a")"
+
+  # Explicit task-id for a branch not checked out anywhere: @ entirely untouched
+  wc_before=$(get_wc_commit)
+  add_b=$(echo "Body B" | run_tt task context add --title "Ctx B" --slug "ctx-b" "$task_b" 2>/dev/null) || true
+  ctx_b=$(printf '%s' "$add_b" | grep '^context/' | tail -1)
+  wc_after=$(get_wc_commit)
+  assert_eq "@ commit unchanged after cross-branch context add" "$wc_after" "$wc_before"
+  assert_context_entry "context on task B" "$task_b" "$ctx_b"
 }
 
 

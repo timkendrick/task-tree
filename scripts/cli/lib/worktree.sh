@@ -7,6 +7,7 @@
 #   _worktree__list             — one "name<TAB>path<TAB>task_id" record per jj workspace
 #   _worktree__resolve_name     — workspace name for a worktree path
 #   _worktree__resolve_path     — recorded filesystem path for a workspace name
+#   _worktree__resolve_current  — root of the worktree the command runs in
 #   _worktree__find_for_branch  — workspace roots whose current branch is a bookmark
 #   _worktree__resolve_for_task — pick the worktree to operate on for a bookmark
 #   _worktree__delete           — forget a workspace and remove its files from disk
@@ -110,17 +111,32 @@ _worktree__resolve_path() {
   return 1
 }
 
+# Usage: _worktree__resolve_current REPO
+# Prints the root of the worktree the command is running in (resolved from
+# CWD, falling back to REPO). Documented pass-through to
+# _repo__resolve_worktree_root so commands can name the current worktree (e.g.
+# as a hook's working directory) without reaching into the VCS layer.
+_worktree__resolve_current() {
+  local repo="$1"
+  _repo__resolve_worktree_root "$repo"
+}
+
 # Usage: _worktree__find_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
-# Outputs one workspace root path per line for each jj workspace where
-# BOOKMARK is the current branch (resolved via _task__resolve_current).
+# Outputs one workspace root path per line for each jj workspace whose
+# working-copy commit sits on BOOKMARK. Classification uses the fork-point
+# ranking of __worktree__resolve_branch rather than the nearest bookmarked
+# ancestor, so a worktree that a branch write has left behind (its branch tip
+# no longer in the working copy's ancestry) is still attributed to its own
+# branch instead of to whichever ancestor bookmark remains reachable.
 _worktree__find_for_branch() {
   local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
   local entries
   entries="$(_worktree__list_entries "$repo")" || return 0
-  local ws_root ws_bookmark
+  local ws_root wc_commit ws_bookmark
   while IFS=$'\t' read -r _ ws_root; do
     [[ -z "$ws_root" || ! -d "$ws_root" ]] && continue
-    ws_bookmark="$(_task__resolve_current_branch "$ws_root" "$task_prefix" "$project_prefix" 2>/dev/null)" || continue
+    wc_commit="$(_repo__resolve_commit "$ws_root" '@' 2>/dev/null)" || continue
+    ws_bookmark="$(__worktree__resolve_branch "$repo" "$wc_commit" 2>/dev/null)" || continue
     [[ "$ws_bookmark" == "$bookmark" ]] && printf '%s\n' "$ws_root"
   done <<< "$entries"
   return 0

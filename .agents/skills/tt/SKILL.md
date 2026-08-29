@@ -53,7 +53,7 @@ Record the current state of work. `--squash` collapses all commits since the las
 
 #### `tt task complete`
 ```
-tt task complete [<task-id>] [--worktree=<path>] [--force]
+tt task complete [<task-id>] [--force]
 ```
 Mark a task DONE. Requires all child tasks to be done, unless `--force` is given.
 

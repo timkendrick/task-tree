@@ -9,6 +9,8 @@
 # Public surface:
 #   _task__check_is_task_branch      — bookmark name matches the task ID pattern
 #   _task__check_is_project_branch   — bookmark name matches the project ID pattern
+#   _task__check_branch_exists       — bookmark resolves to a revision
+#   _task__read_file                 — read a repo file as recorded on a branch
 #   _task__assert_bookmark_current   — exit unless the bookmark tracks all commits up to @-
 #   _task__check_bookmark_current    — test whether the bookmark tracks all commits up to @-
 #   _task__find_parent_branch        — parent branch listing a task as a subtask
@@ -24,7 +26,6 @@
 #   _task__resolve_current_branch    — bookmark name of the current branch
 #   _task__collect_descendant_dirs   — task dirs for all descendants of a task
 #   _task__write_stub                — minimal task file stub for a new task
-#   _task__write_and_commit_on_branch — apply writes and commit them onto a bookmark
 #   _task__commit_on_branch          — staged bare write committed onto a bookmark
 #
 # The _task__full_range_* helpers are internal to _task__get_full_range_records.
@@ -41,6 +42,25 @@ _task__check_is_project_branch() {
   local bookmark="$1"
   local prefix="$2"
   [[ "$bookmark" == "$prefix"* ]] && [[ "$bookmark" =~ -[0-9a-fA-F]{8}$ ]]
+}
+
+# Usage: _task__check_branch_exists REPO BRANCH
+# Returns 0 when BRANCH resolves to a revision in REPO, non-zero otherwise.
+# Documented pass-through to _repo__check_revision_exists so commands can test
+# whether a task or project branch exists without reaching into the VCS layer.
+_task__check_branch_exists() {
+  local repo="$1" branch="$2"
+  _repo__check_revision_exists "$repo" "$branch"
+}
+
+# Usage: _task__read_file REPO REV PATH
+# Prints the content of the repo-root-relative PATH as recorded at REV
+# (typically a task or project branch). Documented pass-through to
+# _repo__read_file_at_revision so commands can read task and context files from
+# a branch without reaching into the VCS layer.
+_task__read_file() {
+  local repo="$1" rev="$2" path="$3"
+  _repo__read_file_at_revision "$repo" "$rev" "$path"
 }
 
 # Usage: _task__assert_bookmark_current REPO BOOKMARK
@@ -522,48 +542,6 @@ _task__find_branch() {
   fi
 
   return 1
-}
-
-# _task__write_and_commit_on_branch REPO TARGET_WORKTREE BOOKMARK CURRENT_WORKTREE \
-#                                  CURRENT_BOOKMARK MESSAGE WRITER_FN [WRITER_ARGS...]
-#
-# Applies filesystem mutations and commits them onto BOOKMARK, advancing the
-# bookmark. WRITER_FN is invoked with the destination worktree root as its first
-# argument, followed by any WRITER_ARGS.
-#
-#   same-branch  - BOOKMARK is checked out in TARGET_WORKTREE: write there and
-#                  commit normally.
-#   cross-branch - otherwise (the task has no worktree of its own, or the current
-#                  worktree is on a different branch): point the working copy at
-#                  BOOKMARK, start a fresh child commit, write into REPO, commit,
-#                  advance the bookmark, then restore the working copy to its
-#                  original parent. Since @ is empty (callers require a clean WC),
-#                  saving the parent commit ID is enough to restore the working
-#                  copy afterwards. This lets commands mutate tasks that have not
-#                  been checked out.
-#
-# Must be called inside a transaction. CURRENT_BOOKMARK must be resolved by the
-# caller *before* _history__begin_transaction, since resolution can trigger a jj snapshot.
-# LEGACY(C1): the working-copy dance. Replaced by a staged bare-write API in Phase C.
-_task__write_and_commit_on_branch() {
-  local repo="$1" target_worktree="$2" bookmark="$3"
-  local current_worktree="$4" current_bookmark="$5" message="$6" writer_fn="$7"
-  shift 7
-
-  if [[ "$target_worktree" == "$current_worktree" && "$current_bookmark" != "$bookmark" ]]; then
-    local original_parent_rev
-    original_parent_rev="$(_repo__get_working_copy_parent "$repo")"
-    _repo__set_working_copy_revision "$repo" "$bookmark"
-    _repo__new_working_copy_child "$repo"
-    "$writer_fn" "$repo" "$@"
-    _repo__commit_working_copy "$repo" "$message"
-    _repo__set_bookmark "$repo" "$bookmark" '@-'
-    _repo__new_working_copy_child "$repo" "$original_parent_rev"
-  else
-    "$writer_fn" "$target_worktree" "$@"
-    _repo__commit_working_copy "$target_worktree" "$message"
-    _repo__set_bookmark "$target_worktree" "$bookmark" '@-'
-  fi
 }
 
 # Usage: _task__commit_on_branch REPO BRANCH MESSAGE

@@ -246,12 +246,15 @@ main() {
     0) target_ws="$repo" ;;
     1) target_ws="$worktrees" ;;
     *)
-      if [[ -z "$worktree_arg" ]]; then
+      if printf '%s\n' "$worktrees" | grep -qxF "$(_repo__resolve_worktree_root "$repo")"; then
+        target_ws="$(_repo__resolve_worktree_root "$repo")"
+      elif [[ -z "$worktree_arg" ]]; then
         _ui__log "Error: Multiple parent workspaces found; use --worktree=<path>:"
         printf '%s\n' "$worktrees" | while IFS= read -r p; do _ui__log "  $p"; done
         exit 1
+      else
+        target_ws="$worktree_arg"
       fi
-      target_ws="$worktree_arg"
       ;;
   esac
 

@@ -802,6 +802,11 @@ _jj__commit_changeset() {
     if _jj__check_bookmark_exists "$repo" "$bookmark_name"; then
       __jj__run_quiet "$repo" --ignore-working-copy bookmark forget "$bookmark_name" || exit 1
     fi
+    # Reconcile the out-of-band git ref deletion now: without this, jj's
+    # last-seen git ref state still contains the temporary ref, and the next
+    # auto-importing jj invocation would mint a surprise "import git refs"
+    # operation outside any tt transaction.
+    __jj__run_quiet "$repo" --ignore-working-copy git import || exit 1
     printf '%s\n' "$commit"
   )
 }
