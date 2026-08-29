@@ -58,6 +58,15 @@ _repo__set_working_copy_revision() { _jj__set_working_copy_revision "$@"; }
 _repo__new_working_copy_child()    { _jj__new_working_copy_child "$@"; }
 _repo__commit_working_copy()       { _jj__commit_working_copy "$@"; }
 
+# --- Mutations (bare; no working copy involved) ---
+_repo__commit_changeset()          { _jj__commit_changeset "$@"; }
+_repo__create_merge_commit()       { _jj__create_merge_commit "$@"; }
+_repo__set_description()           { _jj__set_description "$@"; }
+_repo__move_commits()              { _jj__move_commits "$@"; }
+_repo__squash_commit()             { _jj__squash_commit "$@"; }
+_repo__restore_tree()              { _jj__restore_tree "$@"; }
+_repo__abandon_commit()            { _jj__abandon_commit "$@"; }
+
 # --- Bookmarks ---
 _repo__set_bookmark()              { _jj__set_bookmark "$@"; }
 _repo__list_bookmark_names()       { _jj__list_bookmark_names "$@"; }

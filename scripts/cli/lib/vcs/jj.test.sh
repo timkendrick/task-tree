@@ -753,4 +753,535 @@ test__jj__check_working_copy_clean__dirty_working_copy() {
   assert_failure "dirty working copy detected" "$exit_code"
 }
 
+# ---------------------------------------------------------------------------
+# Mutations (bare): _jj__commit_changeset
+# ---------------------------------------------------------------------------
+
+test__jj__commit_changeset__basic_commit_from_stage() {
+  setup_workspace
+  local parent
+  parent="$(_jj__resolve_commit "$REPO" main)"
+  local stage="$_TEST_ROOT/stage-basic"
+  mkdir -p "$stage/sub"
+  printf 'top\n' > "$stage/top.txt"
+  printf 'nested\n' > "$stage/sub/nested.txt"
+
+  local commit exit_code=0
+  commit="$(_jj__commit_changeset "$REPO" main "bare change" "$stage")" || exit_code=$?
+  assert_success "changeset committed" "$exit_code"
+  assert_matches "full-length commit ID printed" "$commit" '^[0-9a-f]{40}$'
+  assert_eq "parent is the requested revision" \
+    "$(jj -R "$REPO" --ignore-working-copy log -r "$commit" --no-graph \
+      -T 'parents.map(|p| p.commit_id()).join(" ")')" \
+    "$parent"
+  assert_eq "description recorded" \
+    "$(_jj__get_commit_description "$REPO" "$commit")" "bare change"
+  assert_eq "staged file present" \
+    "$(_jj__read_file_at_revision "$REPO" "$commit" top.txt)" "top"
+  assert_eq "nested staged file present" \
+    "$(_jj__read_file_at_revision "$REPO" "$commit" sub/nested.txt)" "nested"
+  assert_eq "parent tree carried over" \
+    "$(_jj__read_file_at_revision "$REPO" "$commit" README.md)" "initial"
+}
+
+test__jj__commit_changeset__git_runner_verbosity() {
+  setup_workspace
+  local stage="$_TEST_ROOT/stage-verbose"
+  mkdir -p "$stage"
+  printf 'v\n' > "$stage/v.txt"
+  local plain_err="$_TEST_ROOT/plain-git-err.txt"
+  local verbose_err="$_TEST_ROOT/verbose-git-err.txt"
+  TT_VERBOSE= _jj__commit_changeset "$REPO" main "quiet run" "$stage" \
+    >/dev/null 2>"$plain_err"
+  TT_VERBOSE=1 _jj__commit_changeset "$REPO" main "verbose run" "$stage" \
+    >/dev/null 2>"$verbose_err"
+  assert_output_empty "no stderr chatter without TT_VERBOSE" \
+    "$(cat "$plain_err")"
+  assert_contains "git command lines echoed with TT_VERBOSE=1" \
+    "$(cat "$verbose_err")" "+ git"
+  assert_contains "jj command lines echoed with TT_VERBOSE=1" \
+    "$(cat "$verbose_err")" "+ jj"
+}
+
+test__jj__commit_changeset__dirty_working_copy_not_involved() {
+  setup_workspace
+  edit_file dirty.txt "un-snapshotted"
+  local wc_before
+  wc_before="$(_jj__resolve_commit "$REPO" '@')"
+  local stage="$_TEST_ROOT/stage-dirty"
+  mkdir -p "$stage"
+  printf 'clean\n' > "$stage/clean.txt"
+
+  local commit exit_code=0
+  commit="$(_jj__commit_changeset "$REPO" main "no dirt" "$stage")" || exit_code=$?
+  assert_success "changeset committed with a dirty working copy" "$exit_code"
+  local ec=0
+  _jj__check_file_exists_at_revision "$REPO" "$commit" dirty.txt || ec=$?
+  assert_failure "dirty file not part of the new commit" "$ec"
+  assert_file_exists "dirty file still on disk" "$REPO/dirty.txt"
+  assert_eq "dirty file content untouched" \
+    "$(cat "$REPO/dirty.txt")" "un-snapshotted"
+  ec=0
+  _jj__check_file_exists_at_revision "$REPO" '@' dirty.txt || ec=$?
+  assert_failure "working copy still un-snapshotted" "$ec"
+  assert_eq "@ did not move" "$(_jj__resolve_commit "$REPO" '@')" "$wc_before"
+}
+
+test__jj__commit_changeset__symlink_round_trip() {
+  setup_workspace
+  ln -s old-target existing-link
+  ln -s doomed dead-link
+  jj -R "$REPO" commit -m "links" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set main -r '@-' >/dev/null 2>&1
+
+  local stage="$_TEST_ROOT/stage-links"
+  mkdir -p "$stage"
+  ln -s some/target "$stage/new-link"
+  ln -s new-target "$stage/existing-link"
+
+  local commit exit_code=0
+  commit="$(_jj__commit_changeset "$REPO" main "link changes" "$stage" dead-link)" \
+    || exit_code=$?
+  assert_success "changeset committed" "$exit_code"
+
+  assert_eq "created symlink has mode 120000" \
+    "$(git --git-dir="$REPO/.git" ls-tree "$commit" -- new-link | cut -d' ' -f1)" \
+    "120000"
+  assert_eq "created symlink target" \
+    "$(git --git-dir="$REPO/.git" cat-file blob "${commit}:new-link")" \
+    "some/target"
+  assert_eq "retargeted symlink has mode 120000" \
+    "$(git --git-dir="$REPO/.git" ls-tree "$commit" -- existing-link | cut -d' ' -f1)" \
+    "120000"
+  assert_eq "retargeted symlink target" \
+    "$(git --git-dir="$REPO/.git" cat-file blob "${commit}:existing-link")" \
+    "new-target"
+  local ec=0
+  _jj__check_file_exists_at_revision "$REPO" "$commit" dead-link || ec=$?
+  assert_failure "deleted symlink absent from the new commit" "$ec"
+  assert_contains "symlink listed among tracked files" \
+    "$(_jj__list_files_at_revision "$REPO" "$commit")" "new-link"
+}
+
+test__jj__commit_changeset__file_modes_preserved() {
+  setup_workspace
+  local stage="$_TEST_ROOT/stage-modes"
+  mkdir -p "$stage"
+  printf '#!/bin/sh\n' > "$stage/tool.sh"
+  chmod +x "$stage/tool.sh"
+  printf 'plain\n' > "$stage/plain.txt"
+
+  local commit exit_code=0
+  commit="$(_jj__commit_changeset "$REPO" main "modes" "$stage")" || exit_code=$?
+  assert_success "changeset committed" "$exit_code"
+  assert_eq "executable file keeps mode 100755" \
+    "$(git --git-dir="$REPO/.git" ls-tree "$commit" -- tool.sh | cut -d' ' -f1)" \
+    "100755"
+  assert_eq "regular file keeps mode 100644" \
+    "$(git --git-dir="$REPO/.git" ls-tree "$commit" -- plain.txt | cut -d' ' -f1)" \
+    "100644"
+}
+
+test__jj__commit_changeset__deletions_before_overlay() {
+  setup_workspace
+  edit_file old.txt "old"
+  edit_file prefix "file that becomes a directory"
+  jj -R "$REPO" commit -m "victims" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set main -r '@-' >/dev/null 2>&1
+
+  local stage="$_TEST_ROOT/stage-del"
+  mkdir -p "$stage/prefix"
+  printf 'inner\n' > "$stage/prefix/inner.txt"
+
+  local commit exit_code=0
+  commit="$(_jj__commit_changeset "$REPO" main "deletions" "$stage" old.txt prefix)" \
+    || exit_code=$?
+  assert_success "changeset committed" "$exit_code"
+  local ec=0
+  _jj__check_file_exists_at_revision "$REPO" "$commit" old.txt || ec=$?
+  assert_failure "deleted path absent" "$ec"
+  assert_eq "staged file beneath the deleted prefix present" \
+    "$(_jj__read_file_at_revision "$REPO" "$commit" prefix/inner.txt)" "inner"
+  assert_contains "prefix is now a directory entry, not the old file" \
+    "$(git --git-dir="$REPO/.git" ls-tree "$commit" -- prefix)" "tree"
+  assert_not_contains "old file gone from the listing" \
+    "$(_jj__list_files_at_revision "$REPO" "$commit")" "old.txt"
+}
+
+test__jj__commit_changeset__identity_from_jj_config() {
+  setup_workspace
+  local expected_name expected_email
+  expected_name="$(jj -R "$REPO" config get user.name 2>/dev/null)"
+  expected_email="$(jj -R "$REPO" config get user.email 2>/dev/null)"
+  local stage="$_TEST_ROOT/stage-id"
+  mkdir -p "$stage"
+  printf 'i\n' > "$stage/i.txt"
+
+  local commit exit_code=0
+  commit="$(GIT_AUTHOR_NAME="Decoy Author" GIT_AUTHOR_EMAIL="decoy@example.com" \
+    GIT_COMMITTER_NAME="Decoy Committer" GIT_COMMITTER_EMAIL="decoy@example.com" \
+    _jj__commit_changeset "$REPO" main "identity" "$stage")" || exit_code=$?
+  assert_success "changeset committed" "$exit_code"
+  assert_eq "author identity from jj config despite decoy env" \
+    "$(jj -R "$REPO" --ignore-working-copy log -r "$commit" --no-graph \
+      -T 'author.name() ++ " <" ++ author.email() ++ ">"')" \
+    "$expected_name <$expected_email>"
+  assert_eq "committer identity from jj config despite decoy env" \
+    "$(jj -R "$REPO" --ignore-working-copy log -r "$commit" --no-graph \
+      -T 'committer.name() ++ " <" ++ committer.email() ++ ">"')" \
+    "$expected_name <$expected_email>"
+}
+
+test__jj__commit_changeset__leaves_no_trace() {
+  setup_workspace
+  local stage="$_TEST_ROOT/stage-trace"
+  mkdir -p "$stage"
+  printf 't\n' > "$stage/t.txt"
+  local scratch_root="$_TEST_ROOT/scratch-root"
+  mkdir -p "$scratch_root"
+
+  local commit exit_code=0
+  commit="$(TMPDIR="$scratch_root" \
+    _jj__commit_changeset "$REPO" main "tidy" "$stage")" || exit_code=$?
+  assert_success "changeset committed" "$exit_code"
+  assert_not_contains "no temporary git ref survives" \
+    "$(git --git-dir="$REPO/.git" for-each-ref)" "tt-tmp-"
+  assert_not_contains "no stray jj bookmark survives" \
+    "$(_jj__list_bookmark_names "$REPO")" "tt-tmp-"
+  assert_output_empty "scratch directory removed" \
+    "$(find "$scratch_root" -mindepth 1)"
+  local ec=0
+  _jj__check_revision_exists "$REPO" "$commit" || ec=$?
+  assert_success "commit still resolvable after cleanup" "$ec"
+}
+
+test__jj__commit_changeset__non_git_store_rejected() {
+  setup_workspace
+  local fixture="$_TEST_ROOT/simple-backend"
+  mkdir -p "$fixture/.jj/repo/store"
+  printf 'simple' > "$fixture/.jj/repo/store/type"
+  local stage="$_TEST_ROOT/stage-simple"
+  mkdir -p "$stage"
+  local out='' err_file="$_TEST_ROOT/simple-err.txt" exit_code=0
+  out="$(_jj__commit_changeset "$fixture" main "nope" "$stage" 2>"$err_file")" \
+    || exit_code=$?
+  assert_failure "non-git backend rejected" "$exit_code"
+  assert_eq "exact contract message on stderr" \
+    "$(cat "$err_file")" "Unsupported repository backend: simple"
+  assert_output_empty "nothing printed on failure" "$out"
+}
+
+test__jj__commit_changeset__invalid_inputs_fail_cleanly() {
+  setup_workspace
+  local stage="$_TEST_ROOT/stage-fail"
+  mkdir -p "$stage"
+  printf 'f\n' > "$stage/f.txt"
+
+  local out='' exit_code=0
+  out="$(_jj__commit_changeset "$REPO" no-such-bookmark "msg" "$stage" 2>/dev/null)" \
+    || exit_code=$?
+  assert_failure "absent parent revision rejected" "$exit_code"
+  assert_output_empty "nothing printed on failure" "$out"
+
+  exit_code=0
+  out="$(_jj__commit_changeset "$REPO" main "msg" "$_TEST_ROOT/no-such-stage" 2>/dev/null)" \
+    || exit_code=$?
+  assert_failure "missing stage directory rejected" "$exit_code"
+  assert_output_empty "nothing printed for a missing stage dir" "$out"
+
+  assert_not_contains "no temporary ref left behind by failures" \
+    "$(git --git-dir="$REPO/.git" for-each-ref)" "tt-tmp-"
+}
+
+test__jj__commit_changeset__secondary_workspace_repo() {
+  setup_workspace
+  _fixture_linear_history
+  local wt_path
+  wt_path="$(dirname "$REPO")/wt-bare"
+  local exit_code=0
+  _jj__create_worktree "$REPO" wt-bare "$wt_path" feature || exit_code=$?
+  assert_success "worktree created" "$exit_code"
+  assert_file_exists "secondary workspace has a repo pointer file" \
+    "$wt_path/.jj/repo"
+
+  local stage="$_TEST_ROOT/stage-ws"
+  mkdir -p "$stage"
+  printf 'ws\n' > "$stage/ws.txt"
+  local commit
+  exit_code=0
+  commit="$(_jj__commit_changeset "$wt_path" feature "from workspace" "$stage")" \
+    || exit_code=$?
+  assert_success "changeset committed via secondary workspace root" "$exit_code"
+  assert_eq "file content readable via the canonical repo" \
+    "$(_jj__read_file_at_revision "$REPO" "$commit" ws.txt)" "ws"
+}
+
+test__jj__commit_changeset__other_workspace_untouched() {
+  setup_workspace
+  _fixture_linear_history
+  local wt_path
+  wt_path="$(dirname "$REPO")/wt-victim"
+  _jj__create_worktree "$REPO" wt-victim "$wt_path" feature >/dev/null 2>&1
+
+  printf 'pending\n' > "$wt_path/pending.txt"
+  local wt_rev_before
+  wt_rev_before="$(_jj__get_worktree_revision "$REPO" wt-victim)"
+
+  local stage="$_TEST_ROOT/stage-victim"
+  mkdir -p "$stage"
+  printf 'x\n' > "$stage/x.txt"
+  local commit exit_code=0
+  commit="$(_jj__commit_changeset "$REPO" feature "onto feature" "$stage")" \
+    || exit_code=$?
+  assert_success "changeset committed" "$exit_code"
+
+  assert_file_exists "worktree materialized file still on disk" "$wt_path/two.txt"
+  assert_file_exists "worktree pending file still on disk" "$wt_path/pending.txt"
+  assert_eq "worktree pending content untouched" \
+    "$(cat "$wt_path/pending.txt")" "pending"
+  assert_eq "worktree working-copy commit unchanged" \
+    "$(_jj__get_worktree_revision "$REPO" wt-victim)" "$wt_rev_before"
+  local ec=0
+  _jj__check_file_exists_at_revision "$REPO" 'wt-victim@' pending.txt || ec=$?
+  assert_failure "worktree changes remain un-snapshotted" "$ec"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__create_merge_commit
+# ---------------------------------------------------------------------------
+
+test__jj__create_merge_commit__two_parents() {
+  setup_workspace
+  local base
+  base="$(get_full_commit_id '@-')"
+  jj -R "$REPO" new "$base" >/dev/null 2>&1
+  edit_file left.txt "left"
+  jj -R "$REPO" commit -m "left side" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set left -r '@-' >/dev/null 2>&1
+  jj -R "$REPO" new "$base" >/dev/null 2>&1
+  edit_file right.txt "right"
+  jj -R "$REPO" commit -m "right side" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set right -r '@-' >/dev/null 2>&1
+  local left_commit right_commit
+  left_commit="$(get_full_commit_id left)"
+  right_commit="$(get_full_commit_id right)"
+
+  local commit exit_code=0
+  commit="$(_jj__create_merge_commit "$REPO" "merge the sides" left right)" \
+    || exit_code=$?
+  assert_success "merge created" "$exit_code"
+  assert_matches "full-length commit ID printed" "$commit" '^[0-9a-f]{40}$'
+  assert_eq "parents are exactly the two given revisions" \
+    "$(jj -R "$REPO" --ignore-working-copy log -r "$commit" --no-graph \
+      -T 'parents.map(|p| p.commit_id()).join(" ")')" \
+    "$left_commit $right_commit"
+  assert_eq "description recorded" \
+    "$(_jj__get_commit_description "$REPO" "$commit")" "merge the sides"
+  local ec=0
+  _jj__check_commit_empty "$REPO" "$commit" || ec=$?
+  assert_success "empty diff against the auto-merged tree" "$ec"
+  assert_eq "both sides' content in the merged tree" \
+    "$(_jj__read_file_at_revision "$REPO" "$commit" left.txt)" "left"
+
+  # A second merge of the same parents with a different description must
+  # resolve to its own commit, proving the description narrows the lookup.
+  local commit2
+  exit_code=0
+  commit2="$(_jj__create_merge_commit "$REPO" $'multi line\nmessage' left right)" \
+    || exit_code=$?
+  assert_success "second merge with the same parents created" "$exit_code"
+  assert_neq "distinct commit resolved for the second merge" "$commit2" "$commit"
+  assert_eq "multi-line description round-trips" \
+    "$(_jj__get_commit_description "$REPO" "$commit2")" $'multi line\nmessage'
+}
+
+test__jj__create_merge_commit__octopus_and_failures() {
+  setup_workspace
+  local base i
+  base="$(get_full_commit_id '@-')"
+  for i in 1 2 3; do
+    jj -R "$REPO" new "$base" >/dev/null 2>&1
+    edit_file "side$i.txt" "s$i"
+    jj -R "$REPO" commit -m "side $i" >/dev/null 2>&1
+    jj -R "$REPO" bookmark set "side$i" -r '@-' >/dev/null 2>&1
+  done
+  local commit exit_code=0
+  commit="$(_jj__create_merge_commit "$REPO" 'tricky "quoted" \ message' \
+    side1 side2 side3)" || exit_code=$?
+  assert_success "three-parent merge created" "$exit_code"
+  assert_line_count "three parents recorded" \
+    "$(jj -R "$REPO" --ignore-working-copy log -r "$commit" --no-graph \
+      -T 'parents.map(|p| p.commit_id()).join("\n")')" 3
+  assert_eq "quoted description round-trips" \
+    "$(_jj__get_commit_description "$REPO" "$commit")" 'tricky "quoted" \ message'
+
+  exit_code=0
+  _jj__create_merge_commit "$REPO" "msg" side1 >/dev/null || exit_code=$?
+  assert_failure "fewer than two parents rejected" "$exit_code"
+  exit_code=0
+  _jj__create_merge_commit "$REPO" "msg" side1 no-such-bookmark >/dev/null \
+    || exit_code=$?
+  assert_failure "absent parent rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__set_description
+# ---------------------------------------------------------------------------
+
+test__jj__set_description__replaces_and_rejects_absent() {
+  setup_workspace
+  _fixture_linear_history
+  local first_change
+  first_change="$(_jj__resolve_change "$REPO" "$FIRST_COMMIT")"
+  local exit_code=0
+  _jj__set_description "$REPO" "$FIRST_COMMIT" "rewritten description" \
+    || exit_code=$?
+  assert_success "description replaced" "$exit_code"
+  assert_eq "new description stored" \
+    "$(_jj__get_commit_description "$REPO" 'feature-')" "rewritten description"
+  assert_eq "change ID preserved across the rewrite" \
+    "$(_jj__resolve_change "$REPO" 'feature-')" "$first_change"
+
+  exit_code=0
+  _jj__set_description "$REPO" no-such-bookmark "x" || exit_code=$?
+  assert_failure "absent revision rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__move_commits
+# ---------------------------------------------------------------------------
+
+test__jj__move_commits__rebases_sources_onto_destination() {
+  setup_workspace
+  _fixture_linear_history
+  jj -R "$REPO" new "$BASE_COMMIT" >/dev/null 2>&1
+  edit_file dest.txt "d"
+  jj -R "$REPO" commit -m "destination" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set dest -r '@-' >/dev/null 2>&1
+
+  local exit_code=0
+  _jj__move_commits "$REPO" dest "$FIRST_COMMIT" || exit_code=$?
+  assert_success "source rebased" "$exit_code"
+  local ec=0
+  _jj__check_is_ancestor "$REPO" dest feature || ec=$?
+  assert_success "destination now an ancestor of the moved branch" "$ec"
+  assert_eq "descendants moved along with the source" \
+    "$(_jj__count_commits_in_range "$REPO" dest feature)" "2"
+  assert_eq "moved commit content intact" \
+    "$(_jj__read_file_at_revision "$REPO" feature two.txt)" "two"
+
+  exit_code=0
+  _jj__move_commits "$REPO" dest || exit_code=$?
+  assert_failure "no sources rejected" "$exit_code"
+  exit_code=0
+  _jj__move_commits "$REPO" dest no-such-bookmark || exit_code=$?
+  assert_failure "absent source rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__squash_commit
+# ---------------------------------------------------------------------------
+
+test__jj__squash_commit__preserves_destination_identity_and_message() {
+  setup_workspace
+  edit_file dst.txt "d"
+  jj -R "$REPO" commit -m "destination message" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set dst -r '@-' >/dev/null 2>&1
+  edit_file extra.txt "e"
+  jj -R "$REPO" commit -m "source message" >/dev/null 2>&1
+  local src_commit dst_change
+  src_commit="$(get_full_commit_id '@-')"
+  dst_change="$(_jj__resolve_change "$REPO" dst)"
+
+  local exit_code=0
+  _jj__squash_commit "$REPO" "$src_commit" dst || exit_code=$?
+  assert_success "squashed" "$exit_code"
+  assert_eq "destination change ID preserved" \
+    "$(_jj__resolve_change "$REPO" dst)" "$dst_change"
+  assert_eq "destination message preserved" \
+    "$(_jj__get_commit_description "$REPO" dst)" "destination message"
+  assert_eq "source content folded into the destination" \
+    "$(_jj__read_file_at_revision "$REPO" dst extra.txt)" "e"
+  assert_eq "emptied source abandoned; @ now sits on the destination" \
+    "$(_jj__resolve_commit "$REPO" '@-')" "$(_jj__resolve_commit "$REPO" dst)"
+
+  exit_code=0
+  _jj__squash_commit "$REPO" no-such-bookmark dst || exit_code=$?
+  assert_failure "absent source revision rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__restore_tree
+# ---------------------------------------------------------------------------
+
+test__jj__restore_tree__wholesale_tree_and_descendant_content() {
+  setup_workspace
+  edit_file a.txt "base"
+  jj -R "$REPO" commit -m "base file" >/dev/null 2>&1
+  local base
+  base="$(get_full_commit_id '@-')"
+  edit_file a.txt "target version"
+  edit_file t.txt "target only"
+  jj -R "$REPO" commit -m "target" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set tgt -r '@-' >/dev/null 2>&1
+  edit_file c.txt "child file"
+  jj -R "$REPO" commit -m "child" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set kid -r '@-' >/dev/null 2>&1
+  jj -R "$REPO" new "$base" >/dev/null 2>&1
+  edit_file a.txt "source version"
+  jj -R "$REPO" commit -m "source" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set src -r '@-' >/dev/null 2>&1
+
+  local tgt_change
+  tgt_change="$(_jj__resolve_change "$REPO" tgt)"
+  local exit_code=0
+  _jj__restore_tree "$REPO" src tgt || exit_code=$?
+  assert_success "tree restored" "$exit_code"
+  assert_eq "target change ID unchanged" \
+    "$(_jj__resolve_change "$REPO" tgt)" "$tgt_change"
+  assert_eq "target description unchanged" \
+    "$(_jj__get_commit_description "$REPO" tgt)" "target"
+  assert_output_empty "target tree equals source tree" \
+    "$(_jj__show_diff "$REPO" src tgt)"
+  local ec=0
+  _jj__check_file_exists_at_revision "$REPO" tgt t.txt || ec=$?
+  assert_failure "target-only file gone after the wholesale restore" "$ec"
+  assert_eq "descendant keeps its content, not a replayed diff" \
+    "$(_jj__read_file_at_revision "$REPO" kid a.txt)" "target version"
+  assert_eq "descendant's own file intact" \
+    "$(_jj__read_file_at_revision "$REPO" kid c.txt)" "child file"
+
+  exit_code=0
+  _jj__restore_tree "$REPO" no-such-bookmark tgt || exit_code=$?
+  assert_failure "absent source rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__abandon_commit
+# ---------------------------------------------------------------------------
+
+test__jj__abandon_commit__abandons_and_rejects_absent() {
+  setup_workspace
+  _fixture_linear_history
+  # Park the working copy away from the branch being rewritten: a bare abandon
+  # of an ancestor of @ would leave @'s on-disk working copy stale.
+  jj -R "$REPO" new main >/dev/null 2>&1
+  local second_change
+  second_change="$(_jj__resolve_change "$REPO" feature)"
+  local exit_code=0
+  _jj__abandon_commit "$REPO" "$FIRST_COMMIT" || exit_code=$?
+  assert_success "commit abandoned" "$exit_code"
+  assert_eq "descendants rebased onto the abandoned commit's parent" \
+    "$(_jj__count_commits_in_range "$REPO" "$BASE_COMMIT" feature)" "1"
+  local ec=0
+  _jj__check_file_exists_at_revision "$REPO" feature one.txt || ec=$?
+  assert_failure "abandoned commit's file gone from the rebased tip" "$ec"
+  assert_eq "surviving commit keeps its change ID" \
+    "$(_jj__resolve_change "$REPO" feature)" "$second_change"
+
+  exit_code=0
+  _jj__abandon_commit "$REPO" no-such-bookmark || exit_code=$?
+  assert_failure "absent revision rejected" "$exit_code"
+}
+
 run_tests "tt lib/vcs/jj (unit)"

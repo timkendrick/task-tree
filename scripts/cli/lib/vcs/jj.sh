@@ -53,6 +53,14 @@
 #     _jj__set_working_copy_revision — point the working copy at a revision
 #     _jj__new_working_copy_child    — start a new working-copy commit
 #     _jj__commit_working_copy       — commit the working copy with a message
+#   Mutations (bare; no working copy involved):
+#     _jj__commit_changeset          — build a commit in the backing Git store from a staged tree
+#     _jj__create_merge_commit       — create a merge commit of two or more parents
+#     _jj__set_description           — replace a revision's description
+#     _jj__move_commits              — rebase revisions and their descendants onto a destination
+#     _jj__squash_commit             — fold a revision's changes into another revision
+#     _jj__restore_tree              — set a revision's tree wholesale from another revision
+#     _jj__abandon_commit            — abandon a revision, rebasing descendants onto its parents
 #   Bookmarks:
 #     _jj__set_bookmark              — move a bookmark to an explicit revision
 #     _jj__list_bookmark_names       — all local bookmark names
@@ -147,6 +155,22 @@ __jj__run_quiet_cd() {
     (cd "$repo" && jj -R "$repo" "$@" >&2)
   else
     (cd "$repo" && jj -R "$repo" "$@" >/dev/null 2>&1)
+  fi
+}
+
+# Usage: __jj__run_git ARG...
+# Runs `git ARG...` with stdout passing through (the caller captures it).
+# Parallel of __jj__run for the git plumbing used by the bare-mutation
+# operations: with TT_VERBOSE=1 the command line is echoed to stderr first
+# ("+ git ...") and git's stderr is forwarded; otherwise git's stderr is
+# discarded. Never logs anything else and never exits; returns the underlying
+# git exit status. Callers name the target repository with --git-dir.
+__jj__run_git() {
+  if [[ "${TT_VERBOSE:-}" == "1" ]]; then
+    { printf '+ git'; printf ' %q' "$@"; printf '\n'; } >&2
+    git "$@"
+  else
+    git "$@" 2>/dev/null
   fi
 }
 
@@ -609,6 +633,267 @@ _jj__new_working_copy_child() {
 _jj__commit_working_copy() {
   local worktree="$1" message="$2"
   __jj__run_quiet "$worktree" commit -m "$message"
+}
+
+# ---------------------------------------------------------------------------
+# Mutations (bare)
+#
+# Bare graph operations: each function here rewrites the commit graph directly
+# and never touches any working copy — no snapshot is taken and no on-disk
+# files are updated. Every jj invocation in this section passes
+# --ignore-working-copy. _jj__commit_changeset additionally drives git plumbing
+# against the Git object store that backs the jj repository, using a private
+# temporary index, so no git working tree or index is involved either.
+# ---------------------------------------------------------------------------
+
+# Usage: _jj__commit_changeset REPO PARENT_REV MESSAGE STAGE_DIR [DELETE_PATH...]
+#
+# Builds a commit directly in the Git object store backing the jj repository
+# and prints its full commit ID. The commit's tree is PARENT_REV's tree with
+# each DELETE_PATH (a repo-root-relative path) removed first and every file
+# under STAGE_DIR overlaid on top, paths taken relative to STAGE_DIR:
+#   - a symlink becomes a symlink entry (mode 120000) whose blob is the link
+#     target string
+#   - an executable file keeps mode 100755
+#   - any other file gets mode 100644
+# Deletions run before the overlay, so one call may delete a path and stage a
+# replacement beneath the same prefix. Author and committer identity comes
+# from the jj-configured user.name/user.email, never from the ambient git
+# identity.
+#
+# No working copy is involved at any point: the tree is assembled in a private
+# temporary index inside a scratch directory, the commit is made visible to jj
+# through a uniquely named temporary git ref plus `jj git import`, and both
+# the ref and the imported bookmark are removed before returning (jj anchors
+# imported commits with its own refs/jj/keep refs, so the commit stays
+# resolvable afterwards). Paths containing newlines are out of scope: staged
+# files are iterated line-by-line from `find` output.
+#
+# Returns non-zero without logging when any step fails (except the backend
+# check, whose stderr message is its own contract); the scratch directory and
+# the temporary ref are cleaned up on all paths.
+_jj__commit_changeset() {
+  local repo="$1" parent_rev="$2" message="$3" stage_dir="$4"
+  shift 4
+  _jj__check_backend_supported "$repo" || return $?
+  local canonical_repo
+  canonical_repo="$(_jj__resolve_repository_root "$repo")" || return 1
+  # git_target names the backing Git directory relative to the store directory
+  # itself (NOT relative to .jj/repo), and may in turn be a relative path, so
+  # canonicalize from inside the store directory.
+  local store_dir="$canonical_repo/.jj/repo/store"
+  local git_target git_dir
+  git_target="$(cat "$store_dir/git_target" 2>/dev/null)" || return 1
+  [[ -n "$git_target" ]] || return 1
+  git_dir="$(cd "$store_dir" 2>/dev/null && cd "$git_target" 2>/dev/null && pwd -P)" || return 1
+  local parent_commit
+  parent_commit="$(_jj__resolve_commit "$repo" "$parent_rev")" || return 1
+  [[ -n "$parent_commit" ]] || return 1
+  [[ -d "$stage_dir" ]] || return 1
+  stage_dir="$(cd "$stage_dir" 2>/dev/null && pwd)" || return 1
+  # The remainder runs in a subshell so that an EXIT trap can clean up the
+  # scratch directory and the temporary ref on every path without leaking a
+  # trap (or a cd) into the caller.
+  (
+    local scratch tmp_ref ref_created=''
+    scratch="$(mktemp -d)" || exit 1
+    tmp_ref="refs/heads/tt-tmp-$$-$(printf '%04x%04x' "$RANDOM" "$RANDOM")"
+    trap '
+      rm -rf "$scratch"
+      if [[ -n "$ref_created" ]]; then
+        __jj__run_git --git-dir="$git_dir" update-ref -d "$tmp_ref" || :
+      fi
+    ' EXIT
+    # Ambient git environment must not redirect the index or re-anchor path
+    # prefixing; cd into the scratch directory so git never treats the
+    # caller's CWD as a worktree subdirectory (index paths are then taken
+    # verbatim as repo-root-relative).
+    unset GIT_WORK_TREE GIT_INDEX_FILE
+    cd "$scratch" || exit 1
+
+    # Do NOT pre-create the index file: git rejects an existing empty file as
+    # a malformed index, so read-tree must create it.
+    local index="$scratch/index"
+    GIT_INDEX_FILE="$index" __jj__run_git --git-dir="$git_dir" \
+      read-tree "${parent_commit}^{tree}" || exit 1
+
+    local delete_path
+    for delete_path in "$@"; do
+      GIT_INDEX_FILE="$index" __jj__run_git --git-dir="$git_dir" \
+        update-index --force-remove -- "$delete_path" || exit 1
+    done
+
+    local entry rel mode blob link_target
+    while IFS= read -r entry; do
+      [[ -n "$entry" ]] || continue
+      rel="${entry#"$stage_dir"/}"
+      if [[ -L "$entry" ]]; then
+        mode=120000
+        link_target="$(readlink "$entry")" || exit 1
+        blob="$(printf '%s' "$link_target" \
+          | __jj__run_git --git-dir="$git_dir" hash-object -w --stdin)" || exit 1
+      else
+        if [[ -x "$entry" ]]; then mode=100755; else mode=100644; fi
+        blob="$(__jj__run_git --git-dir="$git_dir" hash-object -w -- "$entry")" || exit 1
+      fi
+      [[ -n "$blob" ]] || exit 1
+      GIT_INDEX_FILE="$index" __jj__run_git --git-dir="$git_dir" \
+        update-index --add --cacheinfo "$mode,$blob,$rel" || exit 1
+    done < <(find "$stage_dir" \( -type f -o -type l \))
+
+    local tree
+    tree="$(GIT_INDEX_FILE="$index" __jj__run_git --git-dir="$git_dir" write-tree)" || exit 1
+    [[ -n "$tree" ]] || exit 1
+
+    local user_name user_email
+    user_name="$(__jj__run "$repo" config get user.name)" || exit 1
+    user_email="$(__jj__run "$repo" config get user.email)" || exit 1
+
+    local commit
+    commit="$(GIT_AUTHOR_NAME="$user_name" GIT_AUTHOR_EMAIL="$user_email" \
+      GIT_COMMITTER_NAME="$user_name" GIT_COMMITTER_EMAIL="$user_email" \
+      __jj__run_git --git-dir="$git_dir" commit-tree "$tree" \
+        -p "$parent_commit" -m "$message")" || exit 1
+    [[ -n "$commit" ]] || exit 1
+
+    # Import hop: a uniquely named temporary ref makes the commit reachable so
+    # `jj git import` picks it up; afterwards delete the git ref first (so a
+    # concurrent auto-import cannot re-create the bookmark) and then forget
+    # the bookmark the import created.
+    __jj__run_git --git-dir="$git_dir" update-ref "$tmp_ref" "$commit" || exit 1
+    ref_created=1
+    __jj__run_quiet "$repo" --ignore-working-copy git import || exit 1
+    _jj__check_revision_exists "$repo" "$commit" || exit 1
+    __jj__run_git --git-dir="$git_dir" update-ref -d "$tmp_ref" || exit 1
+    ref_created=''
+    local bookmark_name="${tmp_ref#refs/heads/}"
+    if _jj__check_bookmark_exists "$repo" "$bookmark_name"; then
+      __jj__run_quiet "$repo" --ignore-working-copy bookmark forget "$bookmark_name" || exit 1
+    fi
+    printf '%s\n' "$commit"
+  )
+}
+
+# Usage: __jj__escape_revset_string TEXT
+# Prints TEXT escaped for embedding inside a double-quoted jj revset string
+# literal: backslashes, double quotes and newlines become \\, \" and \n.
+# Internal helper for the bare-mutation operations.
+__jj__escape_revset_string() {
+  local text="$1"
+  text="${text//\\/\\\\}"
+  text="${text//\"/\\\"}"
+  text="${text//$'\n'/\\n}"
+  printf '%s' "$text"
+}
+
+# Usage: _jj__create_merge_commit REPO MESSAGE PARENT_REV PARENT_REV [PARENT_REV...]
+#
+# Creates a merge commit with the given parents (at least two) and description
+# MESSAGE, and prints its full commit ID. Never touches any working copy: the
+# commit is created with `jj new --no-edit` under --ignore-working-copy.
+#
+# The new commit's ID is resolved without parsing human-readable output: each
+# parent is resolved to its immutable commit ID up front, and after creation
+# the commit is looked up via a revset intersecting children() of every
+# parent with the exact stored description (jj appends a trailing newline to
+# a non-empty description that lacks one), taking latest(). Within a repo a
+# concurrent commit could only be picked up instead if it had the identical
+# parent set, the identical description AND a newer committer timestamp.
+_jj__create_merge_commit() {
+  local repo="$1" message="$2"
+  shift 2
+  [[ $# -ge 2 ]] || return 1
+  local parent_rev parent_commit parent_commits
+  parent_commits=()
+  for parent_rev in "$@"; do
+    parent_commit="$(_jj__resolve_commit "$repo" "$parent_rev")" || return 1
+    [[ -n "$parent_commit" ]] || return 1
+    parent_commits+=("$parent_commit")
+  done
+  __jj__run_quiet "$repo" --ignore-working-copy new --no-edit -m "$message" \
+    "${parent_commits[@]}" || return 1
+  # Reproduce the description exactly as stored: jj appends "\n" when a
+  # non-empty message lacks one, and stores everything else verbatim.
+  local stored="$message"
+  if [[ -n "$stored" ]]; then
+    case "$stored" in
+      *$'\n') ;;
+      *) stored="$stored"$'\n' ;;
+    esac
+  fi
+  local escaped
+  escaped="$(__jj__escape_revset_string "$stored")"
+  local intersection=''
+  for parent_commit in "${parent_commits[@]}"; do
+    if [[ -z "$intersection" ]]; then
+      intersection="children(${parent_commit})"
+    else
+      intersection="${intersection} & children(${parent_commit})"
+    fi
+  done
+  local new_commit
+  new_commit="$(__jj__run "$repo" --ignore-working-copy log \
+    -r "latest((${intersection}) & description(exact:\"${escaped}\"))" \
+    --no-graph -T 'commit_id')" || return 1
+  [[ -n "$new_commit" ]] || return 1
+  printf '%s\n' "$new_commit"
+}
+
+# Usage: _jj__set_description REPO REV MESSAGE
+# Replaces the description of REV with MESSAGE. Bare graph mutation: no
+# working copy is touched (descendants are rewritten in the graph as usual).
+# Status only; never logs, never exits.
+_jj__set_description() {
+  local repo="$1" rev="$2" message="$3"
+  __jj__run_quiet "$repo" --ignore-working-copy describe -r "$rev" -m "$message"
+}
+
+# Usage: _jj__move_commits REPO DEST_REV SOURCE_REV [SOURCE_REV...]
+# Rebases each SOURCE_REV, together with its tree of descendants
+# (jj rebase -s), onto DEST_REV, in the order given. At least one source is
+# required. Bare graph mutation: no working copy is touched. Status only;
+# stops at the first failing source and returns its status.
+_jj__move_commits() {
+  local repo="$1" dest_rev="$2"
+  shift 2
+  [[ $# -ge 1 ]] || return 1
+  local source_rev
+  for source_rev in "$@"; do
+    __jj__run_quiet "$repo" --ignore-working-copy rebase \
+      -s "$source_rev" -d "$dest_rev" || return $?
+  done
+}
+
+# Usage: _jj__squash_commit REPO FROM_REV INTO_REV
+# Folds FROM_REV's changes into INTO_REV. The destination keeps its own
+# identity (change ID) and its own description (--use-destination-message);
+# the emptied source is abandoned. Bare graph mutation: no working copy is
+# touched. Status only; never logs, never exits.
+_jj__squash_commit() {
+  local repo="$1" from_rev="$2" into_rev="$3"
+  __jj__run_quiet "$repo" --ignore-working-copy squash \
+    --from "$from_rev" --into "$into_rev" --use-destination-message
+}
+
+# Usage: _jj__restore_tree REPO SOURCE_REV TARGET_REV
+# Sets TARGET_REV's tree wholesale to SOURCE_REV's tree, preserving TARGET's
+# change ID, description and author. Descendants of TARGET are rebased with
+# their CONTENT preserved rather than their diffs replayed
+# (--restore-descendants). Bare graph mutation: no working copy is touched.
+# Status only; never logs, never exits.
+_jj__restore_tree() {
+  local repo="$1" source_rev="$2" target_rev="$3"
+  __jj__run_quiet "$repo" --ignore-working-copy restore \
+    --from "$source_rev" --into "$target_rev" --restore-descendants
+}
+
+# Usage: _jj__abandon_commit REPO REV
+# Abandons REV, rebasing its descendants onto REV's parent(s); bookmarks
+# pointing at REV are deleted by jj as part of the abandon. Bare graph
+# mutation: no working copy is touched. Status only; never logs, never exits.
+_jj__abandon_commit() {
+  local repo="$1" rev="$2"
+  __jj__run_quiet "$repo" --ignore-working-copy abandon "$rev"
 }
 
 # ---------------------------------------------------------------------------
