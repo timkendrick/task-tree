@@ -10,7 +10,9 @@ set -euo pipefail
 #
 # The _repo__* wrapper list is the backend contract: every wrapper must have a
 # same-suffix _jj__* implementation, and every _jj__* implementation must be
-# exposed through a same-suffix _repo__* wrapper.
+# exposed through a same-suffix _repo__* wrapper. Backend-internal helpers
+# (double-underscore __jj__* names) are private to the backend module and are
+# excluded from the contract.
 # ---------------------------------------------------------------------------
 
 test__repo__contract__interface_is_not_empty() {
@@ -43,6 +45,9 @@ test__repo__contract__every_backend_implementation_has_wrapper() {
   while IFS= read -r line; do
     fn="${line##* }"
     case "$fn" in
+      __jj__*)
+        # Internal runner helpers: private to the backend, no wrapper expected.
+        ;;
       _jj__*)
         suffix="${fn#_jj__}"
         declare -F "_repo__${suffix}" >/dev/null || missing="${missing} ${fn}"

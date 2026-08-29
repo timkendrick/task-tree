@@ -88,7 +88,7 @@ test__task__get_full_range_records__excludes_creation_and_wrapper_commits() {
   checkout_task "$task_id" >/dev/null || true
   echo work > "$REPO/work.txt"
   checkpoint_task "work" >/dev/null || true
-  checkpoint_commit=$(get_full_commit_id "$task_id")
+  checkpoint_commit=$(_repo__resolve_commit "$REPO" "$task_id")
   run_tt task checkin "$task_id" --complete >/dev/null 2>&1 || true
 
   local records
@@ -102,10 +102,12 @@ test__task__get_full_range_records__excludes_creation_and_wrapper_commits() {
   assert_is_ancestor "checkpoint is included (tip side)" "$checkpoint_commit" "$tip"
 
   # The handoff and checkin merge commits must not appear in the component.
-  handoff_commit=$(jj -R "$REPO" log --no-graph -r "description(substring:'${task_id}:handoff]')" -T 'commit_id' 2>/dev/null)
-  checkin_commit=$(jj -R "$REPO" log --no-graph -r "description(substring:'${task_id}:checkin]')" -T 'commit_id' 2>/dev/null)
-  assert_revset_count "handoff excluded from component" "(${base}..${tip}) & ${handoff_commit}" 0
-  assert_revset_count "checkin merge excluded from component" "(${base}..${tip}) & ${checkin_commit}" 0
+  handoff_commit=$(_repo__resolve_commit "$REPO" "description(substring:'${task_id}:handoff]')")
+  checkin_commit=$(_repo__resolve_commit "$REPO" "description(substring:'${task_id}:checkin]')")
+  local component_commits
+  component_commits="$(_repo__list_commits_in_range "$REPO" "$base" "$tip")"
+  assert_not_contains "handoff excluded from component" "$component_commits" "$handoff_commit"
+  assert_not_contains "checkin merge excluded from component" "$component_commits" "$checkin_commit"
 }
 
 test__task__get_full_range_records__historical_plus_current() {
@@ -121,7 +123,7 @@ test__task__get_full_range_records__historical_plus_current() {
   checkout_task "$task_id" >/dev/null || true
   echo w2 > "$REPO/w2.txt"
   checkpoint_task "w2" >/dev/null || true
-  w2_commit=$(get_full_commit_id "$task_id")
+  w2_commit=$(_repo__resolve_commit "$REPO" "$task_id")
 
   local records
   records="$(_full_range_records_for "$task_id")"
@@ -135,8 +137,8 @@ test__task__get_full_range_records__historical_plus_current() {
   local current_line current_base current_tip
   current_line="$(printf '%s\n' "$records" | sed -n '2p')"
   IFS=$'\t' read -r current_base current_tip _ _ _ <<< "$current_line"
-  assert_revset_count "w2 is included in the current component" \
-    "(${current_base}..${current_tip}) & ${w2_commit}" 1
+  assert_contains "w2 is included in the current component" \
+    "$(_repo__list_commits_in_range "$REPO" "$current_base" "$current_tip")" "$w2_commit"
 }
 
 test__task__get_full_range_records__multiple_discontiguous_historical_components() {
@@ -152,7 +154,7 @@ test__task__get_full_range_records__multiple_discontiguous_historical_components
   checkout_task "$task_id" >/dev/null || true
   echo w2 > "$REPO/w2.txt"
   checkpoint_task "w2" >/dev/null || true
-  w2_commit=$(get_full_commit_id "$task_id")
+  w2_commit=$(_repo__resolve_commit "$REPO" "$task_id")
   # --force accepts the parent-side subtask-checkbox conflict a second,
   # unrebased checkin produces here. --rebase is deliberately avoided: it
   # pre-merges the parent's tree (including its TASK.md target) into the
@@ -173,8 +175,8 @@ test__task__get_full_range_records__multiple_discontiguous_historical_components
   local second_line second_base second_tip
   second_line="$(printf '%s\n' "$records" | sed -n '2p')"
   IFS=$'\t' read -r second_base second_tip _ _ _ <<< "$second_line"
-  assert_revset_count "w2 is included in the second historical component" \
-    "(${second_base}..${second_tip}) & ${w2_commit}" 1
+  assert_contains "w2 is included in the second historical component" \
+    "$(_repo__list_commits_in_range "$REPO" "$second_base" "$second_tip")" "$w2_commit"
 }
 
 test__task__get_full_range_records__unrelated_project_work_excluded() {
@@ -190,7 +192,7 @@ test__task__get_full_range_records__unrelated_project_work_excluded() {
   # Unrelated work directly on the project branch after the checkin.
   checkout_task "$proj_id" >/dev/null || true
   echo p1 > "$REPO/p1.txt"
-  unrelated_commit=$(get_full_commit_id "$proj_id")
+  unrelated_commit=$(_repo__resolve_commit "$REPO" "$proj_id")
   checkpoint_task "unrelated project work" >/dev/null || true
 
   local records
@@ -199,7 +201,8 @@ test__task__get_full_range_records__unrelated_project_work_excluded() {
 
   local base tip
   IFS=$'\t' read -r base tip _ _ _ <<< "$records"
-  assert_revset_count "unrelated project commit excluded" "(${base}..${tip}) & ${unrelated_commit}" 0
+  assert_not_contains "unrelated project commit excluded" \
+    "$(_repo__list_commits_in_range "$REPO" "$base" "$tip")" "$unrelated_commit"
 }
 
 test__task__get_full_range_records__project_branch_rejected() {

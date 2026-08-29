@@ -63,14 +63,13 @@ _task__assert_bookmark_current() {
 # Usage: _task__check_bookmark_current REPO BOOKMARK
 # Returns 0 if there are no commits between BOOKMARK and the working-copy parent
 # (@-) that are not tracked by the bookmark. Returns 1 if commits exist.
-# TRANSITIONAL(B1): inline revset
+# A range that cannot be resolved counts as zero commits, so resolution
+# failures are treated as "current".
 _task__check_bookmark_current() {
   local repo="$1" bookmark="$2"
-  local ahead_commits
-  ahead_commits="$(jj -R "$repo" log \
-    -r "(::@- & ~::${bookmark})" \
-    --no-graph -T 'change_id ++ "\n"' 2>/dev/null)" || return 0
-  [[ -z "$ahead_commits" ]]
+  local ahead_count
+  ahead_count="$(_repo__count_commits_in_range "$repo" "$bookmark" '@-')"
+  [[ "$ahead_count" -eq 0 ]]
 }
 
 # Usage: _task__find_parent_branch REPO TASK_ID TASK_PREFIX PROJECT_PREFIX
@@ -79,14 +78,11 @@ _task__check_bookmark_current() {
 # Exit 0: parent found (printed to stdout).
 # Exit 1: no parent found (task is parentless; nothing printed).
 # Exit 2: multiple parents found (error printed to stderr).
-# TRANSITIONAL(B1): inline revset
 _task__find_parent_branch() {
   local repo="$1" task_id="$2" task_prefix="$3" project_prefix="$4"
-  local jj_opts=(-R "$repo")
 
   local all_bookmarks
-  all_bookmarks="$(jj "${jj_opts[@]}" --ignore-working-copy log -r 'bookmarks()' \
-    -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' --no-graph 2>/dev/null)" || true
+  all_bookmarks="$(_repo__list_bookmark_names "$repo")" || true
 
   local found=''
   while IFS= read -r branch; do
@@ -129,7 +125,6 @@ _task__find_parent_branch() {
 # Exit 0: range resolved (printed to stdout).
 # Exit 1: not on a task branch, bookmark not found, or no parent found.
 # Exit 2: multiple parents found (error printed to stderr).
-# TRANSITIONAL(B1): inline revset
 _task__get_range_context() {
   local repo="$1" task_id_arg="${2:-}"
 
@@ -149,9 +144,7 @@ _task__get_range_context() {
       return 1
     fi
 
-    local wc_empty
-    wc_empty="$(jj -R "$repo" log -r '@' --no-graph -T 'empty' 2>/dev/null)" || true
-    if [[ "$wc_empty" == "true" ]]; then
+    if _repo__check_commit_empty "$repo" '@'; then
       upper_bound='@-'
     else
       upper_bound='@'
@@ -160,7 +153,7 @@ _task__get_range_context() {
     task_bookmark="$task_id_arg"
     upper_bound="$task_bookmark"
 
-    if ! jj -R "$repo" log -r "$task_bookmark" --no-graph -T 'commit_id' >/dev/null 2>&1; then
+    if ! _repo__check_revision_exists "$repo" "$task_bookmark"; then
       _ui__log "Error: Bookmark '$task_bookmark' not found."
       return 1
     fi
@@ -180,7 +173,6 @@ _task__get_range_context() {
 # Compatibility wrapper over _task__get_range_context that outputs only the
 # range endpoints: "<parent_bookmark> <upper_bound>".
 # Exit codes match _task__get_range_context.
-# TRANSITIONAL(B1): inline revset
 _task__resolve_range() {
   local repo="$1" task_id_arg="${2:-}"
 
@@ -194,16 +186,14 @@ _task__resolve_range() {
 }
 
 # Usage: _task__resolve_fork_point REPO PARENT_BOOKMARK UPPER_BOUND
-# Outputs the commit_id of the fork point between PARENT_BOOKMARK and UPPER_BOUND.
+# Outputs the commit ID of the fork point between PARENT_BOOKMARK and UPPER_BOUND.
 # Exit 0: fork point resolved (printed to stdout).
 # Exit 1: fork point could not be resolved (error printed to stderr).
-# TRANSITIONAL(B1): inline revset
 _task__resolve_fork_point() {
   local repo="$1" parent_bookmark="$2" upper_bound="$3"
 
   local fork_point
-  if ! fork_point="$(jj -R "$repo" log -r "fork_point(${parent_bookmark} | ${upper_bound})" \
-    --no-graph -T 'commit_id' 2>/dev/null)"; then
+  if ! fork_point="$(_repo__find_fork_point_commit "$repo" "$parent_bookmark" "$upper_bound")"; then
     _ui__log "Error: Could not resolve fork point between '$parent_bookmark' and '$upper_bound'."
     return 1
   fi
@@ -246,7 +236,6 @@ _task__resolve_fork_point() {
 # Only supports task branches (not project branches).
 # Exit 1: TASK_ID is not a task branch, or a required revision could not be
 # resolved (error printed to stderr).
-# TRANSITIONAL(B1): inline revset
 _task__get_full_range_records() {
   local repo="$1" task_id="$2" parent_bookmark="$3" upper_bound="$4"
 
@@ -276,20 +265,19 @@ _task__get_full_range_records() {
   creation_boundary="$(_task__full_range_creation_boundary \
     "$repo" "$task_id" "$target_file" "$target_commit" "$parent_commit")" || return 1
 
-  local bounded="${creation_boundary}:: & ::(${target_commit} | ${parent_commit})"
-
   # --- Read scalar waypoint fields for every commit that may participate in the
   # range: commit-id, ordered parent ids, timestamp, and whether it changed the
   # target task file. ---
   local -a wp_id=() wp_parents=() wp_ts=() wp_changed=()
-  local commit_id parents ts changed
-  while IFS=$'\t' read -r commit_id parents ts changed; do
-    [[ -z "$commit_id" ]] && continue
-    wp_id+=("$commit_id")
+  local wp_commit parents ts changed
+  while IFS=$'\t' read -r wp_commit parents ts changed; do
+    [[ -z "$wp_commit" ]] && continue
+    wp_id+=("$wp_commit")
     wp_parents+=("$parents")
     wp_ts+=("$ts")
     wp_changed+=("$changed")
-  done < <(_task__full_range_query_waypoints "$repo" "$bounded" "$target_file")
+  done < <(_task__full_range_query_waypoints \
+    "$repo" "$creation_boundary" "$target_commit" "$parent_commit" "$target_file")
 
   # --- Classify two-parent merge candidates as check-ins by the topology of
   # their second (handoff) parent's TASK.md symlink transition. ---
@@ -341,13 +329,13 @@ _task__get_full_range_records() {
     path_order+=("${wp_id[$i]}"); path_ts+=("${wp_ts[$i]}")
   done
 
-  # --- Current unmerged component, and the broad-component union used to drop
-  # covered child/path candidates. ---
+  # --- Current unmerged component, and the interleaved base/tip cover-range
+  # pairs used to drop covered child/path candidates. ---
   local current_base="$parent_bookmark" current_tip="$upper_bound"
-  local broad_union="(${parent_bookmark}..${upper_bound})"
+  local -a cover_pairs=("$parent_bookmark" "$upper_bound")
   for ((i = 0; i < ${#comp_base[@]}; i++)); do
     if [[ "${comp_kind[$i]}" == "historical" ]]; then
-      broad_union="${broad_union} | (${comp_base[$i]}..${comp_tip[$i]})"
+      cover_pairs+=("${comp_base[$i]}" "${comp_tip[$i]}")
     fi
   done
 
@@ -355,14 +343,14 @@ _task__get_full_range_records() {
   for ((i = 0; i < ${#comp_base[@]}; i++)); do
     _task__full_range_span_empty "$repo" "${comp_base[$i]}" "${comp_tip[$i]}" && continue
     if [[ "${comp_kind[$i]}" == "child" ]]; then
-      _task__full_range_covered_by "$repo" "${comp_base[$i]}" "${comp_tip[$i]}" "$broad_union" && continue
+      _repo__check_range_covered "$repo" "${comp_base[$i]}" "${comp_tip[$i]}" "${cover_pairs[@]}" && continue
     fi
     final_base+=("${comp_base[$i]}"); final_tip+=("${comp_tip[$i]}")
     final_kind+=("${comp_kind[$i]}"); final_order+=("${comp_order[$i]}"); final_ts+=("${comp_ts[$i]}")
   done
   for ((i = 0; i < ${#path_base[@]}; i++)); do
     _task__full_range_span_empty "$repo" "${path_base[$i]}" "${path_tip[$i]}" && continue
-    _task__full_range_covered_by "$repo" "${path_base[$i]}" "${path_tip[$i]}" "$broad_union" && continue
+    _repo__check_range_covered "$repo" "${path_base[$i]}" "${path_tip[$i]}" "${cover_pairs[@]}" && continue
     final_base+=("${path_base[$i]}"); final_tip+=("${path_tip[$i]}")
     final_kind+=("path"); final_order+=("${path_order[$i]}"); final_ts+=("${path_ts[$i]}")
   done
@@ -370,13 +358,9 @@ _task__get_full_range_records() {
   # --- Order historical/child/path components by ancestry, then append the
   # current unmerged component last. ---
   if [[ ${#final_base[@]} -gt 0 ]]; then
-    local order_ids=""
-    for ((i = 0; i < ${#final_order[@]}; i++)); do
-      if [[ -z "$order_ids" ]]; then order_ids="${final_order[$i]}"; else order_ids="${order_ids} | ${final_order[$i]}"; fi
-    done
     local ordered order_commit
-    ordered="$(jj -R "$repo" --ignore-working-copy log --no-graph --reversed \
-      -r "(${bounded}) & (${order_ids})" -T 'commit_id ++ "\n"' 2>/dev/null)"
+    ordered="$(_repo__sort_commits_by_ancestry \
+      "$repo" "$creation_boundary" "$target_commit" "$parent_commit" "${final_order[@]}")"
     while IFS= read -r order_commit; do
       [[ -z "$order_commit" ]] && continue
       for ((i = 0; i < ${#final_order[@]}; i++)); do
@@ -391,8 +375,7 @@ _task__get_full_range_records() {
 
   if ! _task__full_range_span_empty "$repo" "$current_base" "$current_tip"; then
     local current_ts
-    current_ts="$(jj -R "$repo" --ignore-working-copy log --no-graph -r "$upper_commit" \
-      -T 'committer.timestamp().utc().format("%Y-%m-%dT%H:%M:%SZ")' 2>/dev/null)"
+    current_ts="$(_repo__get_commit_timestamp "$repo" "$upper_commit")"
     printf '%s\t%s\t%s\t%s\t%s\n' "$current_base" "$current_tip" "current" "$upper_commit" "$current_ts"
   fi
 }
@@ -400,11 +383,10 @@ _task__get_full_range_records() {
 # Usage: _task__full_range_resolve_commit REPO REV
 # Prints the immutable commit ID of REV. Exit 1 with an error if REV cannot be
 # resolved.
-# TRANSITIONAL(B1): inline revset
 _task__full_range_resolve_commit() {
   local repo="$1" rev="$2"
   local id
-  id="$(jj -R "$repo" --ignore-working-copy log -r "$rev" --no-graph -T 'commit_id' 2>/dev/null)"
+  id="$(_repo__resolve_commit "$repo" "$rev")" || id=''
   if [[ -z "$id" ]]; then
     _ui__log "Error: Could not resolve revision '$rev'."
     return 1
@@ -428,46 +410,33 @@ _task__full_range_bookmark_task_file() {
 # Prints the immutable commit ID of the unique commit that created TARGET_FILE
 # within the combined ancestry of TARGET_COMMIT and PARENT_COMMIT. Exit 1 with
 # an error if no such commit, or more than one, is found.
-# TRANSITIONAL(B1): inline revset
 _task__full_range_creation_boundary() {
   local repo="$1" task_id="$2" target_file="$3" target_commit="$4" parent_commit="$5"
-  local matches
-  matches="$(jj -R "$repo" --ignore-working-copy log --no-graph -r \
-    "roots(files(root-file:\"${target_file}\") & ::(${target_commit} | ${parent_commit}))" \
-    -T 'commit_id ++ "\n"' 2>/dev/null)" || true
-  local count
-  count="$(printf '%s' "$matches" | grep -c . || true)"
-  if [[ "$count" -ne 1 ]]; then
+  local boundary
+  if ! boundary="$(_repo__find_file_introduction "$repo" "$target_file" "$target_commit" "$parent_commit")"; then
     _ui__log "Error: Could not resolve a unique creation boundary for '$task_id'."
     return 1
   fi
-  printf '%s' "$matches"
+  printf '%s' "$boundary"
 }
 
-# Usage: _task__full_range_query_waypoints REPO BOUNDED_REVSET TARGET_FILE
+# Usage: _task__full_range_query_waypoints REPO BOUNDARY HEAD_A HEAD_B TARGET_FILE
 # Prints one tab-separated line per commit, oldest first, for every commit
-# within BOUNDED_REVSET that changes TARGET_FILE, changes the root TASK.md
-# symlink, or is a merge with a parent that changes the root TASK.md symlink:
+# between BOUNDARY and the two heads that changes TARGET_FILE, changes the
+# root TASK.md symlink, or is a merge with a parent that changes the root
+# TASK.md symlink:
 #   <commit-id>\t<parent-ids space-separated>\t<timestamp>\t<target-changed 0|1>
-# TRANSITIONAL(B1): inline revset
 _task__full_range_query_waypoints() {
-  local repo="$1" bounded="$2" target_file="$3"
-  local target_changes="files(root-file:\"${target_file}\")"
-  local symlink_changes="files(root-file:\"${TT_TASK_SYMLINK_FILENAME}\")"
-  local merge_candidates="merges() & children(${symlink_changes})"
-  jj -R "$repo" --ignore-working-copy log --no-graph --reversed \
-    -r "(${bounded}) & (${target_changes} | ${symlink_changes} | ${merge_candidates})" \
-    -T 'commit_id ++ "\t" ++ parents.map(|p| p.commit_id()).join(" ") ++ "\t" ++ committer.timestamp().utc().format("%Y-%m-%dT%H:%M:%SZ") ++ "\t" ++ if(self.diff("root-file:\"'"${target_file}"'\"").files().len() > 0, "1", "0") ++ "\n"' \
-    2>/dev/null
+  local repo="$1" boundary="$2" head_a="$3" head_b="$4" target_file="$5"
+  _repo__list_file_waypoints "$repo" "$boundary" "$head_a" "$head_b" \
+    "$target_file" "$TT_TASK_SYMLINK_FILENAME"
 }
 
 # Usage: _task__full_range_symlink_diff REPO REV
 # Prints the Git-format diff of the root TASK.md symlink at REV.
-# TRANSITIONAL(B1): inline revset
 _task__full_range_symlink_diff() {
   local repo="$1" rev="$2"
-  jj -R "$repo" --ignore-working-copy log --no-graph -r "$rev" \
-    -T 'self.diff("root-file:\"'"${TT_TASK_SYMLINK_FILENAME}"'\"").git()' 2>/dev/null
+  _repo__get_file_diff "$repo" "$rev" "$TT_TASK_SYMLINK_FILENAME"
 }
 
 # Usage: _task__full_range_parse_symlink_removed DIFF_TEXT
@@ -483,20 +452,12 @@ _task__full_range_parse_symlink_added() {
 }
 
 # Usage: _task__full_range_span_empty REPO BASE TIP
-# Returns 0 (true) if the revset "BASE..TIP" contains no commits.
+# Returns 0 (true) if the range from BASE (exclusive) to TIP (inclusive)
+# contains no commits.
 _task__full_range_span_empty() {
   local repo="$1" base="$2" tip="$3"
   local count
-  count="$(_repo__count_revisions "$repo" "${base}..${tip}")"
-  [[ "$count" -eq 0 ]]
-}
-
-# Usage: _task__full_range_covered_by REPO BASE TIP BROAD_REVSET
-# Returns 0 (true) if every commit in "BASE..TIP" is already in BROAD_REVSET.
-_task__full_range_covered_by() {
-  local repo="$1" base="$2" tip="$3" broad="$4"
-  local count
-  count="$(_repo__count_revisions "$repo" "(${base}..${tip}) ~ (${broad})")"
+  count="$(_repo__count_commits_in_range "$repo" "$base" "$tip")"
   [[ "$count" -eq 0 ]]
 }
 
@@ -529,12 +490,10 @@ _task__find_parent_project() {
 # "subtask: [x] <task-id>" (merged); if found, outputs that parent branch.
 # Otherwise checks if TASK_ID itself is a valid branch (ongoing) and outputs it.
 # Exits 1 if neither is found.
-# TRANSITIONAL(B1): inline revset
 _task__find_branch() {
   local repo="$1" task_id="$2" task_prefix="$3" project_prefix="$4"
   local all_bookmarks
-  all_bookmarks="$(jj -R "$repo" --ignore-working-copy log -r 'bookmarks()' \
-    -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' --no-graph 2>/dev/null)" || true
+  all_bookmarks="$(_repo__list_bookmark_names "$repo")" || true
 
   while IFS= read -r branch; do
     [[ -z "$branch" ]] && continue
@@ -556,7 +515,7 @@ _task__find_branch() {
   done <<< "$all_bookmarks"
 
   # Not merged — use task's own branch
-  if jj -R "$repo" --ignore-working-copy log -r "$task_id" --no-graph -T '' 2>/dev/null; then
+  if _repo__check_revision_exists "$repo" "$task_id"; then
     printf '%s' "$task_id"
     return 0
   fi
@@ -578,7 +537,7 @@ _task__find_branch() {
 #                  BOOKMARK, start a fresh child commit, write into REPO, commit,
 #                  advance the bookmark, then restore the working copy to its
 #                  original parent. Since @ is empty (callers require a clean WC),
-#                  saving the parent commit_id is enough to restore the working
+#                  saving the parent commit ID is enough to restore the working
 #                  copy afterwards. This lets commands mutate tasks that have not
 #                  been checked out.
 #
@@ -609,30 +568,28 @@ _task__write_and_commit_on_branch() {
 # Usage: _task__resolve_current REPO TASK_PREFIX PROJECT_PREFIX
 #
 # Resolve the "current branch" (closest ancestor of the working copy @ that has a bookmark).
-# Uses heads() so that when @ is a working-copy commit (direct descendant of a task), we get
-# the task bookmark, not a more distant ancestor like main.
+# The *closest* bookmarked ancestor matters: when @ is a working-copy commit
+# (direct descendant of a task), we get the task bookmark, not a more distant
+# ancestor like main.
 # Outputs three lines to stdout:
 #   line 1: rev       — commit ID at the current branch, or '@' if no bookmarks in ancestry
 #   line 2: task_file — path to .tt/task/<slug>-<hex>.md, or empty if current branch is a root
 #   line 3: bookmark  — bookmark name, or empty if current branch is a root
 #
 # Exits 1 if the current branch cannot be resolved.
-# TRANSITIONAL(B1): inline revset
 _task__resolve_current() {
   local repo="$1"
   local task_prefix="$2"
   local project_prefix="$3"
-  local jj_opts=(-R "$repo")
   local current_branch
 
-  current_branch="$(jj "${jj_opts[@]}" --ignore-working-copy log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || true
-  current_branch="${current_branch%%,*}"  # Take first if comma-separated
+  current_branch="$(_repo__find_nearest_bookmark "$repo" '@')" || current_branch=''
 
   if [[ -z "$current_branch" ]]; then
     printf '%s\n\n\n' '@'
   else
     local parent_rev
-    if ! parent_rev="$(jj "${jj_opts[@]}" --ignore-working-copy log -r "$current_branch" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"; then
+    if ! parent_rev="$(_repo__resolve_commit "$repo" "$current_branch")"; then
       _ui__log "Error: Could not resolve current branch: $current_branch"
       exit 1
     fi

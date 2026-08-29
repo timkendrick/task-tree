@@ -5,6 +5,8 @@
 # active backend (currently jj, lib/vcs/jj.sh). The wrapper list below is the
 # backend contract: a backend must implement a same-suffix function for every
 # wrapper, and nothing outside this file may call backend functions directly.
+# Backend-internal helpers (double-underscore names such as __jj__run) are not
+# part of the contract and have no wrappers.
 #
 # Public surface: every _repo__* function declared below. Argument and output
 # conventions are documented on the backend implementations.
@@ -17,15 +19,36 @@ _repo__check_is_repository()       { _jj__check_is_repository "$@"; }
 _repo__find_repository_root()      { _jj__find_repository_root "$@"; }
 _repo__resolve_repository_root()   { _jj__resolve_repository_root "$@"; }
 _repo__resolve_repository_path()   { _jj__resolve_repository_path "$@"; }
+_repo__get_backend_type()          { _jj__get_backend_type "$@"; }
+_repo__check_backend_supported()   { _jj__check_backend_supported "$@"; }
 
 # --- Operation log ---
 _repo__get_operation_id()          { _jj__get_operation_id "$@"; }
+_repo__restore_operation()         { _jj__restore_operation "$@"; }
 
 # --- Revisions ---
-_repo__count_revisions()           { _jj__count_revisions "$@"; }
 _repo__get_commit_description()    { _jj__get_commit_description "$@"; }
+_repo__resolve_commit()            { _jj__resolve_commit "$@"; }
+_repo__resolve_change()            { _jj__resolve_change "$@"; }
+_repo__get_commit_timestamp()      { _jj__get_commit_timestamp "$@"; }
+_repo__check_revision_exists()     { _jj__check_revision_exists "$@"; }
+_repo__check_commit_empty()        { _jj__check_commit_empty "$@"; }
 _repo__check_has_conflicts()       { _jj__check_has_conflicts "$@"; }
+_repo__check_descendants_have_conflicts() { _jj__check_descendants_have_conflicts "$@"; }
+_repo__check_is_ancestor()         { _jj__check_is_ancestor "$@"; }
+_repo__find_fork_point_commit()    { _jj__find_fork_point_commit "$@"; }
+_repo__find_nearest_bookmark()     { _jj__find_nearest_bookmark "$@"; }
+_repo__list_commits_in_range()     { _jj__list_commits_in_range "$@"; }
+_repo__count_commits_in_range()    { _jj__count_commits_in_range "$@"; }
+_repo__list_range_root_commits()   { _jj__list_range_root_commits "$@"; }
+_repo__check_range_covered()       { _jj__check_range_covered "$@"; }
+_repo__format_revision_range()     { _jj__format_revision_range "$@"; }
 _repo__list_mainline_commits()     { _jj__list_mainline_commits "$@"; }
+
+# --- Task-range queries ---
+_repo__find_file_introduction()    { _jj__find_file_introduction "$@"; }
+_repo__list_file_waypoints()       { _jj__list_file_waypoints "$@"; }
+_repo__sort_commits_by_ancestry()  { _jj__sort_commits_by_ancestry "$@"; }
 
 # --- Working copy (restricted: worktree-level callers only) ---
 _repo__check_working_copy_clean()  { _jj__check_working_copy_clean "$@"; }
@@ -37,12 +60,24 @@ _repo__commit_working_copy()       { _jj__commit_working_copy "$@"; }
 
 # --- Bookmarks ---
 _repo__set_bookmark()              { _jj__set_bookmark "$@"; }
+_repo__list_bookmark_names()       { _jj__list_bookmark_names "$@"; }
+_repo__list_bookmarks_at()         { _jj__list_bookmarks_at "$@"; }
+_repo__check_bookmark_exists()     { _jj__check_bookmark_exists "$@"; }
+_repo__rename_bookmark()           { _jj__rename_bookmark "$@"; }
+_repo__delete_bookmark()           { _jj__delete_bookmark "$@"; }
 
 # --- Worktrees ---
 _repo__resolve_worktree_root()     { _jj__resolve_worktree_root "$@"; }
 _repo__list_worktrees()            { _jj__list_worktrees "$@"; }
 _repo__forget_worktree()           { _jj__forget_worktree "$@"; }
+_repo__create_worktree()           { _jj__create_worktree "$@"; }
+_repo__get_worktree_revision()     { _jj__get_worktree_revision "$@"; }
 
 # --- Files ---
 _repo__read_file_at_revision()     { _jj__read_file_at_revision "$@"; }
 _repo__read_file_at_operation()    { _jj__read_file_at_operation "$@"; }
+_repo__check_file_exists_at_revision() { _jj__check_file_exists_at_revision "$@"; }
+_repo__list_files_at_revision()    { _jj__list_files_at_revision "$@"; }
+_repo__list_files_at_operation()   { _jj__list_files_at_operation "$@"; }
+_repo__get_file_diff()             { _jj__get_file_diff "$@"; }
+_repo__show_diff()                 { _jj__show_diff "$@"; }
