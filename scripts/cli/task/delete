@@ -8,8 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # tt task delete — Remove a task from its parent branch.
 #
 # Usage:
-#   delete [<task-id>] [--force]
-#          [--worktree=<path>] [--repo PATH]
+#   delete [<task-id>] [--force] [--repo PATH]
 #
 # Removes the subtask: entry from the parent task file and removes the child
 # task file (and all descendant task files) from the parent branch, creating
@@ -17,15 +16,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # Options:
 #   <task-id>            Task to delete (default: current branch).
-#   --force              Skip DONE status check and clean WC check.
-#   --worktree=<path>    Explicit parent workspace path (for disambiguation).
+#   --force              Skip DONE status check.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [--force] [--worktree=<path>] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [--force] [--repo PATH]
 
 Remove a task from its parent branch.
 
@@ -33,8 +31,7 @@ Arguments:
   <task-id>             Task to delete (default: current branch).
 
 Options:
-  --force               Skip DONE and clean WC checks.
-  --worktree=<path>     Explicit parent workspace path.
+  --force               Skip DONE status check.
   --repo PATH           Repository root (overrides TT_REPO; default: find .jj).
   -h, --help            Show this help.
 
@@ -89,13 +86,13 @@ collect_subtree() {
     # Collect subtask IDs from the task's own branch
     local own_subs=""
     local own_content
-    own_content="$(_repo__read_file_at_revision "$repo" "$current" "$own_file")" || true
+    own_content="$(_task__read_file "$repo" "$current" "$own_file")" || true
     own_subs="$(_subtask_ids_from_content "$own_content")" || true
 
     # Collect subtask IDs from the parent branch's copy of this task's file
     local parent_subs=""
     local parent_content
-    parent_content="$(_repo__read_file_at_revision "$repo" "$parent_branch" "$own_file")" || true
+    parent_content="$(_task__read_file "$repo" "$parent_branch" "$own_file")" || true
     parent_subs="$(_subtask_ids_from_content "$parent_content")" || true
 
     # Union: add all newly discovered subtask IDs to to_visit
@@ -124,13 +121,11 @@ collect_subtree() {
 main() {
   local task_id_arg=''
   local force=false
-  local worktree_arg=''
   local repo=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --force)      force=true; shift ;;
-      --worktree=*) worktree_arg="${1#--worktree=}"; shift ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
@@ -165,7 +160,7 @@ main() {
       _ui__log "Error: '$task_id' is not a recognized task or project ID."
       exit 1
     fi
-    if ! jj -R "$repo" log -r "$task_id" --no-graph -T '' 2>/dev/null; then
+    if ! _task__check_branch_exists "$repo" "$task_id"; then
       _ui__log "Error: Task '$task_id' not found in repository."
       exit 1
     fi
@@ -189,17 +184,9 @@ main() {
     task_file="$(_path__task_file "$task_slug")"
   fi
 
-  # Precondition: WC must be clean (skip with --force)
-  if [[ "$force" != true ]]; then
-    if ! _repo__check_working_copy_clean "$repo"; then
-      _ui__log "Error: Working copy has uncommitted changes. Commit or discard first, or use --force."
-      exit 1
-    fi
-  fi
-
   # Read task content and check status
   local task_content task_title task_status
-  task_content="$(_repo__read_file_at_revision "$repo" "$task_id" "$task_file")" || {
+  task_content="$(_task__read_file "$repo" "$task_id" "$task_file")" || {
     _ui__log "Error: Could not read task file '$task_file' from bookmark '$task_id'."
     exit 1
   }
@@ -235,31 +222,33 @@ main() {
   subtree_ids="$(collect_subtree "$repo" "$task_id" "$parent_bookmark" \
     "$task_prefix" "$project_prefix")"
 
-  # Determine target workspace
-  local target_ws
-  local worktrees
-  worktrees="$(_worktree__find_for_branch "$repo" "$parent_bookmark" "$task_prefix" "$project_prefix")"
-  local wt_count
-  wt_count="$(printf '%s' "$worktrees" | grep -c . 2>/dev/null || true)"
+  # Verify the parent task file exists on the parent branch before writing
+  if ! _task__read_file "$repo" "$parent_bookmark" "$parent_task_file" >/dev/null; then
+    _ui__log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
+    exit 1
+  fi
 
-  case "$wt_count" in
-    0) target_ws="$repo" ;;
-    1) target_ws="$worktrees" ;;
-    *)
-      if printf '%s\n' "$worktrees" | grep -qxF "$(_repo__resolve_worktree_root "$repo")"; then
-        target_ws="$(_repo__resolve_worktree_root "$repo")"
-      elif [[ -z "$worktree_arg" ]]; then
-        _ui__log "Error: Multiple parent workspaces found; use --worktree=<path>:"
-        printf '%s\n' "$worktrees" | while IFS= read -r p; do _ui__log "  $p"; done
-        exit 1
-      else
-        target_ws="$worktree_arg"
-      fi
-      ;;
-  esac
+  # Deletion prefixes for the parent-branch commit: the task's own directory
+  # plus every descendant directory recorded on the parent branch. Prefixes
+  # matching no files at the parent tip contribute nothing, so descendants
+  # never checked into the parent are harmless here (their bookmarks and
+  # workspaces are still cleaned up below via the full subtree).
+  local task_dir
+  task_dir="$(_path__task_dir "$task_slug")"
+  local -a delete_flags=(--delete-prefix "$task_dir")
+  local descendant_dirs
+  descendant_dirs="$(_task__collect_descendant_dirs "$repo" "$parent_bookmark" \
+    "$task_id" "$task_prefix" "$project_prefix")" || true
+  local desc_dir
+  while IFS= read -r desc_dir; do
+    [[ -n "$desc_dir" ]] && delete_flags+=(--delete-prefix "$desc_dir")
+  done <<< "$descendant_dirs"
 
   local current_worktree
-  current_worktree="$(_repo__resolve_worktree_root "$repo")"
+  current_worktree="$(_worktree__resolve_current "$repo")"
+
+  # Precondition: the working-copy commit must not carry a bookmark
+  _worktree__ensure_working_copy "$repo" || exit 1
 
   # Begin transaction (records before-op for undo)
   _history__begin_transaction "$repo"
@@ -271,67 +260,35 @@ main() {
     "TT_PARENT_TASK_ID=$parent_bookmark" \
     "TT_PARENT_TASK_BRANCH=$parent_bookmark"
 
-  # Create new WC branching from parent bookmark
-  jj -R "$target_ws" new "$parent_bookmark"
-
-  # Read parent task file content
-  local parent_task_content
-  parent_task_content="$(_repo__read_file_at_revision "$target_ws" "$parent_bookmark" "$parent_task_file")" || {
-    _ui__log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
-    exit 1
+  # Writer invoked by _task__commit_on_branch with the staging root: removes
+  # this task's subtask entry from the staged parent task file. The task
+  # directories themselves are removed via the --delete-prefix flags.
+  delete_parent_writer() {
+    local root="$1"
+    _frontmatter__remove_subtask "$root/$parent_task_file" "$task_id"
   }
 
-  # Remove subtask entry for this task from parent frontmatter
-  local updated_parent_content
-  updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" '
-    BEGIN { sep = 0 }
-    /^---$/ { sep++; print; next }
-    sep == 1 && /^subtask:/ {
-      rest = $0
-      sub(/^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]*/, "", rest)
-      split(rest, parts, /[[:space:]]/)
-      if (parts[1] == id) next
-    }
-    { print }
-  ')"
-
-  printf '%s\n' "$updated_parent_content" > "$target_ws/$parent_task_file"
-
-  # Remove top-level task directory from target workspace (best-effort)
-  local task_dir
-  task_dir="$(_path__task_dir "$task_slug")"
-  rm -rf "$target_ws/$task_dir"
-
-  # Remove all descendant task directories from target workspace (best-effort)
-  while IFS= read -r desc_id; do
-    [[ -z "$desc_id" ]] && continue
-    local desc_slug
-    if _task__check_is_task_branch "$desc_id" "$task_prefix"; then
-      desc_slug="${desc_id#$task_prefix}"
-    else
-      desc_slug="${desc_id#$project_prefix}"
-    fi
-    local desc_dir
-    desc_dir="$(_path__task_dir "$desc_slug")"
-    rm -rf "$target_ws/$desc_dir"
-  done <<< "$subtree_ids" || true
-
-  # Commit and advance parent bookmark
-  jj -R "$target_ws" commit -m "$(_commit__format_message "task" "delete" "$task_id" "$task_title")"
-  jj -R "$target_ws" bookmark set "$parent_bookmark" -r '@-'
-  jj -R "$target_ws" new '@'
+  # Commit the subtask-entry removal and directory deletions onto the parent
+  # branch in a single commit
+  _task__commit_on_branch "$repo" "$parent_bookmark" \
+    "$(_commit__format_message "task" "delete" "$task_id" "$task_title")" \
+    --modify "$parent_task_file" \
+    "${delete_flags[@]}" \
+    -- delete_parent_writer >/dev/null
 
   # Bulk bookmark deletion: root + all descendants
   local all_ids="${task_id}"$'\n'"${subtree_ids}"
+  local del_id
   while IFS= read -r del_id; do
     [[ -z "$del_id" ]] && continue
-    if jj -R "$repo" log -r "$del_id" --no-graph -T '' 2>/dev/null; then
-      jj -R "$repo" bookmark delete "$del_id" 2>/dev/null || \
+    if _task__check_branch_exists "$repo" "$del_id"; then
+      _task__delete_branch "$repo" "$del_id" || \
         _ui__log "Warning: Could not delete bookmark '$del_id'."
     fi
   done <<< "$all_ids" || true
 
-  # Bulk workspace cleanup: root + all descendants
+  # Bulk workspace cleanup: root + all descendants. Workspaces are forgotten
+  # from the repository model only; their files stay on disk.
   while IFS= read -r del_id; do
     [[ -z "$del_id" || -z "$workspace_dir" ]] && continue
     local ws_path="${workspace_dir}/${del_id}"
@@ -339,7 +296,7 @@ main() {
       local ws_name
       ws_name="$(_worktree__resolve_name "$repo" "$ws_path")" || true
       if [[ -n "$ws_name" ]]; then
-        jj -R "$repo" workspace forget "$ws_name" 2>/dev/null || true
+        _worktree__delete "$repo" "$ws_name" || true
         _ui__log "Workspace '$ws_name' ($del_id) forgotten from jj."
       fi
       _ui__log "Warning: Workspace directory still exists: $ws_path"
@@ -349,6 +306,8 @@ main() {
 
   # Commit transaction (records after-op for undo)
   _history__commit_transaction "$repo"
+
+  _worktree__report_unsynced "$repo" "$parent_bookmark"
 
   # Run post-delete hook (non-blocking)
   _hook__run "$repo" "post-delete" false "$current_worktree" "${workspace_dir:-}" \

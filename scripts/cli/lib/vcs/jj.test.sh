@@ -534,6 +534,34 @@ test__jj__set_bookmark__moves_bookmark_to_explicit_revision() {
     "$(jj -R "$REPO" log -r 'marker' --no-graph -T 'commit_id')" "$target"
 }
 
+test__jj__set_bookmark__backwards_move_requires_flag() {
+  setup_workspace
+  edit_file file.txt "content"
+  jj -R "$REPO" commit -m "second" >/dev/null 2>&1
+
+  local older newer
+  older="$(jj -R "$REPO" log -r '@--' --no-graph -T 'commit_id')"
+  newer="$(jj -R "$REPO" log -r '@-' --no-graph -T 'commit_id')"
+
+  _jj__set_bookmark "$REPO" "marker" "$newer" >/dev/null 2>&1
+
+  # Without --allow-backwards, moving the bookmark to a non-descendant fails
+  # and the bookmark stays put.
+  local exit_code=0
+  _jj__set_bookmark "$REPO" "marker" "$older" >/dev/null 2>&1 || exit_code=$?
+  assert_failure "backwards move without flag rejected" "$exit_code"
+  assert_eq "bookmark unmoved after rejected backwards move" \
+    "$(jj -R "$REPO" log -r 'marker' --no-graph -T 'commit_id')" "$newer"
+
+  # With --allow-backwards the same move succeeds.
+  exit_code=0
+  _jj__set_bookmark "$REPO" "marker" "$older" --allow-backwards >/dev/null 2>&1 \
+    || exit_code=$?
+  assert_success "backwards move with flag succeeds" "$exit_code"
+  assert_eq "bookmark moved backwards to the older revision" \
+    "$(jj -R "$REPO" log -r 'marker' --no-graph -T 'commit_id')" "$older"
+}
+
 # ---------------------------------------------------------------------------
 # _jj__list_bookmark_names / _jj__list_bookmarks_at / _jj__check_bookmark_exists
 # ---------------------------------------------------------------------------
