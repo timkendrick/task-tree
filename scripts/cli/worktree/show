@@ -62,10 +62,10 @@ main() {
     usage >&2; exit 1
   fi
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local ws_path
-  if ! ws_path="$(resolve_workspace_path "$repo" "$name")"; then
+  if ! ws_path="$(_worktree__resolve_path "$repo" "$name")"; then
     _ui__log "Error: No worktree named '$name'"
     exit 1
   fi
@@ -78,7 +78,7 @@ main() {
   fi
   ws_path="$(_path__resolve_symlinks "$ws_path")"
 
-  # $repo is whichever workspace resolve_repo landed on, which is NOT necessarily
+  # $repo is whichever workspace _workspace__resolve_repo landed on, which is NOT necessarily
   # the canonical repo: invoked from inside a dedicated worktree without TT_REPO
   # set, _repo__find_repository_root walks up to the worktree's own .jj and returns the
   # worktree. Resolve to the canonical repo before comparing.

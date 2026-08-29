@@ -69,11 +69,11 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Validate --task filter if provided
   if [[ -n "$task_filter" ]]; then
@@ -96,7 +96,7 @@ main() {
   local -a ws_is_current=()
 
   local ws_data
-  ws_data="$(list_workspaces "$repo" "$task_prefix" "$project_prefix")" || ws_data=''
+  ws_data="$(_worktree__list "$repo" "$task_prefix" "$project_prefix")" || ws_data=''
 
   while IFS=$'\t' read -r ws_name ws_path task_id; do
     [[ -z "$ws_name" ]] && continue

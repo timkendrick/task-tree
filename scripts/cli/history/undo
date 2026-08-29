@@ -78,10 +78,10 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local history_file
-  history_file="$(resolve_history_file_location "$repo")" || exit 1
+  history_file="$(_history__resolve_file "$repo")" || exit 1
 
   # Check history file exists and has at least one entry
   if [[ ! -f "$history_file" ]] || [[ ! -s "$history_file" ]]; then

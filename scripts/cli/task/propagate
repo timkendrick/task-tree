@@ -341,11 +341,11 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
   local jj_opts=(-R "$repo")
 
   # Resolve --from: explicit or current branch
@@ -369,11 +369,11 @@ main() {
 
   # Begin transaction (records before-op for undo; skip for dry-run)
   if [[ "$dry_run" != true ]]; then
-    tt_begin_transaction "$repo"
+    _history__begin_transaction "$repo"
   fi
 
   # Capture @ to restore after merge/rebase operations move it.
-  # (On error, tt_rollback_transaction restores the entire jj state including WC position.)
+  # (On error, _history__rollback_transaction restores the entire jj state including WC position.)
   local original_rev
   original_rev="$(_repo__get_working_copy_revision "$repo")"
 
@@ -381,7 +381,7 @@ main() {
     "$strategy" "$shallow" "$force" "$dry_run" "$original_rev" 0
 
   # Explicitly restore WC to where the user was before the command.
-  # This must happen before tt_commit_transaction so the restore is
+  # This must happen before _history__commit_transaction so the restore is
   # captured in the transaction's after-op-id.
   if [[ -n "$original_rev" ]]; then
     jj -R "$repo" edit "$original_rev" 2>/dev/null || true
@@ -389,7 +389,7 @@ main() {
 
   # Commit transaction (records after-op for undo; skip for dry-run)
   if [[ "$dry_run" != true ]]; then
-    tt_commit_transaction "$repo"
+    _history__commit_transaction "$repo"
   fi
 
   _ui__log "Propagate complete."

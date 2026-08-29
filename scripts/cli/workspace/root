@@ -55,10 +55,10 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local ws_dir
-  if ! ws_dir="$(get_workspace_dir "$repo")"; then
+  if ! ws_dir="$(_workspace__get_dir "$repo")"; then
     _ui__log "Error: No workspace directory configured. Run 'tt workspace init' first."
     exit 1
   fi
