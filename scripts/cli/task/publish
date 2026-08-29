@@ -168,9 +168,6 @@ main() {
   local workspace_dir
   workspace_dir="$(_workspace__get_dir "$repo")" || true
 
-  local current_worktree
-  current_worktree="$(_repo__resolve_worktree_root "$repo")"
-
   # --- Resolve project branch ---
   local child_bookmark child_slug
 
@@ -181,7 +178,7 @@ main() {
       _ui__log "  Use 'tt task checkin' to check in task branches."
       exit 1
     fi
-    if ! jj -R "$repo" log -r "$child_bookmark" --no-graph -T '' 2>/dev/null; then
+    if ! _task__check_branch_exists "$repo" "$child_bookmark"; then
       _ui__log "Error: Branch '$child_bookmark' not found in repository."
       exit 1
     fi
@@ -204,21 +201,19 @@ main() {
   local task_id="$child_bookmark"
 
   # --- Validate target branch exists ---
-  if ! jj -R "$repo" log -r "$target" --no-graph -T '' 2>/dev/null; then
+  if ! _task__check_branch_exists "$repo" "$target"; then
     _ui__log "Error: --target '$target' not found in repository."
     exit 1
   fi
 
-  # --- Check WC clean ---
-  if ! _repo__check_working_copy_clean "$current_worktree"; then
-    _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
-    exit 1
-  fi
+  # No clean-working-copy precondition: publish writes nothing through any
+  # working copy and validates no unmerged range, so uncommitted changes in
+  # the invoking worktree are simply left alone.
 
   # --- Read task title from project branch ---
   local task_file task_content task_title
   task_file="$(_path__task_file "$child_slug")"
-  task_content="$(_repo__read_file_at_revision "$repo" "$child_bookmark" "$task_file")" || true
+  task_content="$(_task__read_file "$repo" "$child_bookmark" "$task_file")" || true
   task_title="$(_frontmatter__parse_quoted_field "$task_content" "title" 2>/dev/null)" || task_title="$child_bookmark"
 
   # --- Optional: rebase/merge propagation from target ---
@@ -230,10 +225,6 @@ main() {
       --"$strategy" \
       ${force:+--force} \
       --repo "$repo"
-    if ! _repo__check_working_copy_clean "$current_worktree"; then
-      _ui__log "Error: Working copy not clean after propagation."
-      exit 1
-    fi
   fi
 
   # --- Resolve the publish commit message ---
@@ -264,62 +255,69 @@ main() {
     exit 1
   fi
 
+  # Precondition: the working-copy commit must not carry a bookmark
+  _worktree__ensure_working_copy "$repo" || exit 1
+
   # Begin transaction (records before-op for undo)
   _history__begin_transaction "$repo"
 
   _ui__log "Publishing: $child_bookmark -> $target"
 
-  # --- Determine target workspace ---
-  local target_ws
-  local worktrees
-  worktrees="$(_worktree__find_for_branch "$repo" "$target" "$task_prefix" "$project_prefix")"
-  local wt_count
-  wt_count="$(printf '%s' "$worktrees" | grep -c . 2>/dev/null || true)"
+  # Pin the target tip: it anchors the merge's first parent and the worktree
+  # reattachment below.
+  local old_target_tip
+  old_target_tip="$(_task__resolve_revision "$repo" "$target")" || {
+    _ui__log "Error: Could not resolve branch '$target'."
+    exit 1
+  }
 
-  case "$wt_count" in
-    0) target_ws="$repo" ;;
-    1) target_ws="$worktrees" ;;
-    *)
-      _ui__log "Error: Multiple workspaces found for target '$target'."
-      printf '%s\n' "$worktrees" | while IFS= read -r p; do _ui__log "  $p"; done
-      exit 1
-      ;;
-  esac
+  # Writer invoked by _task__commit_handoff with the staging root. The publish
+  # handoff carries only deletions (declared via the delete flags below), so
+  # nothing is staged.
+  publish_handoff_writer() {
+    :
+  }
 
-  # --- Create handoff commit ---
-  # New WC branching from project bookmark (stages files for handoff)
-  jj -R "$target_ws" new "$child_bookmark"
-
-  # Project publish: remove TASK.md symlink and .tt/task/ directory.
-  # Task files are development-only scaffolding; they must not land on the
-  # delivery branch. .tt/config.toml is kept (workspace configuration).
-  rm -f "$target_ws/TASK.md"
-  rm -rf "$target_ws/$(_path__task_root)"
-
-  # Commit the handoff (project bookmark does NOT advance)
-  jj -R "$target_ws" commit -m "$(_commit__format_message "task" "handoff" "$task_id" "$task_title")"
+  # --- Create the handoff commit (project bookmark does NOT advance) ---
+  # Project publish: remove the repo-root TASK.md symlink and the .tt/task/
+  # tree. Task files are development-only scaffolding; they must not land on
+  # the delivery branch. .tt/config.toml is kept (workspace configuration).
   local handoff_commit
-  handoff_commit="$(jj -R "$target_ws" log -r '@-' --no-graph -T 'commit_id')"
+  handoff_commit="$(_task__commit_handoff "$repo" "$child_bookmark" \
+    "$(_commit__format_message "task" "handoff" "$task_id" "$task_title")" \
+    --delete "$TT_TASK_SYMLINK_FILENAME" \
+    --delete-prefix "$(_path__task_root)" \
+    -- publish_handoff_writer)"
 
-  # --- Create merge commit and advance target bookmark ---
-  jj -R "$target_ws" new "$target" "$handoff_commit"
+  # --- Create the merge commit and advance the target bookmark ---
+  # Parents: target tip first, handoff second (the order full-range discovery
+  # relies on). The merge carries no file writes of its own.
+  local merge_commit
+  merge_commit="$(_task__merge_branch "$repo" \
+    "$(_commit__format_message "task" "publish" "$task_id" "$message")" \
+    "$old_target_tip" "$handoff_commit")"
 
   # Check for conflicts (unless --force)
   # On conflict, exit 1 triggers the ERR trap → _history__rollback_transaction →
-  # jj op restore, which cleanly reverts all jj operations in this transaction.
-  if [[ "$force" != true ]] && _repo__check_has_conflicts "$target_ws" "@"; then
+  # backend operation restore, which cleanly reverts this transaction's writes.
+  if [[ "$force" != true ]] && _task__check_conflicts "$repo" "$merge_commit"; then
     _ui__log "Error: Merge conflicts detected. Resolve conflicts or use --force."
     exit 1
   fi
 
-  jj -R "$target_ws" describe -m "$(_commit__format_message "task" "publish" "$task_id" "$message")"
-  jj -R "$target_ws" bookmark set "$target" -r '@'
+  # Follow the advance with the current worktree only when it sits on the
+  # TARGET branch (a worktree on the project branch — typically the one this
+  # command runs from — stays put: publish affects the target branch, not the
+  # invoking worktree). Must run before the bookmark moves off old_target_tip.
+  _worktree__reattach_current_on_branch "$repo" "$target" \
+    "$old_target_tip" "$merge_commit"
 
-  # After publish, return to the project branch.
-  jj -R "$target_ws" new "$child_bookmark"
+  _task__advance_branch "$repo" "$target" "$merge_commit"
 
   # Commit transaction (records after-op for undo)
   _history__commit_transaction "$repo"
+
+  _worktree__report_unsynced "$repo" "$target"
 
   _ui__log "Published: $child_bookmark -> $target"
 }

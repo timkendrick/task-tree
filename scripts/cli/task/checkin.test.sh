@@ -16,7 +16,9 @@ test_task_checkin__basic_checkin_of_completed_task() {
   output=$(run_tt task checkin "$task_id" 2>&1) || exit_code=$?
   assert_success "checkin succeeds" "$exit_code"
   assert_subtask_entry "parent [x]" "$proj_id" "$task_id" "[x]"
-  assert_current_task "WC on parent" "$proj_id"
+  # Checkin affects the parent branch, not the invoking worktree: @ stays on
+  # the child branch instead of landing on the new merge commit.
+  assert_current_task "@ unchanged after checkin" "$task_id"
   assert_no_conflicts "no conflicts"
   assert_history_integrity "history after checkin"
 }
@@ -609,6 +611,121 @@ test_task_checkin__switch_applies_when_checkin_non_active_task() {
   assert_neq "HEAD moved with --switch" "$head_after" "$head_before"
   assert_eq "HEAD points at parent worktree" "$head_after" "$REPO"
 }
+
+test_task_checkin__refuses_bookmark_on_working_copy() {
+  setup_workspace "ci-bm-refusal"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+
+  # Clean working copy carrying the task's own bookmark (implicit current
+  # branch: the clean-WC and bookmark-currency preconditions both pass, so
+  # the working-copy guard itself is what refuses).
+  jj -R "$REPO" bookmark set "$task_id" -r '@' >/dev/null 2>&1
+  output="" exit_code=0
+  output=$(checkin_task) || exit_code=$?
+  assert_failure "own bookmark on @ refused" "$exit_code"
+  assert_contains "error names the bookmark" "$output" "tip of bookmark"
+  assert_subtask_entry "parent entry untouched" "$proj_id" "$task_id" "[ ]"
+
+  # Bookmark unrelated to the checkin target (explicit task-id, so the
+  # same-branch preconditions are skipped and the guard alone refuses)
+  jj -R "$REPO" bookmark set "$task_id" -r '@-' --allow-backwards >/dev/null 2>&1
+  jj -R "$REPO" bookmark set unrelated -r '@' >/dev/null 2>&1
+  exit_code=0
+  output=$(checkin_task "$task_id") || exit_code=$?
+  assert_failure "unrelated bookmark on @ refused" "$exit_code"
+  assert_contains "error names the unrelated bookmark" "$output" "unrelated"
+  assert_subtask_entry "parent entry still untouched" "$proj_id" "$task_id" "[ ]"
+}
+
+
+test_task_checkin__dirty_wc_preserved_not_absorbed() {
+  setup_workspace "ci-dirty-keep"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+  edit_file "scratch.txt" "uncommitted scratch"
+
+  # The same-branch (implicit) path requires a clean working copy: pending
+  # edits would silently be left out of the checkin.
+  output="" exit_code=0
+  output=$(checkin_task) || exit_code=$?
+  assert_failure "implicit checkin refuses dirty WC" "$exit_code"
+  assert_contains "error mentions uncommitted changes" "$output" "uncommitted changes"
+
+  # An explicit task-id checks in the branch as recorded; the invoking
+  # worktree's dirt survives on disk and is absorbed into no branch commit.
+  exit_code=0
+  output=$(checkin_task "$task_id") || exit_code=$?
+  assert_success "explicit checkin succeeds with dirty WC" "$exit_code"
+  assert_subtask_entry "checkin landed" "$proj_id" "$task_id" "[-]"
+  assert_file_exists "dirty file still on disk" "$REPO/scratch.txt"
+  assert_wc_dirty "WC still dirty"
+  assert_file_not_on_branch "dirty file not on parent branch" "$proj_id" "scratch.txt"
+  assert_file_not_on_branch "dirty file not on child branch" "$task_id" "scratch.txt"
+}
+
+
+# Checkin from the task's own worktree: @ does not move — same change ID,
+# still sitting on the (unchanged) child branch tip — while the parent
+# bookmark advances to a merge whose first parent is the old parent tip and
+# whose second parent is the handoff commit.
+test_task_checkin__wc_stays_on_child_and_merge_shape() {
+  setup_workspace "ci-wc-shape"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  worktree_path=$(create_task_worktree "$task_id")
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+
+  old_parent_tip=$(get_bookmark_commit "$proj_id")
+  child_tip=$(get_bookmark_commit "$task_id")
+  wc_change_before=$(jj -R "$worktree_path" log -r '@' --no-graph -T 'change_id.short(8)' 2>/dev/null)
+
+  output="" exit_code=0
+  output=$(run_tt_in_worktree "$worktree_path" task checkin 2>&1) || exit_code=$?
+  assert_success "checkin from child worktree succeeds" "$exit_code"
+
+  # @ in the invoking worktree does not move
+  wc_change_after=$(jj -R "$worktree_path" log -r '@' --no-graph -T 'change_id.short(8)' 2>/dev/null)
+  assert_eq "@ change ID stable" "$wc_change_after" "$wc_change_before"
+  wc_parent=$(jj -R "$worktree_path" log -r '@-' --no-graph -T 'commit_id.short(8)' 2>/dev/null)
+  assert_eq "@ still sits on the child tip" "$wc_parent" "$child_tip"
+  assert_eq "child bookmark unchanged" "$(get_bookmark_commit "$task_id")" "$child_tip"
+  worktree_branch=$(jj -R "$worktree_path" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
+    -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)
+  assert_eq "worktree still on the child branch" "${worktree_branch%%,*}" "$task_id"
+
+  # Parent bookmark advanced to a merge: exactly two parents, old parent tip
+  # first, handoff second; the merge itself introduces no file changes beyond
+  # the auto-merge of its parents.
+  merge_parents=$(jj -R "$REPO" log -r "$proj_id" --no-graph \
+    -T 'parents.map(|c| c.commit_id().short(8)).join(" ")' 2>/dev/null)
+  assert_eq "merge has exactly two parents" \
+    "$(printf '%s\n' "$merge_parents" | wc -w | tr -d ' ')" "2"
+  assert_eq "first parent is the old parent tip" "${merge_parents%% *}" "$old_parent_tip"
+  handoff_commit="${merge_parents##* }"
+  assert_eq "second parent is the handoff" \
+    "$(get_commit_message_first_line "$handoff_commit")" \
+    "[tt:task:${task_id}:handoff] T"
+  assert_commit_empty "merge introduces no file changes" "$proj_id"
+
+  # Handoff shape: a single linear commit on the child tip carrying exactly
+  # the TASK.md symlink revert and the parent task file update.
+  handoff_parents=$(jj -R "$REPO" log -r "$handoff_commit" --no-graph \
+    -T 'parents.map(|c| c.commit_id().short(8)).join(" ")' 2>/dev/null)
+  assert_eq "handoff sits on the child tip" "$handoff_parents" "$child_tip"
+  handoff_files=$(get_modified_files "$handoff_commit")
+  assert_contains "handoff reverts the root TASK.md symlink" "$handoff_files" "TASK.md"
+  assert_contains "handoff updates the parent task file" "$handoff_files" ".tt/task/${proj_id#*/}/TASK.md"
+  assert_line_count "handoff touches exactly two files" "$handoff_files" 2
+}
+
 
 test_task_checkin__context_from_stdin() {
   setup_workspace "checkin-ctx-stdin"

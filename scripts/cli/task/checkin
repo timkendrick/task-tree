@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Usage:
 #   checkin [<task-id>] [--context <markdown>|-] [--complete] [--rebase | --merge]
 #           [--force] [--delete] [--switch] [--retain-worktree]
-#           [--worktree=<path>] [--repo PATH]
+#           [--repo PATH]
 #           [--propagate] [--propagate-rebase | --propagate-merge]
 #           [--propagate-shallow] [--propagate-force] [--propagate-dry-run]
 #           [--propagate-to <child-id>]
@@ -27,7 +27,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #                           along with the task's dedicated worktree if it has one.
 #   --retain-worktree       With --delete, keep the task's dedicated worktree.
 #   --switch                Point the HEAD symlink at the parent worktree after checkin.
-#   --worktree=<path>       Worktree to use when task has multiple worktrees.
 #   --repo PATH             Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   --propagate             Run `tt task propagate --from <parent>` after checkin.
 #   --propagate-rebase      Propagate strategy: rebase (default).
@@ -61,7 +60,6 @@ Options:
                             Falls back to the canonical repository root when the parent
                             task is not checked out in any worktree. Without this flag
                             the HEAD symlink is left untouched.
-  --worktree=<path>         Worktree to use when task has multiple worktrees.
   --repo PATH               Repository root (overrides TT_REPO; default: find .jj).
   --propagate               Propagate parent tip to siblings after checkin.
   --propagate-rebase        Propagate strategy: rebase (default).
@@ -85,7 +83,6 @@ main() {
   local force=false
   local delete=false
   local do_switch=false
-  local worktree_arg=''
   local task_id_arg=''
   local repo=''
   local do_propagate=false
@@ -117,7 +114,6 @@ main() {
       --force)      force=true; shift ;;
       --delete)     delete=true; shift ;;
       --switch)     do_switch=true; shift ;;
-      --worktree=*) worktree_arg="${1#--worktree=}"; shift ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
@@ -159,7 +155,7 @@ main() {
   workspace_dir="$(_workspace__get_dir "$repo")" || true
 
   local current_worktree
-  current_worktree="$(_repo__resolve_worktree_root "$repo")"
+  current_worktree="$(_worktree__resolve_current "$repo")"
 
   # --- Resolve branch and task file ---
   local task_file child_bookmark child_slug
@@ -176,7 +172,7 @@ main() {
       _ui__log "Error: '$task_id_arg' is not a task branch."
       exit 1
     fi
-    if ! jj -R "$repo" log -r "$child_bookmark" --no-graph -T '' 2>/dev/null; then
+    if ! _task__check_branch_exists "$repo" "$child_bookmark"; then
       _ui__log "Error: Branch '$child_bookmark' not found in repository."
       exit 1
     fi
@@ -199,27 +195,35 @@ main() {
 
   local task_id="$child_bookmark"
 
-  # --- Resolve child worktree and check WC clean ---
-  local child_worktree
-  if ! child_worktree="$(_worktree__resolve_for_task "$repo" "$child_bookmark" "$task_prefix" "$project_prefix" \
-      "$current_worktree" "$worktree_arg")"; then
-    exit 1
-  fi
-
-  if ! _repo__check_working_copy_clean "$child_worktree"; then
-    _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
-    exit 1
-  fi
-
-  # --- Bookmark up-to-date check (implicit current branch only) ---
-  # Skip when <task-id> was passed explicitly (user knowingly bypasses the check).
+  # --- Same-branch preconditions (implicit current branch only) ---
+  # Checking in the branch the invoking worktree sits on requires everything
+  # in that worktree to be recorded first: a clean working copy (no pending
+  # edits that would silently be left out of the checkin) and a bookmark that
+  # tracks every commit up to @-. Both are skipped when <task-id> was passed
+  # explicitly — the checkin then targets a branch as it stands, and the
+  # invoking worktree's state is not part of what is being merged.
   if [[ -z "$task_id_arg" ]]; then
-    _task__assert_bookmark_current "$child_worktree" "$child_bookmark"
+    if ! _worktree__check_clean "$current_worktree"; then
+      _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
+      exit 1
+    fi
+    _task__assert_bookmark_current "$current_worktree" "$child_bookmark"
+  fi
+
+  # --- Record the child branch's worktrees (--delete cleanup) ---
+  # Resolved before any mutation: once the checkin merge lands (and before
+  # the delegated delete removes the child bookmark), a worktree left behind
+  # on an older child tip can no longer be attributed to the child branch
+  # reliably. The list is only consumed by the post-delete cleanup at the end.
+  local child_worktrees=''
+  if [[ "$delete" == true ]] && [[ "$retain_worktree" != true ]]; then
+    child_worktrees="$(_worktree__find_for_branch "$repo" "$child_bookmark" \
+      "$task_prefix" "$project_prefix")"
   fi
 
   # --- Read current task state from bookmark ---
   local task_content task_title task_status
-  task_content="$(_repo__read_file_at_revision "$repo" "$child_bookmark" "$task_file")" || {
+  task_content="$(_task__read_file "$repo" "$child_bookmark" "$task_file")" || {
     _ui__log "Error: Could not read task file '$task_file' from '$child_bookmark'."
     exit 1
   }
@@ -273,6 +277,9 @@ main() {
   fi
 
 
+  # Precondition: the working-copy commit must not carry a bookmark
+  _worktree__ensure_working_copy "$repo" || exit 1
+
   # Begin transaction early so that --complete and --propagate sub-commands
   # are nested within this transaction (their _history__begin_transaction calls
   # become no-ops, keeping a single history entry for the whole checkin).
@@ -281,7 +288,7 @@ main() {
   # --- Optional: run complete first ---
   if [[ "$do_complete" == true ]]; then
     local task_content_check
-    task_content_check="$(_repo__read_file_at_revision "$repo" "$child_bookmark" "$task_file")" || true
+    task_content_check="$(_task__read_file "$repo" "$child_bookmark" "$task_file")" || true
     local status_check
     status_check="$(_frontmatter__parse_field "$task_content_check" "status")"
     if [[ "$status_check" != "DONE" ]]; then
@@ -294,7 +301,7 @@ main() {
     # Re-read the task file: `complete` advanced the child bookmark, and the refreshed
     # status drives the parent's subtask checkbox, the --delete precondition and the
     # final log message.
-    task_content="$(_repo__read_file_at_revision "$repo" "$child_bookmark" "$task_file")" || {
+    task_content="$(_task__read_file "$repo" "$child_bookmark" "$task_file")" || {
       _ui__log "Error: Could not read task file '$task_file' from '$child_bookmark'."
       exit 1
     }
@@ -318,8 +325,9 @@ main() {
       --"$strategy" \
       ${force:+--force} \
       --repo "$repo"
-    # Re-check WC is clean after propagation
-    if ! _repo__check_working_copy_clean "$child_worktree"; then
+    # Re-check the same-branch clean precondition after propagation, which
+    # may have rewritten the line the invoking worktree sits on.
+    if [[ -z "$task_id_arg" ]] && ! _worktree__check_clean "$current_worktree"; then
       _ui__log "Error: Working copy not clean after propagation."
       exit 1
     fi
@@ -327,9 +335,8 @@ main() {
 
   # --- Validate unmerged range: must not touch other task files ---
   local diff_output
-  diff_output="$(jj -R "$repo" diff \
-    -r "roots(::${child_bookmark} ~ ::${parent_bookmark})..${child_bookmark}" \
-    --name-only -- "$(_path__task_root)/" 2>/dev/null)" || true
+  diff_output="$(_task__list_unmerged_changes "$repo" "$parent_bookmark" "$child_bookmark" \
+    "$(_path__task_root)")" || true
 
   if [[ -n "$diff_output" ]]; then
     # Build the set of allowed task directories: own dir + all descendants.
@@ -362,23 +369,31 @@ main() {
     done <<< "$diff_output"
   fi
 
-  # --- Determine target workspace (where parent branch lives) ---
-  local target_ws
+  # --- Resolve the parent branch's workspace (hook context and --switch) ---
+  # Nothing is written through this workspace — the handoff and merge below
+  # are bare commits — but the receive hooks name it in their environment and
+  # --switch points the HEAD symlink at it. With no worktree checked out on
+  # the parent branch, fall back to the canonical repository root rather than
+  # $repo: when checkin runs from inside the child's own worktree, $repo
+  # resolves to that worktree, which a complete checkin deletes further below.
+  # Several parent worktrees are only a problem for --switch, which needs a
+  # single HEAD target; hooks then also get the canonical root.
+  local receive_ws
   local worktrees
   worktrees="$(_worktree__find_for_branch "$repo" "$parent_bookmark" "$task_prefix" "$project_prefix")"
   local wt_count
   wt_count="$(printf '%s' "$worktrees" | grep -c . 2>/dev/null || true)"
 
-  # With no parent worktree, fall back to the canonical repository root rather
-  # than $repo: when checkin runs from inside the child's own worktree, $repo
-  # resolves to that worktree, which a complete checkin deletes further below.
   case "$wt_count" in
-    0) target_ws="$(_repo__resolve_repository_root "$repo")" ;;
-    1) target_ws="$worktrees" ;;
+    0) receive_ws="$(_worktree__resolve_repository_root "$repo")" ;;
+    1) receive_ws="$worktrees" ;;
     *)
-      _ui__log "Error: Multiple parent workspaces found for '$parent_bookmark'. Run checkin from within the task's own worktree."
-      printf '%s\n' "$worktrees" | while IFS= read -r p; do _ui__log "  $p"; done
-      exit 1
+      if [[ "$do_switch" == true ]]; then
+        _ui__log "Error: Multiple parent workspaces found for '$parent_bookmark'; cannot resolve a --switch target."
+        printf '%s\n' "$worktrees" | while IFS= read -r p; do _ui__log "  $p"; done
+        exit 1
+      fi
+      receive_ws="$(_worktree__resolve_repository_root "$repo")"
       ;;
   esac
 
@@ -389,21 +404,11 @@ main() {
     "TT_PARENT_TASK_ID=$parent_bookmark" \
     "TT_PARENT_BRANCH=$parent_bookmark"
 
-  # --- Save original WC revision in target workspace ---
-  local original_rev
-  original_rev="$(_repo__get_working_copy_revision "$target_ws")"
-
-  # --- Create handoff commit in target workspace ---
-
-  # New WC branching from child bookmark (stages files for handoff)
-  jj -R "$target_ws" new "$child_bookmark"
-
-  # Rewrite TASK.md symlink to point to parent task file
-  ln -sf "$(_path__task_file "$parent_slug")" "$target_ws/$TT_TASK_SYMLINK_FILENAME"
+  # --- Build the handoff content ---
 
   # Build updated parent task file content
   local parent_task_content
-  parent_task_content="$(_repo__read_file_at_revision "$target_ws" "$parent_bookmark" "$parent_task_file")" || {
+  parent_task_content="$(_task__read_file "$repo" "$parent_bookmark" "$parent_task_file")" || {
     _ui__log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
     exit 1
   }
@@ -426,68 +431,90 @@ main() {
     { print }
   ')"
 
-  # If --context is provided, create a context file on the parent task
+  # If --context is provided, a context file is created on the parent task
+  local ctx_id='' ctx_file='' ctx_title='' ctx_ts=''
   if [[ -n "$context_text" ]]; then
-    local ctx_title="Handoff: ${task_title}"
+    ctx_title="Handoff: ${task_title}"
     local ctx_slug
     ctx_slug="$(_string__to_slug "$ctx_title")"
     local ctx_hex
     ctx_hex="$(_string__generate_hex)"
-    local ctx_id="context/${ctx_slug}-${ctx_hex}"
-    local ctx_file
+    ctx_id="context/${ctx_slug}-${ctx_hex}"
     ctx_file="$(_path__task_context "$parent_slug" "$ctx_id")"
-    local ctx_ts
     ctx_ts="$(_string__generate_timestamp)"
+  fi
 
-    # Create context directory if needed
-    mkdir -p "$target_ws/$(dirname "$ctx_file")"
+  # Writer invoked by _task__commit_handoff with the staging root. Stages the
+  # complete handoff file set on top of the child branch tip:
+  #   - the repo-root TASK.md symlink reverted to the parent's task file
+  #     (staged as a real symlink; the bare write records it as a symlink entry)
+  #   - the parent task file rewritten with the child's subtask checkbox (and
+  #     the context: entry inserted in canonical position when one was made)
+  #   - the handoff context file itself, when --context was given
+  checkin_handoff_writer() {
+    local root="$1"
+    ln -s "$(_path__task_file "$parent_slug")" "$root/$TT_TASK_SYMLINK_FILENAME"
+    mkdir -p "$root/$(dirname "$parent_task_file")"
+    printf '%s\n' "$updated_parent_content" > "$root/$parent_task_file"
+    if [[ -n "$ctx_id" ]]; then
+      mkdir -p "$root/$(dirname "$ctx_file")"
+      _frontmatter__write_context_file "$root/$ctx_file" "$ctx_title" "$context_text" "$ctx_ts" "$ctx_ts"
+      _frontmatter__append_context "$root/$parent_task_file" "$ctx_id"
+    fi
+  }
 
-    # Write context file
-    _frontmatter__write_context_file "$target_ws/$ctx_file" "$ctx_title" "$context_text" "$ctx_ts" "$ctx_ts"
+  # Pin the parent tip before the merge: it anchors the merge's first parent
+  # and the worktree reattachment below.
+  local old_parent_tip
+  old_parent_tip="$(_task__resolve_revision "$repo" "$parent_bookmark")" || {
+    _ui__log "Error: Could not resolve branch '$parent_bookmark'."
+    exit 1
+  }
 
+  # --- Create the handoff commit (child bookmark does NOT advance) ---
+  local handoff_commit
+  handoff_commit="$(_task__commit_handoff "$repo" "$child_bookmark" \
+    "$(_commit__format_message "task" "handoff" "$task_id" "$task_title")" \
+    -- checkin_handoff_writer)"
+
+  if [[ -n "$ctx_id" ]]; then
     _ui__log "Created context file: $ctx_file"
   fi
 
-  printf '%s\n' "$updated_parent_content" > "$target_ws/$parent_task_file"
-
-  # Insert context entry in the correct position (after any existing context:
-  # entries, before the first subtask: entry) now that the file is on disk.
-  if [[ -n "${ctx_id:-}" ]]; then
-    _frontmatter__append_context "$target_ws/$parent_task_file" "$ctx_id"
-  fi
-
-  # Commit the handoff (child bookmark does NOT advance)
-  jj -R "$target_ws" commit -m "$(_commit__format_message "task" "handoff" "$task_id" "$task_title")"
-  local handoff_commit
-  handoff_commit="$(jj -R "$target_ws" log -r '@-' --no-graph -T 'commit_id')"
-
   # --- Run pre-receive hook ---
-  _hook__run "$repo" "pre-receive" true "$target_ws" "${workspace_dir:-}" \
+  _hook__run "$repo" "pre-receive" true "$receive_ws" "${workspace_dir:-}" \
     "TT_TASK_ID=$parent_bookmark" \
     "TT_TASK_BRANCH=$parent_bookmark" \
     "TT_INCOMING_TASK_ID=$task_id" \
     "TT_INCOMING_BRANCH=$task_id"
 
-  # --- Create merge commit and advance parent bookmark ---
-  # jj new with two parents creates a merge commit
-  jj -R "$target_ws" new "$parent_bookmark" "$handoff_commit"
+  # --- Create the merge commit and advance the parent bookmark ---
+  # Parents: parent tip first, handoff second (the order full-range discovery
+  # relies on). The merge carries no file writes of its own.
+  local merge_commit
+  merge_commit="$(_task__merge_branch "$repo" \
+    "$(_commit__format_message "task" "checkin" "$task_id" "$task_title")" \
+    "$old_parent_tip" "$handoff_commit")"
 
   # Check for conflicts (unless --force)
   # On conflict, exit 1 triggers the ERR trap → _history__rollback_transaction →
-  # jj op restore, which cleanly reverts all jj operations in this transaction.
-  if [[ "$force" != true ]] && _repo__check_has_conflicts "$target_ws" "@"; then
+  # backend operation restore, which cleanly reverts this transaction's writes.
+  if [[ "$force" != true ]] && _task__check_conflicts "$repo" "$merge_commit"; then
     _ui__log "Error: Merge conflicts detected. Resolve conflicts or use --force."
     exit 1
   fi
 
-  jj -R "$target_ws" describe -m "$(_commit__format_message "task" "checkin" "$task_id" "$task_title")"
-  jj -R "$target_ws" bookmark set "$parent_bookmark" -r '@'
+  # Follow the advance with the current worktree only when it sits on the
+  # PARENT branch (a worktree on the child branch — typically the one this
+  # command runs from — stays put: checkin affects the target branch, not the
+  # invoking worktree). Must run before the bookmark moves off old_parent_tip.
+  _worktree__reattach_current_on_branch "$repo" "$parent_bookmark" \
+    "$old_parent_tip" "$merge_commit"
 
-  # Leave a clean open WC in target_ws
-  jj -R "$target_ws" new '@'
+  _task__advance_branch "$repo" "$parent_bookmark" "$merge_commit"
 
   # --- Run post-receive hook ---
-  _hook__run "$repo" "post-receive" false "$target_ws" "${workspace_dir:-}" \
+  _hook__run "$repo" "post-receive" false "$receive_ws" "${workspace_dir:-}" \
     "TT_TASK_ID=$parent_bookmark" \
     "TT_TASK_BRANCH=$parent_bookmark" \
     "TT_INCOMING_TASK_ID=$task_id" \
@@ -495,12 +522,12 @@ main() {
 
   # --- Post-checkin worktree switch ---
   # Only performed when --switch is given; otherwise HEAD is left untouched.
-  # target_ws is the parent's worktree when it has one, and the canonical
+  # receive_ws is the parent's worktree when it has one, and the canonical
   # repository root otherwise, so HEAD can never be left pointing at the child
   # worktree that a complete checkin deletes below.
   if [[ "$do_switch" == true ]]; then
     _worktree__switch "$repo" "${workspace_dir:-}" "$parent_bookmark" \
-      "$target_ws" "$current_worktree" "$task_id"
+      "$receive_ws" "$current_worktree" "$task_id"
   fi
 
   if [[ "$task_status" != "DONE" ]]; then
@@ -511,9 +538,11 @@ main() {
 
   # Commit transaction now — before any worktree deletion — because the
   # history file lives in $repo, which may be the child worktree that is
-  # about to be removed.  All jj operations that should be recorded are
+  # about to be removed.  All backend operations that should be recorded are
   # already complete at this point.
   _history__commit_transaction "$repo"
+
+  _worktree__report_unsynced "$repo" "$parent_bookmark"
 
   # --- Delegate --delete to tt task delete (second commit on parent branch) ---
   if [[ "$delete" == true ]]; then
@@ -541,35 +570,37 @@ main() {
 
   # --- Post-checkin worktree cleanup ---
   # Only with --delete: the task is being removed from the repository, so its
-  # dedicated worktree (if any) is forgotten from jj and deleted from disk.
+  # dedicated worktrees (recorded above, before the delete removed the
+  # branch) are forgotten from the repository model and deleted from disk.
   # Suppressed by --retain-worktree. A checkin without --delete never removes
-  # a worktree; use `tt worktree delete` for that.
+  # a worktree; use `tt worktree delete` for that. The canonical repository
+  # root is never removed, so a checkin run from the primary workspace with
+  # its working copy on the child branch cleans up nothing here. The root
+  # comparison must canonicalize both sides: when checkin runs from inside
+  # the child's own worktree, $repo resolves to that worktree.
   # IMPORTANT: This MUST be the last thing main() does. After _worktree__delete,
   # the script's own files may have been deleted from disk (if the checkin
   # was run from within the child worktree), so no further commands should run.
-  if [[ "$delete" == true ]] && [[ "$retain_worktree" != true ]]; then
-    # child_worktree is the dedicated worktree if one existed, otherwise the
-    # canonical repository root. Only clean up in the former case. The
-    # comparison must use the canonical root rather than $repo: when checkin
-    # runs from inside the child's own worktree, $repo resolves to that
-    # worktree and would suppress the cleanup.
-    local canon_child canon_repo
-    canon_child="$(realpath "$child_worktree" 2>/dev/null)" || canon_child="$child_worktree"
-    canon_repo="$(_repo__resolve_repository_path "$repo")"
-    if [[ "$canon_child" != "$canon_repo" ]]; then
-      # The delegated `tt task delete` deregisters the jj workspaces of every
+  if [[ -n "$child_worktrees" ]]; then
+    local canon_repo
+    canon_repo="$(_path__resolve_symlinks "$(_worktree__resolve_repository_root "$repo")")"
+    local child_worktree canon_child ws_name
+    while IFS= read -r child_worktree; do
+      [[ -z "$child_worktree" ]] && continue
+      canon_child="$(realpath "$child_worktree" 2>/dev/null)" || canon_child="$child_worktree"
+      [[ "$canon_child" == "$canon_repo" ]] && continue
+      # The delegated `tt task delete` deregisters the workspaces of every
       # task in the deleted subtree but leaves their files on disk, so the
       # workspace name usually no longer resolves by this point; remove the
       # files directly in that case.
-      local ws_name
       if ws_name="$(_worktree__resolve_name "$repo" "$child_worktree")"; then
         _worktree__delete "$repo" "$ws_name" "$child_worktree"
       else
         rm -rf "$child_worktree"
       fi
-      # Do NOT execute any further commands here.
-      # The script's own files may have been deleted from disk.
-    fi
+      # Do NOT execute any further commands after the current worktree is
+      # removed: the script's own files may have been deleted from disk.
+    done <<< "$child_worktrees"
   fi
 }
 
