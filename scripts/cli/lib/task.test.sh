@@ -418,4 +418,98 @@ test__task__commit_on_branch__leaves_no_temp_residue() {
     "$(find "$scratch_root" -mindepth 1)"
 }
 
+# ---------------------------------------------------------------------------
+# _task__commit_handoff, _task__merge_branch, _task__check_conflicts,
+# _task__advance_branch
+# ---------------------------------------------------------------------------
+
+test__task__commit_handoff__commits_on_tip_without_moving_bookmark() {
+  setup_workspace "commit-handoff-basic"
+  _fixture_side_branch
+  local wc_before
+  wc_before="$(_repo__resolve_commit "$REPO" '@')"
+
+  local commit exit_code=0
+  commit="$(_task__commit_handoff "$REPO" side "handoff" \
+    --delete base.txt -- _writer_stage_new_file "carried")" || exit_code=$?
+  assert_success "handoff commit created" "$exit_code"
+  assert_matches "full-length commit ID printed" "$commit" '^[0-9a-f]{40}$'
+  assert_eq "handoff sits on the branch tip" \
+    "$(_repo__resolve_commit "$REPO" "${commit}-")" "$SIDE_TIP"
+  assert_eq "bookmark did NOT advance" \
+    "$(_repo__resolve_commit "$REPO" side)" "$SIDE_TIP"
+  assert_eq "staged file readable at the handoff" \
+    "$(_repo__read_file_at_revision "$REPO" "$commit" new.txt)" "carried"
+  local ec=0
+  _repo__check_file_exists_at_revision "$REPO" "$commit" base.txt || ec=$?
+  assert_failure "deleted file absent at the handoff" "$ec"
+  assert_eq "@ did not move" "$(_repo__resolve_commit "$REPO" '@')" "$wc_before"
+}
+
+test__task__merge_branch__merges_handoff_and_advances() {
+  setup_workspace "merge-branch-basic"
+  _fixture_side_branch
+  local main_tip
+  main_tip="$(_repo__resolve_commit "$REPO" main)"
+
+  local handoff merge exit_code=0
+  handoff="$(_task__commit_handoff "$REPO" side "handoff" \
+    -- _writer_stage_new_file "merged content")" || exit_code=$?
+  assert_success "handoff created" "$exit_code"
+
+  merge="$(_task__merge_branch "$REPO" "land side" main "$handoff")" || exit_code=$?
+  assert_success "merge commit created" "$exit_code"
+  local merge_parents
+  merge_parents="$(jj -R "$REPO" log -r "$merge" --no-graph \
+    -T 'parents.map(|c| c.commit_id()).join(" ")' 2>/dev/null)"
+  assert_eq "first parent is the receiving branch tip" \
+    "${merge_parents%% *}" "$main_tip"
+  assert_eq "second parent is the handoff" "${merge_parents##* }" "$handoff"
+  assert_eq "merged tree carries the handoff content" \
+    "$(_repo__read_file_at_revision "$REPO" "$merge" new.txt)" "merged content"
+
+  local conflict_ec=0
+  _task__check_conflicts "$REPO" "$merge" || conflict_ec=$?
+  assert_failure "disjoint merge is conflict-free" "$conflict_ec"
+
+  exit_code=0
+  _task__advance_branch "$REPO" main "$merge" || exit_code=$?
+  assert_success "branch advance succeeds" "$exit_code"
+  assert_eq "bookmark moved to the merge" \
+    "$(_repo__resolve_commit "$REPO" main)" "$merge"
+}
+
+# ---------------------------------------------------------------------------
+# _task__list_unmerged_changes
+# ---------------------------------------------------------------------------
+
+test__task__list_unmerged_changes__reports_range_paths() {
+  setup_workspace "unmerged-changes"
+  # Two commits off main: the first is the range's root (a branch's creation
+  # commit in the real topology) and is excluded from the diff; the second
+  # carries the files the listing must report.
+  jj -R "$REPO" new main >/dev/null 2>&1
+  edit_file root.txt "root"
+  jj_commit "branch root"
+  edit_file base.txt "base"
+  edit_file prefix/a.txt "a"
+  edit_file prefix/b.txt "b"
+  jj_commit "branch work"
+  jj -R "$REPO" bookmark set side -r '@-' >/dev/null 2>&1
+  jj -R "$REPO" new main >/dev/null 2>&1
+
+  local all
+  all="$(_task__list_unmerged_changes "$REPO" main side)"
+  assert_contains "unfiltered listing has base.txt" "$all" "base.txt"
+  assert_contains "unfiltered listing has prefix files" "$all" "prefix/a.txt"
+  assert_not_contains "range root commit excluded" "$all" "root.txt"
+
+  local filtered
+  filtered="$(_task__list_unmerged_changes "$REPO" main side prefix)"
+  assert_line_count "prefix filter keeps only prefix files" "$filtered" 2
+  assert_contains "prefix/a.txt reported" "$filtered" "prefix/a.txt"
+  assert_contains "prefix/b.txt reported" "$filtered" "prefix/b.txt"
+  assert_not_contains "base.txt excluded by prefix" "$filtered" "base.txt"
+}
+
 run_tests "tt lib/task (unit)"

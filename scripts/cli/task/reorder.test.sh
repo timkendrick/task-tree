@@ -269,6 +269,9 @@ test_task_reorder__tidy_basic() {
   checkout_task "$task_b" >/dev/null || true
   run_tt task complete "$task_b" >/dev/null 2>&1 || true
   run_tt task checkin "$task_b" >/dev/null 2>&1 || true
+  # Checkin leaves the working copy on the child branch, so return to the
+  # project before creating task_a — otherwise it lands under task_b.
+  checkout_task "$proj_id" >/dev/null || true
   task_a=$(create_task "ta" "Task A") || true
 
   # Run tidy on the project
@@ -386,6 +389,9 @@ test_task_reorder__tidy_commit_message() {
   checkout_task "$task_b" >/dev/null || true
   run_tt task complete "$task_b" >/dev/null 2>&1 || true
   run_tt task checkin "$task_b" >/dev/null 2>&1 || true
+  # Checkin leaves the working copy on the child branch, so return to the
+  # project before creating task_a — otherwise it lands under task_b.
+  checkout_task "$proj_id" >/dev/null || true
   task_a=$(create_task "ta" "Task A") || true
 
   run_tt task reorder "$proj_id" >/dev/null 2>&1 || true
@@ -403,6 +409,9 @@ test_task_reorder__tidy_transaction_recorded() {
   checkout_task "$task_b" >/dev/null || true
   run_tt task complete "$task_b" >/dev/null 2>&1 || true
   run_tt task checkin "$task_b" >/dev/null 2>&1 || true
+  # Checkin leaves the working copy on the child branch, so return to the
+  # project before creating task_a — otherwise it lands under task_b.
+  checkout_task "$proj_id" >/dev/null || true
   task_a=$(create_task "ta" "Task A") || true
 
   get_history_lines; hc_before="${#HISTORY_LINES[@]}"
@@ -439,6 +448,9 @@ test_task_reorder__tidy_dirty_wc_preserved_not_absorbed() {
   checkout_task "$task_b" >/dev/null || true
   run_tt task complete "$task_b" >/dev/null 2>&1 || true
   run_tt task checkin "$task_b" >/dev/null 2>&1 || true
+  # Checkin leaves the working copy on the child branch, so return to the
+  # project before creating task_a — otherwise it lands under task_b.
+  checkout_task "$proj_id" >/dev/null || true
   task_a=$(create_task "ta" "Task A") || true
 
   # Dirty WC: tidy must neither reject nor absorb it into the branch commit
