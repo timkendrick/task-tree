@@ -67,9 +67,9 @@ index_of() {
 # Prints the slug-hex portion of TASK_ID, or nothing if it carries neither prefix.
 resolve_task_suffix() {
   local task_id="$1" task_prefix="$2" project_prefix="$3"
-  if is_task_branch "$task_id" "$task_prefix"; then
+  if _task__check_is_task_branch "$task_id" "$task_prefix"; then
     printf '%s' "${task_id#"$task_prefix"}"
-  elif is_project_branch "$task_id" "$project_prefix"; then
+  elif _task__check_is_project_branch "$task_id" "$project_prefix"; then
     printf '%s' "${task_id#"$project_prefix"}"
   fi
 }
@@ -228,7 +228,7 @@ resolve_reference_commit() {
 
   if [[ -z "$since" ]]; then
     local exit_code=0
-    since="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || exit_code=$?
+    since="$(_task__find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || exit_code=$?
     if [[ $exit_code -ne 0 ]]; then
       if [[ $exit_code -eq 1 ]]; then
         _ui__log "Error: No parent branch found for '$task_id'."
@@ -241,7 +241,7 @@ resolve_reference_commit() {
     return 1
   fi
 
-  resolve_task_fork_point "$repo" "$since" "$task_id"
+  _task__resolve_fork_point "$repo" "$since" "$task_id"
 }
 
 main() {
@@ -279,12 +279,12 @@ main() {
   local task_id
   if [[ -n "$task_id_arg" ]]; then
     task_id="$task_id_arg"
-    if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
+    if ! _task__check_is_task_branch "$task_id" "$task_prefix" && ! _task__check_is_project_branch "$task_id" "$project_prefix"; then
       _ui__log "Error: '$task_id' is not a task or project branch."
       exit 1
     fi
   else
-    task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+    task_id="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$task_id" ]]; then
       _ui__log "Error: Not on a task or project branch."
       exit 1
@@ -296,7 +296,7 @@ main() {
     exit 1
   fi
 
-  if "$all_mode" && ! is_task_branch "$task_id" "$task_prefix"; then
+  if "$all_mode" && ! _task__check_is_task_branch "$task_id" "$task_prefix"; then
     _ui__log "Error: --all does not support project branches."
     exit 1
   fi
@@ -316,14 +316,14 @@ main() {
     # default mode, the upper bound is always the task bookmark itself: this
     # command never reports trailing commits beyond it. ---
     local parent_bookmark upper_bound="$task_id" find_exit=0
-    parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || find_exit=$?
+    parent_bookmark="$(_task__find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || find_exit=$?
     if [[ $find_exit -ne 0 ]]; then
       [[ $find_exit -eq 1 ]] && _ui__log "Error: No parent branch found for '$task_id'."
       exit $find_exit
     fi
 
     local range_records
-    range_records="$(get_full_task_range_records "$repo" "$task_id" "$parent_bookmark" "$upper_bound")" || exit 1
+    range_records="$(_task__get_full_range_records "$repo" "$task_id" "$parent_bookmark" "$upper_bound")" || exit 1
 
     local base tip _kind _order _ts
     local -a raw_records=()

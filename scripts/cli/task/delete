@@ -79,7 +79,7 @@ collect_subtree() {
 
     # Determine this task's file path
     local own_slug own_file
-    if is_task_branch "$current" "$task_prefix"; then
+    if _task__check_is_task_branch "$current" "$task_prefix"; then
       own_slug="${current#$task_prefix}"
     else
       own_slug="${current#$project_prefix}"
@@ -103,8 +103,8 @@ collect_subtree() {
     all_subs="$(printf '%s\n%s\n' "$own_subs" "$parent_subs" | sort -u)"
     while IFS= read -r sub_id; do
       [[ -z "$sub_id" ]] && continue
-      if ! is_task_branch "$sub_id" "$task_prefix" && \
-         ! is_project_branch "$sub_id" "$project_prefix"; then
+      if ! _task__check_is_task_branch "$sub_id" "$task_prefix" && \
+         ! _task__check_is_project_branch "$sub_id" "$project_prefix"; then
         continue
       fi
       if ! printf '%s\n' "$seen" | grep -qFx "$sub_id"; then
@@ -161,7 +161,7 @@ main() {
   local task_id task_file task_slug
   if [[ -n "$task_id_arg" ]]; then
     task_id="$task_id_arg"
-    if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
+    if ! _task__check_is_task_branch "$task_id" "$task_prefix" && ! _task__check_is_project_branch "$task_id" "$project_prefix"; then
       _ui__log "Error: '$task_id' is not a recognized task or project ID."
       exit 1
     fi
@@ -169,19 +169,19 @@ main() {
       _ui__log "Error: Task '$task_id' not found in repository."
       exit 1
     fi
-    if is_task_branch "$task_id" "$task_prefix"; then
+    if _task__check_is_task_branch "$task_id" "$task_prefix"; then
       task_slug="${task_id#$task_prefix}"
     else
       task_slug="${task_id#$project_prefix}"
     fi
     task_file="$(_path__task_file "$task_slug")"
   else
-    { read -r _rev; read -r task_file; read -r task_id; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
+    { read -r _rev; read -r task_file; read -r task_id; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$task_id" ]]; then
       _ui__log "Error: Not on a task or project branch. Pass a task ID explicitly."
       exit 1
     fi
-    if is_task_branch "$task_id" "$task_prefix"; then
+    if _task__check_is_task_branch "$task_id" "$task_prefix"; then
       task_slug="${task_id#$task_prefix}"
     else
       task_slug="${task_id#$project_prefix}"
@@ -215,7 +215,7 @@ main() {
 
   # Find parent branch
   local parent_bookmark
-  parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
+  parent_bookmark="$(_task__find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
     local rc=$?
     [[ $rc -eq 1 ]] && _ui__log "Error: No parent branch found for '$task_id'. Parentless tasks cannot be deleted with this command."
     exit 1
@@ -223,7 +223,7 @@ main() {
 
   # Derive parent slug and task file path
   local parent_slug parent_task_file
-  if is_task_branch "$parent_bookmark" "$task_prefix"; then
+  if _task__check_is_task_branch "$parent_bookmark" "$task_prefix"; then
     parent_slug="${parent_bookmark#$task_prefix}"
   else
     parent_slug="${parent_bookmark#$project_prefix}"
@@ -303,7 +303,7 @@ main() {
   while IFS= read -r desc_id; do
     [[ -z "$desc_id" ]] && continue
     local desc_slug
-    if is_task_branch "$desc_id" "$task_prefix"; then
+    if _task__check_is_task_branch "$desc_id" "$task_prefix"; then
       desc_slug="${desc_id#$task_prefix}"
     else
       desc_slug="${desc_id#$project_prefix}"

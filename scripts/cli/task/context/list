@@ -79,30 +79,30 @@ main() {
       _ui__log "Error: Branch '$branch' not found in repository."
       exit 1
     fi
-    if is_task_branch "$branch" "$task_prefix"; then
+    if _task__check_is_task_branch "$branch" "$task_prefix"; then
       task_suffix="${branch#$task_prefix}"
-    elif is_project_branch "$branch" "$project_prefix"; then
+    elif _task__check_is_project_branch "$branch" "$project_prefix"; then
       task_suffix="${branch#$project_prefix}"
     else
       _ui__log "Error: '$task_id' is not a task or project branch."
       exit 1
     fi
   else
-    branch="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+    branch="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$branch" ]]; then
       _ui__log "Error: Not on a task or project branch. Use --task to specify."
       exit 1
     fi
-    if is_task_branch "$branch" "$task_prefix"; then
+    if _task__check_is_task_branch "$branch" "$task_prefix"; then
       task_suffix="${branch#$task_prefix}"
     else
       task_suffix="${branch#$project_prefix}"
     fi
   fi
 
-  # Apply "where to read" rule: use find_branch_for_task to locate canonical branch
+  # Apply "where to read" rule: use _task__find_branch to locate canonical branch
   local read_branch
-  if ! read_branch="$(find_branch_for_task "$repo" "$branch" "$task_prefix" "$project_prefix")"; then
+  if ! read_branch="$(_task__find_branch "$repo" "$branch" "$task_prefix" "$project_prefix")"; then
     _ui__log "Error: Could not locate branch for task '$branch'."
     exit 1
   fi

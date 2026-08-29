@@ -145,7 +145,7 @@ test_task_checkin__project_branch_rejected() {
 
 
 test_task_checkin__not_on_task_branch_without_id_fails() {
-  # Use a fresh workspace with no task checkouts so resolve_current finds no task ancestor
+  # Use a fresh workspace with no task checkouts so _task__resolve_current finds no task ancestor
   setup_workspace "ci-notask"
   output="" exit_code=0
   output=$(run_tt task checkin 2>&1) || exit_code=$?
