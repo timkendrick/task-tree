@@ -406,11 +406,13 @@ main() {
 
   if [[ "$is_project" == true ]]; then
     # Project task: first commit creates the stub task file; second commit (via edit) sets metadata.
+    # The working copy is moved off the bookmarked commit before invoking edit,
+    # which refuses to write while @ carries a bookmark and advances the
+    # bookmark itself with its metadata commit.
     _task__write_stub "$repo" "$task_suffix"
     jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2 >&2
     jj "${jj_opts[@]}" bookmark set "$task_id" -r '@' $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
     jj "${jj_opts[@]}" new "@" >&2
-    jj "${jj_opts[@]}" bookmark set "$task_id" -r '@' >&2
     # Build common args (title, labels)
     local edit_args=(--repo "$repo" --title "$title")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
@@ -430,7 +432,10 @@ main() {
     jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2
     jj "${jj_opts[@]}" bookmark set "$parent_bookmark" -r '@' >&2
     jj "${jj_opts[@]}" new "@" >&2
-    jj "${jj_opts[@]}" bookmark set "$task_id" -r '@' $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
+    # The child bookmark starts at the create commit (@-), not at @: edit
+    # refuses to write while @ carries a bookmark, and its metadata commit
+    # advances the bookmark onto the child branch's first own commit.
+    jj "${jj_opts[@]}" bookmark set "$task_id" -r '@-' $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
     # Build common args (title, labels)
     local edit_args=(--repo "$repo" --title "$title")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
@@ -442,7 +447,10 @@ main() {
     _task__write_stub "$repo" "$task_suffix"
     jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2
     jj "${jj_opts[@]}" new "@" >&2
-    jj "${jj_opts[@]}" bookmark set "$task_id" -r '@' $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2
+    # The bookmark starts at the stub commit (@-), not at @: edit refuses to
+    # write while @ carries a bookmark, and its metadata commit advances the
+    # bookmark itself.
+    jj "${jj_opts[@]}" bookmark set "$task_id" -r '@-' $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2
     # Build common args (title, labels)
     local edit_args=(--repo "$repo" --title "$title")
     for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
