@@ -216,4 +216,206 @@ test__task__get_full_range_records__project_branch_rejected() {
   assert_failure "full range discovery rejects project branches" "$exit_code"
 }
 
+# ---------------------------------------------------------------------------
+# _task__commit_on_branch
+# ---------------------------------------------------------------------------
+
+# Build a divergent "side" branch off main carrying base.txt, outside.txt and
+# two files under prefix/, then park the working copy back on a fresh child of
+# main. The side tip is NOT an ancestor of @, so a commit on "side" must leave
+# the working copy alone. Sets SIDE_TIP to the branch tip's full commit ID.
+_fixture_side_branch() {
+  jj -R "$REPO" new main >/dev/null 2>&1
+  edit_file base.txt "base"
+  edit_file outside.txt "keep"
+  edit_file prefix/a.txt "a"
+  edit_file prefix/b.txt "b"
+  jj -R "$REPO" commit -m "side files" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set side -r '@-' >/dev/null 2>&1
+  jj -R "$REPO" new main >/dev/null 2>&1
+  SIDE_TIP="$(get_full_commit_id side)"
+}
+
+# Writer: stages new.txt with the content passed as its second argument
+# (exercises ARGS forwarding).
+_writer_stage_new_file() {
+  local stage="$1" content="$2"
+  printf '%s\n' "$content" > "$stage/new.txt"
+}
+
+# Writer: verifies base.txt was materialized with the tip's content, then
+# appends a line to it.
+_writer_edit_base() {
+  local stage="$1"
+  [[ "$(cat "$stage/base.txt")" == "base" ]] || return 1
+  printf 'edited\n' >> "$stage/base.txt"
+}
+
+# Writer: stages nothing.
+_writer_noop() {
+  :
+}
+
+# Writer: always fails.
+_writer_fail() {
+  return 1
+}
+
+test__task__commit_on_branch__stages_new_file_without_touching_working_copy() {
+  setup_workspace "commit-on-branch-basic"
+  _fixture_side_branch
+  local wc_before
+  wc_before="$(_repo__resolve_commit "$REPO" '@')"
+
+  local commit exit_code=0
+  commit="$(_task__commit_on_branch "$REPO" side "stage new file" \
+    -- _writer_stage_new_file "hello")" || exit_code=$?
+  assert_success "staged commit created" "$exit_code"
+  assert_matches "full-length commit ID printed" "$commit" '^[0-9a-f]{40}$'
+  assert_eq "bookmark advanced to the printed commit" \
+    "$(_repo__resolve_commit "$REPO" side)" "$commit"
+  assert_eq "staged file readable at the bookmark" \
+    "$(_repo__read_file_at_revision "$REPO" side new.txt)" "hello"
+  assert_eq "staged file absent from the working copy" \
+    "$([[ -e "$REPO/new.txt" ]] && echo present || echo absent)" "absent"
+  assert_eq "@ did not move" "$(_repo__resolve_commit "$REPO" '@')" "$wc_before"
+}
+
+test__task__commit_on_branch__modify_materializes_tip_content() {
+  setup_workspace "commit-on-branch-modify"
+  _fixture_side_branch
+
+  local commit exit_code=0
+  # _writer_edit_base itself asserts the materialized content ("base") and
+  # fails otherwise, so a success here proves the tip content was staged.
+  commit="$(_task__commit_on_branch "$REPO" side "edit base" \
+    --modify base.txt -- _writer_edit_base)" || exit_code=$?
+  assert_success "read-modify-write commit created" "$exit_code"
+  assert_eq "edited content lands on the branch" \
+    "$(_repo__read_file_at_revision "$REPO" side base.txt)" \
+    "$(printf 'base\nedited')"
+}
+
+test__task__commit_on_branch__modify_absent_path_fails() {
+  setup_workspace "commit-on-branch-modify-absent"
+  _fixture_side_branch
+
+  local err_file="$_TEST_ROOT/modify-absent-err.txt"
+  local out='' exit_code=0
+  out="$(_task__commit_on_branch "$REPO" side "nope" \
+    --modify no/such/file.txt -- _writer_noop 2>"$err_file")" || exit_code=$?
+  assert_failure "absent --modify path rejected" "$exit_code"
+  assert_output_empty "no commit ID printed" "$out"
+  assert_contains "error names the path" "$(cat "$err_file")" "no/such/file.txt"
+  assert_eq "bookmark unmoved" "$(_repo__resolve_commit "$REPO" side)" "$SIDE_TIP"
+}
+
+test__task__commit_on_branch__delete_removes_file() {
+  setup_workspace "commit-on-branch-delete"
+  _fixture_side_branch
+
+  local commit exit_code=0
+  commit="$(_task__commit_on_branch "$REPO" side "drop base" \
+    --delete base.txt -- _writer_noop)" || exit_code=$?
+  assert_success "deletion commit created" "$exit_code"
+  local ec=0
+  _repo__check_file_exists_at_revision "$REPO" "$commit" base.txt || ec=$?
+  assert_failure "deleted file absent at the new commit" "$ec"
+  assert_eq "unrelated file survives" \
+    "$(_repo__read_file_at_revision "$REPO" "$commit" outside.txt)" "keep"
+}
+
+test__task__commit_on_branch__delete_prefix_expands_to_tip_files() {
+  setup_workspace "commit-on-branch-delete-prefix"
+  _fixture_side_branch
+
+  local commit exit_code=0
+  commit="$(_task__commit_on_branch "$REPO" side "drop prefix" \
+    --delete-prefix prefix -- _writer_noop)" || exit_code=$?
+  assert_success "prefix deletion commit created" "$exit_code"
+  local files
+  files="$(_repo__list_files_at_revision "$REPO" "$commit")"
+  assert_not_contains "first file under the prefix removed" "$files" "prefix/a.txt"
+  assert_not_contains "second file under the prefix removed" "$files" "prefix/b.txt"
+  assert_contains "file outside the prefix survives" "$files" "outside.txt"
+  assert_contains "base file outside the prefix survives" "$files" "base.txt"
+}
+
+test__task__commit_on_branch__dirty_working_copy_untouched() {
+  setup_workspace "commit-on-branch-dirty"
+  _fixture_side_branch
+  edit_file dirty.txt "un-snapshotted"
+  local wc_change_before
+  wc_change_before="$(_repo__resolve_change "$REPO" '@')"
+
+  local commit exit_code=0
+  commit="$(_task__commit_on_branch "$REPO" side "clean write" \
+    -- _writer_stage_new_file "clean")" || exit_code=$?
+  assert_success "staged commit created with a dirty working copy" "$exit_code"
+  local ec=0
+  _repo__check_file_exists_at_revision "$REPO" "$commit" dirty.txt || ec=$?
+  assert_failure "dirty file did not leak into the commit" "$ec"
+  assert_file_exists "dirty file still on disk" "$REPO/dirty.txt"
+  assert_eq "dirty file content untouched" \
+    "$(cat "$REPO/dirty.txt")" "un-snapshotted"
+  # The bookmark write may snapshot pending changes into the working-copy
+  # commit (amending it in place), so the stable change ID — not the commit
+  # ID — is the identity that must survive.
+  assert_eq "working-copy commit identity unchanged" \
+    "$(_repo__resolve_change "$REPO" '@')" "$wc_change_before"
+  assert_eq "working copy still parented off main, not the written branch" \
+    "$(_repo__get_working_copy_parent "$REPO")" "$(get_full_commit_id main)"
+}
+
+test__task__commit_on_branch__invalid_arguments_rejected() {
+  setup_workspace "commit-on-branch-args"
+  _fixture_side_branch
+
+  local exit_code=0
+  _task__commit_on_branch "$REPO" side "msg" --bogus x -- _writer_noop \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_failure "unknown flag rejected" "$exit_code"
+
+  exit_code=0
+  _task__commit_on_branch "$REPO" side "msg" --delete base.txt \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_failure "missing -- rejected" "$exit_code"
+
+  exit_code=0
+  _task__commit_on_branch "$REPO" side "msg" -- \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_failure "missing WRITER_FN rejected" "$exit_code"
+
+  exit_code=0
+  _task__commit_on_branch "$REPO" side "msg" -- _writer_fail \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_failure "failing writer aborts" "$exit_code"
+
+  assert_eq "bookmark unmoved after every failure" \
+    "$(_repo__resolve_commit "$REPO" side)" "$SIDE_TIP"
+}
+
+test__task__commit_on_branch__leaves_no_temp_residue() {
+  setup_workspace "commit-on-branch-residue"
+  _fixture_side_branch
+  local scratch_root="$_TEST_ROOT/commit-scratch"
+  mkdir -p "$scratch_root"
+
+  # TMPDIR redirects every mktemp in the call (the staging directory and the
+  # backend's scratch directory) into an observable root.
+  local commit exit_code=0
+  commit="$(TMPDIR="$scratch_root" _task__commit_on_branch "$REPO" side "tidy" \
+    -- _writer_stage_new_file "t")" || exit_code=$?
+  assert_success "staged commit created" "$exit_code"
+  assert_output_empty "no staging or scratch residue after success" \
+    "$(find "$scratch_root" -mindepth 1)"
+
+  exit_code=0
+  commit="$(TMPDIR="$scratch_root" _task__commit_on_branch "$REPO" side "boom" \
+    -- _writer_fail 2>/dev/null)" || exit_code=$?
+  assert_failure "failing writer aborts" "$exit_code"
+  assert_output_empty "no staging or scratch residue after failure" \
+    "$(find "$scratch_root" -mindepth 1)"
+}
+
 run_tests "tt lib/task (unit)"

@@ -25,6 +25,7 @@
 #   _task__collect_descendant_dirs   — task dirs for all descendants of a task
 #   _task__write_stub                — minimal task file stub for a new task
 #   _task__write_and_commit_on_branch — apply writes and commit them onto a bookmark
+#   _task__commit_on_branch          — staged bare write committed onto a bookmark
 #
 # The _task__full_range_* helpers are internal to _task__get_full_range_records.
 
@@ -563,6 +564,130 @@ _task__write_and_commit_on_branch() {
     _repo__commit_working_copy "$target_worktree" "$message"
     _repo__set_bookmark "$target_worktree" "$bookmark" '@-'
   fi
+}
+
+# Usage: _task__commit_on_branch REPO BRANCH MESSAGE
+#          [--modify PATH]... [--delete PATH]... [--delete-prefix PREFIX]...
+#          -- WRITER_FN [ARGS...]
+#
+# Commits a staged set of file writes and deletions onto BRANCH without
+# touching any working copy: builds the change as a bare commit on top of the
+# branch tip (_repo__commit_changeset), advances the BRANCH bookmark to it,
+# reattaches the current worktree when it sat on the old tip
+# (_worktree__reattach_current), and prints the new commit ID.
+#
+# The three inputs are ORTHOGONAL:
+#   --modify         materializes an existing branch-tip file (repo-root-
+#                    relative) into the staging directory for read-modify-
+#                    write; a path absent at the tip is an ERROR.
+#   staging dir      carries new and replaced content: WRITER_FN is invoked
+#                    with the staging root as its first argument (followed by
+#                    ARGS), and every file present under it afterwards lands
+#                    in the commit at its stage-relative path.
+#   --delete /       carry removals: each --delete names one repo-root-
+#   --delete-prefix  relative file; each --delete-prefix is expanded to the
+#                    exact files under it at the tip (a prefix matching no
+#                    files contributes nothing).
+# A file disappearing from the staging directory is NOT a deletion — removals
+# are always declared via the delete flags.
+#
+# A non-zero WRITER_FN status aborts the call: nothing is committed and the
+# bookmark does not move. The staged work runs in a subshell whose EXIT trap
+# removes the staging directory on every path, so no trap leaks into the
+# caller and the function is safe to call from set -e scripts.
+#
+# Exit 0: commit created (ID printed to stdout).
+# Exit non-zero: bad arguments, unresolvable branch, absent --modify path,
+# writer failure, or a failed VCS step (error printed to stderr).
+_task__commit_on_branch() {
+  local repo="$1" branch="$2" message="$3"
+  shift 3
+
+  local -a modify_paths=() delete_paths=() delete_prefixes=()
+  local saw_separator=''
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --modify|--delete|--delete-prefix)
+        if [[ $# -lt 2 ]]; then
+          _ui__log "Error: $1 requires a path argument."
+          return 1
+        fi
+        case "$1" in
+          --modify)        modify_paths+=("$2") ;;
+          --delete)        delete_paths+=("$2") ;;
+          --delete-prefix) delete_prefixes+=("$2") ;;
+        esac
+        shift 2
+        ;;
+      --)
+        saw_separator=1
+        shift
+        break
+        ;;
+      *)
+        _ui__log "Error: Unknown flag for _task__commit_on_branch: $1"
+        return 1
+        ;;
+    esac
+  done
+  if [[ -z "$saw_separator" || $# -lt 1 ]]; then
+    _ui__log "Error: _task__commit_on_branch requires '-- WRITER_FN [ARGS...]'."
+    return 1
+  fi
+  local writer_fn="$1"
+  shift
+
+  local tip
+  tip="$(_repo__resolve_commit "$repo" "$branch")" || tip=''
+  if [[ -z "$tip" ]]; then
+    _ui__log "Error: Could not resolve branch '$branch'."
+    return 1
+  fi
+
+  # The remainder runs in a subshell so an EXIT trap can remove the staging
+  # directory on every path without leaking the trap into the caller.
+  (
+    local stage
+    stage="$(mktemp -d)" || exit 1
+    trap 'rm -rf "$stage"' EXIT
+
+    local modify_path
+    for modify_path in "${modify_paths[@]+"${modify_paths[@]}"}"; do
+      mkdir -p "$stage/$(dirname "$modify_path")" || exit 1
+      if ! _repo__read_file_at_revision "$repo" "$tip" "$modify_path" \
+          > "$stage/$modify_path"; then
+        _ui__log "Error: '$modify_path' does not exist on '$branch'."
+        exit 1
+      fi
+    done
+
+    local -a deletions=()
+    local delete_path
+    for delete_path in "${delete_paths[@]+"${delete_paths[@]}"}"; do
+      deletions+=("$delete_path")
+    done
+    local delete_prefix expanded
+    for delete_prefix in "${delete_prefixes[@]+"${delete_prefixes[@]}"}"; do
+      expanded="$(_repo__list_files_at_revision "$repo" "$tip" "$delete_prefix")" \
+        || expanded=''
+      while IFS= read -r delete_path; do
+        [[ -n "$delete_path" ]] && deletions+=("$delete_path")
+      done <<< "$expanded"
+    done
+
+    "$writer_fn" "$stage" "$@" || {
+      _ui__log "Error: Writer '$writer_fn' failed; nothing was committed."
+      exit 1
+    }
+
+    local new_commit
+    new_commit="$(_repo__commit_changeset "$repo" "$tip" "$message" "$stage" \
+      "${deletions[@]+"${deletions[@]}"}")" || exit 1
+    [[ -n "$new_commit" ]] || exit 1
+    _repo__set_bookmark "$repo" "$branch" "$new_commit" || exit 1
+    _worktree__reattach_current "$repo" "$tip" "$new_commit" || exit 1
+    printf '%s\n' "$new_commit"
+  )
 }
 
 # Usage: _task__resolve_current REPO TASK_PREFIX PROJECT_PREFIX

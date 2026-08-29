@@ -441,4 +441,101 @@ test__frontmatter__parse_task__ignores_body_fence() {
   assert_eq "subtask" "${PARSED_SUBTASKS[0]}" "[x] task/a-1 Title A"
 }
 
+# ---------------------------------------------------------------------------
+# _frontmatter__remove_subtask
+# ---------------------------------------------------------------------------
+
+test__frontmatter__remove_subtask__removes_any_checkbox_state() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z" \
+    "subtask: [ ] task/unchecked-aaa11111" \
+    "subtask: [x] task/checked-bbb22222 Checked title" \
+    "subtask: [-] task/skipped-ccc33333"
+
+  _frontmatter__remove_subtask "$file" "task/unchecked-aaa11111"
+  local content
+  content="$(cat "$file")"
+  assert_not_contains "unchecked entry removed" "$content" "task/unchecked-aaa11111"
+  assert_contains "checked entry intact" "$content" \
+    "subtask: [x] task/checked-bbb22222 Checked title"
+  assert_contains "skipped entry intact" "$content" \
+    "subtask: [-] task/skipped-ccc33333"
+
+  _frontmatter__remove_subtask "$file" "task/checked-bbb22222"
+  content="$(cat "$file")"
+  assert_not_contains "checked entry with trailing title removed" \
+    "$content" "task/checked-bbb22222"
+  assert_contains "skipped entry still intact" "$content" \
+    "subtask: [-] task/skipped-ccc33333"
+
+  _frontmatter__remove_subtask "$file" "task/skipped-ccc33333"
+  content="$(cat "$file")"
+  assert_not_contains "skipped entry removed" "$content" "task/skipped-ccc33333"
+  assert_not_contains "no subtask lines left" "$content" "subtask:"
+  assert_contains "other frontmatter intact" "$content" 'title: "Test"'
+}
+
+test__frontmatter__remove_subtask__ignores_body_fence() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  # The body's fenced block repeats the exact frontmatter entry; only the
+  # frontmatter occurrence may be removed.
+  printf '%s\n' \
+    '---' \
+    'title: "Test"' \
+    'subtask: [ ] task/real-abc12345' \
+    '---' \
+    'The frontmatter looked like:' \
+    '' \
+    '```markdown' \
+    '---' \
+    'subtask: [ ] task/real-abc12345' \
+    '---' \
+    '```' \
+    > "$file"
+
+  _frontmatter__remove_subtask "$file" "task/real-abc12345"
+
+  local content
+  content="$(cat "$file")"
+  assert_output_empty "frontmatter has no subtask entries left" \
+    "$(_frontmatter__parse_repeated_field "$content" subtask)"
+  assert_eq "body occurrence survives" \
+    "$(printf '%s\n' "$content" | grep -c 'subtask: \[ \] task/real-abc12345' || true)" \
+    "1"
+  assert_contains "body prose intact" "$content" "The frontmatter looked like:"
+}
+
+test__frontmatter__remove_subtask__nonexistent_entry_is_noop() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z" \
+    "subtask: [ ] task/present-aaa11111"
+
+  local before
+  before="$(cat "$file")"
+  local exit_code=0
+  _frontmatter__remove_subtask "$file" "task/absent-zzz99999" || exit_code=$?
+  assert_success "removing a nonexistent entry returns 0" "$exit_code"
+  assert_eq "file unchanged" "$(cat "$file")" "$before"
+}
+
 run_tests "tt lib/frontmatter (unit)"
