@@ -108,14 +108,14 @@ main() {
   project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   local task_id
-  task_id="$(resolve_current_bookmark "$canonical_worktree_path" "$task_prefix" "$project_prefix")" || true
+  task_id="$(_task__resolve_current_branch "$canonical_worktree_path" "$task_prefix" "$project_prefix")" || true
 
   # Resolve outgoing context from HEAD symlink
   local outgoing_worktree previous_task_id
   outgoing_worktree="$(_workspace__get_active_worktree "$workspace_dir")" || outgoing_worktree="$repo"
 
   # Resolve previous task ID from outgoing worktree
-  previous_task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")" || true
+  previous_task_id="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")" || true
 
   # Dirty check on outgoing worktree
   if ! _repo__check_working_copy_clean "$outgoing_worktree"; then

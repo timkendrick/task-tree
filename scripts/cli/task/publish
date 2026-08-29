@@ -176,7 +176,7 @@ main() {
 
   if [[ -n "$project_id_arg" ]]; then
     child_bookmark="$project_id_arg"
-    if ! is_project_branch "$child_bookmark" "$project_prefix"; then
+    if ! _task__check_is_project_branch "$child_bookmark" "$project_prefix"; then
       _ui__log "Error: '$project_id_arg' is not a project branch."
       _ui__log "  Use 'tt task checkin' to check in task branches."
       exit 1
@@ -187,12 +187,12 @@ main() {
     fi
     child_slug="${child_bookmark#"$project_prefix"}"
   else
-    child_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+    child_bookmark="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$child_bookmark" ]]; then
       _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
-    if ! is_project_branch "$child_bookmark" "$project_prefix"; then
+    if ! _task__check_is_project_branch "$child_bookmark" "$project_prefix"; then
       _ui__log "Error: 'tt task publish' requires a project branch."
       _ui__log "  Current branch '$child_bookmark' is a task branch."
       _ui__log "  Use 'tt task checkin' to check in task branches."

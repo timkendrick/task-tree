@@ -100,7 +100,7 @@ main() {
     old_id="$task_id"
   else
     # Use current task
-    old_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+    old_id="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$old_id" ]]; then
       _ui__log "Error: No current task found. Use --task to specify."
       exit 1
@@ -108,14 +108,14 @@ main() {
   fi
 
   # Validate old_id is a valid task or project branch
-  if ! is_task_branch "$old_id" "$task_prefix" && ! is_project_branch "$old_id" "$project_prefix"; then
+  if ! _task__check_is_task_branch "$old_id" "$task_prefix" && ! _task__check_is_project_branch "$old_id" "$project_prefix"; then
     _ui__log "Error: Invalid task ID: $old_id"
     exit 1
   fi
 
   # Extract old slug and hex from the ID
   local prefix
-  if is_task_branch "$old_id" "$task_prefix"; then
+  if _task__check_is_task_branch "$old_id" "$task_prefix"; then
     prefix="$task_prefix"
   else
     prefix="$project_prefix"
@@ -146,13 +146,13 @@ main() {
 
   # Find parent branch (optional - may not exist for projects)
   local parent_bookmark
-  parent_bookmark="$(find_parent_branch "$repo" "$old_id" "$task_prefix" "$project_prefix")" || true
+  parent_bookmark="$(_task__find_parent_branch "$repo" "$old_id" "$task_prefix" "$project_prefix")" || true
 
   # Find parent task file path
   local parent_task_file
   if [[ -n "$parent_bookmark" ]]; then
     local parent_suffix
-    if is_task_branch "$parent_bookmark" "$task_prefix"; then
+    if _task__check_is_task_branch "$parent_bookmark" "$task_prefix"; then
       parent_suffix="${parent_bookmark#$task_prefix}"
     else
       parent_suffix="${parent_bookmark#$project_prefix}"

@@ -62,7 +62,7 @@ _worktree__list() {
 
     task_id=''
     if [[ -n "$ws_path" && -d "$ws_path" ]]; then
-      task_id="$(resolve_current_bookmark "$ws_path" "$task_prefix" "$project_prefix" 2>/dev/null)" || true
+      task_id="$(_task__resolve_current_branch "$ws_path" "$task_prefix" "$project_prefix" 2>/dev/null)" || true
     fi
 
     printf '%s\t%s\t%s\n' "$ws_name" "$ws_path" "$task_id"
@@ -104,7 +104,7 @@ _worktree__resolve_path() {
 
 # Usage: _worktree__find_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
 # Outputs one workspace root path per line for each jj workspace where
-# BOOKMARK is the current branch (resolved via resolve_current).
+# BOOKMARK is the current branch (resolved via _task__resolve_current).
 _worktree__find_for_branch() {
   local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
   local entries
@@ -112,7 +112,7 @@ _worktree__find_for_branch() {
   local ws_root ws_bookmark
   while IFS=$'\t' read -r _ ws_root; do
     [[ -z "$ws_root" || ! -d "$ws_root" ]] && continue
-    ws_bookmark="$(resolve_current_bookmark "$ws_root" "$task_prefix" "$project_prefix" 2>/dev/null)" || continue
+    ws_bookmark="$(_task__resolve_current_branch "$ws_root" "$task_prefix" "$project_prefix" 2>/dev/null)" || continue
     [[ "$ws_bookmark" == "$bookmark" ]] && printf '%s\n' "$ws_root"
   done <<< "$entries"
   return 0

@@ -71,7 +71,7 @@ main() {
   local bookmark task_file
 
   if [[ -z "$task_id_arg" ]]; then
-    { read -r _rev; read -r task_file; read -r bookmark; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
+    { read -r _rev; read -r task_file; read -r bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
 
     if [[ -z "$bookmark" ]]; then
       _ui__log "Error: Not on a task or project branch."
@@ -80,9 +80,9 @@ main() {
   else
     bookmark="$task_id_arg"
     local suffix
-    if is_task_branch "$bookmark" "$task_prefix"; then
+    if _task__check_is_task_branch "$bookmark" "$task_prefix"; then
       suffix="${bookmark#$task_prefix}"
-    elif is_project_branch "$bookmark" "$project_prefix"; then
+    elif _task__check_is_project_branch "$bookmark" "$project_prefix"; then
       suffix="${bookmark#$project_prefix}"
     else
       _ui__log "Error: '$task_id_arg' is not a task or project branch."

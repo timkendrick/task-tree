@@ -112,9 +112,9 @@ main() {
   if [[ -n "$task_id_arg" ]]; then
     bookmark="$task_id_arg"
     local suffix
-    if is_task_branch "$bookmark" "$task_prefix"; then
+    if _task__check_is_task_branch "$bookmark" "$task_prefix"; then
       suffix="${bookmark#$task_prefix}"
-    elif is_project_branch "$bookmark" "$project_prefix"; then
+    elif _task__check_is_project_branch "$bookmark" "$project_prefix"; then
       suffix="${bookmark#$project_prefix}"
     else
       _ui__log "Error: '$task_id_arg' is not a task or project branch."
@@ -127,12 +127,12 @@ main() {
     task_suffix="$suffix"
     task_file="$(_path__task_file "$suffix")"
   else
-    { read -r _rev; read -r task_file; read -r bookmark; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
+    { read -r _rev; read -r task_file; read -r bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$bookmark" ]]; then
       _ui__log "Error: not on a task or project branch."
       exit 1
     fi
-    if is_task_branch "$bookmark" "$task_prefix"; then
+    if _task__check_is_task_branch "$bookmark" "$task_prefix"; then
       task_suffix="${bookmark#$task_prefix}"
     else
       task_suffix="${bookmark#$project_prefix}"
@@ -225,11 +225,11 @@ main() {
   fi
 
   # Determine if we need a cross-branch commit (must resolve BEFORE starting
-  # the transaction, since resolve_current may trigger a jj snapshot)
+  # the transaction, since _task__resolve_current may trigger a jj snapshot)
   local current_bookmark
-  current_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+  current_bookmark="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
 
-  # Writer invoked by write_and_commit_on_branch with the destination worktree root.
+  # Writer invoked by _task__write_and_commit_on_branch with the destination worktree root.
   ctx_add_writer() {
     local root="$1"
     mkdir -p "$(dirname "$root/$ctx_file")"
@@ -243,7 +243,7 @@ main() {
   # so the before-op matches the previous command's after-op in the history chain.
   _history__begin_transaction "$repo"
 
-  write_and_commit_on_branch "$repo" "$target_worktree" "$bookmark" \
+  _task__write_and_commit_on_branch "$repo" "$target_worktree" "$bookmark" \
     "$current_worktree" "$current_bookmark" \
     "$(_commit__format_message "task" "context:add" "$bookmark" "$ctx_title")" \
     ctx_add_writer

@@ -90,7 +90,7 @@ EOF
 # When PARENT_ARG is non-empty: resolves that task-id/bookmark. If it's a task or project
 #   branch, derives task file path from the ID and outputs the bookmark to update.
 #
-# When PARENT_ARG is empty: calls resolve_current to use the current branch.
+# When PARENT_ARG is empty: calls _task__resolve_current to use the current branch.
 #
 # Exits 1 if parent not found.
 resolve_parent() {
@@ -108,17 +108,17 @@ resolve_parent() {
       _ui__log "Error: Parent task not found: $parent_task_id"
       exit 1
     fi
-    if is_task_branch "$parent_task_id" "$task_prefix"; then
+    if _task__check_is_task_branch "$parent_task_id" "$task_prefix"; then
       local suffix="${parent_task_id#$task_prefix}"
       printf '%s\n%s\n%s\n' "$parent_rev" "$(_path__task_file "$suffix")" "$parent_task_id"
-    elif is_project_branch "$parent_task_id" "$project_prefix"; then
+    elif _task__check_is_project_branch "$parent_task_id" "$project_prefix"; then
       local suffix="${parent_task_id#$project_prefix}"
       printf '%s\n%s\n%s\n' "$parent_rev" "$(_path__task_file "$suffix")" "$parent_task_id"
     else
       printf '%s\n\n\n' "$parent_rev"
     fi
   else
-    resolve_current "$repo" "$task_prefix" "$project_prefix"
+    _task__resolve_current "$repo" "$task_prefix" "$project_prefix"
   fi
 }
 
@@ -370,7 +370,7 @@ main() {
   # leave it at the updated parent tip after task creation rather than restoring to the now-stale
   # original revision. Otherwise, restore as normal.
   local current_bookmark
-  current_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+  current_bookmark="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
   local restore_to_parent=false
   if [[ -n "$parent_bookmark" ]] && [[ "$current_bookmark" == "$parent_bookmark" ]]; then
     restore_to_parent=true
@@ -406,7 +406,7 @@ main() {
 
   if [[ "$is_project" == true ]]; then
     # Project task: first commit creates the stub task file; second commit (via edit) sets metadata.
-    write_task_stub "$repo" "$task_suffix"
+    _task__write_stub "$repo" "$task_suffix"
     jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2 >&2
     jj "${jj_opts[@]}" bookmark set "$task_id" -r '@' $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
     jj "${jj_opts[@]}" new "@" >&2
@@ -424,7 +424,7 @@ main() {
       _ui__log "Error: Parent task file not found: $parent_path"
       exit 1
     fi
-    write_task_stub "$repo" "$task_suffix"
+    _task__write_stub "$repo" "$task_suffix"
     _frontmatter__append_subtask "$parent_path" "$task_id"
     _ui__log "Added subtask to parent: $parent_task_file"
     jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2
@@ -439,7 +439,7 @@ main() {
   else
     # Child task with no identifiable parent task file (e.g. branching from a non-task bookmark).
     # Create the stub and bookmark without modifying any parent; edit sets metadata.
-    write_task_stub "$repo" "$task_suffix"
+    _task__write_stub "$repo" "$task_suffix"
     jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2
     jj "${jj_opts[@]}" new "@" >&2
     jj "${jj_opts[@]}" bookmark set "$task_id" -r '@' $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2

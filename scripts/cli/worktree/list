@@ -77,8 +77,8 @@ main() {
 
   # Validate --task filter if provided
   if [[ -n "$task_filter" ]]; then
-    if ! is_task_branch "$task_filter" "$task_prefix" && \
-       ! is_project_branch "$task_filter" "$project_prefix"; then
+    if ! _task__check_is_task_branch "$task_filter" "$task_prefix" && \
+       ! _task__check_is_project_branch "$task_filter" "$project_prefix"; then
       _ui__log "Error: '$task_filter' is not a recognized task or project ID"
       _ui__log "  Expected prefix '$task_prefix' or '$project_prefix' with 8-hex suffix"
       exit 1

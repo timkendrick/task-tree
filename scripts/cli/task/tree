@@ -54,9 +54,9 @@ EOF
 # Returns 1 if BRANCH is neither a task nor a project branch.
 branch_suffix() {
   local branch="$1" task_prefix="$2" project_prefix="$3"
-  if is_task_branch "$branch" "$task_prefix"; then
+  if _task__check_is_task_branch "$branch" "$task_prefix"; then
     printf '%s' "${branch#"$task_prefix"}"
-  elif is_project_branch "$branch" "$project_prefix"; then
+  elif _task__check_is_project_branch "$branch" "$project_prefix"; then
     printf '%s' "${branch#"$project_prefix"}"
   else
     return 1
@@ -325,9 +325,9 @@ main() {
   local task_branches=''
   while IFS= read -r b; do
     [[ -z "$b" ]] && continue
-    if is_project_branch "$b" "$project_prefix"; then
+    if _task__check_is_project_branch "$b" "$project_prefix"; then
       project_branches="${project_branches}${b}"$'\n'
-    elif is_task_branch "$b" "$task_prefix"; then
+    elif _task__check_is_task_branch "$b" "$task_prefix"; then
       task_branches="${task_branches}${b}"$'\n'
     fi
   done <<< "$all_bookmarks" || true
@@ -344,9 +344,9 @@ main() {
   parent_map="$(parent_map_from_index "$subtask_index")"
 
   local current_bookmark
-  current_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+  current_bookmark="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
   local current_task_id=''
-  if [[ -n "$current_bookmark" ]] && { is_task_branch "$current_bookmark" "$task_prefix" || is_project_branch "$current_bookmark" "$project_prefix"; }; then
+  if [[ -n "$current_bookmark" ]] && { _task__check_is_task_branch "$current_bookmark" "$task_prefix" || _task__check_is_project_branch "$current_bookmark" "$project_prefix"; }; then
     current_task_id="$current_bookmark"
   fi
 
@@ -355,7 +355,7 @@ main() {
       _ui__log "Error: Not on a task or project branch. Cannot show focused list."
       exit 1
     fi
-    if ! is_task_branch "$current_bookmark" "$task_prefix" && ! is_project_branch "$current_bookmark" "$project_prefix"; then
+    if ! _task__check_is_task_branch "$current_bookmark" "$task_prefix" && ! _task__check_is_project_branch "$current_bookmark" "$project_prefix"; then
       _ui__log "Error: Current branch '$current_bookmark' is not a task or project branch. Cannot show focused list."
       exit 1
     fi

@@ -95,7 +95,7 @@ main() {
   if [[ -n "$task_id_arg" ]]; then
     task_id="$task_id_arg"
     # Validate it is a known task/project branch
-    if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
+    if ! _task__check_is_task_branch "$task_id" "$task_prefix" && ! _task__check_is_project_branch "$task_id" "$project_prefix"; then
       _ui__log "Error: '$task_id' is not a recognized task or project ID"
       exit 1
     fi
@@ -104,7 +104,7 @@ main() {
       exit 1
     fi
   else
-    task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+    task_id="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$task_id" ]]; then
       _ui__log "Error: Not on a task or project branch. Use --task to specify."
       exit 1
@@ -112,7 +112,7 @@ main() {
   fi
 
   # Validate new parent exists
-  if ! is_task_branch "$new_parent_id" "$task_prefix" && ! is_project_branch "$new_parent_id" "$project_prefix"; then
+  if ! _task__check_is_task_branch "$new_parent_id" "$task_prefix" && ! _task__check_is_project_branch "$new_parent_id" "$project_prefix"; then
     _ui__log "Error: '$new_parent_id' is not a recognized task or project ID"
     exit 1
   fi
@@ -129,7 +129,7 @@ main() {
 
   # Find old parent
   local old_parent='' find_parent_exit=0
-  old_parent="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || find_parent_exit=$?
+  old_parent="$(_task__find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || find_parent_exit=$?
   if [[ $find_parent_exit -eq 1 ]]; then
     _ui__log "Error: No parent found for '$task_id'. Cannot move a parentless task."
     exit 1
@@ -148,7 +148,7 @@ main() {
   while true; do
     local p_exit=0
     local p=''
-    p="$(find_parent_branch "$repo" "$cursor" "$task_prefix" "$project_prefix")" || p_exit=$?
+    p="$(_task__find_parent_branch "$repo" "$cursor" "$task_prefix" "$project_prefix")" || p_exit=$?
     if [[ $p_exit -ne 0 ]]; then
       break  # reached a root without finding task_id — no cycle
     fi
@@ -161,21 +161,21 @@ main() {
 
   # Derive slugs and task file paths
   local task_slug
-  if is_task_branch "$task_id" "$task_prefix"; then
+  if _task__check_is_task_branch "$task_id" "$task_prefix"; then
     task_slug="${task_id#"$task_prefix"}"
   else
     task_slug="${task_id#"$project_prefix"}"
   fi
 
   local old_parent_slug
-  if is_task_branch "$old_parent" "$task_prefix"; then
+  if _task__check_is_task_branch "$old_parent" "$task_prefix"; then
     old_parent_slug="${old_parent#"$task_prefix"}"
   else
     old_parent_slug="${old_parent#"$project_prefix"}"
   fi
 
   local new_parent_slug
-  if is_task_branch "$new_parent_id" "$task_prefix"; then
+  if _task__check_is_task_branch "$new_parent_id" "$task_prefix"; then
     new_parent_slug="${new_parent_id#"$task_prefix"}"
   else
     new_parent_slug="${new_parent_id#"$project_prefix"}"
@@ -222,7 +222,7 @@ main() {
   local original_rev=''
   local current_branch=''
   local restore_to_old_parent=false
-  current_branch="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+  current_branch="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
   if [[ "$current_branch" == "$task_id" ]]; then
     : # case 1 — no restore
   elif [[ "$current_branch" == "$old_parent" ]]; then

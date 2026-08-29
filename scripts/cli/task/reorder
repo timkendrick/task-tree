@@ -104,7 +104,7 @@ reorder_subtask() {
 
   # 1. Locate parent
   local parent_id
-  parent_id="$(find_parent_branch "$repo" "$child_id" "$task_prefix" "$project_prefix")" || {
+  parent_id="$(_task__find_parent_branch "$repo" "$child_id" "$task_prefix" "$project_prefix")" || {
     local ec=$?
     if [[ $ec -eq 1 ]]; then
       _ui__log "Error: '$child_id' has no parent (parentless task — cannot reorder)."
@@ -114,7 +114,7 @@ reorder_subtask() {
 
   # 2. Determine parent task file path
   local parent_suffix
-  if is_task_branch "$parent_id" "$task_prefix"; then
+  if _task__check_is_task_branch "$parent_id" "$task_prefix"; then
     parent_suffix="${parent_id#$task_prefix}"
   else
     parent_suffix="${parent_id#$project_prefix}"
@@ -234,11 +234,11 @@ reorder_subtask() {
 
   # 9. Read child title for commit message
   local child_branch child_suffix child_content child_title
-  child_branch="$(find_branch_for_task "$repo" "$child_id" "$task_prefix" "$project_prefix")" || {
+  child_branch="$(_task__find_branch "$repo" "$child_id" "$task_prefix" "$project_prefix")" || {
     _ui__log "Error: Could not locate branch for '$child_id'."
     exit 1
   }
-  if is_task_branch "$child_id" "$task_prefix"; then
+  if _task__check_is_task_branch "$child_id" "$task_prefix"; then
     child_suffix="${child_id#$task_prefix}"
   else
     child_suffix="${child_id#$project_prefix}"
@@ -279,14 +279,14 @@ reorder_frontmatter() {
 
   # 1. Determine the canonical branch
   local canonical_branch
-  canonical_branch="$(find_branch_for_task "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
+  canonical_branch="$(_task__find_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
     _ui__log "Error: Could not locate branch for '$task_id'."
     exit 1
   }
 
   # 2. Determine task file path
   local task_suffix
-  if is_task_branch "$task_id" "$task_prefix"; then
+  if _task__check_is_task_branch "$task_id" "$task_prefix"; then
     task_suffix="${task_id#$task_prefix}"
   else
     task_suffix="${task_id#$project_prefix}"
@@ -415,7 +415,7 @@ main() {
 
   # Resolve default task_id if not provided
   if [[ -z "$task_id" ]]; then
-    task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+    task_id="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$task_id" ]]; then
       _ui__log "Error: Not on a task or project branch."
       exit 1
@@ -427,8 +427,8 @@ main() {
     _ui__log "Error: Branch '$task_id' not found in repository."
     exit 1
   fi
-  if ! is_task_branch "$task_id" "$task_prefix" && \
-     ! is_project_branch "$task_id" "$project_prefix"; then
+  if ! _task__check_is_task_branch "$task_id" "$task_prefix" && \
+     ! _task__check_is_project_branch "$task_id" "$project_prefix"; then
     _ui__log "Error: '$task_id' is not a task or project branch."
     exit 1
   fi
