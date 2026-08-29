@@ -937,13 +937,21 @@ _jj__abandon_commit() {
 # Bookmarks
 # ---------------------------------------------------------------------------
 
-# Usage: _jj__set_bookmark REPO NAME REV
+# Usage: _jj__set_bookmark REPO NAME REV [--allow-backwards]
 # Creates or moves bookmark NAME to REV. The revision is REQUIRED: there is no
 # implicit-target form, so callers must always name the revision explicitly.
-# Quiet mutation.
+# By default jj refuses to move an existing bookmark to a revision that is not
+# a descendant of its current position; the optional trailing
+# --allow-backwards flag is passed through to `jj bookmark set` to permit such
+# a move. Quiet mutation.
 _jj__set_bookmark() {
   local repo="$1" name="$2" rev="$3"
-  __jj__run_quiet "$repo" --ignore-working-copy bookmark set "$name" -r "$rev"
+  local -a extra_flags=()
+  if [[ "${4:-}" == '--allow-backwards' ]]; then
+    extra_flags=(--allow-backwards)
+  fi
+  __jj__run_quiet "$repo" --ignore-working-copy bookmark set "$name" -r "$rev" \
+    "${extra_flags[@]+"${extra_flags[@]}"}"
 }
 
 # Usage: _jj__list_bookmark_names REPO

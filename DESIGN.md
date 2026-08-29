@@ -377,7 +377,7 @@ The command exits with an error if none of these resolves to a valid jj reposito
 
 - **`tt task reorder <task-id> <modifier>`** — Reorder a direct child task. Modifier is one of `--up`, `--down`, `--after <other-task-id>`, or `--before <other-task-id>` (mutually exclusive). Fails if the reorder is impossible (e.g. already first with `--up`, or `<other-task-id>` is not a sibling). See §6.7.
 
-- **`tt task delete [<task-id>] [--force]`** — Remove a task and its entire descendant subtree from the parent branch. Collects the full subtree via union traversal (reads subtask lists from both each task's own branch and the parent branch's copy at every level). Creates a single `[tt:task:<task-id>:delete] <title>` commit on the parent branch that removes the top-level `subtask:` entry and all descendant task files present on that branch. After the commit, deletes all bookmarks in the subtree (`jj bookmark delete`). Dedicated workspaces are forgotten from jj; files left on disk with a warning. Defaults to the current branch if no `<task-id>` is given. Requires task `status: DONE` unless `--force` is specified (which also skips the clean working-copy check). Aborts if no parent is found. See §6.9.
+- **`tt task delete [<task-id>] [--force]`** — Remove a task and its entire descendant subtree from the parent branch. Collects the full subtree via union traversal (reads subtask lists from both each task's own branch and the parent branch's copy at every level). Creates a single `[tt:task:<task-id>:delete] <title>` commit on the parent branch that removes the top-level `subtask:` entry and all descendant task files present on that branch. After the commit, deletes all bookmarks in the subtree (`jj bookmark delete`). Dedicated workspaces are forgotten from jj; files left on disk with a warning. Defaults to the current branch if no `<task-id>` is given. Requires task `status: DONE` unless `--force` is specified. Aborts if no parent is found. See §6.9.
 
 - **`tt task rename --slug <new-slug> [--task <task-id>] [--repo PATH] [--workspace-dir PATH]`** — Rename a task's slug (the human-readable part of the task ID), preserving the hex suffix. For example: `task/old-name-abc123` → `task/new-name-abc123`. Renames the jj bookmark, the task directory, and updates the parent's subtask reference. Requires a clean working copy. If the task has no parent (e.g., a project), only the bookmark and directory are renamed. Silently succeeds if the new slug matches the current slug. Errors if the new ID would conflict with an existing bookmark. See §6.10.
 
@@ -472,15 +472,15 @@ Note that the `[tt:task:task/T:checkpoint]` at the bottom of the task/T arm in t
 
 ### 6.1 Task creation (`tt task create`)
 
-**With `--parent`:** The tool creates a commit **on the parent task's branch** (regardless of which branch is currently checked out) that both creates a minimal task stub directory (`.tt/task/<slug>-<hex>/TASK.md` containing `status: TODO`, `created`, and `updated` timestamps) and adds `subtask: [ ] <task-id>` to the parent task file, described as `[tt:task:<task-id>:create] <title>`. The parent bookmark is advanced to this commit. The child task's branch is then initialised by invoking `tt task edit` to set the title, body, and labels; the task bookmark is initialised here with a `[tt:task:<task-id>:edit] <title>` commit. The `TASK.md` symlink is created when the task is first checked out (see §6.2). After task creation, if the working copy was already on the parent branch, it is left at the updated parent branch tip; otherwise it is restored to its original position.
+**With `--parent`:** The tool creates a **bare commit on the parent task's branch** (regardless of which branch is currently checked out, and without touching any working copy) that both creates a minimal task stub directory (`.tt/task/<slug>-<hex>/TASK.md` containing `status: TODO`, `created`, and `updated` timestamps) and adds `subtask: [ ] <task-id>` to the parent task file, described as `[tt:task:<task-id>:create] <title>`. The parent bookmark is advanced to this commit. The child task's branch is then forked from the updated parent tip with its own first commit (also `[tt:task:<task-id>:create] <title>`; the stub content is byte-identical to the parent's copy, so the commit carries no tree changes), and initialised by invoking `tt task edit` to set the title, body, and labels with a `[tt:task:<task-id>:edit] <title>` commit that advances the task bookmark. The `TASK.md` symlink is created when the task is first checked out (see §6.2). The working copy never moves: as with every bare branch write (§6.1.2), a working copy sitting on the parent tip is carried forward onto the updated tip, any other position is left entirely untouched, and uncommitted changes are never absorbed. The command refuses to run while the working-copy commit carries a bookmark.
 
 **Preconditions** (checked before any VCS operation; any failure aborts the command):
 
-- If the resolved parent task file has `status: DONE`, the parent is **reopened** before the child is created: the tool runs `tt task checkout <parent-id>`, which creates a `[tt:task:<parent-id>:checkout] <title>` commit setting the parent's status back to `IN-PROGRESS` and advances the parent bookmark (see §6.2). The child is then created on the reopened parent's tip via the normal flow, and the working copy is restored to its original position afterwards as usual.
+- If the resolved parent task file has `status: DONE`, the parent is **reopened** before the child is created: the tool runs `tt task checkout <parent-id>`, which creates a `[tt:task:<parent-id>:checkout] <title>` commit setting the parent's status back to `IN-PROGRESS`, advances the parent bookmark, and checks the parent out (see §6.2). The child is then created on the reopened parent's tip via the normal flow.
 
 **Slug requirement:** In non-interactive mode (stdin is not a terminal), `--slug` must be provided explicitly; the command errors if it is omitted. In interactive mode the user is prompted with a suggested default derived from the title.
 
-Because the parent task file is modified, sibling (and descendant) branches may need to be updated to avoid conflicts at checkin. The optional `--propagate` flag runs `tt task propagate --from <parent>` after creating the task; it accepts `--rebase | --merge` (propagation strategy; default rebase), `--shallow` (direct children of the parent only), and `--force` (proceed despite conflicts). The optional `--checkout` flag runs `tt task checkout` on the newly created task before exiting; the user is left on the new task branch (the usual restore-to-original-revision behavior is suppressed). With `--checkout`, `--worktree[=<path>]` may be passed and is forwarded to `tt task checkout` to use or create a dedicated jj workspace (see §6.2). If the named child branch already exists, the tool notifies the user and refuses unless `--force` is specified.
+Because the parent task file is modified, sibling (and descendant) branches may need to be updated to avoid conflicts at checkin. The optional `--propagate` flag runs `tt task propagate --from <parent>` after creating the task; it accepts `--rebase | --merge` (propagation strategy; default rebase), `--shallow` (direct children of the parent only), and `--force` (proceed despite conflicts). The optional `--checkout` flag runs `tt task checkout` on the newly created task before exiting; the user is left on the new task branch. With `--checkout`, `--worktree[=<path>]` may be passed and is forwarded to `tt task checkout` to use or create a dedicated jj workspace (see §6.2). If the named child branch already exists, the tool notifies the user and refuses unless `--force` is specified.
 
 **With `--project`:** The tool creates a parentless project task using the project prefix. The project branch is created from `--target <commit-rev>` if specified, else the current revision (any branch). The tool refuses to proceed if the target revision already exists within a task tree. No parent task file is modified. The project task file is created on the project branch.
 
@@ -706,37 +706,36 @@ On failure, `tt task checkin` aborts with an error and leaves the repository unc
 
 Child tasks are ordered via the current task file's `subtask:` frontmatter. **`tt task reorder <task-id> <modifier>`** reorders a direct child; modifier is `--up`, `--down`, `--after <other-task-id>`, or `--before <other-task-id>` (mutually exclusive).
 
+Without a modifier, **`tt task reorder [<task-id>]`** tidies the task file instead: frontmatter fields are rewritten in canonical order and `subtask:` entries are grouped by checkbox status (`[-]` IN-PROGRESS first, then `[ ]` TODO, then `[x]` DONE, stable within each group). An already-canonical file is a no-op (no commit).
+
+In both modes the rewritten task file is committed as a **bare commit** directly onto the branch that owns it (the parent branch when reordering a child; the task's canonical branch when tidying), so that branch need not be checked out anywhere. The working copy never moves and its uncommitted changes are never absorbed; the same refusal and out-of-sync reporting rules as §6.1.2 apply.
+
 ### 6.9 Delete (`tt task delete`)
 
 `tt task delete` removes a task and its entire descendant subtree from the parent branch. It is the canonical mechanism for purging a task from the project: after this command, the task is no longer discoverable via `tt task tree` because its `subtask:` entry is gone from the parent task file.
 
-**Usage:** `tt task delete [<task-id>] [--force] [--worktree=<path>] [--repo PATH] [--workspace-dir PATH]`
+**Usage:** `tt task delete [<task-id>] [--force] [--repo PATH] [--workspace-dir PATH]`
 
 If no `<task-id>` is given, the command operates on the current branch.
 
 **Preconditions** (all checked before any VCS operation; any failure aborts unless noted):
 
-- Working copy is clean. Skipped with `--force`.
 - Current branch is a task or project branch (when no explicit `<task-id>` is given).
 - Top-level task `status` is `DONE`. Skipped with `--force`. (Descendants' status is not checked.)
 - Exactly one parent branch is found (via `find_parent_branch`). Parentless tasks (top-level projects with no parent) cannot be deleted this way; the command aborts.
+- The working-copy commit must not carry a bookmark (as for all bare branch writes; see §6.1.2). The working copy may otherwise hold uncommitted changes, which are never absorbed.
 
 **Behavior:**
 
 1. Locate the parent branch using `find_parent_branch` (same logic as `tt task checkin`).
 2. Collect the full descendant subtree via union traversal: for each discovered task, read subtask lists from both (a) the task's own branch and (b) the parent branch's copy of the task file. Union of both is used at every level, recursively, until no new IDs are found.
-3. Determine the target workspace using `find_worktrees_for_branch` on the parent branch: 0 found → use main repo workspace; 1 found → use that workspace; 2+ → require `--worktree=<path>`.
-4. Run **pre-delete** hook (blocking) in the current worktree.
-5. In the target workspace, create a new WC branching from the parent bookmark (`jj new <parent_bookmark>`).
-6. Remove the `subtask:` entry for the top-level task from the parent task file's frontmatter.
-7. Remove the top-level task directory and all descendant task directories present on the parent branch (best-effort via `rm -rf`).
-8. Commit: `[tt:task:<task-id>:delete] <title>`. Advance the parent bookmark to this commit.
-9. Leave a clean open WC in the target workspace (`jj new '@'`).
-10. Bulk delete bookmarks: run `jj bookmark delete` for every task in the subtree (root + all descendants). Log a warning for any that cannot be deleted.
-11. For each task in the subtree: if a dedicated workspace exists at `<workspace-dir>/<task-id>/`, run `jj workspace forget <name>` to deregister it from jj, but **do not delete the files**. Alert the user that the workspace directory still exists and must be cleaned up manually.
-12. Run **post-delete** hook (non-blocking).
+3. Run **pre-delete** hook (blocking) in the current worktree.
+4. Create a single **bare commit** on the parent branch — no working copy is involved, so the parent branch need not be checked out anywhere — that removes the `subtask:` entry for the top-level task from the parent task file's frontmatter and deletes the top-level task directory plus all descendant task directories present on the parent branch. Message: `[tt:task:<task-id>:delete] <title>`. The parent bookmark advances to this commit; a working copy sitting on the old parent tip is carried forward, and other worktrees on the parent branch are reported as out of sync (see §6.1.2).
+5. Bulk delete bookmarks for every task in the subtree (root + all descendants). Log a warning for any that cannot be deleted.
+6. For each task in the subtree: if a dedicated workspace exists at `<workspace-dir>/<task-id>/`, deregister the jj workspace, but **do not delete the files**. Alert the user that the workspace directory still exists and must be cleaned up manually.
+7. Run **post-delete** hook (non-blocking).
 
-**Delegation from `tt task checkin --delete`:** When `tt task checkin` is run with `--delete`, it first performs the normal checkin (handoff + merge commits on the parent branch), then invokes `tt task delete` on the same task. This produces two commits on the parent branch: the `[tt:task:<id>:checkin]` commit from checkin, followed by the `[tt:task:<id>:delete]` commit from delete. All subtree bookmarks are deleted after the `[tt:task:<id>:delete]` commit. Finally, checkin removes the checked-in task's own dedicated worktree from disk (step 11 above has already deregistered it from jj); pass `--retain-worktree` to keep it. Worktrees belonging to *descendant* tasks in the deleted subtree are deregistered by step 11 but their files are left in place for manual cleanup, as they are for a standalone `tt task delete`.
+**Delegation from `tt task checkin --delete`:** When `tt task checkin` is run with `--delete`, it first performs the normal checkin (handoff + merge commits on the parent branch), then invokes `tt task delete` on the same task. This produces two commits on the parent branch: the `[tt:task:<id>:checkin]` commit from checkin, followed by the `[tt:task:<id>:delete]` commit from delete. All subtree bookmarks are deleted after the `[tt:task:<id>:delete]` commit. Finally, checkin removes the checked-in task's own dedicated worktree from disk (step 6 above has already deregistered it from jj); pass `--retain-worktree` to keep it. Worktrees belonging to *descendant* tasks in the deleted subtree are deregistered by step 6 but their files are left in place for manual cleanup, as they are for a standalone `tt task delete`.
 
 **Hooks:** Runs **pre-delete** (blocking) before any VCS operation, and **post-delete** (non-blocking) after success.
 

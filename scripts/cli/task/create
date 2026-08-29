@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# Create a task file and jj bookmark (branch) for bootstrapping task-tree.
+# Create a task file and branch bookmark for bootstrapping task-tree.
 #
 # For project tasks: use --project to create a top-level project branch.
 # For all other tasks (default): branches from current branch or --parent.
@@ -30,7 +30,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --merge                (with --propagate) Merge parent tip into descendants
 #   --shallow              (with --propagate) Propagate to direct children only
 #   --checkout             After creation, run checkout on the newly created task
-#   --worktree[=<path>]    (with --checkout) Use or create a dedicated jj workspace for the task
+#   --worktree[=<path>]    (with --checkout) Use or create a dedicated workspace for the task
 #   --switch              (with --checkout --worktree) Also update the HEAD symlink to the new worktree
 #
 
@@ -40,7 +40,7 @@ usage() {
   cat <<EOF
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [options...]
 
-Create a task file and jj bookmark for task-tree bootstrap.
+Create a task file and branch bookmark for task-tree bootstrap.
 
 Options:
   --title TITLE         Task title/summary (prompted if missing and interactive)
@@ -57,7 +57,7 @@ Options:
   --merge               (with --propagate) Merge parent tip into descendants
   --shallow             (with --propagate) Propagate to direct children only
   --checkout            After creation, run checkout on the newly created task
-  --worktree[=<path>]   (with --checkout) Use or create a dedicated jj workspace for the task
+  --worktree[=<path>]   (with --checkout) Use or create a dedicated workspace for the task
   --switch              (with --checkout --worktree) Also update the HEAD symlink to the new worktree
 
 Body is read from stdin (via pipe or redirect) if stdin is not a terminal;
@@ -98,13 +98,12 @@ resolve_parent() {
   local repo="$2"
   local task_prefix="$3"
   local project_prefix="$4"
-  local jj_opts=(-R "$repo")
 
   if [[ -n "$parent_arg" ]]; then
     # Explicit --parent <task-id>
     local parent_task_id="$parent_arg"
     local parent_rev
-    if ! parent_rev="$(jj "${jj_opts[@]}" log -r "$parent_task_id" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"; then
+    if ! parent_rev="$(_task__resolve_revision "$repo" "$parent_task_id")"; then
       _ui__log "Error: Parent task not found: $parent_task_id"
       exit 1
     fi
@@ -247,8 +246,6 @@ main() {
 
   repo="$(_workspace__resolve_repo "$repo")"
 
-  local -a jj_opts=(-R "$repo")
-
   # Resolve task prefix and project prefix from config
   local task_prefix project_prefix
   task_prefix="$(_workspace__get_task_prefix "$repo")"
@@ -275,12 +272,12 @@ main() {
   else
     # --project mode: fork from --target if given, else current @
     if [[ -n "$target" ]]; then
-      if ! parent_rev="$(jj "${jj_opts[@]}" log -r "$target" -n 1 --no-graph -T 'commit_id' 2>/dev/null)"; then
+      if ! parent_rev="$(_task__resolve_revision "$repo" "$target")"; then
         _ui__log "Error: --target revision not found: $target"
         exit 1
       fi
     else
-      parent_rev="$(jj "${jj_opts[@]}" log -r '@' -n 1 --no-graph -T 'commit_id')"
+      parent_rev="$(_task__resolve_revision "$repo" '@')"
     fi
   fi
 
@@ -355,30 +352,16 @@ main() {
   local parent_is_done=false
   if [[ -n "$parent_task_file" ]]; then
     local parent_status
-    parent_status="$(_repo__read_file_at_revision "$repo" "$parent_bookmark" "$parent_task_file" \
+    parent_status="$(_task__read_file "$repo" "$parent_bookmark" "$parent_task_file" \
       | awk '/^status:/ { print $2; exit }')"
     if [[ "$parent_status" == "DONE" ]]; then
       parent_is_done=true
     fi
   fi
 
-  # Capture revision user had checked out so we can restore it on success.
-  # (On error, _history__rollback_transaction restores the entire jj state including WC position.)
-  local original_rev
-  original_rev="$(_repo__get_working_copy_revision "$repo")"
-  # If the working copy is currently on the parent branch (it's our closest ancestor bookmark),
-  # leave it at the updated parent tip after task creation rather than restoring to the now-stale
-  # original revision. Otherwise, restore as normal.
-  local current_bookmark
-  current_bookmark="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
-  local restore_to_parent=false
-  if [[ -n "$parent_bookmark" ]] && [[ "$current_bookmark" == "$parent_bookmark" ]]; then
-    restore_to_parent=true
-  fi
-
   # Check whether the target bookmark already exists; refuse unless --force
   local bookmark_existed=false
-  if jj "${jj_opts[@]}" log -r "$task_id" -n 1 --no-graph -T '' 2>/dev/null; then
+  if _task__check_branch_exists "$repo" "$task_id"; then
     if [[ "$force" == false ]]; then
       _ui__log "Error: Branch '$task_id' already exists. Use --force to overwrite."
       exit 1
@@ -386,6 +369,9 @@ main() {
     bookmark_existed=true
     _ui__log "Warning: Branch '$task_id' already exists; overwriting (--force)."
   fi
+
+  # Precondition: the working-copy commit must not carry a bookmark
+  _worktree__ensure_working_copy "$repo" || exit 1
 
   # Begin transaction (records before-op for undo)
   _history__begin_transaction "$repo"
@@ -396,64 +382,76 @@ main() {
   if [[ "$parent_is_done" == true ]]; then
     _ui__log "Parent task '$parent_bookmark' is DONE; reopening before creating child..."
     "$SCRIPT_DIR/checkout" "$parent_bookmark" --repo "$repo" >/dev/null
-    parent_rev="$(jj "${jj_opts[@]}" log -r "$parent_bookmark" -n 1 --no-graph -T 'commit_id')"
+    parent_rev="$(_task__resolve_revision "$repo" "$parent_bookmark")"
   fi
 
-  jj "${jj_opts[@]}" new "$parent_rev" >&2
+  local create_message
+  create_message="$(_commit__format_message "task" "create" "$task_id" "$title")"
 
-  # Ensure .tt/task exists
-  mkdir -p "$repo/$(_path__task_root)"
+  # One timestamp for every copy of the stub written by this invocation, so
+  # the child branch's first commit carries a byte-identical stub to the copy
+  # committed on the parent branch.
+  local stub_ts
+  stub_ts="$(_string__generate_timestamp)"
+
+  # Writer invoked with a staging root: stages the new task's stub file.
+  create_stub_writer() {
+    local root="$1"
+    _task__write_stub "$root" "$task_suffix" "$stub_ts"
+  }
+
+  # Pass --allow-backwards to the branch creation when overwriting an
+  # existing bookmark (--force): its current position need not be an
+  # ancestor of the re-created branch tip.
+  local -a new_branch_flags=()
+  if [[ "$bookmark_existed" == true ]]; then
+    new_branch_flags=(--allow-backwards)
+  fi
+
+  # Common edit-delegation args (title, labels)
+  local edit_args=(--repo "$repo" --title "$title")
+  for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
 
   if [[ "$is_project" == true ]]; then
-    # Project task: first commit creates the stub task file; second commit (via edit) sets metadata.
-    # The working copy is moved off the bookmarked commit before invoking edit,
-    # which refuses to write while @ carries a bookmark and advances the
-    # bookmark itself with its metadata commit.
-    _task__write_stub "$repo" "$task_suffix"
-    jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2 >&2
-    jj "${jj_opts[@]}" bookmark set "$task_id" -r '@' $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
-    jj "${jj_opts[@]}" new "@" >&2
-    # Build common args (title, labels)
-    local edit_args=(--repo "$repo" --title "$title")
-    for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
+    # Project task: the branch's first commit creates the stub task file on
+    # top of the fork revision; the metadata commit (via edit) follows on the
+    # new branch and advances its bookmark.
+    _task__commit_new_branch "$repo" "$task_id" "$parent_rev" "$create_message" \
+      "${new_branch_flags[@]+"${new_branch_flags[@]}"}" -- create_stub_writer >/dev/null
+    _ui__log "Created task file: $task_file"
     # Pipe body to edit
-    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body" >&2 >&2
+    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body" >&2
   elif [[ -n "$parent_task_file" ]]; then
-    # Child task: commit on parent branch creates the stub and registers the subtask;
-    # the child branch's initial commit (via edit) sets title, body, and labels.
-    local parent_path="$repo/$parent_task_file"
-    if [[ ! -f "$parent_path" ]]; then
-      _ui__log "Error: Parent task file not found: $parent_path"
+    # Child task: one commit on the parent branch creates the stub and
+    # registers the subtask entry; the child branch then forks from that
+    # commit with its own first commit (the same stub content), and the
+    # metadata commit (via edit) follows on the child branch.
+    if ! _task__read_file "$repo" "$parent_bookmark" "$parent_task_file" >/dev/null; then
+      _ui__log "Error: Parent task file not found: $repo/$parent_task_file"
       exit 1
     fi
-    _task__write_stub "$repo" "$task_suffix"
-    _frontmatter__append_subtask "$parent_path" "$task_id"
+    create_parent_writer() {
+      local root="$1"
+      _task__write_stub "$root" "$task_suffix" "$stub_ts"
+      _frontmatter__append_subtask "$root/$parent_task_file" "$task_id"
+    }
+    local parent_tip
+    parent_tip="$(_task__commit_on_branch "$repo" "$parent_bookmark" "$create_message" \
+      --modify "$parent_task_file" -- create_parent_writer)"
+    _ui__log "Created task file: $task_file"
     _ui__log "Added subtask to parent: $parent_task_file"
-    jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2
-    jj "${jj_opts[@]}" bookmark set "$parent_bookmark" -r '@' >&2
-    jj "${jj_opts[@]}" new "@" >&2
-    # The child bookmark starts at the create commit (@-), not at @: edit
-    # refuses to write while @ carries a bookmark, and its metadata commit
-    # advances the bookmark onto the child branch's first own commit.
-    jj "${jj_opts[@]}" bookmark set "$task_id" -r '@-' $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2 >&2
-    # Build common args (title, labels)
-    local edit_args=(--repo "$repo" --title "$title")
-    for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
+    _task__commit_new_branch "$repo" "$task_id" "$parent_tip" "$create_message" \
+      "${new_branch_flags[@]+"${new_branch_flags[@]}"}" -- create_stub_writer >/dev/null
+    _worktree__report_unsynced "$repo" "$parent_bookmark"
     # Pipe body to edit
     "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body" >&2
   else
-    # Child task with no identifiable parent task file (e.g. branching from a non-task bookmark).
-    # Create the stub and bookmark without modifying any parent; edit sets metadata.
-    _task__write_stub "$repo" "$task_suffix"
-    jj "${jj_opts[@]}" describe -m "$(_commit__format_message "task" "create" "$task_id" "$title")" >&2
-    jj "${jj_opts[@]}" new "@" >&2
-    # The bookmark starts at the stub commit (@-), not at @: edit refuses to
-    # write while @ carries a bookmark, and its metadata commit advances the
-    # bookmark itself.
-    jj "${jj_opts[@]}" bookmark set "$task_id" -r '@-' $( [[ "$bookmark_existed" == true ]] && echo '--allow-backwards' || true ) >&2
-    # Build common args (title, labels)
-    local edit_args=(--repo "$repo" --title "$title")
-    for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
+    # Child task with no identifiable parent task file (e.g. branching from a
+    # non-task bookmark). Create the stub commit and bookmark without
+    # modifying any parent; edit sets metadata.
+    _task__commit_new_branch "$repo" "$task_id" "$parent_rev" "$create_message" \
+      "${new_branch_flags[@]+"${new_branch_flags[@]}"}" -- create_stub_writer >/dev/null
+    _ui__log "Created task file: $task_file"
     # Pipe body to edit
     "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body" >&2
   fi
@@ -471,7 +469,9 @@ main() {
   fi
 
   if [[ "$checkout" == true ]]; then
-    # Checkout handles WC positioning; no explicit restore needed.
+    # Checkout handles WC positioning. Without --checkout nothing needs to be
+    # restored: the branch writes above never move the working copy (beyond
+    # keeping a working copy that sat on the parent tip attached to it).
     local -a checkout_args=(--repo "$repo" "$task_id")
     if [[ "$checkout_worktree" == true ]]; then
       if [[ -n "$checkout_worktree_path" ]]; then
@@ -484,15 +484,6 @@ main() {
       fi
     fi
     "$SCRIPT_DIR/checkout" "${checkout_args[@]}" >&2
-  else
-    # Explicitly restore WC to where the user was before the command.
-    # This must happen before _history__commit_transaction so the restore is
-    # captured in the transaction's after-op-id.
-    if [[ "$restore_to_parent" == true ]]; then
-      jj -R "$repo" new "$parent_bookmark" >/dev/null 2>&1 || true
-    elif [[ -n "$original_rev" ]]; then
-      jj -R "$repo" edit "$original_rev" >/dev/null 2>&1 || true
-    fi
   fi
 
   # Commit transaction (records after-op for undo)
