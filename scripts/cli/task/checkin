@@ -519,8 +519,7 @@ main() {
   if [[ "$delete" == true ]]; then
     _ui__log "Running delete for $task_id..."
     "$SCRIPT_DIR/delete" "$task_id" --force \
-      --repo "$repo" \
-      ${worktree_arg:+--worktree="$worktree_arg"}
+      --repo "$repo"
   fi
 
   # --- Optional: propagate parent tip to remaining siblings ---

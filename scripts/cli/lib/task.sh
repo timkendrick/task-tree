@@ -10,6 +10,8 @@
 #   _task__check_is_task_branch      — bookmark name matches the task ID pattern
 #   _task__check_is_project_branch   — bookmark name matches the project ID pattern
 #   _task__check_branch_exists       — bookmark resolves to a revision
+#   _task__resolve_revision          — immutable commit ID of a revision
+#   _task__delete_branch             — delete a task/project bookmark
 #   _task__read_file                 — read a repo file as recorded on a branch
 #   _task__assert_bookmark_current   — exit unless the bookmark tracks all commits up to @-
 #   _task__check_bookmark_current    — test whether the bookmark tracks all commits up to @-
@@ -27,8 +29,11 @@
 #   _task__collect_descendant_dirs   — task dirs for all descendants of a task
 #   _task__write_stub                — minimal task file stub for a new task
 #   _task__commit_on_branch          — staged bare write committed onto a bookmark
+#   _task__commit_new_branch         — staged bare write starting a new bookmark
 #
-# The _task__full_range_* helpers are internal to _task__get_full_range_records.
+# The _task__full_range_* helpers are internal to _task__get_full_range_records,
+# and __task__commit_staged is the private staging engine shared by
+# _task__commit_on_branch and _task__commit_new_branch.
 
 # Return true if bookmark name matches task ID pattern (<prefix><slug>-<hex>).
 _task__check_is_task_branch() {
@@ -51,6 +56,28 @@ _task__check_is_project_branch() {
 _task__check_branch_exists() {
   local repo="$1" branch="$2"
   _repo__check_revision_exists "$repo" "$branch"
+}
+
+# Usage: _task__resolve_revision REPO REV
+# Prints the immutable commit ID of REV (a bookmark name, '@', or any other
+# revision expression). Returns non-zero with nothing printed when REV does
+# not resolve. Documented pass-through to _repo__resolve_commit so commands can
+# pin a branch tip or fork revision without reaching into the VCS layer.
+_task__resolve_revision() {
+  local repo="$1" rev="$2"
+  local commit
+  commit="$(_repo__resolve_commit "$repo" "$rev")" || return 1
+  [[ -n "$commit" ]] || return 1
+  printf '%s' "$commit"
+}
+
+# Usage: _task__delete_branch REPO BRANCH
+# Deletes the BRANCH bookmark. Returns non-zero when no such bookmark exists.
+# Documented pass-through to _repo__delete_bookmark so commands can retire a
+# task or project branch without reaching into the VCS layer.
+_task__delete_branch() {
+  local repo="$1" branch="$2"
+  _repo__delete_bookmark "$repo" "$branch"
 }
 
 # Usage: _task__read_file REPO REV PATH
@@ -570,15 +597,98 @@ _task__find_branch() {
 # are always declared via the delete flags.
 #
 # A non-zero WRITER_FN status aborts the call: nothing is committed and the
-# bookmark does not move. The staged work runs in a subshell whose EXIT trap
-# removes the staging directory on every path, so no trap leaks into the
-# caller and the function is safe to call from set -e scripts.
+# bookmark does not move.
 #
 # Exit 0: commit created (ID printed to stdout).
 # Exit non-zero: bad arguments, unresolvable branch, absent --modify path,
 # writer failure, or a failed VCS step (error printed to stderr).
 _task__commit_on_branch() {
   local repo="$1" branch="$2" message="$3"
+  shift 3
+
+  local tip
+  tip="$(_repo__resolve_commit "$repo" "$branch")" || tip=''
+  if [[ -z "$tip" ]]; then
+    _ui__log "Error: Could not resolve branch '$branch'."
+    return 1
+  fi
+
+  local new_commit
+  new_commit="$(__task__commit_staged "$repo" "$tip" "$message" "$@")" || return 1
+  [[ -n "$new_commit" ]] || return 1
+  _repo__set_bookmark "$repo" "$branch" "$new_commit" || return 1
+  _worktree__reattach_current "$repo" "$tip" "$new_commit" || return 1
+  printf '%s\n' "$new_commit"
+}
+
+# Usage: _task__commit_new_branch REPO NEW_BRANCH PARENT_REV MESSAGE
+#          [--allow-backwards] -- WRITER_FN [ARGS...]
+#
+# Starts a branch: builds a bare commit on top of PARENT_REV from the writes
+# WRITER_FN leaves in a fresh staging directory (the same staging contract as
+# _task__commit_on_branch, without the modify/delete flags), points the
+# NEW_BRANCH bookmark at the new commit, and prints the commit ID. No working
+# copy is touched, no worktree is reattached, and no out-of-sync report is
+# produced: a branch that did not exist before the call has no worktrees
+# sitting on it.
+#
+# --allow-backwards is passed through to the bookmark update so an existing
+# NEW_BRANCH bookmark may be moved even when the new commit is not a
+# descendant of its current position (forced branch re-creation).
+#
+# A non-zero WRITER_FN status aborts the call: nothing is committed and no
+# bookmark is created or moved.
+#
+# Exit 0: commit created (ID printed to stdout).
+# Exit non-zero: bad arguments, unresolvable PARENT_REV, writer failure, or a
+# failed VCS step (error printed to stderr).
+_task__commit_new_branch() {
+  local repo="$1" new_branch="$2" parent_rev="$3" message="$4"
+  shift 4
+
+  local -a bookmark_flags=()
+  if [[ "${1:-}" == '--allow-backwards' ]]; then
+    bookmark_flags=(--allow-backwards)
+    shift
+  fi
+
+  local parent_commit
+  parent_commit="$(_repo__resolve_commit "$repo" "$parent_rev")" || parent_commit=''
+  if [[ -z "$parent_commit" ]]; then
+    _ui__log "Error: Could not resolve revision '$parent_rev'."
+    return 1
+  fi
+
+  local new_commit
+  new_commit="$(__task__commit_staged "$repo" "$parent_commit" "$message" "$@")" \
+    || return 1
+  [[ -n "$new_commit" ]] || return 1
+  _repo__set_bookmark "$repo" "$new_branch" "$new_commit" \
+    "${bookmark_flags[@]+"${bookmark_flags[@]}"}" || return 1
+  printf '%s\n' "$new_commit"
+}
+
+# Usage: __task__commit_staged REPO TIP MESSAGE
+#          [--modify PATH]... [--delete PATH]... [--delete-prefix PREFIX]...
+#          -- WRITER_FN [ARGS...]
+#
+# Private staging engine shared by _task__commit_on_branch and
+# _task__commit_new_branch: materializes each --modify path from TIP into a
+# fresh staging directory, expands --delete/--delete-prefix against TIP's
+# tree, runs WRITER_FN with the staging root (followed by ARGS), commits the
+# staged tree as a bare child of TIP (_repo__commit_changeset), and prints the
+# new commit ID. Moves no bookmark and touches no worktree; the public
+# wrappers layer those steps on.
+#
+# The staged work runs in a subshell whose EXIT trap removes the staging
+# directory on every path, so no trap leaks into the caller and the function
+# is safe to call from set -e scripts.
+#
+# Exit 0: commit created (ID printed to stdout).
+# Exit non-zero: bad arguments, absent --modify path, writer failure, or a
+# failed VCS step (error printed to stderr).
+__task__commit_staged() {
+  local repo="$1" tip="$2" message="$3"
   shift 3
 
   local -a modify_paths=() delete_paths=() delete_prefixes=()
@@ -603,24 +713,17 @@ _task__commit_on_branch() {
         break
         ;;
       *)
-        _ui__log "Error: Unknown flag for _task__commit_on_branch: $1"
+        _ui__log "Error: Unknown staged-commit flag: $1"
         return 1
         ;;
     esac
   done
   if [[ -z "$saw_separator" || $# -lt 1 ]]; then
-    _ui__log "Error: _task__commit_on_branch requires '-- WRITER_FN [ARGS...]'."
+    _ui__log "Error: A staged commit requires '-- WRITER_FN [ARGS...]'."
     return 1
   fi
   local writer_fn="$1"
   shift
-
-  local tip
-  tip="$(_repo__resolve_commit "$repo" "$branch")" || tip=''
-  if [[ -z "$tip" ]]; then
-    _ui__log "Error: Could not resolve branch '$branch'."
-    return 1
-  fi
 
   # The remainder runs in a subshell so an EXIT trap can remove the staging
   # directory on every path without leaking the trap into the caller.
@@ -634,7 +737,7 @@ _task__commit_on_branch() {
       mkdir -p "$stage/$(dirname "$modify_path")" || exit 1
       if ! _repo__read_file_at_revision "$repo" "$tip" "$modify_path" \
           > "$stage/$modify_path"; then
-        _ui__log "Error: '$modify_path' does not exist on '$branch'."
+        _ui__log "Error: '$modify_path' does not exist on '$tip'."
         exit 1
       fi
     done
@@ -662,8 +765,6 @@ _task__commit_on_branch() {
     new_commit="$(_repo__commit_changeset "$repo" "$tip" "$message" "$stage" \
       "${deletions[@]+"${deletions[@]}"}")" || exit 1
     [[ -n "$new_commit" ]] || exit 1
-    _repo__set_bookmark "$repo" "$branch" "$new_commit" || exit 1
-    _worktree__reattach_current "$repo" "$tip" "$new_commit" || exit 1
     printf '%s\n' "$new_commit"
   )
 }
@@ -816,23 +917,27 @@ _task__collect_descendant_dirs() {
   done
 }
 
-# _task__write_stub REPO TASK_SUFFIX
+# _task__write_stub ROOT TASK_SUFFIX [TIMESTAMP]
 #
-# Writes a minimal task file stub at .tt/task/<suffix>/TASK.md.
-# Produces a placeholder title: "", status: TODO, and created/updated timestamps.
-# The placeholder title is overwritten by the subsequent `tt task edit` call
-# during task creation.
+# Writes a minimal task file stub at ROOT/.tt/task/<suffix>/TASK.md, where
+# ROOT is any directory tree — typically a staging directory for a bare
+# branch write; nothing outside ROOT is touched. Produces a placeholder
+# title: "", status: TODO, and created/updated set to TIMESTAMP (default:
+# now). Passing an explicit TIMESTAMP lets a caller write byte-identical
+# stub copies across several commits. The placeholder title is overwritten
+# by the subsequent `tt task edit` call during task creation.
 _task__write_stub() {
-  local repo="$1"
+  local root="$1"
   local suffix="$2"
+  local ts="${3:-}"
   local dir
   dir="$(_path__task_dir "$suffix")"
   local file
   file="$(_path__task_file "$suffix")"
-  local ts
-  ts="$(_string__generate_timestamp)"
-  mkdir -p "$repo/$dir"
+  if [[ -z "$ts" ]]; then
+    ts="$(_string__generate_timestamp)"
+  fi
+  mkdir -p "$root/$dir"
   local REWRITE_LABELS=() REWRITE_CONTEXTS=() REWRITE_SUBTASKS=()
-  _frontmatter__write_task_file "$repo/$file" "" "TODO" "" "$ts" "$ts"
-  _ui__log "Created task file: $file"
+  _frontmatter__write_task_file "$root/$file" "" "TODO" "" "$ts" "$ts"
 }

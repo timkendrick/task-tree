@@ -129,9 +129,9 @@ Reparent a task by moving it to a different parent.
 
 #### `tt task delete`
 ```
-tt task delete [<task-id>] [--worktree=<path>] [--force]
+tt task delete [<task-id>] [--force]
 ```
-Remove a task from its parent branch. `--force` skips DONE and clean working-copy checks.
+Remove a task from its parent branch. `--force` skips the DONE status check.
 
 #### `tt task propagate`
 ```
