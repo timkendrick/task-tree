@@ -101,11 +101,11 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Resolve bookmark and task_file
   local bookmark task_file
@@ -139,7 +139,7 @@ main() {
   current_worktree="$(_repo__resolve_worktree_root "$repo")"
 
   local target_worktree
-  if ! target_worktree="$(resolve_task_worktree "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
+  if ! target_worktree="$(_worktree__resolve_for_task "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
       "$current_worktree" "$worktree_arg")"; then
     exit 1
   fi
@@ -272,7 +272,7 @@ main() {
   }
 
   # Begin transaction (records before-op for undo) BEFORE writing to disk
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
   write_and_commit_on_branch "$repo" "$target_worktree" "$bookmark" \
     "$current_worktree" "$current_bookmark" \
@@ -280,7 +280,7 @@ main() {
     task_edit_writer
 
   # Commit transaction (records after-op for undo)
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
 
   unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
   printf '%s\n' "$bookmark"

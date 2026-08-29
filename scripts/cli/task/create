@@ -245,14 +245,14 @@ main() {
     usage >&2; exit 1
   fi
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local -a jj_opts=(-R "$repo")
 
   # Resolve task prefix and project prefix from config
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Choose the active prefix based on mode
   local active_prefix
@@ -363,7 +363,7 @@ main() {
   fi
 
   # Capture revision user had checked out so we can restore it on success.
-  # (On error, tt_rollback_transaction restores the entire jj state including WC position.)
+  # (On error, _history__rollback_transaction restores the entire jj state including WC position.)
   local original_rev
   original_rev="$(_repo__get_working_copy_revision "$repo")"
   # If the working copy is currently on the parent branch (it's our closest ancestor bookmark),
@@ -388,7 +388,7 @@ main() {
   fi
 
   # Begin transaction (records before-op for undo)
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
   # Reopen a completed parent before adding the child. `tt task checkout` creates the
   # status -> IN-PROGRESS commit and advances the parent bookmark, so parent_rev (a
@@ -478,7 +478,7 @@ main() {
     "$SCRIPT_DIR/checkout" "${checkout_args[@]}" >&2
   else
     # Explicitly restore WC to where the user was before the command.
-    # This must happen before tt_commit_transaction so the restore is
+    # This must happen before _history__commit_transaction so the restore is
     # captured in the transaction's after-op-id.
     if [[ "$restore_to_parent" == true ]]; then
       jj -R "$repo" new "$parent_bookmark" >/dev/null 2>&1 || true
@@ -488,7 +488,7 @@ main() {
   fi
 
   # Commit transaction (records after-op for undo)
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
 
   printf '%s\n' "$task_id"
 }

@@ -148,15 +148,15 @@ main() {
   done
 
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Resolve workspace dir via .tt/workspace symlink
   local workspace_dir
-  workspace_dir="$(get_workspace_dir "$repo")" || true
+  workspace_dir="$(_workspace__get_dir "$repo")" || true
 
   local current_worktree
   current_worktree="$(_repo__resolve_worktree_root "$repo")"
@@ -201,7 +201,7 @@ main() {
 
   # --- Resolve child worktree and check WC clean ---
   local child_worktree
-  if ! child_worktree="$(resolve_task_worktree "$repo" "$child_bookmark" "$task_prefix" "$project_prefix" \
+  if ! child_worktree="$(_worktree__resolve_for_task "$repo" "$child_bookmark" "$task_prefix" "$project_prefix" \
       "$current_worktree" "$worktree_arg")"; then
     exit 1
   fi
@@ -274,9 +274,9 @@ main() {
 
 
   # Begin transaction early so that --complete and --propagate sub-commands
-  # are nested within this transaction (their tt_begin_transaction calls
+  # are nested within this transaction (their _history__begin_transaction calls
   # become no-ops, keeping a single history entry for the whole checkin).
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
   # --- Optional: run complete first ---
   if [[ "$do_complete" == true ]]; then
@@ -366,7 +366,7 @@ main() {
   # --- Determine target workspace (where parent branch lives) ---
   local target_ws
   local worktrees
-  worktrees="$(find_worktrees_for_branch "$repo" "$parent_bookmark" "$task_prefix" "$project_prefix")"
+  worktrees="$(_worktree__find_for_branch "$repo" "$parent_bookmark" "$task_prefix" "$project_prefix")"
   local wt_count
   wt_count="$(printf '%s' "$worktrees" | grep -c . 2>/dev/null || true)"
 
@@ -474,7 +474,7 @@ main() {
   jj -R "$target_ws" new "$parent_bookmark" "$handoff_commit"
 
   # Check for conflicts (unless --force)
-  # On conflict, exit 1 triggers the ERR trap → tt_rollback_transaction →
+  # On conflict, exit 1 triggers the ERR trap → _history__rollback_transaction →
   # jj op restore, which cleanly reverts all jj operations in this transaction.
   if [[ "$force" != true ]] && _repo__check_has_conflicts "$target_ws" "@"; then
     _ui__log "Error: Merge conflicts detected. Resolve conflicts or use --force."
@@ -500,7 +500,7 @@ main() {
   # repository root otherwise, so HEAD can never be left pointing at the child
   # worktree that a complete checkin deletes below.
   if [[ "$do_switch" == true ]]; then
-    perform_workspace_switch "$repo" "${workspace_dir:-}" "$parent_bookmark" \
+    _worktree__switch "$repo" "${workspace_dir:-}" "$parent_bookmark" \
       "$target_ws" "$current_worktree" "$task_id"
   fi
 
@@ -514,7 +514,7 @@ main() {
   # history file lives in $repo, which may be the child worktree that is
   # about to be removed.  All jj operations that should be recorded are
   # already complete at this point.
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
 
   # --- Delegate --delete to tt task delete (second commit on parent branch) ---
   if [[ "$delete" == true ]]; then
@@ -546,7 +546,7 @@ main() {
   # dedicated worktree (if any) is forgotten from jj and deleted from disk.
   # Suppressed by --retain-worktree. A checkin without --delete never removes
   # a worktree; use `tt worktree delete` for that.
-  # IMPORTANT: This MUST be the last thing main() does. After forget_worktree,
+  # IMPORTANT: This MUST be the last thing main() does. After _worktree__delete,
   # the script's own files may have been deleted from disk (if the checkin
   # was run from within the child worktree), so no further commands should run.
   if [[ "$delete" == true ]] && [[ "$retain_worktree" != true ]]; then
@@ -564,8 +564,8 @@ main() {
       # workspace name usually no longer resolves by this point; remove the
       # files directly in that case.
       local ws_name
-      if ws_name="$(resolve_workspace_name "$repo" "$child_worktree")"; then
-        forget_worktree "$repo" "$ws_name" "$child_worktree"
+      if ws_name="$(_worktree__resolve_name "$repo" "$child_worktree")"; then
+        _worktree__delete "$repo" "$ws_name" "$child_worktree"
       else
         rm -rf "$child_worktree"
       fi

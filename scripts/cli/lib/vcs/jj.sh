@@ -265,7 +265,7 @@ _jj__resolve_worktree_root() {
 # Usage: _jj__list_worktrees REPO
 # Prints one line per jj workspace in REPO, formatted as "name: /absolute/path",
 # or "name: <Error: ...>" when the workspace has no resolvable path.
-# Parse each line with parse_workspace_list_line (lib/common.sh).
+# Parse each line with _worktree__parse_list_line (lib/worktree.sh).
 _jj__list_worktrees() {
   local repo="$1"
   jj -R "$repo" --ignore-working-copy workspace list --no-pager \

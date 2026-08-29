@@ -158,15 +158,15 @@ main() {
     usage >&2; exit 1
   fi
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Resolve workspace dir via .tt/workspace symlink
   local workspace_dir
-  workspace_dir="$(get_workspace_dir "$repo")" || true
+  workspace_dir="$(_workspace__get_dir "$repo")" || true
 
   local current_worktree
   current_worktree="$(_repo__resolve_worktree_root "$repo")"
@@ -265,14 +265,14 @@ main() {
   fi
 
   # Begin transaction (records before-op for undo)
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
   _ui__log "Publishing: $child_bookmark -> $target"
 
   # --- Determine target workspace ---
   local target_ws
   local worktrees
-  worktrees="$(find_worktrees_for_branch "$repo" "$target" "$task_prefix" "$project_prefix")"
+  worktrees="$(_worktree__find_for_branch "$repo" "$target" "$task_prefix" "$project_prefix")"
   local wt_count
   wt_count="$(printf '%s' "$worktrees" | grep -c . 2>/dev/null || true)"
 
@@ -305,7 +305,7 @@ main() {
   jj -R "$target_ws" new "$target" "$handoff_commit"
 
   # Check for conflicts (unless --force)
-  # On conflict, exit 1 triggers the ERR trap → tt_rollback_transaction →
+  # On conflict, exit 1 triggers the ERR trap → _history__rollback_transaction →
   # jj op restore, which cleanly reverts all jj operations in this transaction.
   if [[ "$force" != true ]] && _repo__check_has_conflicts "$target_ws" "@"; then
     _ui__log "Error: Merge conflicts detected. Resolve conflicts or use --force."
@@ -319,7 +319,7 @@ main() {
   jj -R "$target_ws" new "$child_bookmark"
 
   # Commit transaction (records after-op for undo)
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
 
   _ui__log "Published: $child_bookmark -> $target"
 }

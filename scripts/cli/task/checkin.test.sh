@@ -174,9 +174,9 @@ test_task_checkin__head_no_symlink_loop_when_working_from_head_directory() {
   # Regression: when the user works from inside the HEAD-linked directory
   # (e.g. their editor opens /virtual/HEAD which symlinks to a real worktree),
   # _repo__find_repository_root resolves $repo to the symlink path /virtual/HEAD via `pwd`
-  # rather than the real worktree path. This causes find_worktrees_for_branch
+  # rather than the real worktree path. This causes _worktree__find_for_branch
   # to fall back to $repo (= /virtual/HEAD) as target_ws, and
-  # perform_workspace_switch then sets HEAD -> /virtual/HEAD, a self-referential
+  # _worktree__switch then sets HEAD -> /virtual/HEAD, a self-referential
   # loop that breaks all subsequent tt commands.
   setup_workspace "ci-symlink-loop"
   proj_id=$(create_project "proj" "Project") || true
