@@ -16,8 +16,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   -h, --help           Show this help.
 #
-# The task need not be checked out: if it has no worktree of its own, the deletion
-# is committed directly onto the task branch, leaving the working copy unchanged.
+# The task need not be checked out: the deletion is committed directly onto
+# the task branch, leaving the working copy unchanged.
 #
 # Environment variables:
 #   COMMAND_NAME - Command prefix (e.g., "task context") set by parent dispatcher
@@ -33,8 +33,8 @@ Delete a context file from the specified task (default: current task).
 Removes both the context file and the corresponding 'context:' entry from
 the task's frontmatter, and updates the task's 'updated' timestamp.
 
-The task need not be checked out: if it has no worktree of its own, the deletion
-is committed directly onto the task branch, leaving the working copy unchanged.
+The task need not be checked out: the deletion is committed directly onto
+the task branch, leaving the working copy unchanged.
 
 Arguments:
   <context-id>          Context ID to delete (e.g. context/foo-abc12345).
@@ -97,7 +97,7 @@ main() {
 
   if [[ -n "$task_id_arg" ]]; then
     branch="$task_id_arg"
-    if ! jj -R "$repo" --ignore-working-copy log -r "$branch" --no-graph -T '' 2>/dev/null; then
+    if ! _task__check_branch_exists "$repo" "$branch"; then
       _ui__log "Error: Branch '$branch' not found in repository."
       exit 1
     fi
@@ -122,31 +122,14 @@ main() {
     fi
   fi
 
-  # Resolve target worktree
-  local current_worktree target_worktree
-  current_worktree="$(_repo__resolve_worktree_root "$repo")"
-
-  if ! target_worktree="$(_worktree__resolve_for_task "$repo" "$branch" "$task_prefix" "$project_prefix" \
-      "$current_worktree" "")"; then
-    exit 1
-  fi
-
-  # Precondition: WC must be clean
-  if ! _repo__check_working_copy_clean "$target_worktree"; then
-    _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
-    exit 1
-  fi
-
-  # Determine whether the commit must be made cross-branch (must resolve BEFORE
-  # starting the transaction, since _task__resolve_current may trigger a jj snapshot)
-  local current_bookmark
-  current_bookmark="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
+  # Precondition: the working-copy commit must not carry a bookmark
+  _worktree__ensure_working_copy "$repo" || exit 1
 
   # Read the task file from the task's own branch, so tasks that are not checked
   # out anywhere can still be edited.
   local task_file task_content
   task_file="$(_path__task_file "$task_suffix")"
-  task_content="$(_repo__read_file_at_revision "$repo" "$branch" "$task_file")" || {
+  task_content="$(_task__read_file "$repo" "$branch" "$task_file")" || {
     _ui__log "Error: Could not read task file '$task_file' from branch '$branch'."
     exit 1
   }
@@ -181,7 +164,7 @@ main() {
   # Read the context file to get its title for the commit message
   local ctx_file ctx_content ctx_title
   ctx_file="$(_path__task_context "$task_suffix" "$ctx_id_arg")"
-  ctx_content="$(_repo__read_file_at_revision "$repo" "$branch" "$ctx_file")" || {
+  ctx_content="$(_task__read_file "$repo" "$branch" "$ctx_file")" || {
     _ui__log "Error: Could not read context file '$ctx_file' from branch '$branch'."
     exit 1
   }
@@ -204,24 +187,25 @@ main() {
     { print }
   ')"
 
-  # Writer invoked by _task__write_and_commit_on_branch with the destination worktree root.
+  # Writer invoked by _task__commit_on_branch with the staging root: rewrites
+  # the task file without the deleted context entry. The context file itself
+  # is removed via the --delete flag on the commit call.
   ctx_delete_writer() {
     local root="$1"
     printf '%s\n' "$updated_task_content" > "$root/$task_file"
-    rm -f "$root/$ctx_file"
   }
 
-  # Begin transaction (records before-op for undo) BEFORE any filesystem writes,
-  # so the before-op matches the previous command's after-op in the history chain.
+  # Begin transaction (records before-op for undo)
   _history__begin_transaction "$repo"
 
-  _task__write_and_commit_on_branch "$repo" "$target_worktree" "$branch" \
-    "$current_worktree" "$current_bookmark" \
+  _task__commit_on_branch "$repo" "$branch" \
     "$(_commit__format_message "task" "context:delete" "$branch" "$ctx_title")" \
-    ctx_delete_writer
+    --modify "$task_file" --delete "$ctx_file" -- ctx_delete_writer >/dev/null
 
   # Commit transaction (records after-op for undo)
   _history__commit_transaction "$repo"
+
+  _worktree__report_unsynced "$repo" "$branch"
 
   _ui__log "Deleted context: $ctx_id_arg"
 }

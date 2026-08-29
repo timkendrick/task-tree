@@ -112,6 +112,81 @@ test_task_complete__records_transaction() {
 }
 
 
+test_task_complete__refuses_bookmark_on_working_copy() {
+  setup_workspace "done-bm-refusal"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+
+  # Clean working copy carrying the task's own bookmark
+  jj -R "$REPO" bookmark set "$task_id" -r '@' >/dev/null 2>&1
+  output="" exit_code=0
+  output=$(complete_task) || exit_code=$?
+  assert_failure "own bookmark on @ refused" "$exit_code"
+  assert_contains "error names the bookmark" "$output" "tip of bookmark"
+  status=$(get_frontmatter_field "$(read_task_file "$task_id")" "status")
+  assert_neq "status not DONE" "$status" "DONE"
+
+  # Bookmark unrelated to the completion target (explicit task-id, so the
+  # working-copy guard itself is what refuses)
+  jj -R "$REPO" bookmark set "$task_id" -r '@-' --allow-backwards >/dev/null 2>&1
+  jj -R "$REPO" bookmark set unrelated -r '@' >/dev/null 2>&1
+  exit_code=0
+  output=$(complete_task "$task_id") || exit_code=$?
+  assert_failure "unrelated bookmark on @ refused" "$exit_code"
+  assert_contains "error names the unrelated bookmark" "$output" "unrelated"
+  status=$(get_frontmatter_field "$(read_task_file "$task_id")" "status")
+  assert_neq "status still not DONE" "$status" "DONE"
+}
+
+
+test_task_complete__dirty_wc_preserved_not_absorbed() {
+  setup_workspace "done-dirty-keep"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  edit_file "scratch.txt" "uncommitted scratch"
+
+  output="" exit_code=0
+  output=$(complete_task) || exit_code=$?
+  assert_success "complete succeeds with dirty WC" "$exit_code"
+  assert_task_status "DONE" "$task_id" "DONE"
+  assert_file_exists "dirty file still on disk" "$REPO/scratch.txt"
+  assert_wc_dirty "WC still dirty"
+  modified=$(get_modified_files "$task_id")
+  assert_not_contains "dirty file not in complete commit" "$modified" "scratch.txt"
+  assert_file_not_on_branch "dirty file not on branch" "$task_id" "scratch.txt"
+}
+
+
+test_task_complete__working_copy_commit_stays_put() {
+  setup_workspace "done-wc-stays"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "ta" "A") || true
+  task_b=$(create_task "tb" "B") || true
+  checkout_task "$task_a" >/dev/null || true
+
+  # Same-branch complete: @ keeps its change ID and sits on the new branch tip
+  change_before=$(get_wc_change_id)
+  complete_task >/dev/null 2>&1 || true
+  change_after=$(get_wc_change_id)
+  assert_eq "same WC change after same-branch complete" "$change_after" "$change_before"
+  assert_task_status "task A DONE" "$task_a" "DONE"
+  parent_commit=$(jj -R "$REPO" log -r '@-' --no-graph -T 'commit_id.short(8)' 2>/dev/null)
+  assert_eq "@ parent is new branch tip" "$parent_commit" "$(get_bookmark_commit "$task_a")"
+
+  # Explicit task-id for a branch not checked out anywhere: @ entirely untouched
+  wc_before=$(get_wc_commit)
+  run_tt task complete "$task_b" >/dev/null 2>&1 || true
+  wc_after=$(get_wc_commit)
+  assert_eq "@ commit unchanged after cross-branch complete" "$wc_after" "$wc_before"
+  assert_task_status "task B DONE" "$task_b" "DONE"
+}
+
+
 test_task_complete__help() {
   setup_workspace "complete-help"
   output="" exit_code=0

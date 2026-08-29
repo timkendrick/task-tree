@@ -961,7 +961,8 @@ assert_context_file_not_exists() {
 
 # assert_context_count LABEL TASK_ID EXPECTED_COUNT [REV]
 assert_context_count() {
-  local label="$1" task_id="$2" expected="$3" rev="${4:-$task_id}"
+  local label="$1" task_id="$2" expected="$3"
+  local rev="${4:-$task_id}"
   assert_frontmatter_field_count "$label" "$task_id" "context" "$expected" "$rev"
 }
 
