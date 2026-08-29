@@ -8,12 +8,14 @@
 #   _worktree__resolve_name     — workspace name for a worktree path
 #   _worktree__resolve_path     — recorded filesystem path for a workspace name
 #   _worktree__resolve_current  — root of the worktree the command runs in
+#   _worktree__resolve_repository_root — canonical primary workspace root
+#   _worktree__check_clean      — whether a worktree has no uncommitted changes
 #   _worktree__find_for_branch  — workspace roots whose current branch is a bookmark
-#   _worktree__resolve_for_task — pick the worktree to operate on for a bookmark
 #   _worktree__delete           — forget a workspace and remove its files from disk
 #   _worktree__switch           — hooks + HEAD symlink update for a workspace switch
 #   _worktree__ensure_working_copy — refuse branch writes while @ carries a bookmark
 #   _worktree__reattach_current — follow a branch advance with the current worktree
+#   _worktree__reattach_current_on_branch — follow a merge advance, own-branch worktree only
 #   _worktree__list_unsynced    — worktrees left behind by a write to their branch
 #   _worktree__report_unsynced  — stderr warning naming out-of-sync worktrees
 #   _worktree__sync             — bring a worktree forward onto its branch head
@@ -121,6 +123,29 @@ _worktree__resolve_current() {
   _repo__resolve_worktree_root "$repo"
 }
 
+# Usage: _worktree__resolve_repository_root REPO
+# Prints the canonical repository root — the primary workspace — for REPO,
+# which may itself be a secondary worktree. Documented pass-through to
+# _repo__resolve_repository_root so commands can name the primary workspace
+# (e.g. as a fallback when a branch is not checked out anywhere) without
+# reaching into the VCS layer. Canonicalize the result with
+# _path__resolve_symlinks before comparing it against other resolved paths.
+_worktree__resolve_repository_root() {
+  local repo="$1"
+  _repo__resolve_repository_root "$repo"
+}
+
+# Usage: _worktree__check_clean WORKTREE
+# Returns 0 when WORKTREE's working copy has no uncommitted changes (pending
+# on-disk edits are snapshotted first, so files the backend has not yet seen
+# count as dirt). Documented pass-through to _repo__check_working_copy_clean so
+# commands with a clean-working-copy precondition can test it without
+# reaching into the VCS layer.
+_worktree__check_clean() {
+  local worktree="$1"
+  _repo__check_working_copy_clean "$worktree"
+}
+
 # Usage: _worktree__find_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
 # Outputs one workspace root path per line for each jj workspace whose
 # working-copy commit sits on BOOKMARK. Classification uses the fork-point
@@ -140,43 +165,6 @@ _worktree__find_for_branch() {
     [[ "$ws_bookmark" == "$bookmark" ]] && printf '%s\n' "$ws_root"
   done <<< "$entries"
   return 0
-}
-
-# Usage: _worktree__resolve_for_task REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX CURRENT_WORKTREE [WORKTREE_ARG]
-#
-# Resolves which worktree to operate on for BOOKMARK:
-#   0 matches → use CURRENT_WORKTREE (fallback)
-#   1 match   → use that worktree
-#   multiple  → if CURRENT_WORKTREE is one of them, use it;
-#               else if WORKTREE_ARG is given, use it;
-#               else error and list candidates
-#
-# Prints the resolved worktree path to stdout. Exits 1 on unresolvable ambiguity.
-_worktree__resolve_for_task() {
-  local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
-  local current_worktree="$5" worktree_arg="${6:-}"
-
-  local found wt_count
-  found="$(_worktree__find_for_branch "$repo" "$bookmark" "$task_prefix" "$project_prefix")"
-  wt_count="$(printf '%s' "$found" | grep -c . 2>/dev/null || true)"
-
-  case "$wt_count" in
-    0) printf '%s' "$current_worktree" ;;
-    1) printf '%s' "$found" ;;
-    *)
-      if printf '%s\n' "$found" | grep -qxF "$current_worktree"; then
-        printf '%s' "$current_worktree"
-        return 0
-      fi
-      if [[ -n "$worktree_arg" ]]; then
-        printf '%s' "$worktree_arg"
-        return 0
-      fi
-      _ui__log "Error: Multiple workspaces found for '$bookmark'; use --worktree=<path>:"
-      printf '%s\n' "$found" | while IFS= read -r p; do _ui__log "  $p"; done
-      return 1
-      ;;
-  esac
 }
 
 # Usage: _worktree__delete REPO WORKSPACE_NAME [WORKTREE_PATH]
@@ -265,6 +253,42 @@ _worktree__reattach_current() {
   worktree="$(_repo__resolve_worktree_root "$repo")" || return 1
   local wc_change
   wc_change="$(_repo__resolve_change "$worktree" '@')" || return 1
+  _repo__check_is_ancestor "$repo" "$old_tip" "$wc_change" || return 0
+  _repo__reattach_worktree "$worktree" "$wc_change" "$new_rev"
+}
+
+# Usage: _worktree__reattach_current_on_branch REPO BRANCH OLD_TIP NEW_REV
+#
+# Variant of _worktree__reattach_current for advances that land a MERGE on
+# BRANCH (check-in and publish): moves the current worktree's working-copy
+# commit onto NEW_REV only when the worktree actually sits ON BRANCH.
+#
+# Plain descent from OLD_TIP — the _worktree__reattach_current condition — is
+# the wrong test here: every commit on the merged-in source branch also
+# descends from the receiving branch's old tip (the source forked from it),
+# so ancestry alone would drag a worktree checked out on the source branch —
+# typically the very worktree the command is invoked from — onto the merge
+# commit. A check-in must affect the target branch, never relocate the
+# invoking worktree, so the worktree's own branch is resolved first by
+# fork-point ranking (__worktree__resolve_branch) and anything not on BRANCH
+# is left alone (status 0). The descent check from OLD_TIP is still applied
+# after that, so a worktree already left behind on an older tip of BRANCH is
+# reported by _worktree__report_unsynced rather than silently rewritten.
+#
+# MUST be called while BRANCH's bookmark still sits at OLD_TIP (i.e. before
+# the caller advances it to NEW_REV): the fork-point ranking breaks ties in
+# favor of a bookmark still sitting at its fork point, which is exactly what
+# identifies a worktree checked out directly on BRANCH's tip.
+_worktree__reattach_current_on_branch() {
+  local repo="$1" branch="$2" old_tip="$3" new_rev="$4"
+  local worktree
+  worktree="$(_repo__resolve_worktree_root "$repo")" || return 1
+  local wc_change wc_commit
+  wc_change="$(_repo__resolve_change "$worktree" '@')" || return 1
+  wc_commit="$(_repo__resolve_commit "$worktree" '@')" || return 1
+  local wc_branch
+  wc_branch="$(__worktree__resolve_branch "$repo" "$wc_commit")" || return 0
+  [[ "$wc_branch" == "$branch" ]] || return 0
   _repo__check_is_ancestor "$repo" "$old_tip" "$wc_change" || return 0
   _repo__reattach_worktree "$worktree" "$wc_change" "$new_rev"
 }

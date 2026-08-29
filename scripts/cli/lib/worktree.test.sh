@@ -182,6 +182,61 @@ test__worktree__reattach_current__ignores_wc_on_unrelated_branch() {
 }
 
 # ---------------------------------------------------------------------------
+# _worktree__reattach_current_on_branch
+# ---------------------------------------------------------------------------
+
+test__worktree__reattach_current_on_branch__follows_merge_on_own_branch() {
+  setup_workspace "wt-reattach-merge-own"
+  _fixture_feature_checkout
+  # Build a side line forked off the feature tip by bare writes, then merge
+  # it back into feature. @ sits directly on the feature tip, so it follows
+  # the merge advance.
+  local stage="$_TEST_ROOT/stage-merge-own"
+  mkdir -p "$stage"
+  printf 'child\n' > "$stage/child.txt"
+  local child_tip
+  child_tip="$(_repo__commit_changeset "$REPO" "$FEATURE_TIP" "child work" "$stage")"
+  _repo__set_bookmark "$REPO" child "$child_tip"
+  local merge
+  merge="$(_repo__create_merge_commit "$REPO" "land child" "$FEATURE_TIP" "$child_tip")"
+
+  local exit_code=0
+  _worktree__reattach_current_on_branch "$REPO" feature "$FEATURE_TIP" "$merge" \
+    || exit_code=$?
+  assert_success "reattach succeeds" "$exit_code"
+  assert_eq "working-copy parent is the merge" "$(get_full_commit_id '@-')" "$merge"
+  assert_file_exists "merged file materialized on disk" "$REPO/child.txt"
+}
+
+test__worktree__reattach_current_on_branch__leaves_wc_on_merged_branch() {
+  setup_workspace "wt-reattach-merge-child"
+  _fixture_feature_checkout
+  # main is the receiving branch here and feature the merged-in line: @ sits
+  # on feature, and every feature commit descends from main's tip, so a plain
+  # descent check would drag @ onto the merge. The branch-aware reattach must
+  # leave it alone.
+  local main_tip
+  main_tip="$(get_full_commit_id main)"
+  local stage="$_TEST_ROOT/stage-merge-child"
+  mkdir -p "$stage"
+  printf 'handoff\n' > "$stage/handoff.txt"
+  local handoff
+  handoff="$(_repo__commit_changeset "$REPO" "$FEATURE_TIP" "handoff" "$stage")"
+  local merge
+  merge="$(_repo__create_merge_commit "$REPO" "land feature" "$main_tip" "$handoff")"
+
+  local parent_before
+  parent_before="$(get_full_commit_id '@-')"
+  local exit_code=0
+  _worktree__reattach_current_on_branch "$REPO" main "$main_tip" "$merge" \
+    || exit_code=$?
+  assert_success "reattach is a no-op (status 0)" "$exit_code"
+  assert_eq "working copy did not move" "$(get_full_commit_id '@-')" "$parent_before"
+  assert_eq "working copy still on the feature tip" "$parent_before" "$FEATURE_TIP"
+  assert_file_not_exists "merge content not materialized" "$REPO/handoff.txt"
+}
+
+# ---------------------------------------------------------------------------
 # Bare writes vs. other worktrees, listing and syncing
 # ---------------------------------------------------------------------------
 

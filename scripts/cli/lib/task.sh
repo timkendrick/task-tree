@@ -30,10 +30,15 @@
 #   _task__write_stub                — minimal task file stub for a new task
 #   _task__commit_on_branch          — staged bare write committed onto a bookmark
 #   _task__commit_new_branch         — staged bare write starting a new bookmark
+#   _task__commit_handoff            — staged bare write on a branch tip, bookmark unmoved
+#   _task__merge_branch              — check-in merge commit (branch tip + handoff)
+#   _task__check_conflicts           — whether a revision has merge conflicts
+#   _task__advance_branch            — move a branch bookmark forward to a revision
+#   _task__list_unmerged_changes     — paths changed by a branch's unmerged range
 #
 # The _task__full_range_* helpers are internal to _task__get_full_range_records,
 # and __task__commit_staged is the private staging engine shared by
-# _task__commit_on_branch and _task__commit_new_branch.
+# _task__commit_on_branch, _task__commit_new_branch and _task__commit_handoff.
 
 # Return true if bookmark name matches task ID pattern (<prefix><slug>-<hex>).
 _task__check_is_task_branch() {
@@ -666,6 +671,121 @@ _task__commit_new_branch() {
   _repo__set_bookmark "$repo" "$new_branch" "$new_commit" \
     "${bookmark_flags[@]+"${bookmark_flags[@]}"}" || return 1
   printf '%s\n' "$new_commit"
+}
+
+# Usage: _task__commit_handoff REPO BRANCH MESSAGE
+#          [--modify PATH]... [--delete PATH]... [--delete-prefix PREFIX]...
+#          -- WRITER_FN [ARGS...]
+#
+# Builds the linear handoff commit of a check-in or publish: a staged bare
+# write (the same flag and writer contract as _task__commit_on_branch)
+# committed on top of BRANCH's tip, printing the new commit ID. Unlike
+# _task__commit_on_branch, the BRANCH bookmark does NOT advance and no
+# worktree is reattached: the handoff carries the file changes that belong to
+# the RECEIVING branch's history — it becomes reachable only through the
+# merge commit that lands it there (_task__merge_branch) — so the source
+# branch, and every worktree sitting on it, stays exactly where it was.
+#
+# A non-zero WRITER_FN status aborts the call: nothing is committed.
+#
+# Exit 0: commit created (ID printed to stdout).
+# Exit non-zero: bad arguments, unresolvable branch, absent --modify path,
+# writer failure, or a failed VCS step (error printed to stderr).
+_task__commit_handoff() {
+  local repo="$1" branch="$2" message="$3"
+  shift 3
+
+  local tip
+  tip="$(_repo__resolve_commit "$repo" "$branch")" || tip=''
+  if [[ -z "$tip" ]]; then
+    _ui__log "Error: Could not resolve branch '$branch'."
+    return 1
+  fi
+
+  local new_commit
+  new_commit="$(__task__commit_staged "$repo" "$tip" "$message" "$@")" || return 1
+  [[ -n "$new_commit" ]] || return 1
+  printf '%s\n' "$new_commit"
+}
+
+# Usage: _task__merge_branch REPO MESSAGE PARENT_REV HANDOFF_REV
+#
+# Creates the merge commit that lands a handoff on a receiving branch:
+# a two-parent commit whose FIRST parent is PARENT_REV (the receiving
+# branch's tip) and whose SECOND parent is HANDOFF_REV, described by MESSAGE.
+# Prints the merge commit's ID; the caller advances the receiving branch's
+# bookmark to it separately (_task__advance_branch).
+#
+# The parent order is semantic, not cosmetic: full-range discovery
+# (_task__get_full_range_records) classifies historical check-ins by the shape
+# of a merge's second parent, so the handoff must always be second.
+#
+# The merge carries no file writes of its own: the backend computes the
+# merged tree from the two parents and represents any conflicts natively.
+# Callers inspect the result with _task__check_conflicts and decide whether to
+# keep it. Documented pass-through to _repo__create_merge_commit.
+_task__merge_branch() {
+  local repo="$1" message="$2" parent_rev="$3" handoff_rev="$4"
+  _repo__create_merge_commit "$repo" "$message" "$parent_rev" "$handoff_rev"
+}
+
+# Usage: _task__check_conflicts REPO REV
+# Returns 0 when REV (typically a freshly created merge commit) carries merge
+# conflicts, non-zero when it is conflict-free. Documented pass-through to
+# _repo__check_has_conflicts so commands can gate on a merge's conflict state
+# without reaching into the VCS layer.
+_task__check_conflicts() {
+  local repo="$1" rev="$2"
+  _repo__check_has_conflicts "$repo" "$rev"
+}
+
+# Usage: _task__advance_branch REPO BRANCH REV
+# Moves the BRANCH bookmark forward to REV. REV must be a descendant of the
+# bookmark's current position (the underlying bookmark update refuses
+# backwards moves); use this to land a newly created commit — e.g. a check-in
+# merge — on the branch that owns it. Documented pass-through to
+# _repo__set_bookmark so commands can advance a branch without reaching into
+# the VCS layer.
+_task__advance_branch() {
+  local repo="$1" branch="$2" rev="$3"
+  _repo__set_bookmark "$repo" "$branch" "$rev"
+}
+
+# Usage: _task__list_unmerged_changes REPO PARENT_BRANCH CHILD_BRANCH [PREFIX]
+#
+# Prints the repo-root-relative paths (one per line) that CHILD_BRANCH's
+# unmerged range — the commits reachable from CHILD_BRANCH but not from
+# PARENT_BRANCH — changes as a whole, optionally restricted to paths under
+# the directory PREFIX. Nothing is printed when the range changes nothing.
+#
+# The range is diffed as one unit anchored at the roots of the unmerged set
+# ("roots(::child ~ ::parent)..child"), so content the child merely inherited
+# from the parent at its fork point is never reported. The roots themselves
+# are excluded from the diff: the first unmerged commit is the branch's own
+# creation commit (its task file stub), which is never what a caller needs to
+# inspect. This is deliberately a path listing rather than a content diff:
+# its consumer (checkin's stray-task-file validation) needs to know WHICH
+# task files the range touches, not what changed inside them.
+#
+# Returns non-zero (nothing printed) when the range cannot be diffed.
+_task__list_unmerged_changes() {
+  local repo="$1" parent_branch="$2" child_branch="$3" prefix="${4:-}"
+
+  local changed
+  changed="$(_repo__list_changed_files "$repo" \
+    "roots(::${child_branch} ~ ::${parent_branch})..${child_branch}")" || return 1
+
+  if [[ -z "$prefix" ]]; then
+    [[ -n "$changed" ]] && printf '%s\n' "$changed"
+    return 0
+  fi
+
+  local path
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    [[ "$path" == "$prefix"/* ]] && printf '%s\n' "$path"
+  done <<< "$changed"
+  return 0
 }
 
 # Usage: __task__commit_staged REPO TIP MESSAGE
