@@ -938,7 +938,7 @@ _jj__abandon_commit() {
 # Quiet mutation.
 _jj__set_bookmark() {
   local repo="$1" name="$2" rev="$3"
-  __jj__run_quiet "$repo" bookmark set "$name" -r "$rev"
+  __jj__run_quiet "$repo" --ignore-working-copy bookmark set "$name" -r "$rev"
 }
 
 # Usage: _jj__list_bookmark_names REPO

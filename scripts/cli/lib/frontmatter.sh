@@ -14,6 +14,7 @@
 #   _frontmatter__insert_line          — insert a line into a frontmatter block
 #   _frontmatter__append_context       — append a 'context:' entry
 #   _frontmatter__append_subtask       — append a 'subtask:' entry
+#   _frontmatter__remove_subtask       — remove a 'subtask:' entry by task ID
 #   _frontmatter__update_timestamp     — rewrite the 'updated:' field
 #
 # Global-variable conventions (bash 3.2 functions cannot return structured
@@ -241,6 +242,33 @@ _frontmatter__append_context() {
 # (after any existing context: or subtask: entries).
 _frontmatter__append_subtask() {
   _frontmatter__insert_line "$1" "subtask: [ ] $2" ""
+}
+
+# _frontmatter__remove_subtask FILE TASK_ID
+#
+# Removes the 'subtask: [.] TASK_ID' line — any checkbox state (' ', 'x' or
+# '-') — from FILE's frontmatter, in place. The entry is matched on the task
+# ID alone, so a trailing title after the ID does not prevent removal. Only
+# lines inside the frontmatter block are considered: a body line that looks
+# like a subtask entry is left untouched. Removing an entry that does not
+# exist leaves the file unchanged and returns 0.
+# Uses temp file + mv for atomicity.
+_frontmatter__remove_subtask() {
+  local file="$1" task_id="$2"
+  local tmpfile
+  tmpfile="$(mktemp)"
+  awk -v id="$task_id" '
+    BEGIN { sep = 0 }
+    /^---$/ { sep++; print; next }
+    sep == 1 && /^subtask:/ {
+      rest = $0
+      sub(/^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]*/, "", rest)
+      split(rest, parts, /[[:space:]]/)
+      if (parts[1] == id) next
+    }
+    { print }
+  ' "$file" > "$tmpfile"
+  mv "$tmpfile" "$file"
 }
 
 # _frontmatter__update_timestamp FILE TIMESTAMP
