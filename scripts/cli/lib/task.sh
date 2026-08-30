@@ -32,13 +32,20 @@
 #   _task__commit_new_branch         — staged bare write starting a new bookmark
 #   _task__commit_handoff            — staged bare write on a branch tip, bookmark unmoved
 #   _task__merge_branch              — check-in merge commit (branch tip + handoff)
+#   _task__commit_resume             — empty commit advancing a branch onto a revision
 #   _task__check_conflicts           — whether a revision has merge conflicts
+#   _task__check_descendant_conflicts — whether a revision or its descendants conflict
 #   _task__advance_branch            — move a branch bookmark forward to a revision
 #   _task__list_unmerged_changes     — paths changed by a branch's unmerged range
+#   _task__list_unmerged_roots       — attachment points of a task's unmerged range
+#   _task__move_unmerged_range       — reparent a task's unmerged range
+#   _task__check_up_to_date          — whether a task already sits on a base revision
 #
 # The _task__full_range_* helpers are internal to _task__get_full_range_records,
-# and __task__commit_staged is the private staging engine shared by
-# _task__commit_on_branch, _task__commit_new_branch and _task__commit_handoff.
+# __task__commit_staged is the private staging engine shared by
+# _task__commit_on_branch, _task__commit_new_branch, _task__commit_handoff and
+# _task__commit_resume, and __task__write_nothing is the empty writer those
+# staged commits use when they carry no file changes.
 
 # Return true if bookmark name matches task ID pattern (<prefix><slug>-<hex>).
 _task__check_is_task_branch() {
@@ -576,15 +583,23 @@ _task__find_branch() {
   return 1
 }
 
-# Usage: _task__commit_on_branch REPO BRANCH MESSAGE
+# Usage: _task__commit_on_branch REPO BRANCH MESSAGE [--reattach-on-branch]
 #          [--modify PATH]... [--delete PATH]... [--delete-prefix PREFIX]...
 #          -- WRITER_FN [ARGS...]
 #
 # Commits a staged set of file writes and deletions onto BRANCH without
 # touching any working copy: builds the change as a bare commit on top of the
-# branch tip (_repo__commit_changeset), advances the BRANCH bookmark to it,
-# reattaches the current worktree when it sat on the old tip
-# (_worktree__reattach_current), and prints the new commit ID.
+# branch tip (_repo__commit_changeset), reattaches the current worktree when it
+# sat on the old tip (_worktree__reattach_current), advances the BRANCH
+# bookmark to it, and prints the new commit ID.
+#
+# --reattach-on-branch narrows that reattachment to a worktree that actually
+# sits ON BRANCH (_worktree__reattach_current_on_branch) instead of any
+# worktree descended from the old tip. Pass it whenever BRANCH may be an
+# ANCESTOR of the branch the invoking worktree is on — writing to a task's
+# grandparent, say, while the worktree sits on the task — because plain
+# descent cannot tell "the line that moved" from "a line that forked off it
+# further back", and would drag the worktree onto the wrong branch.
 #
 # The three inputs are ORTHOGONAL:
 #   --modify         materializes an existing branch-tip file (repo-root-
@@ -611,6 +626,12 @@ _task__commit_on_branch() {
   local repo="$1" branch="$2" message="$3"
   shift 3
 
+  local on_branch_only=''
+  if [[ "${1:-}" == '--reattach-on-branch' ]]; then
+    on_branch_only=1
+    shift
+  fi
+
   local tip
   tip="$(_repo__resolve_commit "$repo" "$branch")" || tip=''
   if [[ -z "$tip" ]]; then
@@ -621,8 +642,17 @@ _task__commit_on_branch() {
   local new_commit
   new_commit="$(__task__commit_staged "$repo" "$tip" "$message" "$@")" || return 1
   [[ -n "$new_commit" ]] || return 1
+  # Reattach before advancing the bookmark: the on-branch variant identifies
+  # the worktree's branch by fork-point ranking, which needs BRANCH still
+  # sitting at its old tip. The plain variant tests ancestry only and is
+  # indifferent to the order.
+  if [[ -n "$on_branch_only" ]]; then
+    _worktree__reattach_current_on_branch "$repo" "$branch" "$tip" "$new_commit" \
+      || return 1
+  else
+    _worktree__reattach_current "$repo" "$tip" "$new_commit" || return 1
+  fi
   _repo__set_bookmark "$repo" "$branch" "$new_commit" || return 1
-  _worktree__reattach_current "$repo" "$tip" "$new_commit" || return 1
   printf '%s\n' "$new_commit"
 }
 
@@ -729,6 +759,64 @@ _task__merge_branch() {
   _repo__create_merge_commit "$repo" "$message" "$parent_rev" "$handoff_rev"
 }
 
+# Usage: _task__commit_resume REPO BRANCH DEST_REV
+#
+# Advances BRANCH onto a fresh empty commit placed on top of DEST_REV, and
+# prints that commit's ID. This is the "resume" commit of propagation: a
+# branch whose work has already been absorbed into DEST_REV's history, but
+# whose task is not finished, needs somewhere above DEST_REV to carry on from.
+#
+# The commit deliberately carries NO description and no file changes: it is a
+# placeholder for work about to be done, not a record of work done.
+#
+# Idempotent: when BRANCH already points at DEST_REV there is nothing to
+# resume from, so nothing is committed, the bookmark does not move and nothing
+# is printed.
+#
+# The current worktree follows the advance only when it actually sits on
+# BRANCH (_worktree__reattach_current_on_branch): DEST_REV is routinely the
+# PARENT branch's tip, and every worktree on the parent descends from BRANCH's
+# old tip in that situation, so plain descent would drag unrelated worktrees
+# onto the resumed branch.
+#
+# Exit 0: commit created (ID printed), or nothing to do (nothing printed).
+# Exit non-zero: unresolvable BRANCH or DEST_REV, or a failed VCS step.
+_task__commit_resume() {
+  local repo="$1" branch="$2" dest_rev="$3"
+
+  local tip dest
+  tip="$(_repo__resolve_commit "$repo" "$branch")" || tip=''
+  if [[ -z "$tip" ]]; then
+    _ui__log "Error: Could not resolve branch '$branch'."
+    return 1
+  fi
+  dest="$(_repo__resolve_commit "$repo" "$dest_rev")" || dest=''
+  if [[ -z "$dest" ]]; then
+    _ui__log "Error: Could not resolve revision '$dest_rev'."
+    return 1
+  fi
+  [[ "$tip" == "$dest" ]] && return 0
+
+  local new_commit
+  new_commit="$(__task__commit_staged "$repo" "$dest" "" -- __task__write_nothing)" \
+    || return 1
+  [[ -n "$new_commit" ]] || return 1
+  # Must run while BRANCH still sits at $tip — the on-branch reattach resolves
+  # the worktree's branch by fork-point ranking, which needs the bookmark in
+  # its pre-advance position.
+  _worktree__reattach_current_on_branch "$repo" "$branch" "$tip" "$new_commit" \
+    || return 1
+  _repo__set_bookmark "$repo" "$branch" "$new_commit" || return 1
+  printf '%s\n' "$new_commit"
+}
+
+# Usage: __task__write_nothing ROOT
+# Staged-commit writer that writes nothing, for commits whose entire content
+# is "same tree as the parent" (see _task__commit_resume).
+__task__write_nothing() {
+  :
+}
+
 # Usage: _task__check_conflicts REPO REV
 # Returns 0 when REV (typically a freshly created merge commit) carries merge
 # conflicts, non-zero when it is conflict-free. Documented pass-through to
@@ -737,6 +825,17 @@ _task__merge_branch() {
 _task__check_conflicts() {
   local repo="$1" rev="$2"
   _repo__check_has_conflicts "$repo" "$rev"
+}
+
+# Usage: _task__check_descendant_conflicts REPO REV
+# Returns 0 when REV, or any commit descended from it, carries merge
+# conflicts. Used after a range has been reparented: the rebase replays the
+# range's commits one by one, so a conflict can surface anywhere above the
+# revision the caller named, not just on it. Documented pass-through to
+# _repo__check_descendants_have_conflicts.
+_task__check_descendant_conflicts() {
+  local repo="$1" rev="$2"
+  _repo__check_descendants_have_conflicts "$repo" "$rev"
 }
 
 # Usage: _task__advance_branch REPO BRANCH REV
@@ -785,6 +884,104 @@ _task__list_unmerged_changes() {
     [[ -z "$path" ]] && continue
     [[ "$path" == "$prefix"/* ]] && printf '%s\n' "$path"
   done <<< "$changed"
+  return 0
+}
+
+# Usage: _task__list_unmerged_roots REPO BASE_REV TASK_REV
+#
+# Prints the commit IDs (one per line, oldest first) of the ROOTS of
+# TASK_REV's unmerged range: the commits reachable from TASK_REV but not from
+# BASE_REV that have no parent inside that same set. These are the points at
+# which the task's own line of work hangs off history it inherited, so moving
+# them moves the whole task.
+#
+# Nothing is printed when the task has no commits of its own relative to
+# BASE_REV — which is also the test for "is this range empty at all", since a
+# non-empty range always has at least one root.
+#
+# Documented pass-through to _repo__list_range_root_commits; returns its status.
+_task__list_unmerged_roots() {
+  local repo="$1" base_rev="$2" task_rev="$3"
+  _repo__list_range_root_commits "$repo" "$base_rev" "$task_rev"
+}
+
+# Usage: _task__move_unmerged_range REPO BASE_REV TASK_REV DEST_REV
+#
+# Reparents a task's line of work: rebases every root of TASK_REV's unmerged
+# range relative to BASE_REV (_task__list_unmerged_roots), together with all of
+# their descendants, onto DEST_REV. Commits the task merely inherited from
+# BASE_REV stay where they are; bookmarks pointing into the moved range follow
+# it, so the task branch ends up on top of DEST_REV.
+#
+# Returns 0 without doing anything when the range is empty. Nothing is printed
+# in any case.
+#
+# Roots whose subtree does NOT contain the current working-copy commit are
+# moved as a bare graph rewrite (_repo__move_commits), which touches no working
+# copy at all. A root the working copy sits above is moved through the current
+# worktree instead (_worktree__move_subtree) so the on-disk files travel with
+# the commits rather than being left behind. Bare roots are moved first so the
+# carried subtree is rewritten last, against a graph that is otherwise final.
+_task__move_unmerged_range() {
+  local repo="$1" base_rev="$2" task_rev="$3" dest_rev="$4"
+
+  local roots
+  roots="$(_task__list_unmerged_roots "$repo" "$base_rev" "$task_rev")" || roots=''
+  [[ -n "$roots" ]] || return 0
+
+  local worktree wc_commit=''
+  worktree="$(_repo__resolve_worktree_root "$repo")" || worktree=''
+  if [[ -n "$worktree" ]]; then
+    wc_commit="$(_repo__resolve_commit "$worktree" '@')" || wc_commit=''
+  fi
+
+  local -a bare_roots=() carried_roots=()
+  local root
+  while IFS= read -r root; do
+    [[ -n "$root" ]] || continue
+    if [[ -n "$wc_commit" ]] && _repo__check_is_ancestor "$repo" "$root" "$wc_commit"; then
+      carried_roots+=("$root")
+    else
+      bare_roots+=("$root")
+    fi
+  done <<< "$roots"
+
+  if [[ ${#bare_roots[@]} -gt 0 ]]; then
+    _repo__move_commits "$repo" "$dest_rev" "${bare_roots[@]}" || return 1
+  fi
+  for root in "${carried_roots[@]+"${carried_roots[@]}"}"; do
+    _worktree__move_subtree "$repo" "$root" "$dest_rev" || return 1
+  done
+  return 0
+}
+
+# Usage: _task__check_up_to_date REPO BASE_REV TASK_REV
+#
+# Returns 0 when TASK_REV has nothing left to receive from BASE_REV, either
+# because it has no commits of its own outside BASE_REV's ancestry (all of its
+# work has already been absorbed there), or because every root of its unmerged
+# range already sits directly on BASE_REV — the shape left behind by an
+# earlier reparenting onto this same revision.
+#
+# "Sits directly on BASE_REV" is tested as: BASE_REV is an ancestor of the
+# root AND the range between them holds nothing but the root itself. For a
+# range root the two conditions together are exactly "BASE_REV is one of my
+# parents" — a root cannot have a parent inside its own range, so any other
+# parent it has must already be in BASE_REV's ancestry.
+_task__check_up_to_date() {
+  local repo="$1" base_rev="$2" task_rev="$3"
+
+  local roots
+  roots="$(_task__list_unmerged_roots "$repo" "$base_rev" "$task_rev")" || roots=''
+  [[ -n "$roots" ]] || return 0
+
+  local root count
+  while IFS= read -r root; do
+    [[ -n "$root" ]] || continue
+    _repo__check_is_ancestor "$repo" "$base_rev" "$root" || return 1
+    count="$(_repo__count_commits_in_range "$repo" "$base_rev" "$root")"
+    [[ "$count" -eq 1 ]] || return 1
+  done <<< "$roots"
   return 0
 }
 

@@ -655,17 +655,22 @@ _jj__snapshot_worktree() {
   __jj__run_quiet "$worktree" log -r '@' --no-graph -T ''
 }
 
-# Usage: _jj__reattach_worktree WORKTREE FROM_CHANGE DEST_REV
-# Rebases WORKTREE's working-copy commit — addressed by its stable change ID
-# FROM_CHANGE, which survives rebases where a commit ID would go stale —
-# onto DEST_REV, together with any descendants. Runs against WORKTREE
-# WITHOUT --ignore-working-copy, deliberately: jj then snapshots any pending
-# on-disk changes into the working-copy commit before rebasing it, and
-# updates WORKTREE's on-disk files to the rebased commit in the same step.
+# Usage: _jj__reattach_worktree WORKTREE FROM_REV DEST_REV
+# Rebases FROM_REV, together with all of its descendants, onto DEST_REV. Runs
+# against WORKTREE WITHOUT --ignore-working-copy, deliberately: jj then
+# snapshots any pending on-disk changes into the working-copy commit before
+# rebasing, and updates WORKTREE's on-disk files in the same step whenever the
+# working-copy commit is among the rewritten commits — a bare rewrite would
+# instead leave the files behind on the pre-rewrite tree.
+#
+# FROM_REV is normally the working-copy commit's own stable change ID, which
+# survives rebases where a commit ID would go stale; that reattaches the
+# worktree onto DEST_REV. It may equally name a commit further down the same
+# line, which moves that whole subtree and carries the working copy with it.
 # Status only; never logs, never exits.
 _jj__reattach_worktree() {
-  local worktree="$1" from_change="$2" dest_rev="$3"
-  __jj__run_quiet "$worktree" rebase -s "$from_change" -d "$dest_rev"
+  local worktree="$1" from_rev="$2" dest_rev="$3"
+  __jj__run_quiet "$worktree" rebase -s "$from_rev" -d "$dest_rev"
 }
 # ---------------------------------------------------------------------------
 # Mutations (bare)
