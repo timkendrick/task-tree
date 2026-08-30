@@ -44,6 +44,8 @@
 #     _jj__list_mainline_commits     — first-parent mainline commit records
 #   Task-range queries:
 #     _jj__find_file_introduction    — unique commit that introduced a file
+#     _jj__find_prefix_introduction  — unique commit that introduced a path prefix
+#     _jj__list_descendant_changes   — change IDs of a revision and its descendants
 #     _jj__list_file_waypoints       — commits touching a target/marker file pair
 #     _jj__sort_commits_by_ancestry  — order commit IDs oldest first within a region
 #   Working copy (restricted):
@@ -55,6 +57,7 @@
 #     _jj__commit_working_copy       — commit the working copy with a message
 #     _jj__snapshot_worktree         — capture on-disk changes into the working-copy commit
 #     _jj__reattach_worktree         — rebase the working-copy commit onto a destination
+#     _jj__refresh_worktree          — update on-disk files after a bare rewrite of @
 #   Mutations (bare; no working copy involved):
 #     _jj__commit_changeset          — build a commit in the backing Git store from a staged tree
 #     _jj__create_merge_commit       — create a merge commit of two or more parents
@@ -78,11 +81,13 @@
 #     _jj__get_worktree_revision     — commit ID of a workspace's working-copy commit
 #   Files:
 #     _jj__read_file_at_revision     — file content at a revision
+#     _jj__read_symlink_at_revision  — symlink target at a revision
 #     _jj__read_file_at_operation    — file content at an operation + revision
 #     _jj__check_file_exists_at_revision — whether a file exists at a revision
 #     _jj__list_files_at_revision    — tracked files at a revision
 #     _jj__list_files_at_operation   — tracked files at an operation + revision
 #     _jj__list_changed_files        — files a revision changes relative to its parents
+#     _jj__list_changed_files_in_range — files a range changes relative to its base
 #     _jj__get_file_diff             — Git-format diff of one file at a revision
 #     _jj__show_diff                 — Git-format diff between two revisions
 
@@ -538,6 +543,38 @@ _jj__find_file_introduction() {
   printf '%s' "$matches"
 }
 
+# Usage: _jj__find_prefix_introduction REPO PREFIX
+# Prints the commit ID of the unique commit that introduced the repo-root-
+# relative path PREFIX — a file or a directory, matched together with
+# everything beneath it — anywhere in the repository's visible history.
+# Unlike _jj__find_file_introduction the search is not narrowed to the ancestry
+# of named heads: callers use this to anchor a rewrite that must reach every
+# line carrying the prefix, including branches that forked after it appeared.
+# Returns 1 (nothing printed, no logging) when there is no unique match — the
+# caller owns the error message.
+_jj__find_prefix_introduction() {
+  local repo="$1" prefix="$2"
+  local matches
+  matches="$(__jj__run "$repo" --ignore-working-copy log --no-graph \
+    -r "roots(files(root:\"${prefix}\"))" -T 'commit_id ++ "\n"')" || true
+  local count
+  count="$(printf '%s' "$matches" | grep -c . || true)"
+  [[ "$count" -eq 1 ]] || return 1
+  printf '%s' "$matches"
+}
+
+# Usage: _jj__list_descendant_changes REPO REV
+# Prints the stable change IDs of REV and of every visible commit descended
+# from it, one per line, oldest first. Change IDs rather than commit IDs
+# because a caller rewriting the listed commits one by one invalidates the
+# commit IDs of everything still ahead of it, while change IDs survive.
+# Returns jj's exit code; nothing is printed if REV cannot be resolved.
+_jj__list_descendant_changes() {
+  local repo="$1" rev="$2"
+  __jj__run "$repo" --ignore-working-copy log -r "descendants(${rev})" \
+    --no-graph --reversed -T 'change_id ++ "\n"'
+}
+
 # Usage: _jj__list_file_waypoints REPO BOUNDARY HEAD_A HEAD_B TARGET_PATH MARKER_PATH
 # Considers the commits that descend from BOUNDARY and are ancestors of HEAD_A
 # or HEAD_B (all bounds inclusive). Prints one tab-separated line, oldest
@@ -671,6 +708,19 @@ _jj__snapshot_worktree() {
 _jj__reattach_worktree() {
   local worktree="$1" from_rev="$2" dest_rev="$3"
   __jj__run_quiet "$worktree" rebase -s "$from_rev" -d "$dest_rev"
+}
+
+# Usage: _jj__refresh_worktree WORKTREE
+# Updates WORKTREE's on-disk files to match its working-copy commit after that
+# commit was rewritten by a bare graph mutation. A bare mutation leaves the
+# recorded working-copy state pointing at the pre-rewrite tree, and jj then
+# refuses every command that loads the working copy until it is recovered; this
+# performs that recovery, running from inside WORKTREE so jj resolves the right
+# workspace. Harmless (status 0, nothing changed) when the working copy is
+# already current. Status only; never logs, never exits.
+_jj__refresh_worktree() {
+  local worktree="$1"
+  __jj__run_quiet_cd "$worktree" workspace update-stale
 }
 # ---------------------------------------------------------------------------
 # Mutations (bare)
@@ -991,10 +1041,14 @@ _jj__check_bookmark_exists() {
 }
 
 # Usage: _jj__rename_bookmark REPO OLD NEW
-# Renames bookmark OLD to NEW. Quiet mutation.
+# Renames bookmark OLD to NEW. Quiet mutation; passes --ignore-working-copy
+# because a bookmark rename is pure graph metadata — it neither reads nor
+# writes any working copy — and loading one would make the rename fail in the
+# one situation it is most needed: right after a bare rewrite, while the
+# working copy still has to be refreshed.
 _jj__rename_bookmark() {
   local repo="$1" old="$2" new="$3"
-  __jj__run_quiet "$repo" bookmark rename "$old" "$new"
+  __jj__run_quiet "$repo" --ignore-working-copy bookmark rename "$old" "$new"
 }
 
 # Usage: _jj__delete_bookmark REPO NAME
@@ -1066,6 +1120,32 @@ _jj__read_file_at_revision() {
   __jj__run "$repo" --ignore-working-copy file show -r "$rev" -- "root:$path"
 }
 
+# Usage: _jj__read_symlink_at_revision REPO REV PATH
+# Prints the target string of the symlink recorded at the repo-root-relative
+# PATH in REV, without a trailing newline. Returns 1 (nothing printed) when
+# PATH is absent at REV or is recorded as something other than a symlink.
+#
+# Symlink targets are not readable as file content — the backend rejects a
+# request to show a path that is not a file — so the entry is read out of a
+# Git-format diff of REV against the empty root tree, which renders the symlink
+# as an added `120000`-mode file whose single added line is the target.
+_jj__read_symlink_at_revision() {
+  local repo="$1" rev="$2" path="$3"
+  local diff
+  diff="$(__jj__run "$repo" --ignore-working-copy diff --git \
+    --from 'root()' --to "$rev" -- "root-file:\"${path}\"")" || return 1
+  # One pass over the diff: note the symlink mode, then take the first added
+  # line (the "+++ b/<path>" header is excluded by requiring a non-'+' second
+  # character). A diff without both parts is not a symlink and exits non-zero.
+  local target
+  target="$(printf '%s\n' "$diff" | awk '
+    /^new file mode 120000$/ { symlink = 1 }
+    symlink && !found && /^\+[^+]/ { found = 1; print substr($0, 2) }
+    END { exit(found ? 0 : 1) }
+  ')" || return 1
+  printf '%s' "$target"
+}
+
 # Usage: _jj__read_file_at_operation REPO OP REV PATH
 # Reads a file at a specific jj operation ID and revision, using a
 # repo-root-relative path. Used for historical rescue (e.g. recovering
@@ -1107,6 +1187,20 @@ _jj__list_files_at_revision() {
 _jj__list_changed_files() {
   local repo="$1" rev="$2"
   __jj__run_cd "$repo" --ignore-working-copy diff -r "$rev" --name-only
+}
+
+# Usage: _jj__list_changed_files_in_range REPO BASE TIP
+# Prints the repo-root-relative paths (one per line) changed across TIP's
+# range relative to BASE — the commits reachable from TIP but not from BASE —
+# diffed as a single unit, so content TIP merely inherited from BASE is never
+# reported. The range's own root commits are excluded from the diff, so the
+# paths they introduce are not reported either.
+# Passes --ignore-working-copy and uses the subshell-cd runner so the printed
+# paths are always repo-relative. Returns jj's exit code.
+_jj__list_changed_files_in_range() {
+  local repo="$1" base="$2" tip="$3"
+  __jj__run_cd "$repo" --ignore-working-copy diff \
+    -r "roots(::${tip} ~ ::${base})..${tip}" --name-only
 }
 
 # Usage: _jj__list_files_at_operation REPO OP REV [PREFIX]

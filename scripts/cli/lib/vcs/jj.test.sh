@@ -455,6 +455,141 @@ test__jj__find_file_introduction__non_unique_introduction_fails() {
 }
 
 # ---------------------------------------------------------------------------
+# _jj__find_prefix_introduction
+# ---------------------------------------------------------------------------
+
+test__jj__find_prefix_introduction__matches_directory_and_ignores_heads() {
+  setup_workspace
+  BASE_COMMIT="$(get_full_commit_id '@-')"
+  edit_file nested/dir/one.txt "one"
+  jj -R "$REPO" commit -m "introduce dir" >/dev/null 2>&1
+  local introduction
+  introduction="$(get_full_commit_id '@-')"
+  edit_file nested/dir/two.txt "two"
+  jj -R "$REPO" commit -m "extend dir" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set feature -r '@-' >/dev/null 2>&1
+  # A branch forked from the introducing commit: the introduction must be
+  # found without naming any head, so that both lines are anchored by it.
+  jj -R "$REPO" new "$introduction" >/dev/null 2>&1
+  edit_file nested/dir/three.txt "three"
+  jj -R "$REPO" commit -m "other line" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set other -r '@-' >/dev/null 2>&1
+
+  assert_eq "commit that introduced the directory" \
+    "$(_jj__find_prefix_introduction "$REPO" nested/dir)" "$introduction"
+  assert_eq "a file prefix resolves too" \
+    "$(_jj__find_prefix_introduction "$REPO" nested/dir/one.txt)" "$introduction"
+
+  local out='' exit_code=0
+  out="$(_jj__find_prefix_introduction "$REPO" not-tracked)" || exit_code=$?
+  assert_failure "prefix with no introduction rejected" "$exit_code"
+  assert_output_empty "nothing printed without a match" "$out"
+}
+
+test__jj__find_prefix_introduction__non_unique_introduction_fails() {
+  setup_workspace
+  _fixture_divergent_branches shared/dup.txt
+  local out='' exit_code=0
+  out="$(_jj__find_prefix_introduction "$REPO" shared)" || exit_code=$?
+  assert_failure "two independent introductions rejected" "$exit_code"
+  assert_output_empty "nothing printed on ambiguity" "$out"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__list_descendant_changes
+# ---------------------------------------------------------------------------
+
+test__jj__list_descendant_changes__includes_self_and_every_branch() {
+  setup_workspace
+  local base
+  base="$(get_full_commit_id '@-')"
+  edit_file one.txt "one"
+  jj -R "$REPO" commit -m "fork point" >/dev/null 2>&1
+  local fork
+  fork="$(get_full_commit_id '@-')"
+  edit_file two.txt "two"
+  jj -R "$REPO" commit -m "line a" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set linea -r '@-' >/dev/null 2>&1
+  jj -R "$REPO" new "$fork" >/dev/null 2>&1
+  edit_file three.txt "three"
+  jj -R "$REPO" commit -m "line b" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set lineb -r '@-' >/dev/null 2>&1
+
+  local changes
+  changes="$(_jj__list_descendant_changes "$REPO" "$fork")"
+  assert_eq "the anchor itself comes first" \
+    "$(printf '%s\n' "$changes" | head -1)" "$(_jj__resolve_change "$REPO" "$fork")"
+  assert_contains "descendant on one line listed" \
+    "$changes" "$(_jj__resolve_change "$REPO" linea)"
+  assert_contains "descendant on the other line listed" \
+    "$changes" "$(_jj__resolve_change "$REPO" lineb)"
+  assert_not_contains "ancestors are not listed" \
+    "$changes" "$(_jj__resolve_change "$REPO" "$base")"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__read_symlink_at_revision
+# ---------------------------------------------------------------------------
+
+test__jj__read_symlink_at_revision__reads_target_and_rejects_non_symlinks() {
+  setup_workspace
+  mkdir -p "$REPO/nested"
+  edit_file "$REPO/nested/target.txt" "content"
+  ln -s "nested/target.txt" "$REPO/LINK.md"
+  jj -R "$REPO" commit -m "add symlink" >/dev/null 2>&1
+
+  assert_eq "symlink target read from the revision" \
+    "$(_jj__read_symlink_at_revision "$REPO" '@-' LINK.md)" "nested/target.txt"
+
+  local exit_code=0
+  _jj__read_symlink_at_revision "$REPO" '@-' nested/target.txt >/dev/null || exit_code=$?
+  assert_failure "regular file rejected" "$exit_code"
+  exit_code=0
+  _jj__read_symlink_at_revision "$REPO" '@-' missing.md >/dev/null || exit_code=$?
+  assert_failure "absent path rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__refresh_worktree
+# ---------------------------------------------------------------------------
+
+test__jj__refresh_worktree__recovers_after_a_bare_rewrite_of_the_working_copy() {
+  setup_workspace
+  edit_file kept.txt "original"
+  jj -R "$REPO" commit -m "base" >/dev/null 2>&1
+  local base
+  base="$(get_full_commit_id '@-')"
+  edit_file kept.txt "rewritten"
+  edit_file added.txt "added"
+  jj -R "$REPO" commit -m "source" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set src -r '@-' >/dev/null 2>&1
+  jj -R "$REPO" new "$base" >/dev/null 2>&1
+
+  # Bare rewrite of the working-copy commit: the graph moves, the files on
+  # disk do not, and every command that loads the working copy now fails.
+  _jj__restore_tree "$REPO" src '@'
+  assert_eq "on-disk file still holds the pre-rewrite content" \
+    "$(cat "$REPO/kept.txt")" "original"
+  local stale_exit=0
+  jj -R "$REPO" status >/dev/null 2>&1 || stale_exit=$?
+  assert_failure "working copy is stale before the refresh" "$stale_exit"
+
+  local exit_code=0
+  _jj__refresh_worktree "$REPO" || exit_code=$?
+  assert_success "worktree refreshed" "$exit_code"
+  assert_eq "on-disk file caught up with the rewrite" \
+    "$(cat "$REPO/kept.txt")" "rewritten"
+  assert_file_exists "file added by the rewrite is on disk" "$REPO/added.txt"
+  local ok_exit=0
+  jj -R "$REPO" status >/dev/null 2>&1 || ok_exit=$?
+  assert_success "working copy usable again" "$ok_exit"
+
+  exit_code=0
+  _jj__refresh_worktree "$REPO" || exit_code=$?
+  assert_success "refreshing an up-to-date worktree is harmless" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
 # _jj__list_file_waypoints
 # ---------------------------------------------------------------------------
 
@@ -718,6 +853,39 @@ test__jj__list_files_at_operation__lists_at_operation() {
   local exit_code=0
   _jj__list_files_at_operation "$REPO" "ffffffffffffffff" main >/dev/null || exit_code=$?
   assert_failure "unknown operation rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__list_changed_files_in_range
+# ---------------------------------------------------------------------------
+
+test__jj__list_changed_files_in_range__reports_own_work_only() {
+  setup_workspace
+  local base
+  base="$(get_full_commit_id '@-')"
+  edit_file inherited.txt "inherited"
+  jj -R "$REPO" commit -m "base work" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set parent -r '@-' >/dev/null 2>&1
+
+  # The range's root introduces stub.txt; the commits above it add own.txt.
+  edit_file stub.txt "stub"
+  jj -R "$REPO" commit -m "branch creation" >/dev/null 2>&1
+  edit_file own.txt "own"
+  jj -R "$REPO" commit -m "branch work" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set child -r '@-' >/dev/null 2>&1
+
+  local changed
+  changed="$(_jj__list_changed_files_in_range "$REPO" parent child)"
+  assert_contains "the range's own work is reported" "$changed" "own.txt"
+  assert_not_contains "content inherited from the base is not reported" \
+    "$changed" "inherited.txt"
+  assert_not_contains "the range root's own paths are excluded" \
+    "$changed" "stub.txt"
+
+  local exit_code=0
+  _jj__list_changed_files_in_range "$REPO" parent no-such-bookmark >/dev/null \
+    || exit_code=$?
+  assert_failure "absent revision rejected" "$exit_code"
 }
 
 # ---------------------------------------------------------------------------

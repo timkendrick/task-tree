@@ -47,6 +47,8 @@ _repo__list_mainline_commits()     { _jj__list_mainline_commits "$@"; }
 
 # --- Task-range queries ---
 _repo__find_file_introduction()    { _jj__find_file_introduction "$@"; }
+_repo__find_prefix_introduction()  { _jj__find_prefix_introduction "$@"; }
+_repo__list_descendant_changes()   { _jj__list_descendant_changes "$@"; }
 _repo__list_file_waypoints()       { _jj__list_file_waypoints "$@"; }
 _repo__sort_commits_by_ancestry()  { _jj__sort_commits_by_ancestry "$@"; }
 
@@ -59,6 +61,7 @@ _repo__new_working_copy_child()    { _jj__new_working_copy_child "$@"; }
 _repo__commit_working_copy()       { _jj__commit_working_copy "$@"; }
 _repo__snapshot_worktree()         { _jj__snapshot_worktree "$@"; }
 _repo__reattach_worktree()         { _jj__reattach_worktree "$@"; }
+_repo__refresh_worktree()          { _jj__refresh_worktree "$@"; }
 
 # --- Mutations (bare; no working copy involved) ---
 _repo__commit_changeset()          { _jj__commit_changeset "$@"; }
@@ -86,10 +89,12 @@ _repo__get_worktree_revision()     { _jj__get_worktree_revision "$@"; }
 
 # --- Files ---
 _repo__read_file_at_revision()     { _jj__read_file_at_revision "$@"; }
+_repo__read_symlink_at_revision()  { _jj__read_symlink_at_revision "$@"; }
 _repo__read_file_at_operation()    { _jj__read_file_at_operation "$@"; }
 _repo__check_file_exists_at_revision() { _jj__check_file_exists_at_revision "$@"; }
 _repo__list_files_at_revision()    { _jj__list_files_at_revision "$@"; }
 _repo__list_files_at_operation()   { _jj__list_files_at_operation "$@"; }
 _repo__list_changed_files()        { _jj__list_changed_files "$@"; }
+_repo__list_changed_files_in_range() { _jj__list_changed_files_in_range "$@"; }
 _repo__get_file_diff()             { _jj__get_file_diff "$@"; }
 _repo__show_diff()                 { _jj__show_diff "$@"; }

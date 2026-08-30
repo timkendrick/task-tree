@@ -11,8 +11,12 @@
 #   _task__check_is_project_branch   — bookmark name matches the project ID pattern
 #   _task__check_branch_exists       — bookmark resolves to a revision
 #   _task__resolve_revision          — immutable commit ID of a revision
+#   _task__resolve_change            — stable change ID of a revision
 #   _task__delete_branch             — delete a task/project bookmark
+#   _task__rename_branch             — rename a task/project bookmark
 #   _task__read_file                 — read a repo file as recorded on a branch
+#   _task__read_symlink              — read a symlink target as recorded on a branch
+#   _task__list_files                — files recorded at a revision, under a prefix
 #   _task__assert_bookmark_current   — exit unless the bookmark tracks all commits up to @-
 #   _task__check_bookmark_current    — test whether the bookmark tracks all commits up to @-
 #   _task__find_parent_branch        — parent branch listing a task as a subtask
@@ -31,6 +35,7 @@
 #   _task__commit_on_branch          — staged bare write committed onto a bookmark
 #   _task__commit_new_branch         — staged bare write starting a new bookmark
 #   _task__commit_handoff            — staged bare write on a branch tip, bookmark unmoved
+#   _task__commit_detached           — staged bare write reachable only by its own ID
 #   _task__merge_branch              — check-in merge commit (branch tip + handoff)
 #   _task__commit_resume             — empty commit advancing a branch onto a revision
 #   _task__check_conflicts           — whether a revision has merge conflicts
@@ -40,6 +45,10 @@
 #   _task__list_unmerged_roots       — attachment points of a task's unmerged range
 #   _task__move_unmerged_range       — reparent a task's unmerged range
 #   _task__check_up_to_date          — whether a task already sits on a base revision
+#   _task__find_directory_introduction — commit that first added a task directory
+#   _task__list_rewrite_range        — change IDs of a commit and its descendants
+#   _task__replace_tree              — set a commit's tree wholesale from another
+#   _task__discard_commit            — abandon a commit built as scratch state
 #
 # The _task__full_range_* helpers are internal to _task__get_full_range_records,
 # __task__commit_staged is the private staging engine shared by
@@ -83,6 +92,20 @@ _task__resolve_revision() {
   printf '%s' "$commit"
 }
 
+# Usage: _task__resolve_change REPO REV
+# Prints the stable change ID of REV. Returns non-zero with nothing printed
+# when REV does not resolve. Change IDs survive a rewrite of the commit they
+# name, so commands that rewrite several commits in one pass must hold their
+# working set as change IDs rather than commit IDs. Documented pass-through to
+# _repo__resolve_change.
+_task__resolve_change() {
+  local repo="$1" rev="$2"
+  local change
+  change="$(_repo__resolve_change "$repo" "$rev")" || return 1
+  [[ -n "$change" ]] || return 1
+  printf '%s' "$change"
+}
+
 # Usage: _task__delete_branch REPO BRANCH
 # Deletes the BRANCH bookmark. Returns non-zero when no such bookmark exists.
 # Documented pass-through to _repo__delete_bookmark so commands can retire a
@@ -100,6 +123,38 @@ _task__delete_branch() {
 _task__read_file() {
   local repo="$1" rev="$2" path="$3"
   _repo__read_file_at_revision "$repo" "$rev" "$path"
+}
+
+# Usage: _task__rename_branch REPO OLD_BRANCH NEW_BRANCH
+# Renames the OLD_BRANCH bookmark to NEW_BRANCH, leaving it on the same
+# revision. Documented pass-through to _repo__rename_bookmark so commands can
+# re-identify a task or project branch without reaching into the VCS layer.
+_task__rename_branch() {
+  local repo="$1" old_branch="$2" new_branch="$3"
+  _repo__rename_bookmark "$repo" "$old_branch" "$new_branch"
+}
+
+# Usage: _task__read_symlink REPO REV PATH
+# Prints the target of the symlink recorded at the repo-root-relative PATH at
+# REV, without a trailing newline. Returns non-zero (nothing printed) when
+# PATH is absent at REV or is not recorded as a symlink. The task model stores
+# the repo-root task pointer as a symlink into a task directory, so reading its
+# target is how a command learns which task a revision points at. Documented
+# pass-through to _repo__read_symlink_at_revision.
+_task__read_symlink() {
+  local repo="$1" rev="$2" path="$3"
+  _repo__read_symlink_at_revision "$repo" "$rev" "$path"
+}
+
+# Usage: _task__list_files REPO REV [PREFIX]
+# Prints the repo-root-relative paths recorded at REV, one per line,
+# optionally limited to those at or beneath PREFIX (a file or directory path).
+# Nothing is printed (status 0) when the prefix matches no files. Documented
+# pass-through to _repo__list_files_at_revision so commands can enumerate a task
+# directory's contents as of a given commit without reaching into the VCS layer.
+_task__list_files() {
+  local repo="$1" rev="$2" prefix="${3:-}"
+  _repo__list_files_at_revision "$repo" "$rev" "$prefix"
 }
 
 # Usage: _task__assert_bookmark_current REPO BOOKMARK
@@ -738,6 +793,41 @@ _task__commit_handoff() {
   printf '%s\n' "$new_commit"
 }
 
+# Usage: _task__commit_detached REPO BASE_REV MESSAGE
+#          [--modify PATH]... [--delete PATH]... [--delete-prefix PREFIX]...
+#          -- WRITER_FN [ARGS...]
+#
+# Builds a staged bare commit on top of BASE_REV (the same flag and writer
+# contract as _task__commit_on_branch) and prints its commit ID. Nothing else
+# happens: no bookmark is created or moved, no worktree is reattached, and no
+# branch learns about the commit. The result is reachable only through the ID
+# returned, which is what makes it usable as scratch state — a tree computed
+# ahead of time and parked in the repository until whichever commit needs it
+# is rewritten to carry it. The caller owns the commit's lifetime and is
+# responsible for abandoning it (_task__discard_commit) once it has been used.
+#
+# A non-zero WRITER_FN status aborts the call: nothing is committed.
+#
+# Exit 0: commit created (ID printed to stdout).
+# Exit non-zero: bad arguments, unresolvable BASE_REV, absent --modify path,
+# writer failure, or a failed VCS step (error printed to stderr).
+_task__commit_detached() {
+  local repo="$1" base_rev="$2" message="$3"
+  shift 3
+
+  local base_commit
+  base_commit="$(_repo__resolve_commit "$repo" "$base_rev")" || base_commit=''
+  if [[ -z "$base_commit" ]]; then
+    _ui__log "Error: Could not resolve revision '$base_rev'."
+    return 1
+  fi
+
+  local new_commit
+  new_commit="$(__task__commit_staged "$repo" "$base_commit" "$message" "$@")" || return 1
+  [[ -n "$new_commit" ]] || return 1
+  printf '%s\n' "$new_commit"
+}
+
 # Usage: _task__merge_branch REPO MESSAGE PARENT_REV HANDOFF_REV
 #
 # Creates the merge commit that lands a handoff on a receiving branch:
@@ -857,22 +947,21 @@ _task__advance_branch() {
 # PARENT_BRANCH — changes as a whole, optionally restricted to paths under
 # the directory PREFIX. Nothing is printed when the range changes nothing.
 #
-# The range is diffed as one unit anchored at the roots of the unmerged set
-# ("roots(::child ~ ::parent)..child"), so content the child merely inherited
-# from the parent at its fork point is never reported. The roots themselves
-# are excluded from the diff: the first unmerged commit is the branch's own
-# creation commit (its task file stub), which is never what a caller needs to
-# inspect. This is deliberately a path listing rather than a content diff:
-# its consumer (checkin's stray-task-file validation) needs to know WHICH
-# task files the range touches, not what changed inside them.
+# The range is diffed as one unit, so content the child merely inherited from
+# the parent at its fork point is never reported, and the range's own roots
+# are excluded: the first unmerged commit is the branch's creation commit
+# (its task file stub), which is never what a caller needs to inspect. This
+# is deliberately a path listing rather than a content diff: its consumer
+# (checkin's stray-task-file validation) needs to know WHICH task files the
+# range touches, not what changed inside them.
 #
 # Returns non-zero (nothing printed) when the range cannot be diffed.
 _task__list_unmerged_changes() {
   local repo="$1" parent_branch="$2" child_branch="$3" prefix="${4:-}"
 
   local changed
-  changed="$(_repo__list_changed_files "$repo" \
-    "roots(::${child_branch} ~ ::${parent_branch})..${child_branch}")" || return 1
+  changed="$(_repo__list_changed_files_in_range "$repo" \
+    "$parent_branch" "$child_branch")" || return 1
 
   if [[ -z "$prefix" ]]; then
     [[ -n "$changed" ]] && printf '%s\n' "$changed"
@@ -983,6 +1072,79 @@ _task__check_up_to_date() {
     [[ "$count" -eq 1 ]] || return 1
   done <<< "$roots"
   return 0
+}
+
+# ---------------------------------------------------------------------------
+# Whole-history rewrites
+#
+# A few task operations change something that is recorded in every commit
+# carrying it — the location of a task's directory, say — rather than
+# appending a new commit that supersedes it. Such an operation has to rewrite
+# a whole region of history in place, and these are the primitives it works
+# with: find where the thing first appeared, enumerate the region that has to
+# change, and replace the tree of each commit in it.
+# ---------------------------------------------------------------------------
+
+# Usage: _task__find_directory_introduction REPO TASK_DIR
+#
+# Prints the commit ID of the commit that first added TASK_DIR (a repo-root-
+# relative task directory) anywhere in the repository's visible history. Every
+# commit that carries the directory descends from it, so it is the anchor for
+# a rewrite that has to reach all of them — including branches that forked
+# from the introducing commit's line after the directory appeared.
+#
+# Returns 1 (nothing printed) when no single commit introduced the directory:
+# the caller owns the error message. That happens when the directory was added
+# on two lines independently, in which case no one commit anchors the rewrite.
+#
+# Documented pass-through to _repo__find_prefix_introduction.
+_task__find_directory_introduction() {
+  local repo="$1" task_dir="$2"
+  _repo__find_prefix_introduction "$repo" "$task_dir"
+}
+
+# Usage: _task__list_rewrite_range REPO BASE_REV
+#
+# Prints the change IDs of BASE_REV and every visible commit descended from
+# it, one per line, oldest first: the region an in-place rewrite anchored at
+# BASE_REV has to cover. Change IDs, not commit IDs, because rewriting one
+# commit of the region rebases everything above it and invalidates their
+# commit IDs, while their change IDs are stable.
+#
+# Documented pass-through to _repo__list_descendant_changes.
+_task__list_rewrite_range() {
+  local repo="$1" base_rev="$2"
+  _repo__list_descendant_changes "$repo" "$base_rev"
+}
+
+# Usage: _task__replace_tree REPO SOURCE_REV TARGET_REV
+#
+# Replaces TARGET_REV's tree wholesale with SOURCE_REV's, keeping TARGET_REV's
+# own identity: its change ID, description and author all survive, so a rewrite
+# built out of these calls leaves the shape of history untouched and changes
+# only what each commit records. Descendants of TARGET_REV are rebased with
+# their CONTENT preserved rather than their diffs replayed, so a rewrite that
+# visits every commit of a region in turn never re-derives a tree it is about
+# to set explicitly, and no three-way merge — hence no conflict — is involved.
+#
+# Documented pass-through to _repo__restore_tree; touches no working copy, so a
+# worktree sitting on a rewritten commit must be refreshed afterwards
+# (_worktree__refresh_current).
+_task__replace_tree() {
+  local repo="$1" source_rev="$2" target_rev="$3"
+  _repo__restore_tree "$repo" "$source_rev" "$target_rev"
+}
+
+# Usage: _task__discard_commit REPO REV
+#
+# Abandons REV, rebasing any descendants onto its parents. Used to retire the
+# scratch commits a whole-history rewrite parks in the repository
+# (_task__commit_detached): dropping the refs that made them reachable is not
+# enough on its own, because an unreferenced commit stays a visible head until
+# it is abandoned. Documented pass-through to _repo__abandon_commit.
+_task__discard_commit() {
+  local repo="$1" rev="$2"
+  _repo__abandon_commit "$repo" "$rev"
 }
 
 # Usage: __task__commit_staged REPO TIP MESSAGE
