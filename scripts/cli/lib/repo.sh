@@ -36,6 +36,7 @@ _repo__check_commit_empty()        { _jj__check_commit_empty "$@"; }
 _repo__check_has_conflicts()       { _jj__check_has_conflicts "$@"; }
 _repo__check_descendants_have_conflicts() { _jj__check_descendants_have_conflicts "$@"; }
 _repo__check_is_ancestor()         { _jj__check_is_ancestor "$@"; }
+_repo__filter_commits_reachable_from() { _jj__filter_commits_reachable_from "$@"; }
 _repo__find_fork_point_commit()    { _jj__find_fork_point_commit "$@"; }
 _repo__find_nearest_bookmark()     { _jj__find_nearest_bookmark "$@"; }
 _repo__list_commits_in_range()     { _jj__list_commits_in_range "$@"; }

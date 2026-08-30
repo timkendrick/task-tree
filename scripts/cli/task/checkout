@@ -244,7 +244,7 @@ main() {
 
     target_worktree="$worktree_path"
 
-    if [[ -d "$target_worktree" && ( -d "$target_worktree/.jj" || -L "$target_worktree/.jj" ) ]]; then
+    if _worktree__check_exists "$target_worktree"; then
       # Existing workspace: check for local changes
       if ! _worktree__check_clean "$target_worktree"; then
         if [[ "$force" != true ]]; then

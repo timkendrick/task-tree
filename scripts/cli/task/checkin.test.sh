@@ -175,8 +175,8 @@ test_task_checkin__single_transaction() {
 test_task_checkin__head_no_symlink_loop_when_working_from_head_directory() {
   # Regression: when the user works from inside the HEAD-linked directory
   # (e.g. their editor opens /virtual/HEAD which symlinks to a real worktree),
-  # _repo__find_repository_root resolves $repo to the symlink path /virtual/HEAD via `pwd`
-  # rather than the real worktree path. This causes _worktree__find_for_branch
+  # repository-root discovery resolves $repo to the symlink path /virtual/HEAD
+  # via `pwd` rather than the real worktree path. This causes _worktree__find_for_branch
   # to fall back to $repo (= /virtual/HEAD) as target_ws, and
   # _worktree__switch then sets HEAD -> /virtual/HEAD, a self-referential
   # loop that breaks all subsequent tt commands.
@@ -194,7 +194,7 @@ test_task_checkin__head_no_symlink_loop_when_working_from_head_directory() {
   checkpoint_task "Work" >/dev/null || true
 
   # Run checkin from inside the HEAD symlink directory, without TT_REPO set,
-  # so _repo__find_repository_root resolves $repo via `pwd` to the symlink path.
+  # so repository-root discovery resolves $repo via `pwd` to the symlink path.
   local head_path="$VIRTUAL/HEAD"
   output="" exit_code=0
   output=$(cd "$head_path" && unset TT_REPO && "$TT" task checkin --complete --propagate --switch "$task_id" 2>&1) || exit_code=$?

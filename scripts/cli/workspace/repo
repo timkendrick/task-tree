@@ -7,8 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # tt workspace repo — Print the canonical repository root path.
 #
-# In a worktree, this resolves to the primary (canonical) jj repository,
-# not the worktree itself.
+# In a worktree, this resolves to the primary (canonical) repository, not the
+# worktree itself.
 #
 # Usage:
 #   tt workspace repo [--repo PATH]
@@ -25,9 +25,9 @@ Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--repo PATH]
 
 Print the canonical repository root path.
 
-When run from a task worktree (a secondary jj workspace), this resolves and
-prints the path to the primary (canonical) repository root, not the worktree
-itself. Useful for locating shared repository resources from any worktree.
+When run from a task worktree, this resolves and prints the path to the primary
+(canonical) repository root, not the worktree itself. Useful for locating
+shared repository resources from any worktree.
 
 Options:
   --repo PATH   Repository root (overrides TT_REPO; default: walk up from CWD to find .jj)
@@ -58,7 +58,8 @@ main() {
   done
 
   repo="$(_workspace__resolve_repo "$repo")"
-  canonical="$(_repo__resolve_repository_root "$repo")"
+  local canonical
+  canonical="$(_workspace__resolve_canonical_repo "$repo")"
   printf '%s\n' "$canonical"
 }
 
