@@ -16,6 +16,7 @@
 #   _worktree__ensure_working_copy — refuse branch writes while @ carries a bookmark
 #   _worktree__reattach_current — follow a branch advance with the current worktree
 #   _worktree__reattach_current_on_branch — follow a merge advance, own-branch worktree only
+#   _worktree__move_subtree     — rewrite a subtree the current working copy may sit in
 #   _worktree__list_unsynced    — worktrees left behind by a write to their branch
 #   _worktree__report_unsynced  — stderr warning naming out-of-sync worktrees
 #   _worktree__sync             — bring a worktree forward onto its branch head
@@ -291,6 +292,32 @@ _worktree__reattach_current_on_branch() {
   [[ "$wc_branch" == "$branch" ]] || return 0
   _repo__check_is_ancestor "$repo" "$old_tip" "$wc_change" || return 0
   _repo__reattach_worktree "$worktree" "$wc_change" "$new_rev"
+}
+
+# Usage: _worktree__move_subtree REPO SOURCE_REV DEST_REV
+#
+# Rebases SOURCE_REV together with every commit descended from it onto
+# DEST_REV, running the rewrite from INSIDE the current worktree rather than
+# as a bare graph mutation.
+#
+# The distinction matters only when the current working-copy commit is itself
+# part of the moved subtree. A bare rewrite would move that commit in the
+# graph while leaving the worktree's files on the pre-rewrite tree, which the
+# backend then refuses to work with until the working copy is refreshed.
+# Routing the rewrite through the worktree instead snapshots any pending
+# on-disk edits first and updates the files onto the rewritten commit in the
+# same step, so the working copy rides along with the subtree it belongs to.
+# A working copy outside the moved subtree is left where it is (the snapshot
+# still happens, but a snapshot only records pending edits in the
+# working-copy commit — it never moves a branch onto them).
+#
+# Callers that know the working copy is outside the subtree should prefer the
+# bare move (_repo__move_commits), which skips the snapshot entirely.
+_worktree__move_subtree() {
+  local repo="$1" source_rev="$2" dest_rev="$3"
+  local worktree
+  worktree="$(_repo__resolve_worktree_root "$repo")" || return 1
+  _repo__reattach_worktree "$worktree" "$source_rev" "$dest_rev"
 }
 
 # Usage: __worktree__resolve_branch REPO WC_COMMIT
