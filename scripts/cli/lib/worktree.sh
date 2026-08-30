@@ -2,9 +2,9 @@
 # Source this file; do not execute directly.
 #
 # Public surface:
-#   _worktree__parse_list_line  — parse one `jj workspace list` line into name/path
-#   _worktree__list_entries     — one "name<TAB>path" record per jj workspace
-#   _worktree__list             — one "name<TAB>path<TAB>task_id" record per jj workspace
+#   _worktree__parse_list_line  — parse one backend worktree-listing line into name/path
+#   _worktree__list_entries     — one "name<TAB>path" record per worktree
+#   _worktree__list             — one "name<TAB>path<TAB>task_id" record per worktree
 #   _worktree__resolve_name     — workspace name for a worktree path
 #   _worktree__resolve_path     — recorded filesystem path for a workspace name
 #   _worktree__resolve_current  — root of the worktree the command runs in
@@ -12,6 +12,7 @@
 #   _worktree__resolve_repository_root — canonical primary workspace root
 #   _worktree__resolve_repository_path — canonical primary workspace root, symlink-resolved
 #   _worktree__check_clean      — whether a worktree has no uncommitted changes
+#   _worktree__check_exists     — whether a worktree already lives at a path
 #   _worktree__create           — add a workspace at a path, started on a revision
 #   _worktree__start_working_copy — move a worktree onto a new commit on a revision
 #   _worktree__commit_working_copy — record a worktree's working copy as a commit
@@ -38,7 +39,7 @@
 # private to this module and not part of the public surface.
 
 # Usage: _worktree__parse_list_line LINE
-# Parses one line from `jj workspace list -T 'name ++ ": " ++ root ++ "\n"'`.
+# Parses one line of the backend's worktree listing, formatted "<name>: <root>".
 # Outputs two lines to stdout:
 #   line 1: workspace name
 #   line 2: absolute filesystem path, or empty string if the path is an error
@@ -56,7 +57,7 @@ _worktree__parse_list_line() {
 }
 
 # Usage: _worktree__list_entries REPO
-# Prints one tab-separated "name<TAB>path" record per jj workspace in REPO.
+# Prints one tab-separated "name<TAB>path" record per worktree in REPO.
 # path is the empty string when the workspace has no resolvable path.
 # Returns 1 if the workspace list cannot be read.
 _worktree__list_entries() {
@@ -95,7 +96,7 @@ _worktree__list() {
 }
 
 # Usage: _worktree__resolve_name REPO WORKTREE_PATH
-# Prints the jj workspace name for the workspace at WORKTREE_PATH.
+# Prints the backend's worktree name for the worktree at WORKTREE_PATH.
 # Returns 0 and prints name if found, returns 1 if not found.
 _worktree__resolve_name() {
   local repo="$1" worktree_path="$2"
@@ -111,7 +112,7 @@ _worktree__resolve_name() {
 }
 
 # Usage: _worktree__resolve_path REPO WS_NAME
-# Prints the recorded filesystem path of the jj workspace named WS_NAME.
+# Prints the recorded filesystem path of the worktree named WS_NAME.
 # Prints an empty string if the workspace has no recorded path.
 # Returns 0 if found, 1 if no workspace bears that name.
 _worktree__resolve_path() {
@@ -191,6 +192,16 @@ _worktree__resolve_repository_path() {
 _worktree__check_clean() {
   local worktree="$1"
   _repo__check_working_copy_clean "$worktree"
+}
+
+# Usage: _worktree__check_exists PATH
+# Returns 0 when a worktree already lives at PATH on disk — the directory
+# exists and the backend recognizes it as a worktree root. Commands use this
+# to decide whether to adopt the worktree already there or create a new one,
+# so the on-disk shape of a worktree stays known only to the VCS layer.
+_worktree__check_exists() {
+  local path="$1"
+  [[ -d "$path" ]] && _repo__check_is_repository "$path"
 }
 
 # ---------------------------------------------------------------------------
@@ -299,7 +310,7 @@ _worktree__squash_into_working_copy() {
 }
 
 # Usage: _worktree__find_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
-# Outputs one workspace root path per line for each jj workspace whose
+# Outputs one worktree root path per line for each worktree whose
 # working-copy commit sits on BOOKMARK. Classification uses the fork-point
 # ranking of __worktree__resolve_branch rather than the nearest bookmarked
 # ancestor, so a worktree that a branch write has left behind (its branch tip
@@ -320,7 +331,7 @@ _worktree__find_for_branch() {
 }
 
 # Usage: _worktree__delete REPO WORKSPACE_NAME [WORKTREE_PATH]
-# Forgets the jj workspace from the repository model.
+# Forgets the worktree from the repository model.
 # If WORKTREE_PATH is provided, also removes all files from disk.
 _worktree__delete() {
   local repo="$1" ws_name="$2" worktree_path="${3:-}"
@@ -382,8 +393,7 @@ _worktree__ensure_working_copy() {
   _ui__log "Error: The working-copy commit is the tip of bookmark '$name'."
   _ui__log "  tt cannot write to a branch while the working copy carries a bookmark, because"
   _ui__log "  capturing the working copy would absorb unrelated changes into that branch."
-  _ui__log "  Move off it first:"
-  _ui__log "    jj new"
+  _ui__log "  Move off it first, by starting a new working-copy commit on top of it."
   return 1
 }
 
@@ -714,7 +724,7 @@ _worktree__report_unsynced() {
 #
 # Brings WORKTREE forward onto the head of the branch it is checked out on,
 # running inside WORKTREE itself. The worktree is snapshotted first so
-# changes jj has not yet captured — including files it has never seen — ride
+# changes the VCS has not yet captured — including files it has never seen — ride
 # along with the reattach instead of being lost. The branch is then resolved
 # from the worktree's working-copy commit (__worktree__resolve_branch) and,
 # unless the branch tip is already an ancestor of that commit, the commit is

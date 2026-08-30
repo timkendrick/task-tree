@@ -109,7 +109,7 @@ read_task_metadata() {
   [[ -z "$suffix" ]] && return 0
 
   local content
-  content="$(_repo__read_file_at_revision "$repo" "$rev" "$(_path__task_file "$suffix")")" || return 0
+  content="$(_task__read_file "$repo" "$rev" "$(_path__task_file "$suffix")")" || return 0
   [[ -z "$content" ]] && return 0
 
   printf '%s\t%s\n' \
@@ -206,7 +206,7 @@ render_entries() {
     local child_records='' arm
     for arm in ${entry_arms[$entry_index]}; do
       local arm_records
-      arm_records="$(_repo__list_mainline_commits "$repo" "${arm##*:}" "${arm%%:*}")" || arm_records=''
+      arm_records="$(_task__list_mainline_commits "$repo" "${arm##*:}" "${arm%%:*}")" || arm_records=''
       if [[ -n "$arm_records" ]]; then
         child_records="${child_records}${arm_records}"$'\n'
       fi
@@ -236,7 +236,7 @@ resolve_reference_commit() {
       fi
       return 1
     fi
-  elif ! jj -R "$repo" --ignore-working-copy log -r "$since" --no-graph -T '' 2>/dev/null; then
+  elif ! _task__check_revision_exists "$repo" "$since"; then
     _ui__log "Error: Could not resolve revision '$since'."
     return 1
   fi
@@ -291,7 +291,7 @@ main() {
     fi
   fi
 
-  if ! jj -R "$repo" --ignore-working-copy log -r "$task_id" --no-graph -T '' 2>/dev/null; then
+  if ! _task__check_branch_exists "$repo" "$task_id"; then
     _ui__log "Error: Bookmark '$task_id' not found."
     exit 1
   fi
@@ -301,8 +301,7 @@ main() {
     exit 1
   fi
 
-  if [[ -n "$since_arg" ]] && \
-     ! jj -R "$repo" --ignore-working-copy log -r "$since_arg" --no-graph -T '' 2>/dev/null; then
+  if [[ -n "$since_arg" ]] && ! _task__check_revision_exists "$repo" "$since_arg"; then
     _ui__log "Error: Could not resolve revision '$since_arg'."
     exit 1
   fi
@@ -331,7 +330,7 @@ main() {
       [[ -z "$base" ]] && continue
       while IFS= read -r record; do
         [[ -n "$record" ]] && raw_records+=("$record")
-      done < <(_repo__list_mainline_commits "$repo" "$tip" "$base")
+      done < <(_task__list_mainline_commits "$repo" "$tip" "$base")
     done <<< "$range_records"
 
     local -a seen_ids=()
@@ -347,14 +346,12 @@ main() {
 
     # --- Apply --since as a boundary over the complete selection ---
     if [[ -n "$since_arg" && ${#records[@]} -gt 0 ]]; then
-      local id_union=""
+      local -a selected_ids=()
       for record in "${records[@]}"; do
-        local commit_id="${record%%$'\t'*}"
-        if [[ -z "$id_union" ]]; then id_union="$commit_id"; else id_union="${id_union} | ${commit_id}"; fi
+        selected_ids+=("${record%%$'\t'*}")
       done
       local excluded
-      excluded="$(jj -R "$repo" --ignore-working-copy log --no-graph \
-        -r "(${id_union}) & ::${since_arg}" -T 'commit_id ++ "\n"' 2>/dev/null)"
+      excluded="$(_task__filter_reachable_commits "$repo" "$since_arg" "${selected_ids[@]}")"
       if [[ -n "$excluded" ]]; then
         local -a filtered=()
         for record in "${records[@]}"; do
@@ -375,7 +372,7 @@ main() {
     # --- Collect the branch's own commits since the reference commit ---
     while IFS= read -r record; do
       [[ -n "$record" ]] && records+=("$record")
-    done < <(_repo__list_mainline_commits "$repo" "$task_id" "$reference_commit")
+    done < <(_task__list_mainline_commits "$repo" "$task_id" "$reference_commit")
   fi
 
   # --- Checkpoints recorded directly on the branch ---

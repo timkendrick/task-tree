@@ -58,7 +58,7 @@ test__workspace__resolve_repo__rejects_non_repository() {
   local out exit_code=0
   out="$( (_workspace__resolve_repo "$plain") 2>&1 )" || exit_code=$?
   assert_exit_code "non-repo path rejected" 1 "$exit_code"
-  assert_contains "error names the path" "$out" "Error: Not a jj repository: $plain"
+  assert_contains "error names the path" "$out" "Error: Not a repository: $plain"
 }
 
 test__workspace__resolve_repo__errors_without_enclosing_repo() {
@@ -70,7 +70,26 @@ test__workspace__resolve_repo__errors_without_enclosing_repo() {
   out="$( (cd "$dir" && unset TT_REPO && _workspace__resolve_repo "") 2>&1 )" || exit_code=$?
   assert_exit_code "no enclosing repo rejected" 1 "$exit_code"
   assert_contains "error suggests --repo / TT_REPO" "$out" \
-    "Error: No enclosing jj repository. Use --repo or set TT_REPO."
+    "Error: No enclosing repository. Use --repo or set TT_REPO."
+}
+
+test__workspace__check_repository__accepts_a_repository_root() {
+  local other
+  other="$(_make_other_repo "$_TEST_ROOT/check-repo-yes/other")"
+
+  local exit_code=0
+  _workspace__check_repository "$other" || exit_code=$?
+  assert_success "a repository root is accepted" "$exit_code"
+}
+
+test__workspace__check_repository__rejects_a_plain_directory() {
+  local plain
+  plain="$(mktemp -d)"
+  trap 'rm -rf "$plain"' RETURN
+
+  local exit_code=0
+  _workspace__check_repository "$plain" || exit_code=$?
+  assert_failure "a directory with no repository marker is rejected" "$exit_code"
 }
 
 test__workspace__prefixes__defaults_without_config() {

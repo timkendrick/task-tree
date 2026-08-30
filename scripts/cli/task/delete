@@ -292,12 +292,12 @@ main() {
   while IFS= read -r del_id; do
     [[ -z "$del_id" || -z "$workspace_dir" ]] && continue
     local ws_path="${workspace_dir}/${del_id}"
-    if [[ -d "$ws_path" ]] && [[ -d "$ws_path/.jj" || -L "$ws_path/.jj" ]]; then
+    if _worktree__check_exists "$ws_path"; then
       local ws_name
       ws_name="$(_worktree__resolve_name "$repo" "$ws_path")" || true
       if [[ -n "$ws_name" ]]; then
         _worktree__delete "$repo" "$ws_name" || true
-        _ui__log "Workspace '$ws_name' ($del_id) forgotten from jj."
+        _ui__log "Workspace '$ws_name' ($del_id) unregistered."
       fi
       _ui__log "Warning: Workspace directory still exists: $ws_path"
       _ui__log "  Files have not been removed. Clean up manually when ready."

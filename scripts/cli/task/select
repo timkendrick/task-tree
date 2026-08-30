@@ -57,11 +57,9 @@ main() {
   task_prefix="$(_workspace__get_task_prefix "$repo")"
   project_prefix="$(_workspace__get_project_prefix "$repo")"
 
-  # List all bookmarks from jj
+  # List every branch in the repository
   local all_bookmarks
-  all_bookmarks="$(jj -R "$repo" --ignore-working-copy log -r 'bookmarks()' \
-    -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' \
-    --no-graph 2>/dev/null)" || true
+  all_bookmarks="$(_task__list_branch_names "$repo")" || true
 
   # Filter to task/project branches only, exclude DONE tasks
   local active_items=""
@@ -85,7 +83,7 @@ main() {
     
     # Read task file content
     local content
-    content="$(_repo__read_file_at_revision "$repo" "$b" "$tf")" || continue
+    content="$(_task__read_file "$repo" "$b" "$tf")" || continue
     
     # Check status - exclude DONE tasks
     local status

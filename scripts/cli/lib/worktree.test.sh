@@ -54,6 +54,29 @@ test__worktree__resolve_name__unknown_path_fails() {
   assert_failure "unknown worktree path" "$exit_code"
 }
 
+test__worktree__check_exists__accepts_a_worktree_root() {
+  setup_workspace "worktree-exists-yes"
+
+  local exit_code=0
+  _worktree__check_exists "$REPO" || exit_code=$?
+  assert_success "the repository's own worktree root is recognized" "$exit_code"
+}
+
+test__worktree__check_exists__rejects_a_plain_directory_and_a_missing_path() {
+  setup_workspace "worktree-exists-no"
+
+  local plain="$_TEST_ROOT/worktree-exists-no/plain"
+  mkdir -p "$plain"
+
+  local exit_code=0
+  _worktree__check_exists "$plain" || exit_code=$?
+  assert_failure "a directory holding no worktree is rejected" "$exit_code"
+
+  exit_code=0
+  _worktree__check_exists "$_TEST_ROOT/worktree-exists-no/absent" || exit_code=$?
+  assert_failure "a path that does not exist is rejected" "$exit_code"
+}
+
 # ---------------------------------------------------------------------------
 # Fixtures for the working-copy invariant and sync machinery
 # ---------------------------------------------------------------------------
@@ -125,7 +148,8 @@ test__worktree__ensure_working_copy__refuses_unrelated_bookmark() {
   assert_failure "refuses for a bookmark unrelated to any branch being written" "$exit_code"
   assert_contains "message names the unrelated bookmark" "$out" \
     "the tip of bookmark 'scratch'"
-  assert_contains "message suggests moving off the bookmark" "$out" "jj new"
+  assert_contains "message suggests moving off the bookmark" "$out" \
+    "Move off it first, by starting a new working-copy commit on top of it."
 }
 
 test__worktree__ensure_working_copy__accepts_wc_above_bookmark() {

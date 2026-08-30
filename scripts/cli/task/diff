@@ -16,8 +16,8 @@ usage() {
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--all] [--include-metadata] [--repo PATH]
 
 Show the diff of all unmerged commits on a task branch since it diverged from
-its parent branch. Output is relayed directly from 'jj diff' in Git diff format,
-for consumption by other tools.
+its parent branch. Output is relayed in Git diff format, for consumption by
+other tools.
 
 Changes to tt metadata files (the '$TT_METADATA_DIR' directory and the
 '$TT_TASK_SYMLINK_FILENAME' symlink) are omitted by default; pass
@@ -73,25 +73,17 @@ main() {
   local task_id parent_bookmark upper_bound
   IFS=$'\t' read -r task_id parent_bookmark upper_bound <<< "$context"
 
-  # Filter out tt metadata files unless explicitly requested.
-  # FIXME: fileset assembly belongs in the VCS backend; replaced when diff moves to the backend interface
-  local -a fileset=()
+  # Filter out tt metadata files unless explicitly requested. The exclusions
+  # are carried as plain "<kind>\t<path>" records and handed to the diff as
+  # trailing KIND PATH arguments, so translating them into path-matching
+  # syntax stays the VCS layer's job.
+  local -a exclusions=()
   if [[ "$include_metadata" == false ]]; then
-    local exclusion_terms='' kind path term
+    local kind path
     while IFS=$'\t' read -r kind path; do
       [[ -z "$kind" ]] && continue
-      case "$kind" in
-        dir)  term="root:\"$path\"" ;;
-        file) term="root-file:\"$path\"" ;;
-        *)    continue ;;
-      esac
-      if [[ -z "$exclusion_terms" ]]; then
-        exclusion_terms="$term"
-      else
-        exclusion_terms="$exclusion_terms | $term"
-      fi
+      exclusions+=("$kind" "$path")
     done < <(_path__metadata_exclusions)
-    fileset=("~($exclusion_terms)")
   fi
 
   if "$all_mode"; then
@@ -108,7 +100,7 @@ main() {
     local base tip _kind _order _ts
     while IFS=$'\t' read -r base tip _kind _order _ts; do
       [[ -z "$base" ]] && continue
-      jj -R "$repo" diff --git --from "$base" --to "$tip" ${fileset[@]+"${fileset[@]}"}
+      _task__show_diff "$repo" "$base" "$tip" ${exclusions[@]+"${exclusions[@]}"}
     done <<< "$records"
     exit 0
   fi
@@ -116,9 +108,7 @@ main() {
   local from_rev
   from_rev="$(_task__resolve_fork_point "$repo" "$parent_bookmark" "$upper_bound")" || exit 1
 
-  # --git emits standard Git-format diff output, which is stable and readily
-  # parsed by other tools.
-  exec jj -R "$repo" diff --git --from "$from_rev" --to "$upper_bound" ${fileset[@]+"${fileset[@]}"}
+  _task__show_diff "$repo" "$from_rev" "$upper_bound" ${exclusions[@]+"${exclusions[@]}"}
 }
 
 main "$@"

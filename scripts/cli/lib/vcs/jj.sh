@@ -34,6 +34,7 @@
 #     _jj__check_has_conflicts       — whether a single revision has conflicts
 #     _jj__check_descendants_have_conflicts — whether a revision or any descendant has conflicts
 #     _jj__check_is_ancestor         — whether one revision is an ancestor of another
+#     _jj__filter_commits_reachable_from — the given commits that REV can reach
 #     _jj__find_fork_point_commit    — commit ID where two revisions' histories fork
 #     _jj__find_nearest_bookmark     — name of the closest bookmarked ancestor
 #     _jj__list_commits_in_range     — commit IDs in FROM..TO, oldest first
@@ -392,6 +393,31 @@ _jj__check_is_ancestor() {
   result="$(__jj__run "$repo" --ignore-working-copy log \
     -r "(${ancestor}) & ::(${descendant})" --no-graph -T '"x\n"')" || return 1
   [[ -n "$result" ]]
+}
+
+# Usage: _jj__filter_commits_reachable_from REPO REV COMMIT [COMMIT ...]
+# Prints, one per line, those of the given COMMITs that REV can reach — i.e.
+# the ones that are ancestors of REV (REV itself included). Order follows the
+# backend's own listing order, not the argument order. Nothing is printed
+# (status 0) when no COMMIT is given or none is reachable.
+#
+# This answers the whole question in one backend invocation rather than one
+# ancestry test per commit, which matters for callers holding a range's worth
+# of commits.
+_jj__filter_commits_reachable_from() {
+  local repo="$1" rev="$2"
+  shift 2
+  [[ $# -eq 0 ]] && return 0
+  local union='' id
+  for id in "$@"; do
+    if [[ -z "$union" ]]; then
+      union="$id"
+    else
+      union="${union} | ${id}"
+    fi
+  done
+  __jj__run "$repo" --ignore-working-copy log --no-graph \
+    -r "(${union}) & ::(${rev})" -T 'commit_id ++ "\n"'
 }
 
 # Usage: _jj__find_fork_point_commit REPO REV_A REV_B

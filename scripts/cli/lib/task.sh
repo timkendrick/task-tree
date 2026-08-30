@@ -10,6 +10,8 @@
 #   _task__check_is_task_branch      — bookmark name matches the task ID pattern
 #   _task__check_is_project_branch   — bookmark name matches the project ID pattern
 #   _task__check_branch_exists       — bookmark resolves to a revision
+#   _task__check_revision_exists     — arbitrary revision expression resolves
+#   _task__list_branch_names         — every bookmark name in the repository
 #   _task__resolve_revision          — immutable commit ID of a revision
 #   _task__resolve_change            — stable change ID of a revision
 #   _task__delete_branch             — delete a task/project bookmark
@@ -17,8 +19,12 @@
 #   _task__read_file                 — read a repo file as recorded on a branch
 #   _task__read_commit_message       — description recorded on a commit
 #   _task__list_commits_since_branch — commits on a branch's line since its tip
+#   _task__list_mainline_commits     — first-parent commit records of a range
+#   _task__filter_reachable_commits  — commits of a set that a revision can reach
 #   _task__read_symlink              — read a symlink target as recorded on a branch
 #   _task__list_files                — files recorded at a revision, under a prefix
+#   _task__format_range              — render a revision range in a named format
+#   _task__show_diff                 — Git-format diff of a range, minus exclusions
 #   _task__assert_bookmark_current   — exit unless the bookmark tracks all commits up to @-
 #   _task__check_bookmark_current    — test whether the bookmark tracks all commits up to @-
 #   _task__find_parent_branch        — parent branch listing a task as a subtask
@@ -79,6 +85,29 @@ _task__check_is_project_branch() {
 _task__check_branch_exists() {
   local repo="$1" branch="$2"
   _repo__check_revision_exists "$repo" "$branch"
+}
+
+# Usage: _task__check_revision_exists REPO REV
+# Returns 0 when REV names something that resolves in REPO, non-zero otherwise.
+# Unlike _task__check_branch_exists this makes no claim about REV being a
+# bookmark: it is the check for a revision a user supplied (a `--since`
+# argument, say), which may equally be a commit ID or any other expression the
+# VCS understands. Documented pass-through to _repo__check_revision_exists.
+_task__check_revision_exists() {
+  local repo="$1" rev="$2"
+  _repo__check_revision_exists "$repo" "$rev"
+}
+
+# Usage: _task__list_branch_names REPO
+# Prints every bookmark name in REPO, one per line, unsorted and unfiltered —
+# task branches, project branches and any other bookmark alike. Callers filter
+# to the ones they care about with _task__check_is_task_branch /
+# _task__check_is_project_branch. Documented pass-through to
+# _repo__list_bookmark_names so commands can enumerate the task tree's branches
+# without reaching into the VCS layer.
+_task__list_branch_names() {
+  local repo="$1"
+  _repo__list_bookmark_names "$repo"
 }
 
 # Usage: _task__resolve_revision REPO REV
@@ -154,6 +183,37 @@ _task__list_commits_since_branch() {
   _repo__list_commits_in_dag_range "$repo" "$branch" "$tip"
 }
 
+# Usage: _task__list_mainline_commits REPO TIP BASE
+# Prints one tab-separated record per commit on TIP's own line of descent that
+# BASE does not already reach, oldest first:
+#   <commit-id>\t<change-id>\t<timestamp>\t<parent-ids>\t<description-first-line>
+# <parent-ids> is space-separated; on a check-in merge the branch that was
+# merged into comes first and the handoff commit merged in comes second.
+#
+# Commits that arrived through a merge are excluded: they belong to the branch
+# that was merged in, so a report about TIP names the merge itself rather than
+# repeating everything the merge brought along. Documented pass-through to
+# _repo__list_mainline_commits.
+_task__list_mainline_commits() {
+  local repo="$1" tip="$2" base="$3"
+  _repo__list_mainline_commits "$repo" "$tip" "$base"
+}
+
+# Usage: _task__filter_reachable_commits REPO REV COMMIT [COMMIT ...]
+# Prints those of the given COMMITs that REV can already reach (its ancestors,
+# REV itself included), one per line and in no guaranteed order. Nothing is
+# printed (status 0) when no COMMIT is given or none is reachable.
+#
+# Commands use this to apply a "since" boundary to a set of commits gathered
+# from several ranges: whatever the boundary revision already reaches is work
+# the report should leave out. Documented pass-through to
+# _repo__filter_commits_reachable_from.
+_task__filter_reachable_commits() {
+  local repo="$1" rev="$2"
+  shift 2
+  _repo__filter_commits_reachable_from "$repo" "$rev" "$@"
+}
+
 # Usage: _task__rename_branch REPO OLD_BRANCH NEW_BRANCH
 # Renames the OLD_BRANCH bookmark to NEW_BRANCH, leaving it on the same
 # revision. Documented pass-through to _repo__rename_bookmark so commands can
@@ -184,6 +244,37 @@ _task__read_symlink() {
 _task__list_files() {
   local repo="$1" rev="$2" prefix="${3:-}"
   _repo__list_files_at_revision "$repo" "$rev" "$prefix"
+}
+
+# Usage: _task__format_range REPO FORMAT FROM TO
+# Prints the FROM..TO revision range rendered in FORMAT, followed by a newline:
+#   'native' — the backend's own range expression over FROM and TO as given, so
+#              symbolic endpoints (a bookmark name, '@-') survive into the output
+#   'git'    — an immutable Git commit-ID range, both endpoints resolved
+# Returns non-zero when FORMAT is unknown or an endpoint of a 'git' range does
+# not resolve.
+#
+# Keeping both forms behind one call means the range syntax of each is owned by
+# the VCS layer rather than spelled out by whichever command is printing it.
+# Documented pass-through to _repo__format_revision_range.
+_task__format_range() {
+  local repo="$1" format="$2" from="$3" to="$4"
+  _repo__format_revision_range "$repo" "$format" "$from" "$to"
+}
+
+# Usage: _task__show_diff REPO FROM TO [EXCLUDE_KIND EXCLUDE_PATH ...]
+# Writes the diff between FROM and TO to stdout in Git diff format, which is
+# stable and readily parsed by other tools. Each trailing EXCLUDE_KIND /
+# EXCLUDE_PATH pair (kinds 'dir' and 'file', as emitted by
+# _path__metadata_exclusions) drops one repo-root-relative path from the diff;
+# with no pairs the whole range is shown.
+#
+# The exclusions are passed as plain records so the path-matching syntax stays
+# inside the VCS layer. Documented pass-through to _repo__show_diff.
+_task__show_diff() {
+  local repo="$1" from="$2" to="$3"
+  shift 3
+  _repo__show_diff "$repo" "$from" "$to" "$@"
 }
 
 # Usage: _task__assert_bookmark_current REPO BOOKMARK
