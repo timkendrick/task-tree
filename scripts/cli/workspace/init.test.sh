@@ -151,6 +151,34 @@ test_workspace_init__tt_file_without_force() {
 }
 
 
+test_workspace_init__bookmark_on_working_copy_allowed() {
+  setup_workspace "init-bm-on-wc"
+  repo="$_TEST_ROOT/init-bm-on-wc-alt/repo"
+  virtual="$_TEST_ROOT/init-bm-on-wc-alt/virtual"
+  mkdir -p "$repo"
+  jj git init "$repo" >/dev/null 2>&1
+  cd "$repo"
+  echo "initial" > README.md
+  jj -R "$repo" commit -m "Initial commit" >/dev/null 2>&1
+  # The default bookmark sits ON the working-copy commit, which is where a
+  # freshly created repository leaves it. Unlike the branch-writing commands,
+  # init has no branch to advance and captures only the workspace files it
+  # just wrote, so it proceeds instead of refusing.
+  jj -R "$repo" bookmark set main -r '@' >/dev/null 2>&1
+
+  output="" exit_code=0
+  output=$(run_tt workspace init "$repo" "$virtual" 2>&1) || exit_code=$?
+  assert_success "init succeeds with a bookmark on @" "$exit_code"
+  assert_file_exists ".tt/config.toml exists" "$repo/.tt/config.toml"
+
+  # The workspace files were recorded as a commit rather than left pending.
+  recorded="$(jj -R "$repo" file show -r '@-' -- .tt/config.toml 2>/dev/null)" || recorded=""
+  assert_contains "config recorded in the workspace commit" "$recorded" 'task_prefix'
+  message="$(jj -R "$repo" log -r '@-' --no-graph -T 'description.first_line()' 2>/dev/null)"
+  assert_eq "workspace commit message" "$message" "[tt:workspace:init] Create workspace"
+}
+
+
 test_workspace_init__help() {
   output="" exit_code=0
   output=$(run_tt workspace init --help 2>&1) || exit_code=$?

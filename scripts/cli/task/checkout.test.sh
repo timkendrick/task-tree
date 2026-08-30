@@ -43,8 +43,11 @@ test_task_checkout__dirty_wc_rejected() {
 
   edit_file "dirty.txt" "dirty"
   output="" exit_code=0
-  output=$(checkout_task "$task_id" 2>&1) || exit_code=$?
+  output=$(run_tt task checkout "$task_id" 2>&1) || exit_code=$?
   assert_failure "dirty WC rejected" "$exit_code"
+  assert_contains "error names the precondition" "$output" \
+    "Working copy has uncommitted changes"
+  assert_task_status "task untouched" "$task_id" "TODO"
 }
 
 
@@ -58,6 +61,31 @@ test_task_checkout__dirty_wc_with_force() {
   output="" exit_code=0
   output=$(run_tt task checkout "$task_id" --force 2>&1) || exit_code=$?
   assert_success "checkout --force succeeds" "$exit_code"
+  assert_contains "warns that --force overrode the precondition" "$output" \
+    "proceeding due to --force"
+  assert_task_status "task checked out" "$task_id" "IN-PROGRESS"
+}
+
+
+test_task_checkout__refuses_bookmark_on_working_copy() {
+  setup_workspace "checkout-bm-refusal"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+
+  # The checkout transaction snapshots the invoking worktree's working copy; a
+  # bookmark sitting on that commit would absorb whatever is uncommitted
+  # there, so any bookmark on @ is refused — including one that has nothing to
+  # do with either branch involved.
+  jj -R "$REPO" bookmark set unrelated -r '@' >/dev/null 2>&1
+
+  output="" exit_code=0
+  output=$(run_tt task checkout "$task_id" 2>&1) || exit_code=$?
+  assert_failure "bookmark on @ refused" "$exit_code"
+  assert_contains "error explains the refusal" "$output" "tip of bookmark"
+  assert_contains "error names the bookmark" "$output" "unrelated"
+  assert_task_status "task untouched" "$task_id" "TODO"
+  assert_no_pending_transaction "no transaction opened by a refusal"
 }
 
 

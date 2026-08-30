@@ -10,6 +10,11 @@
 #   _worktree__resolve_current  — root of the worktree the command runs in
 #   _worktree__resolve_repository_root — canonical primary workspace root
 #   _worktree__check_clean      — whether a worktree has no uncommitted changes
+#   _worktree__create           — add a workspace at a path, started on a revision
+#   _worktree__start_working_copy — move a worktree onto a new commit on a revision
+#   _worktree__commit_working_copy — record a worktree's working copy as a commit
+#   _worktree__resolve_working_copy_parent — commit a worktree's working copy sits on
+#   _worktree__squash_into_working_copy — fold commits into a worktree's working copy
 #   _worktree__find_for_branch  — workspace roots whose current branch is a bookmark
 #   _worktree__delete           — forget a workspace and remove its files from disk
 #   _worktree__switch           — hooks + HEAD symlink update for a workspace switch
@@ -147,6 +152,111 @@ _worktree__resolve_repository_root() {
 _worktree__check_clean() {
   local worktree="$1"
   _repo__check_working_copy_clean "$worktree"
+}
+
+# ---------------------------------------------------------------------------
+# Working-copy-bound operations
+#
+# The facades below read or move a named worktree's working copy, and each
+# takes the WORKTREE root (not an arbitrary repository path) as its first
+# argument so the caller must know which working copy it is addressing. They
+# exist for the three commands whose whole purpose is the working copy — tt
+# task checkpoint, tt task checkout and tt workspace init — plus the sync
+# machinery further down this module. Every other command writes its branch
+# bare (lib/task.sh) and must NOT reach for these: a bare write leaves every
+# working copy where the user parked it, which is what makes it safe to run
+# from a worktree carrying unrelated uncommitted work.
+# ---------------------------------------------------------------------------
+
+# Usage: _worktree__create REPO NAME PATH REV
+# Adds a workspace named NAME at filesystem PATH to REPO, with a fresh
+# working-copy commit started on top of REV, and populates PATH with REV's
+# files. Counterpart of _worktree__delete. Working-copy-bound: creating a
+# worktree is a working-copy operation by definition, so only a command whose
+# purpose is to populate a worktree calls this. Documented pass-through to
+# _repo__create_worktree.
+_worktree__create() {
+  local repo="$1" name="$2" path="$3" rev="$4"
+  _repo__create_worktree "$repo" "$name" "$path" "$rev"
+}
+
+# Usage: _worktree__start_working_copy WORKTREE REV
+# Moves WORKTREE onto a new, empty working-copy commit whose parent is REV,
+# updating its files on disk to REV's content. This is how a command that
+# switches a worktree to a branch parks it above the branch tip rather than on
+# it. Working-copy-bound. Documented pass-through to
+# _repo__new_working_copy_child.
+_worktree__start_working_copy() {
+  local worktree="$1" rev="$2"
+  _repo__new_working_copy_child "$worktree" "$rev"
+}
+
+# Usage: _worktree__commit_working_copy WORKTREE MESSAGE
+# Records WORKTREE's working copy as a commit described by MESSAGE and leaves
+# the worktree on a new, empty working-copy commit on top of it. Pending
+# on-disk edits are snapshotted as part of the operation, so this captures
+# exactly what the user has in front of them — which is why only a command
+# asked to record the working copy may call it. The resulting commit is
+# WORKTREE's working-copy parent afterwards
+# (_worktree__resolve_working_copy_parent). Working-copy-bound. Documented
+# pass-through to _repo__commit_working_copy.
+_worktree__commit_working_copy() {
+  local worktree="$1" message="$2"
+  _repo__commit_working_copy "$worktree" "$message"
+}
+
+# Usage: _worktree__resolve_working_copy_parent WORKTREE
+# Prints the commit ID of the commit WORKTREE's working copy sits on. Callers
+# use it both to name a commit they have just recorded and to bound a range at
+# the working copy's position. Working-copy-bound. Returns non-zero (nothing
+# printed) when the parent cannot be resolved. Documented pass-through to
+# _repo__get_working_copy_parent.
+_worktree__resolve_working_copy_parent() {
+  local worktree="$1"
+  _repo__get_working_copy_parent "$worktree"
+}
+
+# Usage: _worktree__squash_into_working_copy WORKTREE REV [REV...]
+#
+# Folds each given revision — every one an ancestor of WORKTREE's working-copy
+# commit — into that working-copy commit, so the work they carry ends up in a
+# single commit the caller can then record with a message of its own
+# (_worktree__commit_working_copy). The emptied sources are abandoned and the
+# working-copy commit keeps its own identity, so the whole run collapses onto
+# the nearest bookmarked ancestor.
+#
+# Three steps, in this order:
+#   1. Snapshot, so pending on-disk edits are part of the working-copy commit
+#      before anything is rewritten rather than being folded in blind.
+#   2. Resolve every source to its stable change ID up front, then squash them
+#      in turn: each squash rebases the commits above it, which invalidates
+#      the commit IDs of the sources still to come.
+#   3. Refresh the worktree, because the squashes are bare graph mutations:
+#      they rewrite the working-copy commit without updating the files on disk,
+#      and the backend refuses further working-copy commands until that
+#      mismatch is resolved. The files themselves do not change — the
+#      working-copy commit already contained the sources' content as an
+#      inherited ancestor.
+#
+# Working-copy-bound. Returns non-zero as soon as any step fails.
+_worktree__squash_into_working_copy() {
+  local worktree="$1"; shift
+  [[ $# -ge 1 ]] || return 1
+  _repo__snapshot_worktree "$worktree" || return 1
+  local wc_change
+  wc_change="$(_repo__get_working_copy_revision "$worktree")" || return 1
+  [[ -n "$wc_change" ]] || return 1
+  local rev change
+  local -a sources=()
+  for rev in "$@"; do
+    change="$(_repo__resolve_change "$worktree" "$rev")" || return 1
+    [[ -n "$change" ]] || return 1
+    sources+=("$change")
+  done
+  for change in "${sources[@]}"; do
+    _repo__squash_commit "$worktree" "$change" "$wc_change" || return 1
+  done
+  _repo__refresh_worktree "$worktree"
 }
 
 # Usage: _worktree__find_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX

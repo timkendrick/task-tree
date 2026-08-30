@@ -37,6 +37,7 @@
 #     _jj__find_fork_point_commit    — commit ID where two revisions' histories fork
 #     _jj__find_nearest_bookmark     — name of the closest bookmarked ancestor
 #     _jj__list_commits_in_range     — commit IDs in FROM..TO, oldest first
+#     _jj__list_commits_in_dag_range — commit IDs descended from BASE up to TIP
 #     _jj__count_commits_in_range    — number of commits in FROM..TO
 #     _jj__list_range_root_commits   — commit IDs of the roots of FROM..TO
 #     _jj__check_range_covered       — whether a range is inside a union of ranges
@@ -426,6 +427,22 @@ _jj__find_nearest_bookmark() {
 _jj__list_commits_in_range() {
   local repo="$1" from="$2" to="$3"
   __jj__run "$repo" --ignore-working-copy log -r "${from}..${to}" \
+    --no-graph --reversed -T 'commit_id ++ "\n"'
+}
+
+# Usage: _jj__list_commits_in_dag_range REPO BASE TIP
+# Prints the commit IDs of the commits that descend from BASE and are
+# ancestors of TIP — the DAG range between the two — with BASE itself
+# excluded, one per line, oldest first. Returns jj's exit code; nothing is
+# printed if the range cannot be resolved.
+#
+# Narrower than the FROM..TO range of _jj__list_commits_in_range: that range
+# holds everything reachable from TIP but not from BASE, which includes
+# commits that arrived at TIP through a merge from a line that never descended
+# from BASE. Here every listed commit lies on a path from BASE to TIP.
+_jj__list_commits_in_dag_range() {
+  local repo="$1" base="$2" tip="$3"
+  __jj__run "$repo" --ignore-working-copy log -r "(${base})::(${tip}) ~ (${base})" \
     --no-graph --reversed -T 'commit_id ++ "\n"'
 }
 
