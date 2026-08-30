@@ -77,7 +77,7 @@ main() {
   # If no worktree path given, detect from CWD before resolving repo
   if [[ -z "$worktree_path" ]]; then
     local detected
-    detected="$(jj workspace root 2>/dev/null)" || {
+    detected="$(_worktree__find_current)" || {
       _ui__log "Error: could not detect current worktree from working directory"
       exit 1
     }
@@ -87,14 +87,14 @@ main() {
 
   repo="$(_workspace__resolve_repo "$repo")"
 
-  # Canonicalize the path for comparison with jj workspace list
+  # Canonicalize the path for comparison with the recorded worktree paths
   local canonical_worktree_path
   canonical_worktree_path="$(_path__resolve_symlinks "$worktree_path" 2>/dev/null)" || canonical_worktree_path="$worktree_path"
 
-  # Validate that the path is a valid jj workspace
+  # Validate that the path is a known worktree of this repository
   local ws_name
   ws_name="$(_worktree__resolve_name "$repo" "$canonical_worktree_path")" || {
-    _ui__log "Error: '$worktree_path' is not a jj workspace in this repository"
+    _ui__log "Error: '$worktree_path' is not a worktree in this repository"
     exit 1
   }
 
@@ -118,7 +118,7 @@ main() {
   previous_task_id="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")" || true
 
   # Dirty check on outgoing worktree
-  if ! _repo__check_working_copy_clean "$outgoing_worktree"; then
+  if ! _worktree__check_clean "$outgoing_worktree"; then
     if [[ "$force" != true ]]; then
       _ui__log "Error: Outgoing workspace '$outgoing_worktree' has uncommitted changes."
       _ui__log "  Commit or discard changes first, or use --force to proceed anyway."

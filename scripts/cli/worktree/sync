@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt worktree sync — bring a worktree forward onto the head of its own branch.
+#
+# Usage:
+#   sync [<worktree-path>] [--all] [--repo PATH]
+#
+# A write to a branch advances its bookmark without touching any working copy
+# other than the invoking one, so worktrees checked out on that branch are left
+# sitting on an older tip. This command moves such a worktree back onto the
+# branch head and updates its files on disk to match. The worktree is
+# snapshotted first, so uncommitted work — including files the repository has
+# never seen — rides along with the move rather than being lost.
+#
+# The checked-out task does not change: the worktree stays on the branch it was
+# already on; only its position along that branch moves. No hooks are invoked.
+#
+# Options:
+#   <worktree-path>      Worktree to synchronize (default: the one containing the CWD)
+#   --all                Synchronize every out-of-sync worktree in the repository
+#   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD).
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<worktree-path>] [--all] [--repo PATH]
+
+Bring a worktree up to date with advances to its branch head that were applied
+by operations in other worktrees.
+
+Any uncommitted work is rebased onto the updated branch head.
+
+Arguments:
+  [<worktree-path>]  Worktree to synchronize (optional; defaults to the worktree
+                   containing the current working directory)
+
+Options:
+  --all                 Synchronize every out-of-sync worktree in the repository,
+                        continuing past failures and exiting non-zero if any
+                        worktree could not be synchronized. Cannot be combined
+                        with <worktree-path>.
+  --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
+
+Examples:
+  ${COMMAND_NAME:-$SCRIPT_NAME}
+  ${COMMAND_NAME:-$SCRIPT_NAME} /path/to/worktree
+  ${COMMAND_NAME:-$SCRIPT_NAME} --all
+
+EOF
+}
+
+# Usage: sync_one REPO WORKTREE
+# Synchronizes one worktree and reports the outcome on stderr: either that it
+# was already up to date, or the branch it moved along, the commits it moved
+# between, and every file the move touched. Returns non-zero when the sync
+# itself failed, having reported why.
+sync_one() {
+  local repo="$1" worktree="$2"
+
+  local record
+  record="$(_worktree__sync "$repo" "$worktree")" || {
+    _ui__log "Error: Could not synchronize worktree: $worktree"
+    return 1
+  }
+
+  local state branch old_parent new_tip
+  state="$(printf '%s\n' "$record" | cut -f 1)"
+  branch="$(printf '%s\n' "$record" | cut -f 2)"
+  old_parent="$(printf '%s\n' "$record" | cut -f 3)"
+  new_tip="$(printf '%s\n' "$record" | cut -f 4)"
+
+  if [[ "$state" != "synced" ]]; then
+    _ui__log "Already up to date: $worktree ($branch)"
+    return 0
+  fi
+
+  _ui__log "Synced $worktree ($branch)"
+  _ui__log "  ${old_parent:0:12} → ${new_tip:0:12}"
+
+  # File summary. A summary the backend cannot produce is not worth failing
+  # the sync over — the move itself has already succeeded — so an unreadable
+  # range simply reports no files.
+  local changes=''
+  changes="$(_worktree__list_sync_changes "$repo" "$old_parent" "$new_tip")" || changes=''
+  if [[ -z "$changes" ]]; then
+    _ui__log "  No files changed"
+  else
+    local added=0 modified=0 removed=0
+    local status path
+    while IFS=$'\t' read -r status path; do
+      [[ -z "$path" ]] && continue
+      case "$status" in
+        added)    added=$((added + 1));       _ui__log "  + $path" ;;
+        modified) modified=$((modified + 1)); _ui__log "  ~ $path" ;;
+        removed)  removed=$((removed + 1));   _ui__log "  - $path" ;;
+      esac
+    done <<< "$changes"
+    _ui__log "  $added added, $modified modified, $removed removed"
+  fi
+
+  # A move that could not be replayed cleanly leaves conflicts recorded in the
+  # working copy rather than failing, so report them and let the user resolve
+  # them in place.
+  if _task__check_conflicts "$worktree" '@'; then
+    _ui__log "  Warning: the working copy now has conflicts; resolve them in $worktree"
+  fi
+
+  return 0
+}
+
+main() {
+  local worktree_path=''
+  local all=false
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all)
+        all=true
+        shift
+        ;;
+      --repo)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        repo="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -*)
+        usage >&2; exit 1
+        ;;
+      *)
+        if [[ -z "$worktree_path" ]]; then
+          worktree_path="$1"
+          shift
+        else
+          usage >&2; exit 1
+        fi
+        ;;
+    esac
+  done
+
+  # --all names its own targets, so a path alongside it is contradictory.
+  if [[ "$all" == true && -n "$worktree_path" ]]; then
+    _ui__log "Error: --all cannot be combined with a worktree path."
+    usage >&2
+    exit 1
+  fi
+
+  # Detect the current worktree from the CWD before the repository is
+  # resolved: --repo or TT_REPO would otherwise name a repository root that
+  # has nothing to do with where the user is standing.
+  if [[ "$all" != true && -z "$worktree_path" ]]; then
+    worktree_path="$(_worktree__find_current)" || {
+      _ui__log "Error: could not detect current worktree from working directory"
+      exit 1
+    }
+  fi
+
+  repo="$(_workspace__resolve_repo "$repo")"
+
+  local -a targets=()
+  if [[ "$all" == true ]]; then
+    local records
+    records="$(_worktree__list_all_unsynced "$repo")"
+    if [[ -z "$records" ]]; then
+      _ui__log "All worktrees are up to date."
+      exit 0
+    fi
+    local record_path
+    while IFS=$'\t' read -r record_path _; do
+      [[ -z "$record_path" ]] && continue
+      targets+=("$record_path")
+    done <<< "$records"
+  else
+    # Canonicalize so the path can be matched against the recorded workspace
+    # paths, which are themselves symlink-resolved.
+    local canonical_worktree_path
+    canonical_worktree_path="$(_path__resolve_symlinks "$worktree_path" 2>/dev/null)" \
+      || canonical_worktree_path="$worktree_path"
+
+    _worktree__resolve_name "$repo" "$canonical_worktree_path" >/dev/null || {
+      _ui__log "Error: '$worktree_path' is not a worktree in this repository"
+      exit 1
+    }
+
+    # A worktree that is not behind its branch has nothing to move, and moving
+    # nothing must not record an undoable transaction: an entry that reverts to
+    # the state it was already in would displace the user's real previous
+    # action by one step in the undo history.
+    if ! _worktree__check_behind "$repo" "$canonical_worktree_path"; then
+      _ui__log "Already up to date: $canonical_worktree_path ($(_worktree__resolve_branch "$repo" "$canonical_worktree_path"))"
+      exit 0
+    fi
+    targets+=("$canonical_worktree_path")
+  fi
+
+  _history__begin_transaction "$repo"
+
+  local failures=0 target
+  for target in "${targets[@]}"; do
+    if [[ "$all" == true ]]; then
+      # Every worktree is attempted: one that cannot be synchronized must not
+      # strand the others still sitting behind their branch.
+      sync_one "$repo" "$target" || failures=$((failures + 1))
+    else
+      # A single named target has nothing to continue past, so a failure aborts
+      # the command and the transaction rolls back.
+      sync_one "$repo" "$target"
+    fi
+  done
+
+  _history__commit_transaction "$repo"
+
+  if [[ "$failures" -gt 0 ]]; then
+    _ui__log "Error: $failures of ${#targets[@]} worktrees could not be synchronized."
+    exit 1
+  fi
+}
+
+main "$@"

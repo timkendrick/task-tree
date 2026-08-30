@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt worktree list — List all jj workspaces and their corresponding tt task IDs.
+# tt worktree list — List all worktrees and their corresponding tt task IDs.
 #
 # Usage:
 #   list [--task <task-id>] [--quiet] [--repo PATH]
@@ -22,12 +22,12 @@ usage() {
   cat <<EOF
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--quiet] [--repo PATH]
 
-List all jj workspaces for the current repository and their corresponding
+List all worktrees of the current repository and their corresponding
 tt task or project IDs.
 
 Output columns:
   (marker)  *  marks the current workspace
-  NAME      jj workspace name
+  NAME      workspace name
   TASK ID   tt task or project ID (nearest ancestor bookmark), or (none)
   PATH      filesystem path to the workspace root (~-abbreviated), or (none)
 
@@ -87,7 +87,7 @@ main() {
 
   # Determine current workspace root (to mark with *)
   local current_ws_root
-  current_ws_root="$(_repo__resolve_worktree_root "$repo")" || current_ws_root=""
+  current_ws_root="$(_worktree__resolve_current "$repo")" || current_ws_root=""
 
   # Parse into parallel arrays
   local -a ws_names=()

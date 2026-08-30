@@ -194,6 +194,12 @@ tt worktree switch [<worktree-path>] [--force]
 ```
 Redirect the virtual project's HEAD symlink to an existing worktree. The worktree must already exist (run `tt task checkout --worktree` first).
 
+#### `tt worktree sync`  (alias: `tt sync`)
+```
+tt worktree sync [<worktree-path>] [--all]
+```
+Bring a worktree forward onto the head of the branch it is checked out on, updating its files to match. Use it when a command reports that worktrees are out of sync: a branch write advances the bookmark without moving any working copy but the invoking one. Uncommitted changes in the target worktree are preserved. Defaults to the worktree containing the current directory; `--all` synchronizes every out-of-sync worktree in the repository. Reports the files added, modified and removed. Fires no hooks — the checked-out task does not change.
+
 #### `tt worktree list`
 ```
 tt worktree list [--task <task-id>] [--quiet]
