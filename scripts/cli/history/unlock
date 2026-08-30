@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 . "$SCRIPT_DIR/../lib/common.sh"
 
 # tt history unlock — clear a stale in-progress transaction from .tt/history
-#                     WITHOUT reverting the jj repository state.
+#                     WITHOUT reverting the repository state.
 #
 # Usage:
 #   tt history unlock [--force] [--repo PATH]
@@ -20,9 +20,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # If the history file is empty, exits silently with code 0 (no-op).
 #
 # When --force is given and there is an in-progress transaction, the last history
-# line is completed by writing the current jj operation ID as the after-op-id, producing:
+# line is completed by writing the current operation ID as the after-op-id, producing:
 #   <before-op-id>:<current-op-id>
-# This leaves the jj repository state unchanged.
+# This leaves the repository state unchanged.
 
 readonly SCRIPT_NAME="${0##*/}"
 
@@ -31,7 +31,7 @@ usage() {
 Usage: tt history unlock [--force] [--repo PATH]
 
 Clear a stale in-progress transaction from .tt/history without reverting
-the jj repository. Use this when a tt process crashed mid-transaction and
+the repository. Use this when a tt process crashed mid-transaction and
 the repository is already in an acceptable state.
 
 If there is no in-progress transaction, this command exits 0 silently (no-op).
@@ -117,15 +117,15 @@ main() {
     _ui__log "Error: In-progress transaction detected."
     _ui__log "  before-op: ${before_op:0:12}..."
     _ui__log "  This may indicate a crashed or killed tt process."
-    _ui__log "  Use --force to clear the lock (keeps current jj state)."
+    _ui__log "  Use --force to clear the lock (keeps the current repository state)."
     _ui__log "  Use 'tt history undo --force' to revert to the pre-transaction state."
     exit 1
   fi
 
-  # --force: complete the transaction entry by writing the current jj op as after-op
+  # --force: complete the transaction entry by writing the current op as after-op
   local current_op
-  current_op="$(_repo__get_operation_id "$repo")" || {
-    _ui__log "Error: Could not read current jj operation ID."
+  current_op="$(_history__resolve_operation "$repo")" || {
+    _ui__log "Error: Could not read the current operation ID."
     exit 1
   }
 
@@ -136,7 +136,7 @@ main() {
   fi
 
   _ui__log "Unlocked: in-progress transaction cleared (history marked complete)."
-  _ui__log "  jj repository state is unchanged."
+  _ui__log "  Repository state is unchanged."
   _ui__log "  Transaction entry: ${before_op:0:12}:${current_op:0:12}..."
 }
 

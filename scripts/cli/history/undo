@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt history undo — revert the jj repository to the state before the last mutating tt command.
+# tt history undo — revert the repository to the state before the last mutating tt command.
 #
 # Usage:
 #   history undo [--force] [--repo PATH]
@@ -19,8 +19,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   <before-op-id>:<after-op-id>
 # An in-progress transaction (crashed/killed command) has an empty after-op-id.
 #
-# Before undoing, the current outgoing jj operation ID is logged so the user
-# can manually restore it with: jj op restore <operation-id>
+# Before undoing, the outgoing operation ID is logged, because there is no redo
+# command: restoring that operation by hand is the only way back.
 
 readonly SCRIPT_NAME="${0##*/}"
 
@@ -28,24 +28,24 @@ usage() {
   cat <<EOF
 Usage: tt history undo [--force] [--repo PATH]
 
-Undo the most recent mutating tt command by restoring the jj repository
-to the operation state before that command ran.
+Undo the most recent mutating tt command by restoring the repository to the
+operation state before that command ran.
 
-Multiple invocations go further back in history. There is no redo command;
-the outgoing operation ID is logged so you can manually restore it with:
-  jj op restore <operation-id>
+Multiple invocations go further back in history. There is no redo command; the
+outgoing operation ID is logged instead, so the state this undo discards can be
+restored by hand through the underlying version control system.
 
 Options:
   --force   Bypass safety checks:
               - in-progress (stale) transaction lock
-              - jj operation ID mismatch (repo modified outside tt)
+              - operation ID mismatch (repo modified outside tt)
               - dirty working copy
   --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
   tt history undo           # undo last tt command
   tt undo                   # same (alias)
-  tt history undo --force   # force-undo even if op ID mismatches or WC is dirty
+  tt history undo --force   # force-undo even if the op ID mismatches or the WC is dirty
 
 EOF
 }
@@ -121,11 +121,11 @@ main() {
     _ui__log "Warning: Reverting in-progress transaction (--force)."
   fi
 
-  # Check current jj op matches expected after-op (only for completed transactions)
+  # Check the current operation matches the expected after-op (only for completed transactions)
   if [[ "$in_progress" != true && "$force" != true ]]; then
     local current_op
-    current_op="$(_repo__get_operation_id "$repo")" || {
-      _ui__log "Error: Could not read current jj operation ID."
+    current_op="$(_history__resolve_operation "$repo")" || {
+      _ui__log "Error: Could not read the current operation ID."
       exit 1
     }
     if [[ "$current_op" != "$after_op" ]]; then
@@ -139,31 +139,32 @@ main() {
 
   # Check working copy is clean
   if [[ "$force" != true ]]; then
-    if ! _repo__check_working_copy_clean "$repo"; then
+    if ! _worktree__check_clean "$repo"; then
       _ui__log "Error: Working copy has uncommitted changes."
       _ui__log "  Commit or discard changes first, or use --force."
       exit 1
     fi
   fi
 
-  # Log the outgoing operation ID for manual redo
+  # Log the outgoing operation ID: there is no redo command, so this is the
+  # only handle on the state the undo is about to discard.
   if [[ "$in_progress" != true && -n "$after_op" ]]; then
-    _ui__log "Outgoing jj operation (to redo manually):"
-    _ui__log "  jj op restore $after_op"
+    _ui__log "Outgoing operation (restore it manually to redo):"
+    _ui__log "  $after_op"
   fi
 
-  # Capture current op ID for safety trap (in case jj op restore itself fails)
+  # Capture the current op ID for the safety trap (in case the restore itself fails)
   local pre_undo_op
-  pre_undo_op="$(_repo__get_operation_id "$repo")" || pre_undo_op=""
+  pre_undo_op="$(_history__resolve_operation "$repo")" || pre_undo_op=""
 
   # Set safety trap: if the undo itself fails, restore back to where we were
   # (history line is NOT removed until after successful restore)
   if [[ -n "$pre_undo_op" ]]; then
-    trap '_ui__log "Error: undo failed; restoring to pre-undo state"; jj -R "'"$repo"'" op restore "'"$pre_undo_op"'" 2>/dev/null || true' ERR
+    trap '_ui__log "Error: undo failed; restoring to pre-undo state"; _history__restore_operation "'"$repo"'" "'"$pre_undo_op"'" || true' ERR
   fi
 
-  # Restore jj to before-op state (pop history line only after success)
-  jj -R "$repo" op restore "$before_op"
+  # Restore the repository to the before-op state (pop the history line only on success)
+  _history__restore_operation "$repo" "$before_op"
 
   # Pop the last line from the history file (only reached on success)
   if [[ "$(uname)" == "Darwin" ]]; then
@@ -172,15 +173,16 @@ main() {
     sed -i '$ d' "$history_file"
   fi
 
-  # Patch the now-last history entry's after-op to the current (post-restore) jj op.
+  # Patch the now-last history entry's after-op to the current (post-restore) operation.
   #
-  # Why: `jj op restore` creates a NEW operation — the repo state matches the
-  # target, but the operation ID differs. Without this patch the history chain
-  # breaks (the now-last entry's after-op still points to the *original* op,
-  # not the restore op), so a subsequent `tt undo` would fail its safety check.
+  # Why: restoring an operation creates a NEW operation — the repo state matches
+  # the target, but the operation ID differs. Without this patch the history
+  # chain breaks (the now-last entry's after-op still points to the *original*
+  # op, not the restore op), so a subsequent `tt undo` would fail its safety
+  # check.
   if [[ -f "$history_file" && -s "$history_file" ]]; then
     local new_current_op
-    new_current_op="$(_repo__get_operation_id "$repo")" || true
+    new_current_op="$(_history__resolve_operation "$repo")" || true
     if [[ -n "$new_current_op" ]]; then
       local prev_line
       prev_line="$(tail -n 1 "$history_file")"
@@ -200,7 +202,7 @@ main() {
 
   trap - ERR
 
-  _ui__log "Undone: jj repository restored to operation ${before_op:0:12}..."
+  _ui__log "Undone: repository restored to operation ${before_op:0:12}..."
 }
 
 main "$@"

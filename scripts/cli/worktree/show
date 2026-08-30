@@ -80,10 +80,10 @@ main() {
 
   # $repo is whichever workspace _workspace__resolve_repo landed on, which is NOT necessarily
   # the canonical repo: invoked from inside a dedicated worktree without TT_REPO
-  # set, _repo__find_repository_root walks up to the worktree's own .jj and returns the
-  # worktree. Resolve to the canonical repo before comparing.
+  # set, repository discovery walks up to the worktree's own metadata directory
+  # and returns the worktree. Resolve to the canonical repo before comparing.
   local canonical_repo
-  if ! canonical_repo="$(_repo__resolve_repository_path "$repo")"; then
+  if ! canonical_repo="$(_worktree__resolve_repository_path "$repo")"; then
     _ui__log "Error: Could not resolve the repository root for '$repo'"
     exit 1
   fi

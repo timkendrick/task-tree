@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Usage:
 #   delete <worktree-path> [--force] [--repo PATH]
 #
-# Forgets the jj workspace and removes all files from the worktree path.
+# Deregisters the worktree from the repository and removes all its files from disk.
 # The task bookmark is NOT deleted.
 #
 # Options:
@@ -25,7 +25,7 @@ usage() {
   cat <<EOF
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} <worktree-path> [--force] [--repo PATH]
 
-Delete a task's worktree. Forgets the jj workspace and removes all files.
+Delete a task's worktree. Deregisters it from the repository and removes all files.
 The task bookmark is NOT deleted.
 
 Arguments:
@@ -73,7 +73,7 @@ main() {
 
   repo="$(_workspace__resolve_repo "$repo")"
 
-  # Canonicalize the path for comparison with jj workspace list
+  # Canonicalize the path for comparison with the recorded worktree paths
   local canonical_worktree_path
   canonical_worktree_path="$(_path__resolve_symlinks "$worktree_path" 2>/dev/null)" || canonical_worktree_path="$worktree_path"
 
@@ -83,7 +83,7 @@ main() {
 
   # Refuse to delete the canonical (main) repo workspace — this is always an error
   local canonical_repo
-  canonical_repo="$(_repo__resolve_repository_path "$repo")"
+  canonical_repo="$(_worktree__resolve_repository_path "$repo")"
   if [[ "$canonical_worktree_path" == "$canonical_repo" ]]; then
     _ui__log "Error: Not a task worktree"
     exit 1
@@ -93,10 +93,10 @@ main() {
   local workspace_dir
   workspace_dir="$(_workspace__get_dir "$repo")" || true
 
-  # Resolve jj workspace name — validates the path is a known jj workspace
+  # Resolve the workspace name — validates the path is a known worktree
   local ws_name
   ws_name="$(_worktree__resolve_name "$repo" "$canonical_worktree_path")" || {
-    _ui__log "Error: Could not resolve jj workspace name for '$worktree_path'"
+    _ui__log "Error: Could not resolve a workspace name for '$worktree_path'"
     exit 1
   }
 
@@ -108,7 +108,7 @@ main() {
   if [[ "$force" != true ]]; then
     # Refuse to delete the current working copy worktree
     local current_wc_root
-    current_wc_root="$(jj workspace root 2>/dev/null)" || current_wc_root=""
+    current_wc_root="$(_worktree__find_current)" || current_wc_root=""
     if [[ -n "$current_wc_root" ]]; then
       local canonical_current_root
       canonical_current_root="$(_path__resolve_symlinks "$current_wc_root" 2>/dev/null)" || canonical_current_root="$current_wc_root"
@@ -129,7 +129,7 @@ main() {
         task_suffix="${task_id#$project_prefix}"
       fi
       task_file="$(_path__task_file "$task_suffix")"
-      task_content="$(_repo__read_file_at_revision "$repo" "$task_id" "$task_file" 2>/dev/null)" || task_content=""
+      task_content="$(_task__read_file "$repo" "$task_id" "$task_file" 2>/dev/null)" || task_content=""
       task_status="$(_frontmatter__parse_field "$task_content" "status")"
       if [[ "$task_status" != "DONE" ]]; then
         _ui__log "Error: Task '$task_id' status is '${task_status:-unknown}' (not DONE)."
@@ -146,7 +146,7 @@ main() {
     fi
 
     # Worktree must be clean (no uncommitted changes)
-    if ! _repo__check_working_copy_clean "$canonical_worktree_path"; then
+    if ! _worktree__check_clean "$canonical_worktree_path"; then
       _ui__log "Error: Worktree '$worktree_path' has uncommitted changes."
       _ui__log "  Commit or discard changes first, or use --force."
       exit 1
@@ -159,7 +159,7 @@ main() {
   # when delete runs from inside the worktree being removed, $repo resolves to
   # that worktree and HEAD would be left dangling.
   local repo_root
-  repo_root="$(_repo__resolve_repository_root "$repo")"
+  repo_root="$(_worktree__resolve_repository_root "$repo")"
 
   local head_needs_reset=false
   if [[ -n "$workspace_dir" && -L "${workspace_dir}/HEAD" ]]; then
@@ -189,7 +189,7 @@ main() {
   if [[ -n "$task_id" ]]; then
     _ui__log "  Task: $task_id"
   fi
-  _ui__log "  Workspace '$ws_name' forgotten from jj"
+  _ui__log "  Workspace '$ws_name' deregistered from the repository"
 }
 
 main "$@"

@@ -8,7 +8,9 @@
 #   _worktree__resolve_name     — workspace name for a worktree path
 #   _worktree__resolve_path     — recorded filesystem path for a workspace name
 #   _worktree__resolve_current  — root of the worktree the command runs in
+#   _worktree__find_current     — root of the worktree containing the CWD, or none
 #   _worktree__resolve_repository_root — canonical primary workspace root
+#   _worktree__resolve_repository_path — canonical primary workspace root, symlink-resolved
 #   _worktree__check_clean      — whether a worktree has no uncommitted changes
 #   _worktree__create           — add a workspace at a path, started on a revision
 #   _worktree__start_working_copy — move a worktree onto a new commit on a revision
@@ -24,9 +26,13 @@
 #   _worktree__move_subtree     — rewrite a subtree the current working copy may sit in
 #   _worktree__refresh_current  — update the current worktree after a bare rewrite of @
 #   _worktree__list_holding_descendants — other worktrees positioned inside a rewrite range
+#   _worktree__resolve_branch   — the branch a worktree is sitting on
+#   _worktree__check_behind     — whether a worktree is behind its branch head
 #   _worktree__list_unsynced    — worktrees left behind by a write to their branch
+#   _worktree__list_all_unsynced — every worktree behind its own branch head
 #   _worktree__report_unsynced  — stderr warning naming out-of-sync worktrees
 #   _worktree__sync             — bring a worktree forward onto its branch head
+#   _worktree__list_sync_changes — files a sync updates on disk, with their status
 #
 # Functions named with a double underscore (__worktree__*) are internal helpers
 # private to this module and not part of the public surface.
@@ -131,6 +137,26 @@ _worktree__resolve_current() {
   _repo__resolve_worktree_root "$repo"
 }
 
+# Usage: _worktree__find_current
+#
+# Prints the root of the worktree that contains the current working directory,
+# resolved from the CWD alone and taking no repository argument. Every worktree
+# is a workspace in its own right — it owns a VCS metadata directory of its own
+# — so walking up from the CWD to the nearest workspace lands on the worktree
+# the user is standing in.
+#
+# Unlike _worktree__resolve_current, there is deliberately no fallback: the
+# function returns 1 (printing nothing) when the CWD lies outside every
+# worktree, which is exactly the condition a command must report when it is
+# asked to act on "the current worktree" and there is none. It is also usable
+# before the repository has been resolved, which matters for commands whose
+# repository argument would otherwise mask the CWD.
+#
+# Documented pass-through to _repo__find_repository_root.
+_worktree__find_current() {
+  _repo__find_repository_root
+}
+
 # Usage: _worktree__resolve_repository_root REPO
 # Prints the canonical repository root — the primary workspace — for REPO,
 # which may itself be a secondary worktree. Documented pass-through to
@@ -141,6 +167,19 @@ _worktree__resolve_current() {
 _worktree__resolve_repository_root() {
   local repo="$1"
   _repo__resolve_repository_root "$repo"
+}
+
+# Usage: _worktree__resolve_repository_path REPO
+# Prints the canonical repository root for REPO with every symlink in the path
+# resolved — the comparison-ready form of _worktree__resolve_repository_root.
+# Use it wherever the result is tested against another canonicalized path (a
+# worktree path from the workspace listing, say), so that a symlinked root does
+# not defeat the comparison; use the plain variant when the path is only being
+# reported or passed on. Returns non-zero when the canonical root cannot be
+# resolved. Documented pass-through to _repo__resolve_repository_path.
+_worktree__resolve_repository_path() {
+  local repo="$1"
+  _repo__resolve_repository_path "$repo"
 }
 
 # Usage: _worktree__check_clean WORKTREE
@@ -536,6 +575,77 @@ __worktree__resolve_branch() {
   printf '%s' "$best_name"
 }
 
+# Usage: _worktree__resolve_branch REPO WORKTREE
+#
+# Prints the name of the branch WORKTREE is sitting on, resolved by the same
+# fork-point ranking the out-of-sync listings use, so a worktree a branch write
+# has left behind still resolves to its own branch rather than to whichever
+# ancestor bookmark remains reachable. Returns 1 (nothing printed) when the
+# worktree's position or branch cannot be resolved.
+_worktree__resolve_branch() {
+  local repo="$1" worktree="$2"
+  local wc_commit
+  wc_commit="$(_repo__resolve_commit "$worktree" '@')" || return 1
+  [[ -n "$wc_commit" ]] || return 1
+  __worktree__resolve_branch "$repo" "$wc_commit"
+}
+
+# Usage: _worktree__check_behind REPO WORKTREE
+#
+# Returns 0 when WORKTREE is behind the head of the branch it sits on — that
+# is, when the branch tip is not an ancestor of its working-copy commit, so
+# there is something for a sync to move it onto. Returns non-zero when it is
+# already current, and when its position or branch cannot be resolved (nothing
+# is known to move it onto).
+_worktree__check_behind() {
+  local repo="$1" worktree="$2"
+  local wc_commit branch
+  wc_commit="$(_repo__resolve_commit "$worktree" '@')" || return 1
+  [[ -n "$wc_commit" ]] || return 1
+  branch="$(__worktree__resolve_branch "$repo" "$wc_commit")" || return 1
+  [[ -n "$branch" ]] || return 1
+  ! _repo__check_is_ancestor "$repo" "$branch" "$wc_commit"
+}
+
+# Usage: __worktree__list_behind REPO BRANCH SKIP_CURRENT
+#
+# Shared engine behind _worktree__list_unsynced and _worktree__list_all_unsynced,
+# which differ only in how much of the repository they look at. Prints one
+# tab-separated "<worktree-path>\t<task-id>" record per worktree whose
+# working-copy commit no longer has, as an ancestor, the tip of the branch the
+# worktree sits on.
+#
+# BRANCH restricts the result to worktrees sitting on that branch; passing an
+# empty string considers every branch, each worktree judged against its own.
+# SKIP_CURRENT is "true" to leave out the worktree the command is running in.
+#
+# Worktrees with no resolvable path, no directory on disk, no readable
+# working-copy commit, or no branch at all are skipped: none of them is
+# something a caller could report on or act on. Reading a worktree's position
+# never snapshots it, so the walk leaves every worktree exactly as it was.
+# Always returns 0.
+__worktree__list_behind() {
+  local repo="$1" branch="$2" skip_current="$3"
+  local current_worktree=''
+  if [[ "$skip_current" == true ]]; then
+    current_worktree="$(_repo__resolve_worktree_root "$repo")" || current_worktree="$repo"
+  fi
+  local entries
+  entries="$(_worktree__list_entries "$repo")" || return 0
+  local ws_name ws_path wc_commit wt_branch
+  while IFS=$'\t' read -r ws_name ws_path; do
+    [[ -z "$ws_path" || ! -d "$ws_path" ]] && continue
+    [[ -n "$current_worktree" && "$ws_path" == "$current_worktree" ]] && continue
+    wc_commit="$(_repo__resolve_commit "$ws_path" '@')" || continue
+    [[ -n "$wc_commit" ]] || continue
+    wt_branch="$(__worktree__resolve_branch "$repo" "$wc_commit")" || continue
+    [[ -n "$branch" && "$wt_branch" != "$branch" ]] && continue
+    _repo__check_is_ancestor "$repo" "$wt_branch" "$wc_commit" && continue
+    printf '%s\t%s\n' "$ws_path" "$wt_branch"
+  done <<< "$entries"
+  return 0
+}
+
 # Usage: _worktree__list_unsynced REPO BRANCH
 #
 # Prints one tab-separated "<worktree-path>\t<task-id>" record for every
@@ -547,24 +657,33 @@ __worktree__resolve_branch() {
 # only reported, since rewriting a working copy nobody asked to touch would
 # be surprising. The task-id column is the branch the worktree sits on
 # (branch names are task IDs in the tt model). Always returns 0.
+#
+# For a repository-wide answer covering every branch and the current worktree
+# too, use _worktree__list_all_unsynced.
 _worktree__list_unsynced() {
   local repo="$1" branch="$2"
-  local current_worktree
-  current_worktree="$(_repo__resolve_worktree_root "$repo")" || current_worktree="$repo"
-  local entries
-  entries="$(_worktree__list_entries "$repo")" || return 0
-  local ws_name ws_path wc_commit wt_branch
-  while IFS=$'\t' read -r ws_name ws_path; do
-    [[ -z "$ws_path" || ! -d "$ws_path" ]] && continue
-    [[ "$ws_path" == "$current_worktree" ]] && continue
-    wc_commit="$(_repo__resolve_commit "$ws_path" '@')" || continue
-    [[ -n "$wc_commit" ]] || continue
-    wt_branch="$(__worktree__resolve_branch "$repo" "$wc_commit")" || continue
-    [[ "$wt_branch" == "$branch" ]] || continue
-    _repo__check_is_ancestor "$repo" "$branch" "$wc_commit" && continue
-    printf '%s\t%s\n' "$ws_path" "$wt_branch"
-  done <<< "$entries"
-  return 0
+  __worktree__list_behind "$repo" "$branch" true
+}
+
+# Usage: _worktree__list_all_unsynced REPO
+#
+# Prints one tab-separated "<worktree-path>\t<task-id>" record for every
+# worktree in REPO that has fallen behind the head of its OWN branch — its
+# working-copy commit no longer has that branch's tip as an ancestor.
+#
+# Drops both of _worktree__list_unsynced's restrictions, because it answers a
+# different question. That function answers "which worktrees did this write to
+# BRANCH leave behind?", so it looks at one branch and skips the current
+# worktree (whose caller reattaches it directly). This answers "what in this
+# repository is behind?": every worktree is considered, the current one
+# included, and each is judged against the branch it is itself checked out on.
+# It is what a repository-wide sync iterates over. See __worktree__list_behind
+# for which worktrees are skipped as unactionable. The task-id column is the
+# branch the worktree sits on (branch names are task IDs in the tt model).
+# Always returns 0.
+_worktree__list_all_unsynced() {
+  local repo="$1"
+  __worktree__list_behind "$repo" '' false
 }
 
 # Usage: _worktree__report_unsynced REPO BRANCH
@@ -627,4 +746,64 @@ _worktree__sync() {
   new_tip="$(_repo__resolve_commit "$repo" "$branch")" || return 1
   _repo__reattach_worktree "$worktree" "$wc_change" "$new_tip" || return 1
   printf 'synced\t%s\t%s\t%s\n' "$branch" "$old_parent" "$new_tip"
+}
+
+# Usage: _worktree__list_sync_changes REPO OLD_REV NEW_REV
+#
+# Prints one tab-separated "<status>\t<path>" record per file that a sync
+# updates on disk when it moves a worktree from OLD_REV onto NEW_REV, sorted by
+# path. <status> is one of "added", "modified" or "removed", named from the
+# worktree's point of view: a file tracked at NEW_REV but not at OLD_REV was
+# added, one tracked at OLD_REV but no longer at NEW_REV was removed, and one
+# tracked at both ends was modified.
+#
+# The path set is the union of the paths each commit brought in between the two
+# revisions (_repo__list_commits_in_range feeding _repo__list_changed_files), and
+# the status of each is decided by testing that path against the file listing
+# at either end (_repo__list_files_at_revision). Both are line-oriented listings
+# of repository-relative paths, matched whole-line, so a path containing spaces
+# or shell metacharacters is handled exactly like any other — which a rendered
+# diff, where the two sides of a header run together, could not promise.
+#
+# The result is a summary of what the move touched rather than a minimal diff:
+# a path a commit in the range changed and a later one changed back is still
+# listed (as "modified"). Returns non-zero (nothing printed) when the range or
+# either file listing cannot be read, so a caller that only wants to decorate
+# its output can fall back to printing no summary. Prints nothing and returns 0
+# when the range is empty.
+_worktree__list_sync_changes() {
+  local repo="$1" old_rev="$2" new_rev="$3"
+
+  local commits
+  commits="$(_repo__list_commits_in_range "$repo" "$old_rev" "$new_rev")" || return 1
+  [[ -n "$commits" ]] || return 0
+
+  local commit paths all_paths=''
+  while IFS= read -r commit; do
+    [[ -z "$commit" ]] && continue
+    paths="$(_repo__list_changed_files "$repo" "$commit")" || continue
+    [[ -z "$paths" ]] && continue
+    all_paths="${all_paths}${paths}"$'\n'
+  done <<< "$commits"
+  [[ -n "$all_paths" ]] || return 0
+
+  local old_files new_files
+  old_files="$(_repo__list_files_at_revision "$repo" "$old_rev")" || return 1
+  new_files="$(_repo__list_files_at_revision "$repo" "$new_rev")" || return 1
+
+  local path status
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    if printf '%s\n' "$new_files" | grep -qFx -e "$path"; then
+      if printf '%s\n' "$old_files" | grep -qFx -e "$path"; then
+        status='modified'
+      else
+        status='added'
+      fi
+    else
+      status='removed'
+    fi
+    printf '%s\t%s\n' "$status" "$path"
+  done <<< "$(printf '%s' "$all_paths" | sort -u)"
+  return 0
 }

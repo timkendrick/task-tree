@@ -9,7 +9,7 @@ test_worktree_switch__non_workspace_path_rejected() {
   output="" exit_code=0
   output=$(run_tt worktree switch "/tmp/nonexistent-path" 2>&1) || exit_code=$?
   assert_failure "non-workspace path rejected" "$exit_code"
-  assert_contains "error mentions workspace" "$output" "not a jj workspace"
+  assert_contains "error mentions worktree" "$output" "is not a worktree in this repository"
 }
 
 
