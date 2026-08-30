@@ -538,4 +538,96 @@ test__frontmatter__remove_subtask__nonexistent_entry_is_noop() {
   assert_eq "file unchanged" "$(cat "$file")" "$before"
 }
 
+# ---------------------------------------------------------------------------
+# _frontmatter__rename_subtask
+# ---------------------------------------------------------------------------
+
+test__frontmatter__rename_subtask__preserves_checkbox_title_and_order() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z" \
+    "subtask: [ ] task/first-aaa11111" \
+    "subtask: [x] task/second-bbb22222 Second title" \
+    "subtask: [-] task/third-ccc33333"
+
+  _frontmatter__rename_subtask "$file" "task/second-bbb22222" "task/renamed-bbb22222"
+  local content
+  content="$(cat "$file")"
+  assert_contains "entry repointed, checkbox and title kept" "$content" \
+    "subtask: [x] task/renamed-bbb22222 Second title"
+  assert_not_contains "old ID gone" "$content" "task/second-bbb22222"
+  assert_eq "list order preserved" \
+    "$(_frontmatter__parse_repeated_field "$content" subtask)" \
+    "$(printf '[ ] task/first-aaa11111\n[x] task/renamed-bbb22222 Second title\n[-] task/third-ccc33333')"
+
+  _frontmatter__rename_subtask "$file" "task/third-ccc33333" "task/last-ccc33333"
+  content="$(cat "$file")"
+  assert_contains "skipped-state entry repointed" "$content" \
+    "subtask: [-] task/last-ccc33333"
+  assert_contains "other frontmatter intact" "$content" 'title: "Test"'
+}
+
+test__frontmatter__rename_subtask__ignores_body_fence() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  # The body's fenced block repeats the exact frontmatter entry; only the
+  # frontmatter occurrence may be rewritten.
+  printf '%s\n' \
+    '---' \
+    'title: "Test"' \
+    'subtask: [ ] task/real-abc12345' \
+    '---' \
+    'The frontmatter looked like:' \
+    '' \
+    '```markdown' \
+    '---' \
+    'subtask: [ ] task/real-abc12345' \
+    '---' \
+    '```' \
+    > "$file"
+
+  _frontmatter__rename_subtask "$file" "task/real-abc12345" "task/renamed-abc12345"
+
+  local content
+  content="$(cat "$file")"
+  assert_eq "frontmatter entry repointed" \
+    "$(_frontmatter__parse_repeated_field "$content" subtask)" \
+    "[ ] task/renamed-abc12345"
+  assert_eq "body occurrence survives" \
+    "$(printf '%s\n' "$content" | grep -c 'subtask: \[ \] task/real-abc12345' || true)" \
+    "1"
+}
+
+test__frontmatter__rename_subtask__nonexistent_entry_is_noop() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z" \
+    "subtask: [ ] task/present-aaa11111"
+
+  local before
+  before="$(cat "$file")"
+  local exit_code=0
+  _frontmatter__rename_subtask "$file" "task/absent-zzz99999" "task/other-zzz99999" \
+    || exit_code=$?
+  assert_success "renaming a nonexistent entry returns 0" "$exit_code"
+  assert_eq "file unchanged" "$(cat "$file")" "$before"
+}
+
 run_tests "tt lib/frontmatter (unit)"

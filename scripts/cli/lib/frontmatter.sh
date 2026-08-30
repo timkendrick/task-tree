@@ -15,6 +15,7 @@
 #   _frontmatter__append_context       — append a 'context:' entry
 #   _frontmatter__append_subtask       — append a 'subtask:' entry
 #   _frontmatter__remove_subtask       — remove a 'subtask:' entry by task ID
+#   _frontmatter__rename_subtask       — repoint a 'subtask:' entry at a new task ID
 #   _frontmatter__update_timestamp     — rewrite the 'updated:' field
 #
 # Global-variable conventions (bash 3.2 functions cannot return structured
@@ -265,6 +266,40 @@ _frontmatter__remove_subtask() {
       sub(/^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]*/, "", rest)
       split(rest, parts, /[[:space:]]/)
       if (parts[1] == id) next
+    }
+    { print }
+  ' "$file" > "$tmpfile"
+  mv "$tmpfile" "$file"
+}
+
+# _frontmatter__rename_subtask FILE OLD_ID NEW_ID
+#
+# Rewrites the 'subtask: [.] OLD_ID' entry in FILE's frontmatter to name
+# NEW_ID instead, in place. The checkbox state and anything following the ID
+# on the line (e.g. a trailing title) are preserved, and the entry keeps its
+# position in the list. The entry is matched on the task ID alone, and only
+# lines inside the frontmatter block are considered: a body line that looks
+# like a subtask entry is left untouched. Renaming an entry that does not
+# exist leaves the file unchanged and returns 0.
+# Uses temp file + mv for atomicity.
+_frontmatter__rename_subtask() {
+  local file="$1" old_id="$2" new_id="$3"
+  local tmpfile
+  tmpfile="$(mktemp)"
+  awk -v old_id="$old_id" -v new_id="$new_id" '
+    BEGIN { sep = 0 }
+    /^---$/ { sep++; print; next }
+    sep == 1 && /^subtask:/ {
+      rest = $0
+      # The checkbox prefix is fixed-width once normalized, so capture it by
+      # removing the remainder rather than by pattern-matching the ID itself.
+      sub(/^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]*/, "", rest)
+      prefix = substr($0, 1, length($0) - length(rest))
+      split(rest, parts, /[[:space:]]/)
+      if (parts[1] == old_id) {
+        print prefix new_id substr(rest, length(old_id) + 1)
+        next
+      }
     }
     { print }
   ' "$file" > "$tmpfile"
