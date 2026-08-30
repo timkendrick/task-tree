@@ -99,7 +99,7 @@ main() {
       _ui__log "Error: '$task_id' is not a recognized task or project ID"
       exit 1
     fi
-    if ! jj -R "$repo" log -r "$task_id" --no-graph -T '' 2>/dev/null; then
+    if ! _task__check_branch_exists "$repo" "$task_id"; then
       _ui__log "Error: Task '$task_id' not found in repository"
       exit 1
     fi
@@ -116,13 +116,20 @@ main() {
     _ui__log "Error: '$new_parent_id' is not a recognized task or project ID"
     exit 1
   fi
-  if ! jj -R "$repo" log -r "$new_parent_id" --no-graph -T '' 2>/dev/null; then
+  if ! _task__check_branch_exists "$repo" "$new_parent_id"; then
     _ui__log "Error: Parent '$new_parent_id' not found in repository"
     exit 1
   fi
 
-  # Check working copy is clean
-  if ! _repo__check_working_copy_clean "$repo"; then
+  local current_worktree
+  current_worktree="$(_worktree__resolve_current "$repo")"
+
+  # Precondition: the working copy must be clean. Unlike the other branch
+  # writes, a move rebases the task's own line of work, and the invoking
+  # worktree may be sitting on it: the rebase carries the working copy across
+  # to the new parent, so any uncommitted edits would be replayed onto a
+  # different base than the one they were written against.
+  if ! _worktree__check_clean "$current_worktree"; then
     _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
     exit 1
   fi
@@ -188,48 +195,26 @@ main() {
 
   # Read task title for commit messages
   local task_content task_title
-  task_content="$(_repo__read_file_at_revision "$repo" "$task_id" "$task_file")" || {
+  task_content="$(_task__read_file "$repo" "$task_id" "$task_file")" || {
     _ui__log "Error: Could not read task file '$task_file' from '$task_id'."
     exit 1
   }
   task_title="$(_frontmatter__parse_quoted_field "$task_content" "title")"
 
-  # Capture the old parent's commit ID now, before Step 1 advances its bookmark.
-  # We use commit_id (not change_id) so the reference remains stable even after the
-  # bookmark moves; jj keeps all commits in history and can read from any commit_id.
-  local old_parent_commit_id
-  old_parent_commit_id="$(jj -R "$repo" log -r "$old_parent" --no-graph -T 'commit_id' 2>/dev/null)"
+  local task_dir
+  task_dir="$(_path__task_dir "$task_slug")"
 
-  # Determine how to restore @ after the move.
-  #
-  # Three cases:
-  #
-  # 1. @ is on the task being moved — no restore needed; leave it wherever
-  #    the rebase lands it.
-  #
-  # 2. @ is on the old parent branch — Step 1 runs `jj new <old_parent>`,
-  #    which causes jj to ABANDON the prior empty @ commit (no description,
-  #    now orphaned).  Saving its change_id is useless: by Step 4 that ID no
-  #    longer exists.  Also, even if @ had a description and survived, its
-  #    change_id would point to a commit whose parent is the pre-Step-1 old
-  #    parent tip — one commit behind the updated bookmark.  The correct
-  #    restore is `jj new "$old_parent"` AFTER Step 1 has advanced the
-  #    bookmark, which naturally lands @ on the updated tip.
-  #
-  # 3. @ is on any other branch — save its change_id; change IDs survive
-  #    rebases (jj rewrites the change ID onto the rebased commit), so
-  #    `jj new <change_id>` will always resolve correctly after Step 3.
-  local original_rev=''
-  local current_branch=''
-  local restore_to_old_parent=false
-  current_branch="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
-  if [[ "$current_branch" == "$task_id" ]]; then
-    : # case 1 — no restore
-  elif [[ "$current_branch" == "$old_parent" ]]; then
-    restore_to_old_parent=true  # case 2
-  else
-    original_rev="$(_repo__get_working_copy_revision "$repo")"  # case 3
-  fi
+  # Pin the old parent's tip before anything moves: it is both the source of
+  # the task stub copied onto the new parent below and the base the task's
+  # unmerged range is measured against.
+  local old_parent_tip
+  old_parent_tip="$(_task__resolve_revision "$repo" "$old_parent")" || {
+    _ui__log "Error: Could not resolve branch '$old_parent'."
+    exit 1
+  }
+
+  # Precondition: the working-copy commit must not carry a bookmark
+  _worktree__ensure_working_copy "$repo" || exit 1
 
   # Begin transaction (records before-op for undo)
   _history__begin_transaction "$repo"
@@ -237,87 +222,85 @@ main() {
   # ----------------------------------------------------------------
   # Step 1: Update old parent — remove subtask entry and task stub dir
   # ----------------------------------------------------------------
+  # Writer invoked by _task__commit_on_branch with the staging root: drops the
+  # moved task's subtask entry from the staged old-parent task file. The
+  # task's stub directory is removed via the --delete-prefix flag, mirroring
+  # how tt task create places that stub on the parent branch in the first
+  # place.
+  move_old_parent_writer() {
+    local root="$1"
+    _frontmatter__remove_subtask "$root/$old_parent_task_file" "$task_id"
+  }
+
+  # --reattach-on-branch: a move names three branches that are routinely in an
+  # ancestor relationship with one another, so plain descent from the written
+  # branch's tip is not enough to identify the invoking worktree's own branch.
+  # A worktree sitting on the task being moved must stay with the task and be
+  # carried by the rebase in Step 3, not be pulled onto whichever parent is
+  # written first.
   _ui__log "Updating old parent: $old_parent"
-  jj -R "$repo" new "$old_parent"
-
-  local tmpfile
-  tmpfile="$(mktemp)"
-  # \[.\] matches any single-character checkbox glyph ([ ], [-], [x], etc.)
-  sed "\|^subtask:[[:space:]]*\[.\][[:space:]]*$task_id$|d" "$repo/$old_parent_task_file" > "$tmpfile"
-  mv "$tmpfile" "$repo/$old_parent_task_file"
-
-  # Remove the task's stub directory from the old parent, mirroring how
-  # tt task create places the stub on the parent branch in the first place.
-  local task_dir
-  task_dir="$(_path__task_dir "$task_slug")"
-  rm -rf "${repo:?}/$task_dir"
-
-  jj -R "$repo" describe -m "$(_commit__format_message "task" "remove" "$task_id" "$task_title")"
-  jj -R "$repo" bookmark set "$old_parent" -r '@'
-  jj -R "$repo" new "@"
+  _task__commit_on_branch "$repo" "$old_parent" \
+    "$(_commit__format_message "task" "remove" "$task_id" "$task_title")" \
+    --reattach-on-branch \
+    --modify "$old_parent_task_file" \
+    --delete-prefix "$task_dir" \
+    -- move_old_parent_writer >/dev/null
 
   # ----------------------------------------------------------------
   # Step 2: Update new parent — add subtask entry and task stub dir
   # ----------------------------------------------------------------
+  # Writer invoked by _task__commit_on_branch with the staging root: adds the
+  # moved task's subtask entry to the staged new-parent task file and stages
+  # the task's stub file alongside it.
+  #
+  # The stub is read straight out of the old parent's pinned tip, so the new
+  # parent's copy is byte-identical to the one Step 1 removed. That identity
+  # is what keeps the rebase in Step 3 conflict-free: the three-way merge sees
+  # "theirs == base" for the stub and cleanly takes the task branch's own
+  # updated task file.
+  move_new_parent_writer() {
+    local root="$1"
+    _frontmatter__append_subtask "$root/$new_parent_task_file" "$task_id"
+    mkdir -p "$root/$(dirname "$task_file")"
+    if _task__read_file "$repo" "$old_parent_tip" "$task_file" > "$root/$task_file"; then
+      _ui__log "Copied task stub from old parent to new parent: $task_file"
+    else
+      rm -f "$root/$task_file"
+      _ui__log "Warning: Could not copy task stub '$task_file' from old parent; skipping."
+    fi
+  }
+
   _ui__log "Updating new parent: $new_parent_id"
-  jj -R "$repo" new "$new_parent_id"
-
-  _frontmatter__append_subtask "$repo/$new_parent_task_file" "$task_id"
-
-  # Copy the task's stub file from the old parent commit onto the new parent, using
-  # the commit_id captured before Step 1 moved the bookmark.  This makes the new
-  # parent's copy byte-identical to the old parent's, so jj's 3-way merge sees
-  # "theirs == base" for the stub and cleanly takes "ours" (the task branch's
-  # updated TASK.md) without producing a conflict during the rebase in Step 3.
-  local task_dir_new
-  task_dir_new="$(_path__task_dir "$task_slug")"
-  mkdir -p "$repo/$task_dir_new"
-  if _repo__read_file_at_revision "$repo" "$old_parent_commit_id" "$task_file" \
-       > "$repo/$task_file"; then
-    _ui__log "Copied task stub from old parent to new parent: $task_file"
-  else
-    _ui__log "Warning: Could not copy task stub '$task_file' from old parent; skipping."
-  fi
-
-  jj -R "$repo" describe -m "$(_commit__format_message "task" "move" "$task_id" "$task_title")"
-  jj -R "$repo" bookmark set "$new_parent_id" -r '@'
-  jj -R "$repo" new "@"
+  _task__commit_on_branch "$repo" "$new_parent_id" \
+    "$(_commit__format_message "task" "move" "$task_id" "$task_title")" \
+    --reattach-on-branch \
+    --modify "$new_parent_task_file" \
+    -- move_new_parent_writer >/dev/null
 
   # ----------------------------------------------------------------
-  # Step 3: Rebase task's unmerged range onto new parent
+  # Step 3: Reparent the task's unmerged range onto the new parent
   # ----------------------------------------------------------------
-  # Compute the roots of the unmerged range: commits in task's ancestry
-  # not yet in old_parent's ancestry.
+  # The range is measured against the old parent's pinned tip rather than its
+  # bookmark: Step 1 advanced that bookmark, and the commit it added is not in
+  # the task's ancestry, so the pinned tip is the fork base that actually
+  # describes what the task owns.
   local rebase_roots
-  rebase_roots="$(jj -R "$repo" log \
-      -r "roots(::${task_id} ~ ::${old_parent})" \
-      --no-graph -T 'commit_id' 2>/dev/null)" || true
+  rebase_roots="$(_task__list_unmerged_roots "$repo" "$old_parent_tip" "$task_id")" || true
 
   if [[ -n "$rebase_roots" ]]; then
     _ui__log "Rebasing $task_id onto $new_parent_id..."
-    jj -R "$repo" rebase \
-        -s "roots(::${task_id} ~ ::${old_parent})" \
-        -d "$new_parent_id"
+    _task__move_unmerged_range "$repo" "$old_parent_tip" "$task_id" "$new_parent_id"
   else
     _ui__log "No unmerged commits to rebase for $task_id."
   fi
 
-  # ----------------------------------------------------------------
-  # Step 4: Restore @ to the correct position
-  # ----------------------------------------------------------------
-  if [[ "$restore_to_old_parent" == true ]]; then
-    # Case 2: @ was on the old parent branch.  Step 1 advanced the bookmark;
-    # land @ on the new tip as a fresh empty commit.
-    jj -R "$repo" new "$old_parent"
-  elif [[ -n "$original_rev" ]]; then
-    # Case 3: @ was on some other branch.  The change_id survives rebases.
-    jj -R "$repo" new "$original_rev"
-  fi
-  # Case 1 (@ was on the task itself): no restore — leave @ wherever the
-  # rebase in Step 3 left it.
-
   # Commit transaction (records after-op for undo)
   _history__commit_transaction "$repo"
+
+  # Both parent branches were written to, so both may have left worktrees
+  # other than the invoking one behind.
+  _worktree__report_unsynced "$repo" "$old_parent"
+  _worktree__report_unsynced "$repo" "$new_parent_id"
 
   _ui__log "Moved: $task_id"
   _ui__log "  Old parent: $old_parent"
