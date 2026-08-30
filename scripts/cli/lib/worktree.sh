@@ -17,6 +17,8 @@
 #   _worktree__reattach_current — follow a branch advance with the current worktree
 #   _worktree__reattach_current_on_branch — follow a merge advance, own-branch worktree only
 #   _worktree__move_subtree     — rewrite a subtree the current working copy may sit in
+#   _worktree__refresh_current  — update the current worktree after a bare rewrite of @
+#   _worktree__list_holding_descendants — other worktrees positioned inside a rewrite range
 #   _worktree__list_unsynced    — worktrees left behind by a write to their branch
 #   _worktree__report_unsynced  — stderr warning naming out-of-sync worktrees
 #   _worktree__sync             — bring a worktree forward onto its branch head
@@ -318,6 +320,65 @@ _worktree__move_subtree() {
   local worktree
   worktree="$(_repo__resolve_worktree_root "$repo")" || return 1
   _repo__reattach_worktree "$worktree" "$source_rev" "$dest_rev"
+}
+
+# Usage: _worktree__refresh_current REPO
+#
+# Brings the current worktree's on-disk files back into agreement with its
+# working-copy commit after that commit was rewritten by a bare graph
+# mutation. A bare rewrite deliberately leaves every working copy alone, which
+# means the files on disk still match the pre-rewrite tree and the backend
+# refuses any further command that loads the working copy until the mismatch
+# is resolved. Call this once a bare rewrite that may have touched the current
+# working-copy commit is complete, and before anything else needs the working
+# copy again.
+#
+# Does not snapshot: pending on-disk edits are NOT captured, so callers that
+# could be sitting on uncommitted work must record it (or refuse) beforehand.
+# Harmless when the working copy was never disturbed. Returns non-zero when
+# the current worktree cannot be resolved or the refresh fails.
+_worktree__refresh_current() {
+  local repo="$1"
+  local worktree
+  worktree="$(_repo__resolve_worktree_root "$repo")" || return 1
+  _repo__refresh_worktree "$worktree"
+}
+
+# Usage: _worktree__list_holding_descendants REPO BASE_REV
+#
+# Prints one tab-separated "<worktree-path>\t<task-id>" record for every
+# worktree OTHER than the current one whose working-copy commit is BASE_REV or
+# a descendant of it — that is, every worktree parked inside the region a
+# rewrite anchored at BASE_REV would rewrite.
+#
+# A command that rewrites history in place can carry its OWN worktree across
+# the rewrite, but it cannot do the same for anybody else's: another worktree's
+# uncommitted, un-snapshotted work only exists on that worktree's disk, and
+# rewriting the commit underneath it would strand or destroy that work. Such a
+# command therefore asks for this list first and refuses when it is non-empty,
+# naming each blocking worktree so the user can resolve it deliberately.
+#
+# Reading each worktree's position never snapshots it, so a refusal leaves
+# other worktrees exactly as they were. The task-id column is the branch the
+# worktree sits on (branch names are task IDs in the tt model) and is empty
+# when the worktree sits on no branch. Always returns 0.
+_worktree__list_holding_descendants() {
+  local repo="$1" base_rev="$2"
+  local current_worktree
+  current_worktree="$(_repo__resolve_worktree_root "$repo")" || current_worktree="$repo"
+  local entries
+  entries="$(_worktree__list_entries "$repo")" || return 0
+  local ws_name ws_path wc_commit wt_branch
+  while IFS=$'\t' read -r ws_name ws_path; do
+    [[ -z "$ws_path" || ! -d "$ws_path" ]] && continue
+    [[ "$ws_path" == "$current_worktree" ]] && continue
+    wc_commit="$(_repo__resolve_commit "$ws_path" '@')" || continue
+    [[ -n "$wc_commit" ]] || continue
+    _repo__check_is_ancestor "$repo" "$base_rev" "$wc_commit" || continue
+    wt_branch="$(__worktree__resolve_branch "$repo" "$wc_commit")" || wt_branch=''
+    printf '%s\t%s\n' "$ws_path" "$wt_branch"
+  done <<< "$entries"
+  return 0
 }
 
 # Usage: __worktree__resolve_branch REPO WC_COMMIT
