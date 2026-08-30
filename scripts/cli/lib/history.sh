@@ -1,16 +1,16 @@
 # Transaction history management for tt bootstrap CLI scripts.
 # Source this file; do not execute directly.
 #
-# A "transaction" records the jj operation ID before and after a mutating tt
+# A "transaction" records the VCS operation ID before and after a mutating tt
 # command, enabling `tt history undo` to restore the repository state.
 #
 # Log file: <canonical-repo>/.tt/history
 # Format:   one line per transaction: <before-op-id>:<after-op-id>
 #           An in-progress transaction has an empty after-op-id: <before-op-id>:
 #
-# History location: the history file always lives in the **canonical** jj repo
+# History location: the history file always lives in the **canonical** repo
 # root (the repo whose .jj/repo entry is a directory, not a pointer file).
-# Secondary jj workspaces have a .jj/repo *file* containing a relative path
+# Secondary workspaces have a .jj/repo *file* containing a relative path
 # back to the canonical repo's .jj/repo directory. _repo__resolve_repository_root
 # follows that pointer so all workspaces share a single history file.
 #
@@ -32,7 +32,7 @@
 # Usage: _history__init REPO
 # Creates an empty .tt/history file in REPO if it does not already exist.
 # The history file is gitignored (via .tt/.gitignore) and used by the
-# transaction system to record before/after jj operation IDs for `tt history undo`.
+# transaction system to record before/after VCS operation IDs for `tt history undo`.
 _history__init() {
   local repo="$1"
   local history_file="$repo/$(_path__metadata 'history')"
@@ -43,7 +43,7 @@ _history__init() {
 
 # Usage: _history__resolve_file REPO
 # Returns the path to the .tt/history file for REPO.
-# Follows .jj/repo pointer files so secondary jj workspaces resolve to the
+# Follows .jj/repo pointer files so secondary workspaces resolve to the
 # canonical repo's history file rather than a per-worktree copy.
 # Canonical repos return <repo>/.tt/history directly.
 _history__resolve_file() {
@@ -82,7 +82,7 @@ _history__restore_operation() {
 
 # Usage: _history__begin_transaction REPO
 # Begins a tt transaction. No-op if TT_TRANSACTION_ID is already set (nested call).
-# Captures the current jj operation ID, checks for in-progress transactions,
+# Captures the current VCS operation ID, checks for in-progress transactions,
 # appends "<before-op-id>:" to .tt/history, exports TT_TRANSACTION_ID, sets an
 # ERR trap to auto-rollback on failure, and finally snapshots the current
 # worktree's working copy so pending on-disk changes are captured as part of
@@ -109,10 +109,10 @@ _history__begin_transaction() {
   local history_file
   history_file="$(_history__resolve_file "$repo")" || exit 1
 
-  # Capture current jj operation ID
+  # Capture current VCS operation ID
   local before_op
   before_op="$(_repo__get_operation_id "$repo")" || {
-    _ui__log "Error: Could not read jj operation ID to begin transaction"
+    _ui__log "Error: Could not read the VCS operation ID to begin transaction"
     exit 1
   }
 
@@ -176,10 +176,10 @@ _history__commit_transaction() {
     canonical_repo="$repo"
   }
 
-  # Capture current jj operation ID
+  # Capture current VCS operation ID
   local after_op
   after_op="$(_repo__get_operation_id "$canonical_repo")" || {
-    _ui__log "Warning: Could not read jj operation ID for transaction commit; history may be incomplete"
+    _ui__log "Warning: Could not read the VCS operation ID for transaction commit; history may be incomplete"
     after_op="unknown"
   }
 
@@ -196,7 +196,7 @@ _history__commit_transaction() {
 }
 
 # Usage: _history__rollback_transaction REPO
-# Rolls back the transaction by restoring jj to the before-op state and
+# Rolls back the transaction by restoring the VCS to the before-op state and
 # removing the in-progress line from .tt/history.
 # No-op when called from a nested sub-command (not the transaction owner).
 #
@@ -230,7 +230,7 @@ _history__rollback_transaction() {
   local canonical_repo
   canonical_repo="$(cd "$(dirname "$history_file")" && _repo__find_repository_root)" || canonical_repo="$repo"
 
-  _ui__log "Rolling back transaction (restoring jj operation: ${before_op:0:12}...)"
+  _ui__log "Rolling back transaction (restoring VCS operation: ${before_op:0:12}...)"
 
   # Copy the working-copy commit's changed files aside before the restore so
   # they can be re-applied afterwards (see the header comment). Best-effort:
@@ -264,7 +264,7 @@ _history__rollback_transaction() {
   # when the caller's working directory has been deleted (e.g. after
   # worktree delete).
   _repo__restore_operation "$canonical_repo" "$before_op" || \
-    _ui__log "Warning: Could not restore jj operation state; manual recovery may be needed"
+    _ui__log "Warning: Could not restore the VCS operation state; manual recovery may be needed"
 
   # Re-apply the preserved working-copy changes when the restore landed on
   # the same change (i.e. the transaction never moved the working copy).
@@ -280,7 +280,7 @@ _history__rollback_transaction() {
               mkdir -p "$wc_worktree/$(dirname "$rel")" 2>/dev/null || continue
               rm -f "$wc_worktree/$rel" 2>/dev/null
               cp -pRP "$preserve_dir/files/$rel" "$wc_worktree/$rel" 2>/dev/null || \
-                _ui__log "Warning: Could not preserve uncommitted change to $rel; recover it with: jj op log"
+                _ui__log "Warning: Could not preserve uncommitted change to $rel; it may still be recoverable from the VCS operation log"
             done
       fi
       if [[ -f "$preserve_dir/deleted" ]]; then

@@ -158,7 +158,7 @@ emit_tree() {
   fi
 
   local content
-  content="$(_repo__read_file_at_revision "$repo" "$source_branch" "$path")" || true
+  content="$(_task__read_file "$repo" "$source_branch" "$path")" || true
 
   local checkbox title
   local meta
@@ -207,7 +207,7 @@ build_subtask_index() {
     [[ -z "$branch" ]] && continue
     suffix="$(branch_suffix "$branch" "$task_prefix" "$project_prefix")" || continue
     path="$(_path__task_file "$suffix")"
-    content="$(_repo__read_file_at_revision "$repo" "$branch" "$path")" || continue
+    content="$(_task__read_file "$repo" "$branch" "$path")" || continue
     [[ -z "$content" ]] && continue
     while IFS='|' read -r cb id _title; do
       [[ -z "$id" ]] && continue
@@ -260,7 +260,7 @@ collect_task_ids() {
     local path
     path="$(_path__task_file "$suffix")"
     local content
-    content="$(_repo__read_file_at_revision "$repo" "$source_branch" "$path")" || true
+    content="$(_task__read_file "$repo" "$source_branch" "$path")" || true
     local subs
     subs="$(get_subtask_entries "$content" | cut -d'|' -f2)"
     for sub in $subs; do
@@ -318,9 +318,8 @@ main() {
   task_prefix="$(_workspace__get_task_prefix "$repo")"
   project_prefix="$(_workspace__get_project_prefix "$repo")"
 
-  local jj_opts=(-R "$repo")
   local all_bookmarks
-  all_bookmarks="$(jj "${jj_opts[@]}" log -r 'bookmarks()' -T 'local_bookmarks.map(|b| b.name()).join(",") ++ "\n"' --no-graph 2>/dev/null)" || true
+  all_bookmarks="$(_task__list_branch_names "$repo")" || true
   local project_branches=''
   local task_branches=''
   while IFS= read -r b; do

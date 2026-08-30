@@ -103,7 +103,7 @@ main() {
 
   # --- Read task file ---
   local content
-  if ! content="$(_repo__read_file_at_revision "$repo" "$branch" "$task_file")"; then
+  if ! content="$(_task__read_file "$repo" "$branch" "$task_file")"; then
     _ui__log "Error: Could not read task file '$task_file' from '$branch'."
     exit 1
   fi
@@ -148,7 +148,7 @@ main() {
       [[ -z "$ctx_id" ]] && continue
       local ctx_file ctx_content ctx_title ctx_body
       ctx_file="$(_path__task_context "$task_suffix" "$ctx_id")"
-      ctx_content="$(_repo__read_file_at_revision "$repo" "$branch" "$ctx_file" || true)"
+      ctx_content="$(_task__read_file "$repo" "$branch" "$ctx_file" || true)"
       ctx_title="$(_frontmatter__parse_quoted_field "$ctx_content" "title" 2>/dev/null || true)"
       ctx_body="$(_frontmatter__parse_body "$ctx_content")"
       printf -- '---\n'

@@ -3,6 +3,8 @@
 #
 # Public surface:
 #   _workspace__resolve_repo        — resolve the repository root (--repo, TT_REPO, walk-up)
+#   _workspace__check_repository    — whether a path is a repository root
+#   _workspace__resolve_canonical_repo — canonical repository root behind a worktree
 #   _workspace__get_task_prefix     — task branch prefix from .tt/config.toml
 #   _workspace__get_project_prefix  — project branch prefix from .tt/config.toml
 #   _workspace__set_dir             — point the .tt/workspace symlink at a directory
@@ -18,7 +20,8 @@
 #   3. _repo__find_repository_root — walk up from CWD to find the enclosing repo
 #
 # Prints the resolved repo path to stdout.
-# Exits 1 with an error message if the path cannot be resolved or is not a jj repo.
+# Exits 1 with an error message if the path cannot be resolved or is not a
+# version-control repository.
 _workspace__resolve_repo() {
   local repo="${1:-}"
 
@@ -30,20 +33,42 @@ _workspace__resolve_repo() {
     else
       # Priority 3: walk up from CWD
       if ! repo="$(_repo__find_repository_root)"; then
-        _ui__log "Error: No enclosing jj repository. Use --repo or set TT_REPO."
+        _ui__log "Error: No enclosing repository. Use --repo or set TT_REPO."
         exit 1
       fi
     fi
   fi
 
   if ! _repo__check_is_repository "$repo"; then
-    _ui__log "Error: Not a jj repository: $repo"
+    _ui__log "Error: Not a repository: $repo"
     exit 1
   fi
 
   # Canonicalize to match jj's own path representation (e.g. /var → /private/var on macOS)
   repo="$(_path__resolve_symlinks "$repo")"
   printf '%s' "$repo"
+}
+
+# Usage: _workspace__check_repository PATH
+# Returns 0 when PATH is the root of a repository the backend understands.
+# Documented pass-through to _repo__check_is_repository so commands that must
+# validate a path before the repository is resolved can test it without
+# reaching into the VCS layer.
+_workspace__check_repository() {
+  local path="$1"
+  _repo__check_is_repository "$path"
+}
+
+# Usage: _workspace__resolve_canonical_repo REPO
+# Prints the canonical repository root behind REPO. REPO may itself be the
+# canonical root (printed back unchanged) or a task worktree, in which case
+# this resolves to the primary repository the worktree is attached to — where
+# the shared repository state, and everything tt keeps beside it, actually
+# lives. Returns non-zero with an error logged when the link cannot be
+# followed. Documented pass-through to _repo__resolve_repository_root.
+_workspace__resolve_canonical_repo() {
+  local repo="$1"
+  _repo__resolve_repository_root "$repo"
 }
 
 # Read task_prefix from .tt/config.toml; default "task/" if missing or unreadable.

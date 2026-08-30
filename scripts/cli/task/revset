@@ -31,7 +31,8 @@ supported (not project branches).
 Options:
   --task ID    Task branch name (default: current task).
   --all        Print the task's complete range (all check-ins plus unmerged work).
-  --git        Output a git commit range (<from>..<to>) instead of a jj revset.
+  --git        Output an immutable commit-ID range (<from>..<to>) instead of
+               the version-control system's own range expression.
                With --all, prints one immutable range per line.
   --repo PATH  Repository root (overrides TT_REPO; default: find .jj).
   -h, --help   Show this help.
@@ -39,40 +40,37 @@ Options:
 EOF
 }
 
-# Usage: print_all_ranges REPO TASK_ID PARENT_BOOKMARK UPPER_BOUND GIT_MODE
-# Prints the task's complete range: a parenthesized jj union of connected
-# ranges, or (with GIT_MODE) one immutable git range per line.
+# Usage: print_all_ranges REPO TASK_ID PARENT_BOOKMARK UPPER_BOUND FORMAT
+# Prints the task's complete range in FORMAT ('native' or 'git'), one line per
+# connected component with 'git' and a single combined line with 'native'.
+#
+# Only 'native' combines: the union is written as parenthesized ranges joined
+# by '|', which the native form understands as one selection covering all the
+# components at once. There is no equivalent for an immutable commit-ID range,
+# so 'git' emits the components separately and leaves combining to the caller.
 print_all_ranges() {
-  local repo="$1" task_id="$2" parent_bookmark="$3" upper_bound="$4" git_mode="$5"
+  local repo="$1" task_id="$2" parent_bookmark="$3" upper_bound="$4" format="$5"
 
   local records
   records="$(_task__get_full_range_records "$repo" "$task_id" "$parent_bookmark" "$upper_bound")" || exit 1
 
-  local base tip _kind _order _ts
-  if "$git_mode"; then
-    while IFS=$'\t' read -r base tip _kind _order _ts; do
-      [[ -z "$base" ]] && continue
-      local from_rev to_rev
-      from_rev="$(jj -R "$repo" log -r "$base" --no-graph -T 'commit_id' 2>/dev/null)" || {
-        _ui__log "Error: Could not resolve revision '$base'."
-        exit 1
-      }
-      to_rev="$(jj -R "$repo" log -r "$tip" --no-graph -T 'commit_id' 2>/dev/null)" || {
-        _ui__log "Error: Could not resolve revision '$tip'."
-        exit 1
-      }
-      printf '%s..%s\n' "$from_rev" "$to_rev"
-    done <<< "$records"
-  else
-    local joined=''
-    while IFS=$'\t' read -r base tip _kind _order _ts; do
-      [[ -z "$base" ]] && continue
-      if [[ -z "$joined" ]]; then
-        joined="(${base}..${tip})"
-      else
-        joined="${joined} | (${base}..${tip})"
-      fi
-    done <<< "$records"
+  local base tip _kind _order _ts range joined=''
+  while IFS=$'\t' read -r base tip _kind _order _ts; do
+    [[ -z "$base" ]] && continue
+    range="$(_task__format_range "$repo" "$format" "$base" "$tip")" || {
+      _ui__log "Error: Could not resolve range '$base' to '$tip'."
+      exit 1
+    }
+    if [[ "$format" == 'git' ]]; then
+      printf '%s\n' "$range"
+    elif [[ -z "$joined" ]]; then
+      joined="(${range})"
+    else
+      joined="${joined} | (${range})"
+    fi
+  done <<< "$records"
+
+  if [[ "$format" != 'git' ]]; then
     printf '%s\n' "$joined"
   fi
 }
@@ -105,6 +103,14 @@ main() {
   local task_id parent_bookmark upper_bound
   IFS=$'\t' read -r task_id parent_bookmark upper_bound <<< "$context"
 
+  # --git selects an immutable commit-ID range; without it the range is printed
+  # in the version-control system's own notation, so each form's syntax stays
+  # owned by the VCS layer rather than being spelled out here.
+  local format='native'
+  if "$git_mode"; then
+    format='git'
+  fi
+
   if "$all_mode"; then
     local task_prefix
     task_prefix="$(_workspace__get_task_prefix "$repo")"
@@ -112,24 +118,22 @@ main() {
       _ui__log "Error: --all does not support project branches."
       exit 1
     fi
-    print_all_ranges "$repo" "$task_id" "$parent_bookmark" "$upper_bound" "$git_mode"
+    print_all_ranges "$repo" "$task_id" "$parent_bookmark" "$upper_bound" "$format"
     exit 0
   fi
 
-  # Build the range
-  local from_rev to_rev
-  if "$git_mode"; then
+  # Build the range. The native form keeps the symbolic endpoints, which stay
+  # correct as the branches move; the immutable form starts from the fork point
+  # because a bookmark name is not a commit ID the range can be pinned to.
+  local from_rev="$parent_bookmark"
+  if [[ "$format" == 'git' ]]; then
     from_rev="$(_task__resolve_fork_point "$repo" "$parent_bookmark" "$upper_bound")" || exit 1
-    to_rev="$(jj -R "$repo" log -r "$upper_bound" --no-graph -T 'commit_id' 2>/dev/null)" || {
-      _ui__log "Error: Could not resolve revision '$upper_bound'."
-      exit 1
-    }
-  else
-    from_rev="$parent_bookmark"
-    to_rev="$upper_bound"
   fi
 
-  printf '%s..%s\n' "$from_rev" "$to_rev"
+  _task__format_range "$repo" "$format" "$from_rev" "$upper_bound" || {
+    _ui__log "Error: Could not resolve revision '$upper_bound'."
+    exit 1
+  }
 }
 
 main "$@"

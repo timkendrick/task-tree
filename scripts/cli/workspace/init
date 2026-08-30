@@ -144,8 +144,8 @@ main() {
   repo_abs="$(cd "$repo_arg" && pwd)"
 
   # Verify it is a repository the backend understands
-  if [[ ! -d "$repo_abs/.jj" ]]; then
-    _ui__log "Error: Not a jj-backed repository (no .jj directory): $repo_abs"
+  if ! _workspace__check_repository "$repo_abs"; then
+    _ui__log "Error: Not a repository: $repo_abs"
     exit 1
   fi
 
