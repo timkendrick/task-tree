@@ -23,6 +23,8 @@
 # Public surface:
 #   _history__init                 — create an empty .tt/history file if absent
 #   _history__resolve_file         — path to the canonical .tt/history file
+#   _history__resolve_operation    — identifier of the repository's current operation
+#   _history__restore_operation    — return the repository to a recorded operation
 #   _history__begin_transaction    — record an in-progress entry and set the rollback trap
 #   _history__commit_transaction   — finalize the in-progress entry with the after-op-id
 #   _history__rollback_transaction — restore the before-op state and drop the entry
@@ -49,6 +51,33 @@ _history__resolve_file() {
   local canonical_repo
   canonical_repo="$(_repo__resolve_repository_root "$repo")" || return 1
   printf '%s/%s' "$canonical_repo" "$(_path__metadata 'history')"
+}
+
+# Usage: _history__resolve_operation REPO
+# Prints the identifier of the operation REPO is currently at — the value a
+# transaction entry records at each of its two ends. Documented pass-through to
+# _repo__get_operation_id, so a command that reads or repairs the history file can
+# name the current operation without reaching into the VCS layer. Returns
+# non-zero (nothing printed) when the operation log cannot be read.
+_history__resolve_operation() {
+  local repo="$1"
+  _repo__get_operation_id "$repo"
+}
+
+# Usage: _history__restore_operation REPO OPERATION
+# Returns REPO to the state recorded at OPERATION, discarding everything done
+# since — the working copy included. Documented pass-through to
+# _repo__restore_operation, so a command that undoes a recorded transaction can
+# revert to its before-op without reaching into the VCS layer.
+#
+# The restore is itself recorded as a NEW operation: afterwards the repository's
+# state matches OPERATION but its current operation ID does not equal OPERATION.
+# A caller keeping the history file in step must therefore re-read the current
+# operation (_history__resolve_operation) rather than assume it. Returns non-zero
+# when the restore fails.
+_history__restore_operation() {
+  local repo="$1" operation="$2"
+  _repo__restore_operation "$repo" "$operation"
 }
 
 # Usage: _history__begin_transaction REPO
