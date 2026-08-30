@@ -15,6 +15,8 @@
 #   _task__delete_branch             — delete a task/project bookmark
 #   _task__rename_branch             — rename a task/project bookmark
 #   _task__read_file                 — read a repo file as recorded on a branch
+#   _task__read_commit_message       — description recorded on a commit
+#   _task__list_commits_since_branch — commits on a branch's line since its tip
 #   _task__read_symlink              — read a symlink target as recorded on a branch
 #   _task__list_files                — files recorded at a revision, under a prefix
 #   _task__assert_bookmark_current   — exit unless the bookmark tracks all commits up to @-
@@ -123,6 +125,33 @@ _task__delete_branch() {
 _task__read_file() {
   local repo="$1" rev="$2" path="$3"
   _repo__read_file_at_revision "$repo" "$rev" "$path"
+}
+
+# Usage: _task__read_commit_message REPO REV
+# Prints the full description recorded on REV (empty when it has none).
+# Documented pass-through to _repo__get_commit_description so commands can reuse
+# the wording of an existing commit — e.g. to prefill a checkpoint message
+# editor — without reaching into the VCS layer.
+_task__read_commit_message() {
+  local repo="$1" rev="$2"
+  _repo__get_commit_description "$repo" "$rev"
+}
+
+# Usage: _task__list_commits_since_branch REPO BRANCH TIP
+# Prints the commit IDs, one per line and oldest first, of the commits that
+# descend from BRANCH's tip and are ancestors of TIP, with BRANCH's own tip
+# excluded — the work recorded on the branch's line of descent since its
+# bookmark last moved. Nothing is printed (status 0) when there is no such
+# commit or the range does not resolve.
+#
+# The descent condition is what distinguishes this from the plain BRANCH..TIP
+# range: a commit that reached TIP through a merge from another line is an
+# ancestor of TIP without descending from the branch tip, and it is not work
+# that belongs to this branch's own line. Documented pass-through to
+# _repo__list_commits_in_dag_range.
+_task__list_commits_since_branch() {
+  local repo="$1" branch="$2" tip="$3"
+  _repo__list_commits_in_dag_range "$repo" "$branch" "$tip"
 }
 
 # Usage: _task__rename_branch REPO OLD_BRANCH NEW_BRANCH

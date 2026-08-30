@@ -39,6 +39,7 @@ _repo__check_is_ancestor()         { _jj__check_is_ancestor "$@"; }
 _repo__find_fork_point_commit()    { _jj__find_fork_point_commit "$@"; }
 _repo__find_nearest_bookmark()     { _jj__find_nearest_bookmark "$@"; }
 _repo__list_commits_in_range()     { _jj__list_commits_in_range "$@"; }
+_repo__list_commits_in_dag_range() { _jj__list_commits_in_dag_range "$@"; }
 _repo__count_commits_in_range()    { _jj__count_commits_in_range "$@"; }
 _repo__list_range_root_commits()   { _jj__list_range_root_commits "$@"; }
 _repo__check_range_covered()       { _jj__check_range_covered "$@"; }
