@@ -140,6 +140,7 @@ subtask: [x] task/tt-task-checkin-missing-parent-worktree-f984e31c
 subtask: [x] task/tt-task-changelog-5c0ad75c
 subtask: [x] task/tt-revset-entire-task-range-893a9451
 subtask: [x] task/tt-worktree-show-by-name-6ffcd37e
+subtask: [ ] task/redirect-hooks-to-stderr-5296bc55
 ---
 Implement shell script implementations of all `tt` CLI commands
 
