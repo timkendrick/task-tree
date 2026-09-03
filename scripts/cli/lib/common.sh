@@ -442,7 +442,7 @@ run_hook() {
   local hook_path="$repo/$(tt_metadata_path "hooks/$hook_name")"
   [[ ! -x "$hook_path" ]] && return 0
   local exit_code=0
-  env TT_WORKSPACE_DIR="${workspace_dir:-}" TT_WORKTREE_DIR="$worktree_dir" "$@" "$hook_path" \
+  env TT_WORKSPACE_DIR="${workspace_dir:-}" TT_WORKTREE_DIR="$worktree_dir" "$@" "$hook_path" 1>&2 \
     || exit_code=$?
   if [[ $exit_code -ne 0 ]]; then
     if [[ "$blocking" == true ]]; then
