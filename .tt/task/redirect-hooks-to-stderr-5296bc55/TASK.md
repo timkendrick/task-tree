@@ -1,6 +1,6 @@
 ---
 title: "Redirect hook script output to stderr"
-status: TODO
+status: IN-PROGRESS
 created: 2026-09-01T09:47:34Z
 updated: 2026-09-01T09:47:35Z
 ---
