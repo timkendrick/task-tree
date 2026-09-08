@@ -142,6 +142,7 @@ subtask: [x] task/tt-revset-entire-task-range-893a9451
 subtask: [x] task/tt-worktree-show-by-name-6ffcd37e
 subtask: [x] task/redirect-hooks-to-stderr-5296bc55
 subtask: [ ] task/omit-repo-from-worktree-location-ec2fd112
+subtask: [ ] task/tt-worktree-show-current-fe2cec34
 ---
 Implement shell script implementations of all `tt` CLI commands
 
