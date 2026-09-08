@@ -144,6 +144,7 @@ subtask: [x] task/redirect-hooks-to-stderr-5296bc55
 subtask: [ ] task/omit-repo-from-worktree-location-ec2fd112
 subtask: [ ] task/tt-worktree-show-current-fe2cec34
 subtask: [ ] task/tt-worktree-current-c11e5908
+subtask: [ ] task/retain-editor-contents-ad700a0b
 ---
 Implement shell script implementations of all `tt` CLI commands
 
