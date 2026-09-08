@@ -146,6 +146,7 @@ subtask: [ ] task/tt-worktree-show-current-fe2cec34
 subtask: [ ] task/tt-worktree-current-c11e5908
 subtask: [ ] task/retain-editor-contents-ad700a0b
 subtask: [ ] task/prompt-editor-line-stripping-af3fc142
+subtask: [ ] task/tt-task-status-beb8a9e2
 ---
 Implement shell script implementations of all `tt` CLI commands
 
