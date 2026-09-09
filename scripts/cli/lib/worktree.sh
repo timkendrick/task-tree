@@ -49,8 +49,8 @@
 _worktree__parse_list_line() {
   local line="$1"
   local ws_name ws_path
-  ws_name="$(printf '%s' "$line" | sed 's/: .*//')"
-  ws_path="$(printf '%s' "$line" | sed 's/^[^:]*: //')"
+  ws_name="${line%%: *}"
+  ws_path="${line#*: }"
   if [[ "$ws_path" == '<Error:'* ]]; then
     ws_path=''
   fi
@@ -67,11 +67,12 @@ _worktree__list_entries() {
   ws_raw="$(_repo__list_worktrees "$repo")" || return 1
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    local parsed
+    local parsed ws_name ws_path
     parsed="$(_worktree__parse_list_line "$line")"
-    printf '%s\t%s\n' \
-      "$(printf '%s' "$parsed" | sed -n '1p')" \
-      "$(printf '%s' "$parsed" | sed -n '2p')"
+    ws_name="${parsed%%$'\n'*}"
+    ws_path="${parsed#*$'\n'}"
+    [[ "$ws_path" == "$parsed" ]] && ws_path=''
+    printf '%s\t%s\n' "$ws_name" "$ws_path"
   done <<< "$ws_raw"
 }
 
@@ -419,8 +420,7 @@ _worktree__ensure_working_copy() {
   worktree="$(_repo__resolve_worktree_root "$repo")" || return 1
   local bookmarks
   bookmarks="$(_repo__list_bookmarks_at "$worktree" '@')" || return 1
-  local name
-  name="$(printf '%s\n' "$bookmarks" | sed -n '1p')"
+  local name="${bookmarks%%$'\n'*}"
   [[ -z "$name" ]] && return 0
   _ui__log "Error: The working-copy commit is the tip of bookmark '$name'."
   _ui__log "  tt cannot write to a branch while the working copy carries a bookmark, because"
