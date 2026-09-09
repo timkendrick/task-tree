@@ -351,12 +351,20 @@ main() {
   # before the child is created (see DESIGN.md §6.1).
   local parent_is_done=false
   if [[ -n "$parent_task_file" ]]; then
-    local parent_status
-    parent_status="$(_task__read_file "$repo" "$parent_bookmark" "$parent_task_file" \
-      | awk '/^status:/ { print $2; exit }')"
-    if [[ "$parent_status" == "DONE" ]]; then
-      parent_is_done=true
+    local parent_content
+    if ! parent_content="$(_task__read_file "$repo" "$parent_bookmark" "$parent_task_file")"; then
+      _ui__log "Error: Parent task file not found: $repo/$parent_task_file"
+      exit 1
     fi
+    local parent_line
+    while IFS= read -r parent_line; do
+      if [[ "$parent_line" == 'status:'* ]]; then
+        parent_line="${parent_line#status:}"
+        parent_line="${parent_line#"${parent_line%%[![:space:]]*}"}"
+        [[ "${parent_line%% *}" == "DONE" ]] && parent_is_done=true
+        break
+      fi
+    done <<< "$parent_content"
   fi
 
   # Check whether the target bookmark already exists; refuse unless --force
@@ -408,28 +416,37 @@ main() {
     new_branch_flags=(--allow-backwards)
   fi
 
-  # Common edit-delegation args (title, labels)
-  local edit_args=(--repo "$repo" --title "$title")
-  for label in "${labels[@]+"${labels[@]}"}"; do edit_args+=(--label "$label"); done
+  # Metadata commit on the new branch: the commit `tt task edit` records for
+  # the title, labels and body, made here in the same process. The stub the
+  # branch starts from is TODO with the creation timestamp and nothing else.
+  commit_metadata() {
+    local updated
+    updated="$(_string__generate_timestamp)"
+    local REWRITE_LABELS=("${labels[@]+"${labels[@]}"}") REWRITE_SUBTASKS=() REWRITE_CONTEXTS=()
+    metadata_writer() {
+      local root="$1"
+      _frontmatter__write_task_file "$root/$task_file" \
+        "$title" "TODO" "$body" "$stub_ts" "$updated"
+    }
+    _task__commit_on_branch "$repo" "$task_id" \
+      "$(_commit__format_message "task" "edit" "$task_id" "$title")" \
+      --modify "$task_file" -- metadata_writer >/dev/null
+    _worktree__report_unsynced "$repo" "$task_id"
+  }
 
   if [[ "$is_project" == true ]]; then
     # Project task: the branch's first commit creates the stub task file on
-    # top of the fork revision; the metadata commit (via edit) follows on the
+    # top of the fork revision; the metadata commit follows on the
     # new branch and advances its bookmark.
     _task__commit_new_branch "$repo" "$task_id" "$parent_rev" "$create_message" \
       "${new_branch_flags[@]+"${new_branch_flags[@]}"}" -- create_stub_writer >/dev/null
     _ui__log "Created task file: $task_file"
-    # Pipe body to edit
-    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body" >&2
+    commit_metadata
   elif [[ -n "$parent_task_file" ]]; then
     # Child task: one commit on the parent branch creates the stub and
     # registers the subtask entry; the child branch then forks from that
     # commit with its own first commit (the same stub content), and the
-    # metadata commit (via edit) follows on the child branch.
-    if ! _task__read_file "$repo" "$parent_bookmark" "$parent_task_file" >/dev/null; then
-      _ui__log "Error: Parent task file not found: $repo/$parent_task_file"
-      exit 1
-    fi
+    # metadata commit follows on the child branch.
     create_parent_writer() {
       local root="$1"
       _task__write_stub "$root" "$task_suffix" "$stub_ts"
@@ -443,8 +460,7 @@ main() {
     _task__commit_new_branch "$repo" "$task_id" "$parent_tip" "$create_message" \
       "${new_branch_flags[@]+"${new_branch_flags[@]}"}" -- create_stub_writer >/dev/null
     _worktree__report_unsynced "$repo" "$parent_bookmark"
-    # Pipe body to edit
-    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body" >&2
+    commit_metadata
   else
     # Child task with no identifiable parent task file (e.g. branching from a
     # non-task bookmark). Create the stub commit and bookmark without
@@ -452,8 +468,7 @@ main() {
     _task__commit_new_branch "$repo" "$task_id" "$parent_rev" "$create_message" \
       "${new_branch_flags[@]+"${new_branch_flags[@]}"}" -- create_stub_writer >/dev/null
     _ui__log "Created task file: $task_file"
-    # Pipe body to edit
-    "$SCRIPT_DIR/edit" "${edit_args[@]}" "$task_id" <<< "$body" >&2
+    commit_metadata
   fi
 
   _ui__log "Created task $task_id (bookmark: $task_id)"
