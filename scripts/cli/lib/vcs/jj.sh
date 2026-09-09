@@ -796,9 +796,9 @@ _jj__refresh_worktree() {
 # and never touches any working copy — no snapshot is taken and no on-disk
 # files are updated. Every jj invocation in this section passes
 # --ignore-working-copy, per the module header.
-# _jj__commit_changeset additionally drives git plumbing
-# against the Git object store that backs the jj repository, using a private
-# temporary index, so no git working tree or index is involved either.
+# _jj__commit_changeset additionally drives `git fast-import` against the Git
+# object store that backs the jj repository, so no git working tree or index
+# is involved either.
 # ---------------------------------------------------------------------------
 
 # Usage: _jj__commit_changeset REPO PARENT_REV MESSAGE STAGE_DIR [DELETE_PATH...]
@@ -816,17 +816,22 @@ _jj__refresh_worktree() {
 # from the jj-configured user.name/user.email, never from the ambient git
 # identity.
 #
-# No working copy is involved at any point: the tree is assembled in a private
-# temporary index inside a scratch directory, the commit is made visible to jj
-# through a uniquely named temporary git ref plus `jj git import`, and both
-# the ref and the imported bookmark are removed before returning (jj anchors
-# imported commits with its own refs/jj/keep refs, so the commit stays
-# resolvable afterwards). Paths containing newlines are out of scope: staged
-# files are iterated line-by-line from `find` output.
+# No working copy is involved at any point: regular files are hashed into
+# blobs in one `git hash-object` call, the commit is then described to a
+# single `git fast-import` run as the parent's tree plus the deletions and the
+# staged entries (symlink targets travel inline), and fast-import writes the
+# tree and commit objects and points a uniquely named temporary ref at the
+# result. `jj git import` makes the commit known to jj; the ref and the
+# imported bookmark are then removed before returning (jj anchors imported
+# commits with its own refs/jj/keep refs, so the commit stays resolvable
+# afterwards), and the ref's deletion is reconciled with a final import.
+# fast-import unpacks a small result into loose objects, so the store does not
+# accumulate a packfile per commit. Paths containing newlines are out of
+# scope: staged files are iterated line-by-line from `find` output.
 #
 # Returns non-zero without logging when any step fails (except the backend
-# check, whose stderr message is its own contract); the scratch directory and
-# the temporary ref are cleaned up on all paths.
+# check, whose stderr message is its own contract); the temporary ref is
+# cleaned up on all paths.
 _jj__commit_changeset() {
   local repo="$1" parent_rev="$2" message="$3" stage_dir="$4"
   shift 4
@@ -837,101 +842,150 @@ _jj__commit_changeset() {
   # itself (NOT relative to .jj/repo), and may in turn be a relative path, so
   # canonicalize from inside the store directory.
   local store_dir="$canonical_repo/.jj/repo/store"
-  local git_target git_dir
-  git_target="$(cat "$store_dir/git_target" 2>/dev/null)" || return 1
+  local git_target='' git_dir
+  read -r git_target < "$store_dir/git_target" 2>/dev/null || :
   [[ -n "$git_target" ]] || return 1
   git_dir="$(cd "$store_dir" 2>/dev/null && cd "$git_target" 2>/dev/null && pwd -P)" || return 1
+  # A full commit ID needs no resolution: fast-import verifies it names a
+  # commit in the store, which is the same guarantee the backend query gives.
   local parent_commit
-  parent_commit="$(_jj__resolve_commit "$repo" "$parent_rev")" || return 1
+  if [[ "$parent_rev" =~ ^[0-9a-f]{40}$ ]]; then
+    parent_commit="$parent_rev"
+  else
+    parent_commit="$(_jj__resolve_commit "$repo" "$parent_rev")" || return 1
+  fi
   [[ -n "$parent_commit" ]] || return 1
   [[ -d "$stage_dir" ]] || return 1
   stage_dir="$(cd "$stage_dir" 2>/dev/null && pwd)" || return 1
+  local identity user_name user_email
+  identity="$(__jj__read_identity "$repo")" || return 1
+  user_name="${identity%%$'\t'*}"
+  user_email="${identity#*$'\t'}"
+  [[ -n "$user_name" && -n "$user_email" ]] || return 1
+
+  # Collect the staged entries: regular files are hashed in one batch, symlink
+  # targets are read here and embedded in the fast-import stream.
+  local -a file_paths=() file_modes=() link_paths=() link_targets=()
+  local entry rel link_target
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    rel="${entry#"$stage_dir"/}"
+    if [[ -L "$entry" ]]; then
+      link_target="$(readlink "$entry")" || return 1
+      link_paths+=("$rel")
+      link_targets+=("$link_target")
+    else
+      file_paths+=("$rel")
+      if [[ -x "$entry" ]]; then file_modes+=(100755); else file_modes+=(100644); fi
+    fi
+  done < <(find "$stage_dir" \( -type f -o -type l \))
+
   # The remainder runs in a subshell so that an EXIT trap can clean up the
-  # scratch directory and the temporary ref on every path without leaking a
-  # trap (or a cd) into the caller.
+  # temporary ref on every path without leaking a trap into the caller, and
+  # so that the byte-counting locale does not leak either.
   (
-    local scratch tmp_ref ref_created=''
-    scratch="$(mktemp -d)" || exit 1
+    local tmp_ref ref_created=''
     tmp_ref="refs/heads/tt-tmp-$$-$(printf '%04x%04x' "$RANDOM" "$RANDOM")"
     trap '
-      rm -rf "$scratch"
       if [[ -n "$ref_created" ]]; then
         __jj__git --git-dir="$git_dir" update-ref -d "$tmp_ref" || :
       fi
     ' EXIT
-    # Ambient git environment must not redirect the index or re-anchor path
-    # prefixing; cd into the scratch directory so git never treats the
-    # caller's CWD as a worktree subdirectory (index paths are then taken
-    # verbatim as repo-root-relative).
+    # Ambient git environment must not redirect the object store or index.
     unset GIT_WORK_TREE GIT_INDEX_FILE
-    cd "$scratch" || exit 1
 
-    # Do NOT pre-create the index file: git rejects an existing empty file as
-    # a malformed index, so read-tree must create it.
-    local index="$scratch/index"
-    GIT_INDEX_FILE="$index" __jj__git --git-dir="$git_dir" \
-      read-tree "${parent_commit}^{tree}" || exit 1
+    local -a file_blobs=()
+    if [[ ${#file_paths[@]} -gt 0 ]]; then
+      local blob
+      while IFS= read -r blob; do
+        [[ -n "$blob" ]] && file_blobs+=("$blob")
+      done < <(printf '%s\n' "${file_paths[@]/#/$stage_dir/}" \
+        | __jj__git --git-dir="$git_dir" hash-object -w --stdin-paths)
+      [[ ${#file_blobs[@]} -eq ${#file_paths[@]} ]] || exit 1
+    fi
 
-    local delete_path
-    for delete_path in "$@"; do
-      GIT_INDEX_FILE="$index" __jj__git --git-dir="$git_dir" \
-        update-index --force-remove -- "$delete_path" || exit 1
-    done
-
-    local entry rel mode blob link_target
-    while IFS= read -r entry; do
-      [[ -n "$entry" ]] || continue
-      rel="${entry#"$stage_dir"/}"
-      if [[ -L "$entry" ]]; then
-        mode=120000
-        link_target="$(readlink "$entry")" || exit 1
-        blob="$(printf '%s' "$link_target" \
-          | __jj__git --git-dir="$git_dir" hash-object -w --stdin)" || exit 1
-      else
-        if [[ -x "$entry" ]]; then mode=100755; else mode=100644; fi
-        blob="$(__jj__git --git-dir="$git_dir" hash-object -w -- "$entry")" || exit 1
-      fi
-      [[ -n "$blob" ]] || exit 1
-      GIT_INDEX_FILE="$index" __jj__git --git-dir="$git_dir" \
-        update-index --add --cacheinfo "$mode,$blob,$rel" || exit 1
-    done < <(find "$stage_dir" \( -type f -o -type l \))
-
-    local tree
-    tree="$(GIT_INDEX_FILE="$index" __jj__git --git-dir="$git_dir" write-tree)" || exit 1
-    [[ -n "$tree" ]] || exit 1
-
-    local user_name user_email
-    user_name="$(__jj__read "$repo" --ignore-working-copy config get user.name)" || exit 1
-    user_email="$(__jj__read "$repo" --ignore-working-copy config get user.email)" || exit 1
+    # fast-import counts data in bytes; the C locale makes ${#…} count bytes.
+    LC_ALL=C
+    ref_created=1
+    {
+      printf 'commit %s\n' "$tmp_ref"
+      printf 'author %s <%s> now\ncommitter %s <%s> now\n' \
+        "$user_name" "$user_email" "$user_name" "$user_email"
+      # A trailing newline terminates the message, as `git commit-tree -m` does.
+      printf 'data %d\n%s\n' "$(( ${#message} + 1 ))" "$message"
+      printf 'from %s\n' "$parent_commit"
+      local delete_path
+      for delete_path in "$@"; do
+        printf 'D %s\n' "$(__jj__quote_import_path "$delete_path")"
+      done
+      local i
+      for (( i = 0; i < ${#file_paths[@]}; i++ )); do
+        printf 'M %s %s %s\n' "${file_modes[$i]}" "${file_blobs[$i]}" \
+          "$(__jj__quote_import_path "${file_paths[$i]}")"
+      done
+      for (( i = 0; i < ${#link_paths[@]}; i++ )); do
+        printf 'M 120000 inline %s\ndata %d\n%s\n' \
+          "$(__jj__quote_import_path "${link_paths[$i]}")" \
+          "${#link_targets[$i]}" "${link_targets[$i]}"
+      done
+      printf '\n'
+    } | __jj__git --git-dir="$git_dir" fast-import --quiet --date-format=now || exit 1
 
     local commit
-    commit="$(GIT_AUTHOR_NAME="$user_name" GIT_AUTHOR_EMAIL="$user_email" \
-      GIT_COMMITTER_NAME="$user_name" GIT_COMMITTER_EMAIL="$user_email" \
-      __jj__git --git-dir="$git_dir" commit-tree "$tree" \
-        -p "$parent_commit" -m "$message")" || exit 1
+    commit="$(__jj__git --git-dir="$git_dir" rev-parse --verify "${tmp_ref}^{commit}")" || exit 1
     [[ -n "$commit" ]] || exit 1
 
-    # Import hop: a uniquely named temporary ref makes the commit reachable so
-    # `jj git import` picks it up; afterwards delete the git ref first (so a
+    # Import hop: the temporary ref makes the commit reachable so `jj git
+    # import` picks it up; afterwards delete the git ref first (so a
     # concurrent auto-import cannot re-create the bookmark) and then forget
-    # the bookmark the import created.
-    __jj__git --git-dir="$git_dir" update-ref "$tmp_ref" "$commit" || exit 1
-    ref_created=1
+    # the bookmark the import created, together with its remote-tracking
+    # record. Forgetting fails when the import did not create it, which is
+    # what reports a failed import.
     __jj__write_internal "$repo" --ignore-working-copy git import || exit 1
-    _jj__check_revision_exists "$repo" "$commit" || exit 1
     __jj__git --git-dir="$git_dir" update-ref -d "$tmp_ref" || exit 1
     ref_created=''
-    local bookmark_name="${tmp_ref#refs/heads/}"
-    if _jj__check_bookmark_exists "$repo" "$bookmark_name"; then
-      __jj__write_internal "$repo" --ignore-working-copy bookmark forget "$bookmark_name" || exit 1
-    fi
+    __jj__write_internal "$repo" --ignore-working-copy bookmark forget --include-remotes \
+      "${tmp_ref#refs/heads/}" || exit 1
     # Reconcile the out-of-band git ref deletion now: without this, jj's
     # last-seen git ref state still contains the temporary ref, and the next
     # auto-importing jj invocation would mint a surprise "import git refs"
-    # operation outside any tt transaction.
+    # operation outside any tt transaction. Forgetting the bookmark does not
+    # clear that record when the operation runs from a secondary workspace.
     __jj__write_internal "$repo" --ignore-working-copy git import || exit 1
     printf '%s\n' "$commit"
   )
+}
+
+# Usage: __jj__quote_import_path PATH
+# Prints PATH quoted for a `git fast-import` stream: always double-quoted,
+# with backslashes, double quotes and newlines escaped, so any path the
+# stream can carry is rendered unambiguously. Internal helper.
+__jj__quote_import_path() {
+  local path="$1"
+  path="${path//\\/\\\\}"
+  path="${path//\"/\\\"}"
+  path="${path//$'\n'/\\n}"
+  printf '"%s"' "$path"
+}
+
+# Usage: __jj__read_identity REPO
+# Prints the jj-configured user.name and user.email for REPO on one line,
+# tab-separated, reading both in a single backend query. Returns 1 (nothing
+# printed) when either is unset. Internal helper for the bare-mutation
+# operations.
+__jj__read_identity() {
+  local repo="$1"
+  local records name='' email='' key value
+  records="$(__jj__read "$repo" --ignore-working-copy config list user \
+    -T 'name ++ "\t" ++ value.as_string() ++ "\n"')" || return 1
+  while IFS=$'\t' read -r key value; do
+    case "$key" in
+      user.name)  name="$value" ;;
+      user.email) email="$value" ;;
+    esac
+  done <<< "$records"
+  [[ -n "$name" && -n "$email" ]] || return 1
+  printf '%s\t%s' "$name" "$email"
 }
 
 # Usage: __jj__escape_revset_string TEXT
