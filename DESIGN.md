@@ -234,6 +234,20 @@ All `tt` commands that accept a `--repo PATH` option resolve the repository root
 
 The command exits with an error if none of these resolves to a valid jj repository. `tt workspace init` is exempt — it always takes the repository path as a required positional argument.
 
+### 5.0.1 Diagnostic output
+
+By default `tt` reports only its own results, and the version-control commands it runs underneath are invisible. The `TT_LOG` environment variable narrates them:
+
+| Value | Effect |
+|-------|--------|
+| unset | No narration. |
+| `info` | Each mutation `tt` performs on the repository is echoed as the command line that was run, followed by that command's own output. |
+| `verbose` | As `info`, plus every read and every internal step of a mutation. Intended for diagnosing `tt` itself. |
+
+Any other value — including `INFO` or `VERBOSE` — leaves narration off.
+
+`TT_LOG` affects diagnostics only. All narration is written to stderr, and a command's stdout and exit status are identical at every level, so it is safe to enable for a command whose output is being piped or captured.
+
 ### 5.2 History
 
 - **`tt history undo [--force] [--repo PATH]`** — Undo the most recent mutating `tt` command by restoring the jj repository to the operation state before that command ran. Multiple invocations go further back in history. There is no `tt history redo`; instead, the outgoing jj operation ID is logged to stderr before undoing so the user can manually restore it with `jj op restore <operation-id>`.

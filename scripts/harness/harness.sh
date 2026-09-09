@@ -8,6 +8,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   exit 1
 fi
 
+# VCS tracing must never leak in from the ambient environment: TT_LOG=info or
+# TT_LOG=verbose echoes backend command lines to stderr and forwards output the
+# backend would otherwise discard, and suites that fold stderr into captured
+# output would then assert against trace lines. Suites that exercise tracing set
+# TT_LOG explicitly per invocation.
+unset TT_LOG
+
 # Resolve paths
 HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HARNESS_DIR/../.." && pwd)"

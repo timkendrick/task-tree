@@ -96,92 +96,91 @@
 # ---------------------------------------------------------------------------
 # Internal runners (__jj__*; not part of the backend contract)
 #
-# Every jj invocation in this module goes through one of these helpers so that
-# verbosity is handled uniformly:
-#   - By default, read helpers discard jj's stderr; mutating helpers discard
-#     both stdout and stderr.
-#   - With TT_VERBOSE=1 the command line is echoed to stderr first and jj's
-#     otherwise-discarded output is forwarded to stderr.
+# Every jj and git invocation in this module goes through one of these four
+# helpers, each of which is a single call to _ui__run_command (lib/ui.sh)
+# naming two things: the log level at which the invocation becomes worth
+# narrating, and whether its stdout is the caller's return value.
+#
+#   runner                 level    stdout
+#   __jj__read             verbose  captured
+#   __jj__write            info     discarded
+#   __jj__write_internal   verbose  discarded
+#   __jj__git              verbose  captured
+#
+# The level is an editorial judgement, not a mechanical property. TT_LOG=info
+# is a narration of what tt did to the user's repository, so it carries the
+# mutations a user would recognize as the point of the command. Mutations that
+# are private mechanism rather than user-visible intent — the temporary-ref hop
+# inside _jj__commit_changeset, the deliberate working-copy snapshot — use
+# __jj__write_internal and appear only at TT_LOG=verbose. Tracing them at info
+# would narrate tt's implementation instead of its effect, and jj's own
+# reporting of the temporary ref ("Abandoned 1 commits that are no longer
+# reachable") reads alarmingly out of context.
+#
+# Reads are verbose-level because a read changes nothing a user needs told.
+# The git plumbing is verbose-level for the same reason: it is the mechanism of
+# a single bare write whose user-visible effect is the bookmark move that
+# follows it.
+#
+# The helpers run the command in the caller's working directory. A few
+# operations must instead run from inside the repository, and each wraps its
+# own `( cd "$repo" && ... )` with a comment giving one of the following
+# reasons:
+#
+#   1. The command prints paths. `file list` and `diff --name-only` report
+#      paths relative to the working directory — from a subdirectory the same
+#      file comes back as `../kept.txt` rather than `kept.txt`. Running from
+#      the root is what makes tt's output repo-root-relative instead of
+#      dependent on wherever the user happened to invoke tt.
+#   2. The caller's own working directory may no longer exist. jj resolves its
+#      working directory before anything else and fails outright with "Could
+#      not determine current directory" when it is gone, whatever -R says.
+#      `worktree delete --force` run from inside the worktree it removes is
+#      the case that arises in practice: everything after the removal — the
+#      transaction's closing operation-id read included — runs from a deleted
+#      directory.
+#
+# Needing to act on a particular workspace is NOT one of them: -R selects the
+# workspace on its own, including for workspace-scoped commands such as
+# `workspace update-stale`.
+#
 # The helpers never log anything else and never exit; they return the
-# underlying jj exit status.
+# underlying command's exit status.
 # ---------------------------------------------------------------------------
 
-# Usage: __jj__log_command ARG...
-# Echoes "+ jj ARG..." to stderr with each argument shell-quoted.
-__jj__log_command() {
-  { printf '+ jj'; printf ' %q' "$@"; printf '\n'; } >&2
-}
-
-# Usage: __jj__run REPO ARG...
+# Usage: __jj__read REPO ARG...
 # Runs `jj -R REPO ARG...` with stdout passing through (the caller captures it).
-# TT_VERBOSE=1: echoes the command line to stderr first and forwards jj's stderr.
-# Otherwise jj's stderr is discarded. Never logs otherwise, never exits; returns
-# the underlying exit status.
-__jj__run() {
+__jj__read() {
   local repo="$1"; shift
-  if [[ "${TT_VERBOSE:-}" == "1" ]]; then
-    __jj__log_command -R "$repo" "$@"
+  _ui__run_command "$_UI__LOG_LEVEL_VERBOSE" "$_UI__OUTPUT_CAPTURE" \
     jj -R "$repo" "$@"
-  else
-    jj -R "$repo" "$@" 2>/dev/null
-  fi
 }
 
-# Usage: __jj__run_cd REPO ARG...
-# Like __jj__run, but cds into REPO in a subshell first, so jj can resolve its
-# CWD even when the caller's working directory has been deleted (e.g. after a
-# worktree is removed by `worktree delete`). The -R flag tells jj which repo to
-# operate on, so the cd only affects CWD resolution, not the target repo.
-__jj__run_cd() {
+# Usage: __jj__write REPO ARG...
+# Runs `jj -R REPO ARG...` for a user-visible mutation: stdout is not wanted,
+# and the invocation is narrated at TT_LOG=info.
+__jj__write() {
   local repo="$1"; shift
-  if [[ "${TT_VERBOSE:-}" == "1" ]]; then
-    __jj__log_command -R "$repo" "$@"
-    (cd "$repo" && jj -R "$repo" "$@")
-  else
-    (cd "$repo" && jj -R "$repo" "$@" 2>/dev/null)
-  fi
+  _ui__run_command "$_UI__LOG_LEVEL_INFO" "$_UI__OUTPUT_QUIET" \
+    jj -R "$repo" "$@"
 }
 
-# Usage: __jj__run_quiet REPO ARG...
-# Runs `jj -R REPO ARG...` for mutations: stdout AND stderr are suppressed by
-# default. TT_VERBOSE=1: echoes the command line and forwards both streams to
-# stderr. Never logs otherwise, never exits; returns the underlying exit status.
-__jj__run_quiet() {
+# Usage: __jj__write_internal REPO ARG...
+# Like __jj__write, but for a mutation that is private mechanism rather than
+# user-visible intent, so it is narrated only at TT_LOG=verbose.
+__jj__write_internal() {
   local repo="$1"; shift
-  if [[ "${TT_VERBOSE:-}" == "1" ]]; then
-    __jj__log_command -R "$repo" "$@"
-    jj -R "$repo" "$@" >&2
-  else
-    jj -R "$repo" "$@" >/dev/null 2>&1
-  fi
+  _ui__run_command "$_UI__LOG_LEVEL_VERBOSE" "$_UI__OUTPUT_QUIET" \
+    jj -R "$repo" "$@"
 }
 
-# Usage: __jj__run_quiet_cd REPO ARG...
-# Like __jj__run_quiet, with the subshell-cd behavior of __jj__run_cd.
-__jj__run_quiet_cd() {
-  local repo="$1"; shift
-  if [[ "${TT_VERBOSE:-}" == "1" ]]; then
-    __jj__log_command -R "$repo" "$@"
-    (cd "$repo" && jj -R "$repo" "$@" >&2)
-  else
-    (cd "$repo" && jj -R "$repo" "$@" >/dev/null 2>&1)
-  fi
-}
-
-# Usage: __jj__run_git ARG...
-# Runs `git ARG...` with stdout passing through (the caller captures it).
-# Parallel of __jj__run for the git plumbing used by the bare-mutation
-# operations: with TT_VERBOSE=1 the command line is echoed to stderr first
-# ("+ git ...") and git's stderr is forwarded; otherwise git's stderr is
-# discarded. Never logs anything else and never exits; returns the underlying
-# git exit status. Callers name the target repository with --git-dir.
-__jj__run_git() {
-  if [[ "${TT_VERBOSE:-}" == "1" ]]; then
-    { printf '+ git'; printf ' %q' "$@"; printf '\n'; } >&2
+# Usage: __jj__git ARG...
+# Runs `git ARG...` with stdout passing through (the caller captures it), for
+# the git plumbing used by the bare-mutation operations. Callers name the
+# target repository with --git-dir.
+__jj__git() {
+  _ui__run_command "$_UI__LOG_LEVEL_VERBOSE" "$_UI__OUTPUT_CAPTURE" \
     git "$@"
-  else
-    git "$@" 2>/dev/null
-  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -284,9 +283,7 @@ _jj__check_backend_supported() {
 
 # Usage: _jj__get_operation_id REPO
 # Prints the current jj operation ID to stdout.
-# Returns 1 if the operation ID cannot be read.
-# Uses the subshell-cd runner so the read works even when the caller's working
-# directory has been deleted. Passes --ignore-working-copy because this must
+# Returns 1 if the operation ID cannot be read. Passes --ignore-working-copy because this must
 # be a pure read: without it, jj snapshots the working copy before printing
 # the op ID, so the "current" operation would be a snapshot created by the
 # read itself. Transaction bookkeeping depends on the purity — the before-op
@@ -294,16 +291,19 @@ _jj__check_backend_supported() {
 # copy snapshot so that undoing the transaction reverts the snapshot too.
 _jj__get_operation_id() {
   local repo="$1"
-  __jj__run_cd "$repo" --ignore-working-copy op log --no-graph -T id -n 1
+  # Read from inside the repository ($PWD): so that the operation succeeds
+  # even when invoked from a deleted working directory.
+  ( cd "$repo" && __jj__read "$PWD" --ignore-working-copy op log --no-graph -T id -n 1 )
 }
 
 # Usage: _jj__restore_operation REPO OP_ID
 # Restores the repository to the state recorded at operation OP_ID.
-# Quiet mutation; uses the subshell-cd runner so the restore works even when
-# the caller's working directory has been deleted.
+# Quiet mutation.
 _jj__restore_operation() {
   local repo="$1" op_id="$2"
-  __jj__run_quiet_cd "$repo" op restore "$op_id"
+  # Restore from inside the repository ($PWD) so that the operation succeeds
+  # even when invoked from a deleted working directory.
+  ( cd "$repo" && __jj__write "$PWD" op restore "$op_id" )
 }
 
 # ---------------------------------------------------------------------------
@@ -314,7 +314,7 @@ _jj__restore_operation() {
 # Prints the full description of REV (empty if it has none).
 _jj__get_commit_description() {
   local repo="$1" rev="$2"
-  __jj__run "$repo" log -r "$rev" --no-graph -T 'description'
+  __jj__read "$repo" log -r "$rev" --no-graph -T 'description'
 }
 
 # Usage: _jj__resolve_commit REPO REV
@@ -322,7 +322,7 @@ _jj__get_commit_description() {
 # printed if REV cannot be resolved.
 _jj__resolve_commit() {
   local repo="$1" rev="$2"
-  __jj__run "$repo" --ignore-working-copy log -r "$rev" --no-graph -T 'commit_id'
+  __jj__read "$repo" --ignore-working-copy log -r "$rev" --no-graph -T 'commit_id'
 }
 
 # Usage: _jj__resolve_change REPO REV
@@ -331,7 +331,7 @@ _jj__resolve_commit() {
 # resolved.
 _jj__resolve_change() {
   local repo="$1" rev="$2"
-  __jj__run "$repo" --ignore-working-copy log -r "$rev" --no-graph -T 'change_id'
+  __jj__read "$repo" --ignore-working-copy log -r "$rev" --no-graph -T 'change_id'
 }
 
 # Usage: _jj__get_commit_timestamp REPO REV
@@ -339,7 +339,7 @@ _jj__resolve_change() {
 # (e.g. 2026-01-31T12:34:56Z). Returns jj's exit code.
 _jj__get_commit_timestamp() {
   local repo="$1" rev="$2"
-  __jj__run "$repo" --ignore-working-copy log --no-graph -r "$rev" \
+  __jj__read "$repo" --ignore-working-copy log --no-graph -r "$rev" \
     -T 'committer.timestamp().utc().format("%Y-%m-%dT%H:%M:%SZ")'
 }
 
@@ -347,7 +347,7 @@ _jj__get_commit_timestamp() {
 # Returns 0 if REV resolves to a revision, non-zero otherwise. Status only.
 _jj__check_revision_exists() {
   local repo="$1" rev="$2"
-  __jj__run "$repo" --ignore-working-copy log -r "$rev" --no-graph -T '' >/dev/null
+  __jj__read "$repo" --ignore-working-copy log -r "$rev" --no-graph -T '' >/dev/null
 }
 
 # Usage: _jj__check_commit_empty REPO REV
@@ -357,7 +357,7 @@ _jj__check_revision_exists() {
 _jj__check_commit_empty() {
   local repo="$1" rev="$2"
   local result
-  result="$(__jj__run "$repo" log -r "$rev" --no-graph -T 'empty')" || return 1
+  result="$(__jj__read "$repo" log -r "$rev" --no-graph -T 'empty')" || return 1
   [[ "$result" == "true" ]]
 }
 
@@ -367,7 +367,7 @@ _jj__check_commit_empty() {
 _jj__check_has_conflicts() {
   local repo="$1" rev="$2"
   local result
-  result="$(__jj__run "$repo" log -r "$rev" \
+  result="$(__jj__read "$repo" log -r "$rev" \
     --no-graph -T 'if(conflict, "yes")')" || true
   [[ -n "$result" ]]
 }
@@ -378,7 +378,7 @@ _jj__check_has_conflicts() {
 _jj__check_descendants_have_conflicts() {
   local repo="$1" rev="$2"
   local result
-  result="$(__jj__run "$repo" log -r "descendants(${rev})" \
+  result="$(__jj__read "$repo" log -r "descendants(${rev})" \
     --no-graph -T 'if(conflict, "yes\n")')" || true
   [[ -n "$result" ]]
 }
@@ -390,7 +390,7 @@ _jj__check_descendants_have_conflicts() {
 _jj__check_is_ancestor() {
   local repo="$1" ancestor="$2" descendant="$3"
   local result
-  result="$(__jj__run "$repo" --ignore-working-copy log \
+  result="$(__jj__read "$repo" --ignore-working-copy log \
     -r "(${ancestor}) & ::(${descendant})" --no-graph -T '"x\n"')" || return 1
   [[ -n "$result" ]]
 }
@@ -416,7 +416,7 @@ _jj__filter_commits_reachable_from() {
       union="${union} | ${id}"
     fi
   done
-  __jj__run "$repo" --ignore-working-copy log --no-graph \
+  __jj__read "$repo" --ignore-working-copy log --no-graph \
     -r "(${union}) & ::(${rev})" -T 'commit_id ++ "\n"'
 }
 
@@ -426,7 +426,7 @@ _jj__filter_commits_reachable_from() {
 # nothing is printed if the fork point cannot be resolved.
 _jj__find_fork_point_commit() {
   local repo="$1" rev_a="$2" rev_b="$3"
-  __jj__run "$repo" log -r "fork_point(${rev_a} | ${rev_b})" \
+  __jj__read "$repo" log -r "fork_point(${rev_a} | ${rev_b})" \
     --no-graph -T 'commit_id'
 }
 
@@ -438,7 +438,7 @@ _jj__find_fork_point_commit() {
 _jj__find_nearest_bookmark() {
   local repo="$1" rev="$2"
   local names
-  names="$(__jj__run "$repo" --ignore-working-copy log \
+  names="$(__jj__read "$repo" --ignore-working-copy log \
     -r "heads(ancestors(${rev}) & bookmarks())" -n 1 --no-graph \
     -T 'local_bookmarks.map(|b| b.name()).join(",")')" || return 1
   names="${names%%,*}"
@@ -452,7 +452,7 @@ _jj__find_nearest_bookmark() {
 # exit code; nothing is printed if the range cannot be resolved.
 _jj__list_commits_in_range() {
   local repo="$1" from="$2" to="$3"
-  __jj__run "$repo" --ignore-working-copy log -r "${from}..${to}" \
+  __jj__read "$repo" --ignore-working-copy log -r "${from}..${to}" \
     --no-graph --reversed -T 'commit_id ++ "\n"'
 }
 
@@ -468,7 +468,7 @@ _jj__list_commits_in_range() {
 # from BASE. Here every listed commit lies on a path from BASE to TIP.
 _jj__list_commits_in_dag_range() {
   local repo="$1" base="$2" tip="$3"
-  __jj__run "$repo" --ignore-working-copy log -r "(${base})::(${tip}) ~ (${base})" \
+  __jj__read "$repo" --ignore-working-copy log -r "(${base})::(${tip}) ~ (${base})" \
     --no-graph --reversed -T 'commit_id ++ "\n"'
 }
 
@@ -478,7 +478,7 @@ _jj__list_commits_in_dag_range() {
 # resolved, so callers may treat resolution failure as an empty range.
 _jj__count_commits_in_range() {
   local repo="$1" from="$2" to="$3"
-  __jj__run "$repo" log -r "${from}..${to}" --no-graph -T '"x\n"' \
+  __jj__read "$repo" log -r "${from}..${to}" --no-graph -T '"x\n"' \
     | grep -c . || true
 }
 
@@ -487,7 +487,7 @@ _jj__count_commits_in_range() {
 # parent inside the range, one per line. Returns jj's exit code.
 _jj__list_range_root_commits() {
   local repo="$1" from="$2" to="$3"
-  __jj__run "$repo" --ignore-working-copy log -r "roots(${from}..${to})" \
+  __jj__read "$repo" --ignore-working-copy log -r "roots(${from}..${to})" \
     --no-graph -T 'commit_id ++ "\n"'
 }
 
@@ -511,7 +511,7 @@ _jj__check_range_covered() {
     fi
   done
   local count
-  count="$(__jj__run "$repo" log -r "(${base}..${tip}) ~ (${union})" \
+  count="$(__jj__read "$repo" log -r "(${base}..${tip}) ~ (${union})" \
     --no-graph -T '"x\n"' | grep -c . || true)"
   [[ "$count" -eq 0 ]]
 }
@@ -556,7 +556,7 @@ _jj__format_revision_range() {
 # Returns jj's exit code; nothing is printed if the revset cannot be resolved.
 _jj__list_mainline_commits() {
   local repo="$1" tip="$2" base="$3"
-  __jj__run "$repo" --ignore-working-copy log \
+  __jj__read "$repo" --ignore-working-copy log \
     -r "first_ancestors($tip) ~ ::$base" --no-graph --reversed \
     -T 'commit_id ++ "\t" ++ change_id ++ "\t" ++ committer.timestamp().utc().format("%Y-%m-%dT%H:%M:%SZ") ++ "\t" ++ parents.map(|p| p.commit_id()).join(" ") ++ "\t" ++ description.first_line() ++ "\n"'
 }
@@ -577,7 +577,7 @@ _jj__list_mainline_commits() {
 _jj__find_file_introduction() {
   local repo="$1" path="$2" head_a="$3" head_b="$4"
   local matches
-  matches="$(__jj__run "$repo" --ignore-working-copy log --no-graph -r \
+  matches="$(__jj__read "$repo" --ignore-working-copy log --no-graph -r \
     "roots(files(root-file:\"${path}\") & ::(${head_a} | ${head_b}))" \
     -T 'commit_id ++ "\n"')" || true
   local count
@@ -598,7 +598,7 @@ _jj__find_file_introduction() {
 _jj__find_prefix_introduction() {
   local repo="$1" prefix="$2"
   local matches
-  matches="$(__jj__run "$repo" --ignore-working-copy log --no-graph \
+  matches="$(__jj__read "$repo" --ignore-working-copy log --no-graph \
     -r "roots(files(root:\"${prefix}\"))" -T 'commit_id ++ "\n"')" || true
   local count
   count="$(printf '%s' "$matches" | grep -c . || true)"
@@ -614,7 +614,7 @@ _jj__find_prefix_introduction() {
 # Returns jj's exit code; nothing is printed if REV cannot be resolved.
 _jj__list_descendant_changes() {
   local repo="$1" rev="$2"
-  __jj__run "$repo" --ignore-working-copy log -r "descendants(${rev})" \
+  __jj__read "$repo" --ignore-working-copy log -r "descendants(${rev})" \
     --no-graph --reversed -T 'change_id ++ "\n"'
 }
 
@@ -632,7 +632,7 @@ _jj__list_file_waypoints() {
   local target_changes="files(root-file:\"${target_path}\")"
   local marker_changes="files(root-file:\"${marker_path}\")"
   local merge_candidates="merges() & children(${marker_changes})"
-  __jj__run "$repo" --ignore-working-copy log --no-graph --reversed \
+  __jj__read "$repo" --ignore-working-copy log --no-graph --reversed \
     -r "(${bounded}) & (${target_changes} | ${marker_changes} | ${merge_candidates})" \
     -T 'commit_id ++ "\t" ++ parents.map(|p| p.commit_id()).join(" ") ++ "\t" ++ committer.timestamp().utc().format("%Y-%m-%dT%H:%M:%SZ") ++ "\t" ++ if(self.diff("root-file:\"'"${target_path}"'\"").files().len() > 0, "1", "0") ++ "\n"'
 }
@@ -655,7 +655,7 @@ _jj__sort_commits_by_ancestry() {
     fi
   done
   local bounded="${boundary}:: & ::(${head_a} | ${head_b})"
-  __jj__run "$repo" --ignore-working-copy log --no-graph --reversed \
+  __jj__read "$repo" --ignore-working-copy log --no-graph --reversed \
     -r "(${bounded}) & (${ids})" -T 'commit_id ++ "\n"'
 }
 
@@ -673,7 +673,7 @@ _jj__sort_commits_by_ancestry() {
 _jj__check_working_copy_clean() {
   local worktree="$1"
   local result
-  result="$(__jj__run "$worktree" log -r '@' --no-graph -T 'empty')" || return 1
+  result="$(__jj__read "$worktree" log -r '@' --no-graph -T 'empty')" || return 1
   [[ "$result" == "true" ]]
 }
 
@@ -686,7 +686,7 @@ _jj__check_working_copy_clean() {
 # working-copy commit.
 _jj__get_working_copy_revision() {
   local worktree="$1"
-  __jj__run "$worktree" log -r '@' --no-graph -T 'change_id'
+  __jj__read "$worktree" log -r '@' --no-graph -T 'change_id'
 }
 
 # Usage: _jj__get_working_copy_parent WORKTREE
@@ -694,14 +694,14 @@ _jj__get_working_copy_revision() {
 # Returns jj's exit code; nothing is printed if the parent cannot be resolved.
 _jj__get_working_copy_parent() {
   local worktree="$1"
-  __jj__run "$worktree" log -r '@-' --no-graph -T 'commit_id'
+  __jj__read "$worktree" log -r '@-' --no-graph -T 'commit_id'
 }
 
 # Usage: _jj__set_working_copy_revision WORKTREE REV
 # Points the working copy at REV (jj edit). Quiet mutation.
 _jj__set_working_copy_revision() {
   local worktree="$1" rev="$2"
-  __jj__run_quiet "$worktree" edit "$rev"
+  __jj__write "$worktree" edit "$rev"
 }
 
 # Usage: _jj__new_working_copy_child WORKTREE [REV]
@@ -710,9 +710,9 @@ _jj__set_working_copy_revision() {
 _jj__new_working_copy_child() {
   local worktree="$1" rev="${2:-}"
   if [[ -n "$rev" ]]; then
-    __jj__run_quiet "$worktree" new -r "$rev"
+    __jj__write "$worktree" new -r "$rev"
   else
-    __jj__run_quiet "$worktree" new
+    __jj__write "$worktree" new
   fi
 }
 
@@ -720,7 +720,7 @@ _jj__new_working_copy_child() {
 # Commits the working copy with MESSAGE. Quiet mutation.
 _jj__commit_working_copy() {
   local worktree="$1" message="$2"
-  __jj__run_quiet "$worktree" commit -m "$message"
+  __jj__write "$worktree" commit -m "$message"
 }
 
 # Usage: _jj__snapshot_worktree WORKTREE
@@ -732,7 +732,7 @@ _jj__commit_working_copy() {
 # copy makes this a no-op. Status only; never logs, never exits.
 _jj__snapshot_worktree() {
   local worktree="$1"
-  __jj__run_quiet "$worktree" log -r '@' --no-graph -T ''
+  __jj__write_internal "$worktree" log -r '@' --no-graph -T ''
 }
 
 # Usage: _jj__reattach_worktree WORKTREE FROM_REV DEST_REV
@@ -750,7 +750,7 @@ _jj__snapshot_worktree() {
 # Status only; never logs, never exits.
 _jj__reattach_worktree() {
   local worktree="$1" from_rev="$2" dest_rev="$3"
-  __jj__run_quiet "$worktree" rebase -s "$from_rev" -d "$dest_rev"
+  __jj__write "$worktree" rebase -s "$from_rev" -d "$dest_rev"
 }
 
 # Usage: _jj__refresh_worktree WORKTREE
@@ -758,12 +758,11 @@ _jj__reattach_worktree() {
 # commit was rewritten by a bare graph mutation. A bare mutation leaves the
 # recorded working-copy state pointing at the pre-rewrite tree, and jj then
 # refuses every command that loads the working copy until it is recovered; this
-# performs that recovery, running from inside WORKTREE so jj resolves the right
-# workspace. Harmless (status 0, nothing changed) when the working copy is
-# already current. Status only; never logs, never exits.
+# performs that recovery. Harmless (status 0, nothing changed) when the working
+# copy is already current. Status only; never logs, never exits.
 _jj__refresh_worktree() {
   local worktree="$1"
-  __jj__run_quiet_cd "$worktree" workspace update-stale
+  __jj__write "$worktree" workspace update-stale
 }
 # ---------------------------------------------------------------------------
 # Mutations (bare)
@@ -831,7 +830,7 @@ _jj__commit_changeset() {
     trap '
       rm -rf "$scratch"
       if [[ -n "$ref_created" ]]; then
-        __jj__run_git --git-dir="$git_dir" update-ref -d "$tmp_ref" || :
+        __jj__git --git-dir="$git_dir" update-ref -d "$tmp_ref" || :
       fi
     ' EXIT
     # Ambient git environment must not redirect the index or re-anchor path
@@ -844,12 +843,12 @@ _jj__commit_changeset() {
     # Do NOT pre-create the index file: git rejects an existing empty file as
     # a malformed index, so read-tree must create it.
     local index="$scratch/index"
-    GIT_INDEX_FILE="$index" __jj__run_git --git-dir="$git_dir" \
+    GIT_INDEX_FILE="$index" __jj__git --git-dir="$git_dir" \
       read-tree "${parent_commit}^{tree}" || exit 1
 
     local delete_path
     for delete_path in "$@"; do
-      GIT_INDEX_FILE="$index" __jj__run_git --git-dir="$git_dir" \
+      GIT_INDEX_FILE="$index" __jj__git --git-dir="$git_dir" \
         update-index --force-remove -- "$delete_path" || exit 1
     done
 
@@ -861,28 +860,28 @@ _jj__commit_changeset() {
         mode=120000
         link_target="$(readlink "$entry")" || exit 1
         blob="$(printf '%s' "$link_target" \
-          | __jj__run_git --git-dir="$git_dir" hash-object -w --stdin)" || exit 1
+          | __jj__git --git-dir="$git_dir" hash-object -w --stdin)" || exit 1
       else
         if [[ -x "$entry" ]]; then mode=100755; else mode=100644; fi
-        blob="$(__jj__run_git --git-dir="$git_dir" hash-object -w -- "$entry")" || exit 1
+        blob="$(__jj__git --git-dir="$git_dir" hash-object -w -- "$entry")" || exit 1
       fi
       [[ -n "$blob" ]] || exit 1
-      GIT_INDEX_FILE="$index" __jj__run_git --git-dir="$git_dir" \
+      GIT_INDEX_FILE="$index" __jj__git --git-dir="$git_dir" \
         update-index --add --cacheinfo "$mode,$blob,$rel" || exit 1
     done < <(find "$stage_dir" \( -type f -o -type l \))
 
     local tree
-    tree="$(GIT_INDEX_FILE="$index" __jj__run_git --git-dir="$git_dir" write-tree)" || exit 1
+    tree="$(GIT_INDEX_FILE="$index" __jj__git --git-dir="$git_dir" write-tree)" || exit 1
     [[ -n "$tree" ]] || exit 1
 
     local user_name user_email
-    user_name="$(__jj__run "$repo" config get user.name)" || exit 1
-    user_email="$(__jj__run "$repo" config get user.email)" || exit 1
+    user_name="$(__jj__read "$repo" config get user.name)" || exit 1
+    user_email="$(__jj__read "$repo" config get user.email)" || exit 1
 
     local commit
     commit="$(GIT_AUTHOR_NAME="$user_name" GIT_AUTHOR_EMAIL="$user_email" \
       GIT_COMMITTER_NAME="$user_name" GIT_COMMITTER_EMAIL="$user_email" \
-      __jj__run_git --git-dir="$git_dir" commit-tree "$tree" \
+      __jj__git --git-dir="$git_dir" commit-tree "$tree" \
         -p "$parent_commit" -m "$message")" || exit 1
     [[ -n "$commit" ]] || exit 1
 
@@ -890,21 +889,21 @@ _jj__commit_changeset() {
     # `jj git import` picks it up; afterwards delete the git ref first (so a
     # concurrent auto-import cannot re-create the bookmark) and then forget
     # the bookmark the import created.
-    __jj__run_git --git-dir="$git_dir" update-ref "$tmp_ref" "$commit" || exit 1
+    __jj__git --git-dir="$git_dir" update-ref "$tmp_ref" "$commit" || exit 1
     ref_created=1
-    __jj__run_quiet "$repo" --ignore-working-copy git import || exit 1
+    __jj__write_internal "$repo" --ignore-working-copy git import || exit 1
     _jj__check_revision_exists "$repo" "$commit" || exit 1
-    __jj__run_git --git-dir="$git_dir" update-ref -d "$tmp_ref" || exit 1
+    __jj__git --git-dir="$git_dir" update-ref -d "$tmp_ref" || exit 1
     ref_created=''
     local bookmark_name="${tmp_ref#refs/heads/}"
     if _jj__check_bookmark_exists "$repo" "$bookmark_name"; then
-      __jj__run_quiet "$repo" --ignore-working-copy bookmark forget "$bookmark_name" || exit 1
+      __jj__write_internal "$repo" --ignore-working-copy bookmark forget "$bookmark_name" || exit 1
     fi
     # Reconcile the out-of-band git ref deletion now: without this, jj's
     # last-seen git ref state still contains the temporary ref, and the next
     # auto-importing jj invocation would mint a surprise "import git refs"
     # operation outside any tt transaction.
-    __jj__run_quiet "$repo" --ignore-working-copy git import || exit 1
+    __jj__write_internal "$repo" --ignore-working-copy git import || exit 1
     printf '%s\n' "$commit"
   )
 }
@@ -945,7 +944,7 @@ _jj__create_merge_commit() {
     [[ -n "$parent_commit" ]] || return 1
     parent_commits+=("$parent_commit")
   done
-  __jj__run_quiet "$repo" --ignore-working-copy new --no-edit -m "$message" \
+  __jj__write "$repo" --ignore-working-copy new --no-edit -m "$message" \
     "${parent_commits[@]}" || return 1
   # Reproduce the description exactly as stored: jj appends "\n" when a
   # non-empty message lacks one, and stores everything else verbatim.
@@ -967,7 +966,7 @@ _jj__create_merge_commit() {
     fi
   done
   local new_commit
-  new_commit="$(__jj__run "$repo" --ignore-working-copy log \
+  new_commit="$(__jj__read "$repo" --ignore-working-copy log \
     -r "latest((${intersection}) & description(exact:\"${escaped}\"))" \
     --no-graph -T 'commit_id')" || return 1
   [[ -n "$new_commit" ]] || return 1
@@ -980,7 +979,7 @@ _jj__create_merge_commit() {
 # Status only; never logs, never exits.
 _jj__set_description() {
   local repo="$1" rev="$2" message="$3"
-  __jj__run_quiet "$repo" --ignore-working-copy describe -r "$rev" -m "$message"
+  __jj__write "$repo" --ignore-working-copy describe -r "$rev" -m "$message"
 }
 
 # Usage: _jj__move_commits REPO DEST_REV SOURCE_REV [SOURCE_REV...]
@@ -994,7 +993,7 @@ _jj__move_commits() {
   [[ $# -ge 1 ]] || return 1
   local source_rev
   for source_rev in "$@"; do
-    __jj__run_quiet "$repo" --ignore-working-copy rebase \
+    __jj__write "$repo" --ignore-working-copy rebase \
       -s "$source_rev" -d "$dest_rev" || return $?
   done
 }
@@ -1006,7 +1005,7 @@ _jj__move_commits() {
 # touched. Status only; never logs, never exits.
 _jj__squash_commit() {
   local repo="$1" from_rev="$2" into_rev="$3"
-  __jj__run_quiet "$repo" --ignore-working-copy squash \
+  __jj__write "$repo" --ignore-working-copy squash \
     --from "$from_rev" --into "$into_rev" --use-destination-message
 }
 
@@ -1018,7 +1017,7 @@ _jj__squash_commit() {
 # Status only; never logs, never exits.
 _jj__restore_tree() {
   local repo="$1" source_rev="$2" target_rev="$3"
-  __jj__run_quiet "$repo" --ignore-working-copy restore \
+  __jj__write "$repo" --ignore-working-copy restore \
     --from "$source_rev" --into "$target_rev" --restore-descendants
 }
 
@@ -1028,7 +1027,7 @@ _jj__restore_tree() {
 # mutation: no working copy is touched. Status only; never logs, never exits.
 _jj__abandon_commit() {
   local repo="$1" rev="$2"
-  __jj__run_quiet "$repo" --ignore-working-copy abandon "$rev"
+  __jj__write "$repo" --ignore-working-copy abandon "$rev"
 }
 
 # ---------------------------------------------------------------------------
@@ -1048,7 +1047,7 @@ _jj__set_bookmark() {
   if [[ "${4:-}" == '--allow-backwards' ]]; then
     extra_flags=(--allow-backwards)
   fi
-  __jj__run_quiet "$repo" --ignore-working-copy bookmark set "$name" -r "$rev" \
+  __jj__write "$repo" --ignore-working-copy bookmark set "$name" -r "$rev" \
     "${extra_flags[@]+"${extra_flags[@]}"}"
 }
 
@@ -1057,7 +1056,7 @@ _jj__set_bookmark() {
 # be skipped by callers). Returns jj's exit code.
 _jj__list_bookmark_names() {
   local repo="$1"
-  __jj__run "$repo" --ignore-working-copy log -r 'bookmarks()' \
+  __jj__read "$repo" --ignore-working-copy log -r 'bookmarks()' \
     -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' --no-graph
 }
 
@@ -1067,7 +1066,7 @@ _jj__list_bookmark_names() {
 _jj__list_bookmarks_at() {
   local repo="$1" rev="$2"
   local names
-  names="$(__jj__run "$repo" --ignore-working-copy log -r "$rev" --no-graph \
+  names="$(__jj__read "$repo" --ignore-working-copy log -r "$rev" --no-graph \
     -T 'local_bookmarks.map(|b| b.name()).join("\n")')" || return 1
   [[ -n "$names" ]] && printf '%s\n' "$names"
   return 0
@@ -1078,7 +1077,7 @@ _jj__list_bookmarks_at() {
 _jj__check_bookmark_exists() {
   local repo="$1" name="$2"
   local result
-  result="$(__jj__run "$repo" --ignore-working-copy log \
+  result="$(__jj__read "$repo" --ignore-working-copy log \
     -r "bookmarks(exact:\"${name}\")" --no-graph -T '"x\n"')" || return 1
   [[ -n "$result" ]]
 }
@@ -1091,7 +1090,7 @@ _jj__check_bookmark_exists() {
 # working copy still has to be refreshed.
 _jj__rename_bookmark() {
   local repo="$1" old="$2" new="$3"
-  __jj__run_quiet "$repo" --ignore-working-copy bookmark rename "$old" "$new"
+  __jj__write "$repo" --ignore-working-copy bookmark rename "$old" "$new"
 }
 
 # Usage: _jj__delete_bookmark REPO NAME
@@ -1101,7 +1100,7 @@ _jj__rename_bookmark() {
 _jj__delete_bookmark() {
   local repo="$1" name="$2"
   _jj__check_bookmark_exists "$repo" "$name" || return 1
-  __jj__run_quiet "$repo" bookmark delete "$name"
+  __jj__write "$repo" bookmark delete "$name"
 }
 
 # ---------------------------------------------------------------------------
@@ -1112,7 +1111,7 @@ _jj__delete_bookmark() {
 # Prints the current workspace root; falls back to REPO if not in a workspace.
 _jj__resolve_worktree_root() {
   local repo="$1"
-  __jj__run "$repo" workspace root || printf '%s' "$repo"
+  __jj__read "$repo" workspace root || printf '%s' "$repo"
 }
 
 # Usage: _jj__list_worktrees REPO
@@ -1121,7 +1120,7 @@ _jj__resolve_worktree_root() {
 # Parse each line with _worktree__parse_list_line (lib/worktree.sh).
 _jj__list_worktrees() {
   local repo="$1"
-  __jj__run "$repo" --ignore-working-copy workspace list --no-pager \
+  __jj__read "$repo" --ignore-working-copy workspace list --no-pager \
     -T 'name ++ ": " ++ root ++ "\n"'
 }
 
@@ -1130,7 +1129,7 @@ _jj__list_worktrees() {
 # untouched. Quiet mutation.
 _jj__forget_worktree() {
   local repo="$1" name="$2"
-  __jj__run_quiet "$repo" workspace forget "$name"
+  __jj__write "$repo" workspace forget "$name"
 }
 
 # Usage: _jj__create_worktree REPO NAME PATH REV
@@ -1138,7 +1137,7 @@ _jj__forget_worktree() {
 # started on top of REV. Quiet mutation.
 _jj__create_worktree() {
   local repo="$1" name="$2" path="$3" rev="$4"
-  __jj__run_quiet "$repo" workspace add --name "$name" -r "$rev" "$path"
+  __jj__write "$repo" workspace add --name "$name" -r "$rev" "$path"
 }
 
 # Usage: _jj__get_worktree_revision REPO NAME
@@ -1146,7 +1145,7 @@ _jj__create_worktree() {
 # (nothing printed) when no workspace named NAME exists.
 _jj__get_worktree_revision() {
   local repo="$1" name="$2"
-  __jj__run "$repo" --ignore-working-copy log -r "${name}@" --no-graph \
+  __jj__read "$repo" --ignore-working-copy log -r "${name}@" --no-graph \
     -T 'commit_id'
 }
 
@@ -1160,7 +1159,7 @@ _jj__get_worktree_revision() {
 # Outputs file content to stdout. Returns jj's exit code (non-zero = file absent).
 _jj__read_file_at_revision() {
   local repo="$1" rev="$2" path="$3"
-  __jj__run "$repo" --ignore-working-copy file show -r "$rev" -- "root:$path"
+  __jj__read "$repo" --ignore-working-copy file show -r "$rev" -- "root:$path"
 }
 
 # Usage: _jj__read_symlink_at_revision REPO REV PATH
@@ -1175,7 +1174,7 @@ _jj__read_file_at_revision() {
 _jj__read_symlink_at_revision() {
   local repo="$1" rev="$2" path="$3"
   local diff
-  diff="$(__jj__run "$repo" --ignore-working-copy diff --git \
+  diff="$(__jj__read "$repo" --ignore-working-copy diff --git \
     --from 'root()' --to "$rev" -- "root-file:\"${path}\"")" || return 1
   # One pass over the diff: note the symlink mode, then take the first added
   # line (the "+++ b/<path>" header is excluded by requiring a non-'+' second
@@ -1196,40 +1195,39 @@ _jj__read_symlink_at_revision() {
 # Outputs file content to stdout. Returns jj's exit code (non-zero = file absent).
 _jj__read_file_at_operation() {
   local repo="$1" op="$2" rev="$3" path="$4"
-  __jj__run "$repo" --at-operation "$op" file show -r "$rev" -- "root:$path"
+  __jj__read "$repo" --at-operation "$op" file show -r "$rev" -- "root:$path"
 }
 
 # Usage: _jj__check_file_exists_at_revision REPO REV PATH
 # Returns 0 when the repo-root-relative file PATH exists at REV. Status only.
 _jj__check_file_exists_at_revision() {
   local repo="$1" rev="$2" path="$3"
-  __jj__run "$repo" --ignore-working-copy file show -r "$rev" -- "root:$path" \
+  __jj__read "$repo" --ignore-working-copy file show -r "$rev" -- "root:$path" \
     >/dev/null
 }
 
 # Usage: _jj__list_files_at_revision REPO REV [PREFIX]
 # Prints the repo-relative paths of the files tracked at REV, one per line,
 # optionally limited to the path prefix PREFIX (a repo-root-relative file or
-# directory). Uses the subshell-cd runner so that printed paths are always
-# repo-relative. Returns jj's exit code.
+# directory). Returns jj's exit code.
 _jj__list_files_at_revision() {
   local repo="$1" rev="$2" prefix="${3:-}"
-  if [[ -n "$prefix" ]]; then
-    __jj__run_cd "$repo" --ignore-working-copy file list -r "$rev" -- "root:$prefix"
-  else
-    __jj__run_cd "$repo" --ignore-working-copy file list -r "$rev"
-  fi
+  local -a fileset=()
+  [[ -n "$prefix" ]] && fileset=(-- "root:$prefix")
+  # List from inside the repository ($PWD) to ensure printed file paths are relative to the repo root
+  ( cd "$repo" && __jj__read "$PWD" --ignore-working-copy file list -r "$rev" \
+      "${fileset[@]+"${fileset[@]}"}" )
 }
 
 # Usage: _jj__list_changed_files REPO REV
 # Prints the repo-relative paths of the files that REV changes relative to
 # its parents (added, modified or deleted), one per line. Passes
 # --ignore-working-copy: when REV is @ and pending on-disk changes should be
-# included, callers must snapshot first. Uses the subshell-cd runner so the
-# printed paths are always repo-relative. Returns jj's exit code.
+# included, callers must snapshot first. Returns jj's exit code.
 _jj__list_changed_files() {
   local repo="$1" rev="$2"
-  __jj__run_cd "$repo" --ignore-working-copy diff -r "$rev" --name-only
+  # Diff from inside the repository ($PWD) to ensure printed file paths are relative to the repo root
+  ( cd "$repo" && __jj__read "$PWD" --ignore-working-copy diff -r "$rev" --name-only )
 }
 
 # Usage: _jj__list_changed_files_in_range REPO BASE TIP
@@ -1238,23 +1236,23 @@ _jj__list_changed_files() {
 # diffed as a single unit, so content TIP merely inherited from BASE is never
 # reported. The range's own root commits are excluded from the diff, so the
 # paths they introduce are not reported either.
-# Passes --ignore-working-copy and uses the subshell-cd runner so the printed
-# paths are always repo-relative. Returns jj's exit code.
+# Passes --ignore-working-copy. Returns jj's exit code.
 _jj__list_changed_files_in_range() {
   local repo="$1" base="$2" tip="$3"
-  __jj__run_cd "$repo" --ignore-working-copy diff \
-    -r "roots(::${tip} ~ ::${base})..${tip}" --name-only
+  # Diff from inside the repository ($PWD) to ensure printed file paths are relative to the repo root
+  ( cd "$repo" && __jj__read "$PWD" --ignore-working-copy diff \
+      -r "roots(::${tip} ~ ::${base})..${tip}" --name-only )
 }
 
 # Usage: _jj__list_files_at_operation REPO OP REV [PREFIX]
 # Like _jj__list_files_at_revision, but reads at a specific operation ID.
 _jj__list_files_at_operation() {
   local repo="$1" op="$2" rev="$3" prefix="${4:-}"
-  if [[ -n "$prefix" ]]; then
-    __jj__run_cd "$repo" --at-operation "$op" file list -r "$rev" -- "root:$prefix"
-  else
-    __jj__run_cd "$repo" --at-operation "$op" file list -r "$rev"
-  fi
+  local -a fileset=()
+  [[ -n "$prefix" ]] && fileset=(-- "root:$prefix")
+  # List from inside the repository ($PWD) to ensure printed file paths are relative to the repo root
+  ( cd "$repo" && __jj__read "$PWD" --at-operation "$op" file list -r "$rev" \
+      "${fileset[@]+"${fileset[@]}"}" )
 }
 
 # Usage: _jj__get_file_diff REPO REV PATH
@@ -1262,7 +1260,7 @@ _jj__list_files_at_operation() {
 # file PATH (empty when REV does not touch it). Returns jj's exit code.
 _jj__get_file_diff() {
   local repo="$1" rev="$2" path="$3"
-  __jj__run "$repo" --ignore-working-copy log --no-graph -r "$rev" \
+  __jj__read "$repo" --ignore-working-copy log --no-graph -r "$rev" \
     -T 'self.diff("root-file:\"'"${path}"'\"").git()'
 }
 
@@ -1290,8 +1288,8 @@ _jj__show_diff() {
     fi
   done
   if [[ -n "$exclusion_terms" ]]; then
-    __jj__run "$repo" diff --git --from "$from" --to "$to" "~($exclusion_terms)"
+    __jj__read "$repo" diff --git --from "$from" --to "$to" "~($exclusion_terms)"
   else
-    __jj__run "$repo" diff --git --from "$from" --to "$to"
+    __jj__read "$repo" diff --git --from "$from" --to "$to"
   fi
 }
