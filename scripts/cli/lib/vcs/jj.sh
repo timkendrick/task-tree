@@ -1248,10 +1248,17 @@ _jj__delete_bookmark() {
 # ---------------------------------------------------------------------------
 
 # Usage: _jj__resolve_worktree_root REPO
-# Prints the current workspace root; falls back to REPO if not in a workspace.
+# Prints the workspace root for REPO, symlink-resolved; falls back to REPO if
+# it is not a workspace. jj resolves `-R REPO` by requiring REPO itself to be
+# a workspace root (it does not search upwards), and answers `workspace root`
+# with that path canonicalized, so the answer is read from the filesystem
+# without a backend process.
 _jj__resolve_worktree_root() {
   local repo="$1"
-  __jj__read "$repo" --ignore-working-copy workspace root || printf '%s' "$repo"
+  if [[ -d "$repo/.jj" ]]; then
+    ( cd "$repo" 2>/dev/null && pwd -P ) && return 0
+  fi
+  printf '%s' "$repo"
 }
 
 # Usage: _jj__list_worktrees REPO
