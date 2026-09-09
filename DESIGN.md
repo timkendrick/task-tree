@@ -931,9 +931,9 @@ Error: Another tt command is in progress (incomplete transaction).
 
 Running `tt history undo --force` reverts the stale in-progress transaction. Alternatively, `tt history unlock --force` clears the lock without reverting the repository state — use this when the jj repository is already in an acceptable state and you simply want to unblock future `tt` commands.
 
-#### 6.12.3 `tt history undo` command
+#### 6.12.3 Reverting a transaction
 
-`tt history undo [--force] [--repo PATH]` (aliased to `tt undo`) reverts the jj repository to the state before the most recently recorded `tt` command.
+`tt history undo [--force] [--repo PATH]` reverts the jj repository to the state before the most recently recorded `tt` command.
 
 **Behavior:**
 
