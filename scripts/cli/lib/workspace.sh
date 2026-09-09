@@ -75,25 +75,56 @@ _workspace__resolve_canonical_repo() {
 # Read task_prefix from .tt/config.toml; default "task/" if missing or unreadable.
 _workspace__get_task_prefix() {
   local repo="$1"
-  local config="$repo/$(_path__metadata 'config.toml')"
-  local default_prefix='task/'
-  if [[ -r "$config" ]]; then
-    convfmt --from toml --to json < "$config" | jq -r '.task_prefix // "'"$default_prefix"'"'
-  else
-    printf '%s' "$default_prefix"
-  fi
+  __workspace__read_config_string "$repo" task_prefix 'task/'
 }
 
 # Read project_prefix from .tt/config.toml; default "project/" if missing or unreadable.
 _workspace__get_project_prefix() {
   local repo="$1"
+  __workspace__read_config_string "$repo" project_prefix 'project/'
+}
+
+# Usage: __workspace__read_config_string REPO KEY DEFAULT
+# Prints the string value of top-level KEY in REPO's config.toml, or DEFAULT
+# when the file or the key is absent. The file holds only the two prefix keys
+# that `tt workspace init` writes, each a basic (double-quoted) string on its
+# own line, so it is read here directly instead of through a TOML converter:
+# comments and blank lines are skipped, and the value is unquoted with the
+# basic-string escapes for a backslash and a double quote applied.
+__workspace__read_config_string() {
+  local repo="$1" key="$2" default="$3"
   local config="$repo/$(_path__metadata 'config.toml')"
-  local default_prefix='project/'
-  if [[ -r "$config" ]]; then
-    convfmt --from toml --to json < "$config" | jq -r '.project_prefix // "'"$default_prefix"'"'
-  else
-    printf '%s' "$default_prefix"
+  if [[ ! -r "$config" ]]; then
+    printf '%s' "$default"
+    return 0
   fi
+  local line rest value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ "$line" == "$key"* ]] || continue
+    rest="${line#"$key"}"
+    rest="${rest#"${rest%%[![:space:]]*}"}"
+    [[ "$rest" == '='* ]] || continue
+    rest="${rest#=}"
+    rest="${rest#"${rest%%[![:space:]]*}"}"
+    [[ "$rest" == '"'* ]] || continue
+    rest="${rest#\"}"
+    value=''
+    local i ch
+    for (( i = 0; i < ${#rest}; i++ )); do
+      ch="${rest:$i:1}"
+      if [[ "$ch" == '\' ]]; then
+        (( i++ ))
+        ch="${rest:$i:1}"
+      elif [[ "$ch" == '"' ]]; then
+        break
+      fi
+      value+="$ch"
+    done
+    printf '%s' "$value"
+    return 0
+  done < "$config"
+  printf '%s' "$default"
 }
 
 # Usage: _workspace__set_dir REPO VIRTUAL_DIR
