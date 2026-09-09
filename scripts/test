@@ -5,13 +5,26 @@ set -euo pipefail
 #
 # Discovers all *.test.sh files under scripts/cli/ and runs each one.
 # With --parallel, all tests across all suites are fed into a flat worker pool
-# capped at TT_TEST_CONCURRENCY (default 4) concurrent processes;
-# a single summary is printed at the end.
+# capped at TT_TEST_CONCURRENCY (default: the number of CPUs) concurrent
+# processes; a single summary is printed at the end.
 # Exits with non-zero if any test fails.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { printf '%s\n' "$*" >&2; }
+
+# The number of CPUs, for the default worker count; 4 when it cannot be read.
+_cpu_count() {
+  local n=''
+  if command -v sysctl >/dev/null 2>&1; then
+    n="$(sysctl -n hw.ncpu 2>/dev/null)" || n=''
+  fi
+  if [[ -z "$n" ]] && command -v nproc >/dev/null 2>&1; then
+    n="$(nproc 2>/dev/null)" || n=''
+  fi
+  [[ "$n" =~ ^[0-9]+$ && "$n" -gt 0 ]] || n=4
+  printf '%s' "$n"
+}
 
 # Current time in milliseconds, matching the harness helper of the same name.
 _ms_now() {
@@ -104,6 +117,7 @@ main() {
 
   _front_load_path
   _build_template
+  _open_setup_cache
 
   if [[ "$mode" == "parallel" ]]; then
     _run_parallel "${test_files[@]}"
@@ -139,6 +153,17 @@ _front_load_path() {
     new_path="$new_path:$entry"
   done
   export PATH="$new_path"
+}
+
+# Create the command cache the harness records tt command results in, export
+# its location as _TT_TEST_CACHE, and remove it on exit. See the harness's
+# "Command cache" section.
+_open_setup_cache() {
+  local cache
+  cache="$(mktemp -d "${TT_TEST_ROOT:-${TMPDIR:-/tmp}}/tt-cache-XXXXXX")"
+  local template="${_TT_TEST_TEMPLATE:-}"
+  trap "rm -rf '$cache' ${template:+'$template'}" EXIT
+  export _TT_TEST_CACHE="$cache"
 }
 
 # Build the template workspace every test's setup_workspace copies, and export
@@ -253,7 +278,7 @@ _run_series() {
     if ! _TT_TEST_RESULTS_DIR="$results_dir" \
        _TT_TEST_OFFSET="$offset" \
        _TT_TEST_TOTAL="$global_total" \
-       bash "$test_file"; then
+       bash "$test_file" </dev/null; then
       ((failed++)) || true
     fi
     (( offset += suite_counts[i] )) || true
@@ -331,7 +356,7 @@ _run_parallel() {
     return 0
   fi
 
-  local concurrency="${TT_TEST_CONCURRENCY:-4}"
+  local concurrency="${TT_TEST_CONCURRENCY:-$(_cpu_count)}"
   log "Running $total test(s) across $concurrency workers..."
 
   # Pass color intent to subprocesses: their stderr is redirected to a file so
@@ -369,7 +394,7 @@ _run_parallel() {
         _TT_TEST_FORCE_COLOR="$force_color" \
         _TT_TEST_OFFSET="$(( flat_idxs[$j] - 1 ))" \
         _TT_TEST_TOTAL="$global_total" \
-        bash "${flat_suite_files[$j]}" >"$out" 2>&1
+        bash "${flat_suite_files[$j]}" >"$out" 2>&1 </dev/null
         printf '%d' $? > "$exit_file"
         : > "$done_file"
       ) &
