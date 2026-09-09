@@ -13,6 +13,27 @@
 # revset or template syntax may appear. Everything else expresses VCS needs
 # through the named operations below.
 #
+# The --ignore-working-copy convention
+# ------------------------------------
+# Whenever jj runs a command that loads the working copy, it first records any
+# on-disk changes into the working-copy commit, and afterwards rewrites the
+# files on disk to match wherever the working copy ended up.
+#
+# This behavior is typically only desirable for the helpers that explicitly
+# operate on the current working copy.
+#
+# So the rule is:
+#
+#   Everything passes --ignore-working-copy, EXCEPT the operations in the
+#   "Working copy" section below, which exist precisely to read or move a
+#   working copy.
+#
+# Two operations outside that section are also exceptions, each for a reason
+# given in full at the function itself: _jj__restore_operation (an undo has to
+# rewrite the files on disk, and the snapshot it takes on the way allows
+# recovering the discarded work) and _jj__create_worktree (creating a worktree
+# means writing its files, so no `--ignore-working-copy` flag exists).
+#
 # Public surface:
 #   Repository discovery:
 #     _jj__check_is_repository       — test whether a directory is a jj repository
@@ -283,12 +304,10 @@ _jj__check_backend_supported() {
 
 # Usage: _jj__get_operation_id REPO
 # Prints the current jj operation ID to stdout.
-# Returns 1 if the operation ID cannot be read. Passes --ignore-working-copy because this must
-# be a pure read: without it, jj snapshots the working copy before printing
-# the op ID, so the "current" operation would be a snapshot created by the
-# read itself. Transaction bookkeeping depends on the purity — the before-op
-# recorded at transaction begin must precede the transaction's own working-
-# copy snapshot so that undoing the transaction reverts the snapshot too.
+# Returns 1 if the operation ID cannot be read.
+# Passes --ignore-working-copy because this must be a pure read: without it,
+# jj snapshots the working copy before printing the op ID, so the "current"
+# operation would be a snapshot created by the read itself.
 _jj__get_operation_id() {
   local repo="$1"
   # Read from inside the repository ($PWD): so that the operation succeeds
@@ -299,6 +318,11 @@ _jj__get_operation_id() {
 # Usage: _jj__restore_operation REPO OP_ID
 # Restores the repository to the state recorded at operation OP_ID.
 # Quiet mutation.
+#
+# Snapshots the working copy, both to apply incoming changes to the worktree
+# and also to retain outgoing changes in the jj operation log, so that
+# uncommitted work discarded by the undo can still be recovered by restoring
+# the snapshot operation.
 _jj__restore_operation() {
   local repo="$1" op_id="$2"
   # Restore from inside the repository ($PWD) so that the operation succeeds
@@ -314,7 +338,7 @@ _jj__restore_operation() {
 # Prints the full description of REV (empty if it has none).
 _jj__get_commit_description() {
   local repo="$1" rev="$2"
-  __jj__read "$repo" log -r "$rev" --no-graph -T 'description'
+  __jj__read "$repo" --ignore-working-copy log -r "$rev" --no-graph -T 'description'
 }
 
 # Usage: _jj__resolve_commit REPO REV
@@ -357,7 +381,7 @@ _jj__check_revision_exists() {
 _jj__check_commit_empty() {
   local repo="$1" rev="$2"
   local result
-  result="$(__jj__read "$repo" log -r "$rev" --no-graph -T 'empty')" || return 1
+  result="$(__jj__read "$repo" --ignore-working-copy log -r "$rev" --no-graph -T 'empty')" || return 1
   [[ "$result" == "true" ]]
 }
 
@@ -367,7 +391,7 @@ _jj__check_commit_empty() {
 _jj__check_has_conflicts() {
   local repo="$1" rev="$2"
   local result
-  result="$(__jj__read "$repo" log -r "$rev" \
+  result="$(__jj__read "$repo" --ignore-working-copy log -r "$rev" \
     --no-graph -T 'if(conflict, "yes")')" || true
   [[ -n "$result" ]]
 }
@@ -378,7 +402,7 @@ _jj__check_has_conflicts() {
 _jj__check_descendants_have_conflicts() {
   local repo="$1" rev="$2"
   local result
-  result="$(__jj__read "$repo" log -r "descendants(${rev})" \
+  result="$(__jj__read "$repo" --ignore-working-copy log -r "descendants(${rev})" \
     --no-graph -T 'if(conflict, "yes\n")')" || true
   [[ -n "$result" ]]
 }
@@ -426,7 +450,7 @@ _jj__filter_commits_reachable_from() {
 # nothing is printed if the fork point cannot be resolved.
 _jj__find_fork_point_commit() {
   local repo="$1" rev_a="$2" rev_b="$3"
-  __jj__read "$repo" log -r "fork_point(${rev_a} | ${rev_b})" \
+  __jj__read "$repo" --ignore-working-copy log -r "fork_point(${rev_a} | ${rev_b})" \
     --no-graph -T 'commit_id'
 }
 
@@ -478,7 +502,7 @@ _jj__list_commits_in_dag_range() {
 # resolved, so callers may treat resolution failure as an empty range.
 _jj__count_commits_in_range() {
   local repo="$1" from="$2" to="$3"
-  __jj__read "$repo" log -r "${from}..${to}" --no-graph -T '"x\n"' \
+  __jj__read "$repo" --ignore-working-copy log -r "${from}..${to}" --no-graph -T '"x\n"' \
     | grep -c . || true
 }
 
@@ -511,7 +535,7 @@ _jj__check_range_covered() {
     fi
   done
   local count
-  count="$(__jj__read "$repo" log -r "(${base}..${tip}) ~ (${union})" \
+  count="$(__jj__read "$repo" --ignore-working-copy log -r "(${base}..${tip}) ~ (${union})" \
     --no-graph -T '"x\n"' | grep -c . || true)"
   [[ "$count" -eq 0 ]]
 }
@@ -770,7 +794,8 @@ _jj__refresh_worktree() {
 # Bare graph operations: each function here rewrites the commit graph directly
 # and never touches any working copy — no snapshot is taken and no on-disk
 # files are updated. Every jj invocation in this section passes
-# --ignore-working-copy. _jj__commit_changeset additionally drives git plumbing
+# --ignore-working-copy, per the module header.
+# _jj__commit_changeset additionally drives git plumbing
 # against the Git object store that backs the jj repository, using a private
 # temporary index, so no git working tree or index is involved either.
 # ---------------------------------------------------------------------------
@@ -875,8 +900,8 @@ _jj__commit_changeset() {
     [[ -n "$tree" ]] || exit 1
 
     local user_name user_email
-    user_name="$(__jj__read "$repo" config get user.name)" || exit 1
-    user_email="$(__jj__read "$repo" config get user.email)" || exit 1
+    user_name="$(__jj__read "$repo" --ignore-working-copy config get user.name)" || exit 1
+    user_email="$(__jj__read "$repo" --ignore-working-copy config get user.email)" || exit 1
 
     local commit
     commit="$(GIT_AUTHOR_NAME="$user_name" GIT_AUTHOR_EMAIL="$user_email" \
@@ -1100,7 +1125,7 @@ _jj__rename_bookmark() {
 _jj__delete_bookmark() {
   local repo="$1" name="$2"
   _jj__check_bookmark_exists "$repo" "$name" || return 1
-  __jj__write "$repo" bookmark delete "$name"
+  __jj__write "$repo" --ignore-working-copy bookmark delete "$name"
 }
 
 # ---------------------------------------------------------------------------
@@ -1111,7 +1136,7 @@ _jj__delete_bookmark() {
 # Prints the current workspace root; falls back to REPO if not in a workspace.
 _jj__resolve_worktree_root() {
   local repo="$1"
-  __jj__read "$repo" workspace root || printf '%s' "$repo"
+  __jj__read "$repo" --ignore-working-copy workspace root || printf '%s' "$repo"
 }
 
 # Usage: _jj__list_worktrees REPO
@@ -1129,12 +1154,16 @@ _jj__list_worktrees() {
 # untouched. Quiet mutation.
 _jj__forget_worktree() {
   local repo="$1" name="$2"
-  __jj__write "$repo" workspace forget "$name"
+  __jj__write "$repo" --ignore-working-copy workspace forget "$name"
 }
 
 # Usage: _jj__create_worktree REPO NAME PATH REV
 # Adds a workspace named NAME at filesystem PATH, with its working copy
 # started on top of REV. Quiet mutation.
+#
+# Loads the working copy deliberately: creating a workspace means writing that
+# workspace's files to disk, so there is nothing to skip. jj enforces this and
+# refuses the operation outright if told to ignore the working copy.
 _jj__create_worktree() {
   local repo="$1" name="$2" path="$3" rev="$4"
   __jj__write "$repo" workspace add --name "$name" -r "$rev" "$path"
@@ -1195,7 +1224,7 @@ _jj__read_symlink_at_revision() {
 # Outputs file content to stdout. Returns jj's exit code (non-zero = file absent).
 _jj__read_file_at_operation() {
   local repo="$1" op="$2" rev="$3" path="$4"
-  __jj__read "$repo" --at-operation "$op" file show -r "$rev" -- "root:$path"
+  __jj__read "$repo" --ignore-working-copy --at-operation "$op" file show -r "$rev" -- "root:$path"
 }
 
 # Usage: _jj__check_file_exists_at_revision REPO REV PATH
@@ -1251,7 +1280,7 @@ _jj__list_files_at_operation() {
   local -a fileset=()
   [[ -n "$prefix" ]] && fileset=(-- "root:$prefix")
   # List from inside the repository ($PWD) to ensure printed file paths are relative to the repo root
-  ( cd "$repo" && __jj__read "$PWD" --at-operation "$op" file list -r "$rev" \
+  ( cd "$repo" && __jj__read "$PWD" --ignore-working-copy --at-operation "$op" file list -r "$rev" \
       "${fileset[@]+"${fileset[@]}"}" )
 }
 
@@ -1288,8 +1317,8 @@ _jj__show_diff() {
     fi
   done
   if [[ -n "$exclusion_terms" ]]; then
-    __jj__read "$repo" diff --git --from "$from" --to "$to" "~($exclusion_terms)"
+    __jj__read "$repo" --ignore-working-copy diff --git --from "$from" --to "$to" "~($exclusion_terms)"
   else
-    __jj__read "$repo" diff --git --from "$from" --to "$to"
+    __jj__read "$repo" --ignore-working-copy diff --git --from "$from" --to "$to"
   fi
 }

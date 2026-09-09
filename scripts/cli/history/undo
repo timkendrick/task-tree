@@ -137,9 +137,15 @@ main() {
     fi
   fi
 
+  # Both the cleanliness check below and the pre-restore snapshot further down
+  # concern the working copy this command is running in, so name that worktree
+  # rather than letting the repository path stand in for it.
+  local current_worktree
+  current_worktree="$(_worktree__resolve_current "$repo")"
+
   # Check working copy is clean
   if [[ "$force" != true ]]; then
-    if ! _worktree__check_clean "$repo"; then
+    if ! _worktree__check_clean "$current_worktree"; then
       _ui__log "Error: Working copy has uncommitted changes."
       _ui__log "  Commit or discard changes first, or use --force."
       exit 1
@@ -151,6 +157,20 @@ main() {
   if [[ "$in_progress" != true && -n "$after_op" ]]; then
     _ui__log "Outgoing operation (restore it manually to redo):"
     _ui__log "  $after_op"
+  fi
+
+  # Record any uncommitted work before the restore overwrites it on disk, and
+  # hand the user the operation that holds it. Reaching here with a dirty
+  # working copy means --force was given, so those changes are about to be
+  # discarded; the recorded operation is the only route back to them.
+  local snapshot_op
+  if ! snapshot_op="$(_worktree__record_working_copy "$current_worktree")"; then
+    _ui__log "Error: Could not record uncommitted changes in worktree '$current_worktree'."
+    exit 1
+  fi
+  if [[ -n "$snapshot_op" ]]; then
+    _ui__log "Uncommitted changes recorded before undoing (restore it to recover them):"
+    _ui__log "  $snapshot_op"
   fi
 
   # Capture the current op ID for the safety trap (in case the restore itself fails)

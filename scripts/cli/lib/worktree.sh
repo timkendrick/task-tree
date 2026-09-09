@@ -18,6 +18,7 @@
 #   _worktree__commit_working_copy — record a worktree's working copy as a commit
 #   _worktree__resolve_working_copy_parent — commit a worktree's working copy sits on
 #   _worktree__squash_into_working_copy — fold commits into a worktree's working copy
+#   _worktree__record_working_copy — capture uncommitted work and name the operation holding it
 #   _worktree__find_for_branch  — workspace roots whose current branch is a bookmark
 #   _worktree__delete           — forget a workspace and remove its files from disk
 #   _worktree__switch           — hooks + HEAD symlink update for a workspace switch
@@ -307,6 +308,37 @@ _worktree__squash_into_working_copy() {
     _repo__squash_commit "$worktree" "$change" "$wc_change" || return 1
   done
   _repo__refresh_worktree "$worktree"
+}
+
+# Usage: _worktree__record_working_copy WORKTREE
+#
+# Captures whatever is uncommitted in WORKTREE into its working-copy commit,
+# and prints the identifier of the operation that did so. Prints nothing when
+# there was nothing to capture.
+#
+# For commands that are about to discard or overwrite a working copy. The
+# recorded operation is the only route back to the work, so a caller that
+# destroys uncommitted changes should show the user what this prints.
+#
+# Snapshotting a worktree from outside it is safe in a way that rewriting one
+# is not: it only records what is already on disk, and never updates a working
+# copy to match a commit it does not contain.
+#
+# Returns non-zero if the worktree cannot be captured, so that empty output
+# means "there was nothing to record" and nothing else. A caller about to
+# destroy the worktree must treat failure as fatal: proceeding would discard
+# work it has just been unable to make recoverable. Callers resolve the path
+# from the worktree listing moments before calling, so a worktree that is not
+# there was removed mid-command.
+_worktree__record_working_copy() {
+  local worktree="$1"
+  _worktree__check_exists "$worktree" || return 1
+  local before after
+  before="$(_repo__get_operation_id "$worktree")" || return 1
+  _repo__snapshot_worktree "$worktree" || return 1
+  after="$(_repo__get_operation_id "$worktree")" || return 1
+  [[ "$after" != "$before" ]] && printf '%s' "$after"
+  return 0
 }
 
 # Usage: _worktree__find_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
