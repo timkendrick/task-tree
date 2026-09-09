@@ -228,7 +228,8 @@ _jj__find_repository_root() {
       return 0
     fi
     [[ "$dir" == '/' ]] && break
-    dir="$(dirname "$dir")"
+    dir="${dir%/*}"
+    [[ -n "$dir" ]] || dir='/'
   done
   return 1
 }
@@ -244,11 +245,13 @@ _jj__resolve_repository_root() {
   if [[ -f "$repo_entry" ]]; then
     # Secondary workspace: .jj/repo is a file containing a relative path to
     # the canonical repo's .jj/repo directory (e.g. "../../../../repo/.jj/repo").
-    local target
-    target="$(cd "$repo/.jj" && realpath "$(cat "$repo_entry")")" \
+    local pointer target
+    pointer="$(<"$repo_entry")"
+    target="$(cd "$repo/.jj" && cd "$pointer" && pwd -P)" \
       || { _ui__log "Error: Could not resolve canonical repo from $repo_entry"; return 1; }
     # target = /path/to/canonical/.jj/repo — strip /.jj/repo to get repo root
-    dirname "$(dirname "$target")"
+    target="${target%/*}"
+    printf '%s' "${target%/*}"
   else
     # Canonical repo: .jj/repo is a directory (the actual op store)
     printf '%s' "$repo"
@@ -279,7 +282,7 @@ _jj__get_backend_type() {
   canonical_repo="$(_jj__resolve_repository_root "$repo")" || return 1
   local type_file="$canonical_repo/.jj/repo/store/type"
   [[ -r "$type_file" ]] || return 1
-  cat "$type_file"
+  printf '%s' "$(<"$type_file")"
 }
 
 # Usage: _jj__check_backend_supported REPO
@@ -306,11 +309,29 @@ _jj__check_backend_supported() {
 # Usage: _jj__get_operation_id REPO
 # Prints the current jj operation ID to stdout.
 # Returns 1 if the operation ID cannot be read.
-# Passes --ignore-working-copy because this must be a pure read: without it,
-# jj snapshots the working copy before printing the op ID, so the "current"
-# operation would be a snapshot created by the read itself.
+#
+# The operation store keeps one file per operation head, named by the
+# operation ID, so with a single head the ID is read from the filesystem
+# without a backend process. Several heads mean concurrent operations that
+# only the backend can reconcile, so that case asks it. Either way this is a
+# pure read: the backend query passes --ignore-working-copy because without
+# it jj would snapshot the working copy first, and the "current" operation
+# would be a snapshot created by the read itself.
 _jj__get_operation_id() {
   local repo="$1"
+  local canonical_repo
+  canonical_repo="$(_jj__resolve_repository_root "$repo")" || return 1
+  local heads_dir="$canonical_repo/.jj/repo/op_heads/heads"
+  local entry head='' count=0
+  for entry in "$heads_dir"/*; do
+    [[ -e "$entry" ]] || continue
+    head="${entry##*/}"
+    count=$(( count + 1 ))
+  done
+  if [[ $count -eq 1 ]]; then
+    printf '%s\n' "$head"
+    return 0
+  fi
   # Read from inside the repository ($PWD): so that the operation succeeds
   # even when invoked from a deleted working directory.
   ( cd "$repo" && __jj__read "$PWD" --ignore-working-copy op log --no-graph -T id -n 1 )
@@ -880,13 +901,16 @@ _jj__commit_changeset() {
       file_paths+=("$rel")
       if [[ -x "$entry" ]]; then file_modes+=(100755); else file_modes+=(100644); fi
     fi
-  done < <(find "$stage_dir" \( -type f -o -type l \))
+  done < <(__jj__list_stage_entries "$stage_dir")
 
   # The remainder runs in a subshell so that an EXIT trap can clean up the
   # temporary ref on every path without leaking a trap into the caller, and
-  # so that the byte-counting locale does not leak either.
+  # so that the byte-counting locale does not leak either. The variables the
+  # trap reads are deliberately not `local`: an explicit exit from inside a
+  # function unwinds its locals before the trap runs, and the subshell
+  # already confines them.
   (
-    local tmp_ref ref_created=''
+    ref_created=''
     tmp_ref="refs/heads/tt-tmp-$$-$(printf '%04x%04x' "$RANDOM" "$RANDOM")"
     trap '
       if [[ -n "$ref_created" ]]; then
@@ -956,6 +980,21 @@ _jj__commit_changeset() {
     __jj__write_internal "$repo" --ignore-working-copy git import || exit 1
     printf '%s\n' "$commit"
   )
+}
+
+# Usage: __jj__list_stage_entries DIR
+# Prints every regular file and symlink beneath DIR, one absolute path per
+# line, descending into subdirectories (dot entries included) without a
+# process. Internal helper for _jj__commit_changeset.
+__jj__list_stage_entries() {
+  local dir="$1" entry
+  for entry in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+    if [[ -L "$entry" || -f "$entry" ]]; then
+      printf '%s\n' "$entry"
+    elif [[ -d "$entry" ]]; then
+      __jj__list_stage_entries "$entry"
+    fi
+  done
 }
 
 # Usage: __jj__quote_import_path PATH

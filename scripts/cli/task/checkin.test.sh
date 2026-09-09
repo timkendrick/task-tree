@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 test_task_checkin__basic_checkin_of_completed_task() {
   setup_workspace "ci-basic"

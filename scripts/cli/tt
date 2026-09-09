@@ -112,7 +112,7 @@ EOF
 
 main() {
   local script_dir
-  script_dir="$(cd "$(dirname "$0")" && pwd)"
+  script_dir="$(cd "${0%/*}" && pwd)"
 
   # Resolve top-level aliases before dispatching
   case "${1:-}" in
