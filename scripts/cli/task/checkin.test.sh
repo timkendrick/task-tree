@@ -767,4 +767,158 @@ test_task_checkin__context_empty_stdin_skips_context() {
   assert_eq "no context file for empty stdin" "$ctx_list" ""
 }
 
+# ---------------------------------------------------------------------------
+# --delete worktree safety
+#
+# --delete removes the child task's dedicated worktree from disk. Work that
+# lives only in that worktree has never been recorded, and by the time the
+# removal runs the delegated `tt task delete` has already deregistered the
+# workspace, so `tt history undo` cannot recover it either. The checks below
+# hold those worktrees to the same standard `tt worktree delete` holds its
+# target, and --force trades the refusal for a recoverable snapshot.
+# ---------------------------------------------------------------------------
+
+test_task_checkin__delete_refuses_dirty_child_worktree() {
+  # The invoking worktree's cleanliness check is skipped when <task-id> is
+  # given explicitly, so before this check a dirty child worktree was deleted
+  # with no refusal and no record of the work.
+  setup_workspace "ci-wt-dirty-refuse"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+
+  # Uncommitted work in the child's worktree, never snapshotted.
+  printf 'unsaved\n' > "$worktree_path/scratch.txt"
+
+  local exit_code=0
+  output=$(run_tt task checkin --complete --delete "$task_id" 2>&1) || exit_code=$?
+  assert_failure "checkin --delete refuses a dirty child worktree" "$exit_code"
+  assert_contains "names the worktree" "$output" "$worktree_path"
+  assert_contains "names the cause" "$output" "has uncommitted changes"
+  assert_contains "offers --retain-worktree" "$output" "--retain-worktree"
+
+  assert_file_exists "worktree kept on refusal" "$worktree_path"
+  assert_file_exists "uncommitted file kept on refusal" "$worktree_path/scratch.txt"
+}
+
+test_task_checkin__delete_refuses_child_worktree_ahead_of_bookmark() {
+  # Commits made in the child worktree since the last checkpoint are not part
+  # of the checkin, and --delete removes the bookmark that reaches them.
+  setup_workspace "ci-wt-ahead-refuse"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+
+  # A commit made directly in the worktree, leaving the bookmark behind @-.
+  printf 'more\n' > "$worktree_path/extra.txt"
+  (cd "$worktree_path" && jj commit -m "untracked by the bookmark" >/dev/null 2>&1) || true
+
+  local exit_code=0
+  output=$(run_tt task checkin --complete --delete "$task_id" 2>&1) || exit_code=$?
+  assert_failure "checkin --delete refuses a worktree ahead of the bookmark" "$exit_code"
+  assert_contains "names the cause" "$output" "has commits after the task bookmark"
+
+  assert_file_exists "worktree kept on refusal" "$worktree_path"
+}
+
+test_task_checkin__delete_refusal_leaves_repository_unchanged() {
+  # The check runs before the transaction opens, so a refusal is inert: no
+  # merge lands on the parent and the child bookmark does not move.
+  setup_workspace "ci-wt-refuse-inert"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  printf 'unsaved\n' > "$worktree_path/scratch.txt"
+
+  local parent_before child_before
+  parent_before=$(get_bookmark_commit "$proj_id") || true
+  child_before=$(get_bookmark_commit "$task_id") || true
+
+  run_tt task checkin --complete --delete "$task_id" >/dev/null 2>&1 || true
+
+  assert_eq "parent bookmark unmoved" "$(get_bookmark_commit "$proj_id")" "$parent_before"
+  assert_eq "child bookmark unmoved" "$(get_bookmark_commit "$task_id")" "$child_before"
+  assert_subtask_entry "subtask still open" "$proj_id" "$task_id" "[ ]"
+}
+
+test_task_checkin__delete_force_records_dirty_child_worktree() {
+  # --force proceeds, but only after capturing the work into the worktree's
+  # own working-copy commit and reporting the operation that holds it.
+  setup_workspace "ci-wt-dirty-force"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  run_tt_in_worktree "$worktree_path" task checkpoint --m "work" >/dev/null 2>&1 || true
+
+  # Capture the change ID of the WC commit before the worktree is destroyed.
+  # --ignore-working-copy is passed to prevent jj log from creating a
+  # snapshot of the worktree and influencing the test
+  # (potentially causing checkin's own snapshot to report no dirty changes)
+  local wc_change
+  wc_change=$(jj -R "$worktree_path" --ignore-working-copy log -r '@' \
+    --no-graph -T 'change_id.short(8)' 2>/dev/null) || wc_change=''
+
+  # Uncommitted work in the child's worktree, never snapshotted.
+  printf 'unsaved\n' > "$worktree_path/scratch.txt"
+
+  local exit_code=0
+  output=$(run_tt task checkin --complete --delete --force "$task_id" 2>&1) || exit_code=$?
+  assert_success "checkin --delete --force succeeds" "$exit_code"
+  assert_contains "reports the recovery operation" "$output" "recorded before deleting"
+  assert_file_not_exists "worktree deleted with --force" "$worktree_path"
+
+  # The reported operation is a real handle on the discarded work: the file is
+  # present in the worktree's working-copy commit as it stood at that operation.
+  local snapshot_op files_at_op
+  snapshot_op=$(printf '%s\n' "$output" | grep -A1 'recorded before deleting' | tail -1 | tr -d '[:space:]')
+  assert_output_not_empty "recovery operation id printed" "$snapshot_op"
+  files_at_op=$(jj -R "$REPO" --at-operation "$snapshot_op" --ignore-working-copy \
+    file list -r "$wc_change" 2>/dev/null) || files_at_op=''
+  assert_contains "discarded work reachable at the recorded operation" "$files_at_op" "scratch.txt"
+
+  # The capture must not have leaked the user's scratch file onto the branch:
+  # it belongs in the worktree's own working-copy commit, a child of the
+  # bookmark, and nowhere else.
+  local files_on_branch
+  files_on_branch=$(jj -R "$REPO" --at-operation "$snapshot_op" --ignore-working-copy \
+    file list -r "$task_id" 2>/dev/null) || files_on_branch=''
+  assert_not_contains "capture did not contaminate the task branch" "$files_on_branch" "scratch.txt"
+}
+
+test_task_checkin__delete_with_retain_worktree_skips_checks() {
+  # --retain-worktree removes nothing, so there is no work at risk and no
+  # reason to refuse. The dirty worktree survives untouched.
+  setup_workspace "ci-wt-retain-dirty"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  printf 'unsaved\n' > "$worktree_path/scratch.txt"
+
+  local exit_code=0
+  output=$(run_tt task checkin --complete --delete --retain-worktree "$task_id" 2>&1) || exit_code=$?
+  assert_success "checkin --delete --retain-worktree succeeds" "$exit_code"
+  assert_not_contains "no refusal for a retained worktree" "$output" "has uncommitted changes"
+  assert_file_exists "worktree retained" "$worktree_path"
+  assert_file_exists "uncommitted file untouched" "$worktree_path/scratch.txt"
+}
+
 run_tests "tt task checkin"
