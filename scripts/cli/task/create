@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
@@ -266,9 +266,9 @@ main() {
   local parent_bookmark=''
   if [[ "$is_project" == false ]]; then
     resolve_output="$(resolve_parent "$parent" "$repo" "$task_prefix" "$project_prefix")"
-    parent_rev="$(printf '%s' "$resolve_output" | head -n 1)"
-    parent_task_file="$(printf '%s' "$resolve_output" | sed -n '2p')"
-    parent_bookmark="$(printf '%s' "$resolve_output" | sed -n '3p')"
+    # The trailing lines are empty off a task branch, and reading past them
+    # reports end of input rather than a failure.
+    { read -r parent_rev; read -r parent_task_file; read -r parent_bookmark; } <<< "$resolve_output" || true
   else
     # --project mode: fork from --target if given, else current @
     if [[ -n "$target" ]]; then
@@ -325,7 +325,7 @@ main() {
     body="$raw"
   else
     # Read from stdin (pipe or redirect)
-    body="$(cat)"
+    body="$(</dev/stdin)"
   fi
 
   # Generate task ID
@@ -420,8 +420,7 @@ main() {
   # the title, labels and body, made here in the same process. The stub the
   # branch starts from is TODO with the creation timestamp and nothing else.
   commit_metadata() {
-    local updated
-    updated="$(_string__generate_timestamp)"
+    local updated="$stub_ts"
     local REWRITE_LABELS=("${labels[@]+"${labels[@]}"}") REWRITE_SUBTASKS=() REWRITE_CONTEXTS=()
     metadata_writer() {
       local root="$1"

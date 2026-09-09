@@ -30,7 +30,15 @@
 # Outputs everything after the second "---" line (the frontmatter closing delimiter).
 _frontmatter__parse_body() {
   local content="$1"
-  printf '%s' "$content" | awk '/^---$/{n++; if(n==2){found=1; next}} found{print}'
+  local line sep=0 found=''
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -n "$found" ]]; then
+      printf '%s\n' "$line"
+    elif [[ "$line" == '---' ]]; then
+      sep=$(( sep + 1 ))
+      [[ $sep -eq 2 ]] && found=1
+    fi
+  done <<< "$content"
 }
 
 # Usage: _frontmatter__parse_fields CONTENT FIELD...
@@ -44,20 +52,28 @@ _frontmatter__parse_body() {
 # ignored, so body content can never be mistaken for frontmatter.
 _frontmatter__parse_fields() {
   local content="$1"; shift
-  printf '%s' "$content" | awk -v fields="$*" '
-    BEGIN { n = split(fields, f, " "); for (i = 1; i <= n; i++) want[f[i]] = 1 }
-    NR == 1 && $0 != "---" { exit }
-    /^---$/ { sep++; if (sep == 2) exit; next }
-    sep == 1 {
-      key = $0
-      if (sub(/:.*$/, "", key) == 0) next
-      if (key in want) {
-        val = $0
-        sub("^" key ":[ \t]*", "", val)
-        print key ":" val
-      }
-    }
-  '
+  local line sep=0 first=1 key val field
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -n "$first" ]]; then
+      first=''
+      [[ "$line" == '---' ]] || return 0
+    fi
+    if [[ "$line" == '---' ]]; then
+      sep=$(( sep + 1 ))
+      [[ $sep -eq 2 ]] && return 0
+      continue
+    fi
+    [[ $sep -eq 1 && "$line" == *:* ]] || continue
+    key="${line%%:*}"
+    for field in "$@"; do
+      if [[ "$key" == "$field" ]]; then
+        val="${line#"$key":}"
+        val="${val#"${val%%[!$' \t']*}"}"
+        printf '%s:%s\n' "$key" "$val"
+        break
+      fi
+    done
+  done <<< "$content"
 }
 
 # Usage: _frontmatter__parse_field CONTENT FIELD
@@ -125,17 +141,25 @@ _frontmatter__parse_task() {
     < <(_frontmatter__parse_repeated_field "$content" "subtask")
 
   # Reject unrecognized frontmatter keys
-  local unknown
-  unknown="$(printf '%s' "$content" | awk '
-    NR == 1 && $0 != "---" { exit }
-    /^---$/ { n++; if (n==2) exit; next }
-    n==1 && /^[a-zA-Z]/ {
-      key=$0; sub(/:.*/, "", key)
-      if (key != "title" && key != "status" && key != "created" && key != "updated" \
-          && key != "label" && key != "context" && key != "subtask")
-        print key
-    }
-  ')"
+  local unknown='' line sep=0 first=1 key
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -n "$first" ]]; then
+      first=''
+      [[ "$line" == '---' ]] || break
+    fi
+    if [[ "$line" == '---' ]]; then
+      sep=$(( sep + 1 ))
+      [[ $sep -eq 2 ]] && break
+      continue
+    fi
+    [[ $sep -eq 1 && "$line" == [a-zA-Z]* ]] || continue
+    key="${line%%:*}"
+    case "$key" in
+      title|status|created|updated|label|context|subtask) ;;
+      *) unknown+="$key"$'\n' ;;
+    esac
+  done <<< "$content"
+  unknown="${unknown%$'\n'}"
   if [[ -n "$unknown" ]]; then
     printf 'Error: Unrecognized frontmatter field(s):\n%s\n' "$unknown" >&2
     return 1
@@ -151,7 +175,8 @@ _frontmatter__parse_task() {
 # Canonical field order: title, status, created, updated, label…, context…, subtask…
 # STATUS is omitted when empty (used for context files which have no status field).
 # Timestamps are caller-supplied; generate via _string__generate_timestamp at the call site.
-# Writes to a temp file and renames for atomicity.
+# FILE is written directly: callers stage files for a commit rather than
+# editing files anything else is reading.
 _frontmatter__write_task_file() {
   local file="$1"
   local title="$2"
@@ -160,8 +185,6 @@ _frontmatter__write_task_file() {
   local created="$5"
   local updated="$6"
 
-  local tmpfile
-  tmpfile="$(mktemp)"
   {
     echo '---'
     echo "title: \"${title//\"/\\\"}\""
@@ -181,8 +204,7 @@ _frontmatter__write_task_file() {
     if [[ -n "$body" ]]; then
       printf '%s\n' "$body"
     fi
-  } > "$tmpfile"
-  mv "$tmpfile" "$file"
+  } > "$file"
 }
 
 # _frontmatter__write_context_file FILE TITLE BODY CREATED UPDATED
@@ -207,24 +229,24 @@ _frontmatter__write_context_file() {
 #   - If BEFORE_PATTERN is given: before the first line matching that pattern
 #     within the frontmatter block.
 #   - If omitted: before the closing --- separator.
-# Uses temp file + mv for atomicity.
+# Rewritten in place, in bash: the file is a staged copy nothing else reads.
 _frontmatter__insert_line() {
   local file="$1" line="$2" before="${3:-}"
-  local tmpfile
-  tmpfile="$(mktemp)"
-  awk -v ins="$line" -v bef="$before" '
-    BEGIN { sep=0; inserted=0 }
-    /^---$/ {
-      sep++
-      if (sep == 2 && !inserted) { print ins; inserted=1 }
-      print; next
-    }
-    sep == 1 && bef != "" && !inserted && $0 ~ bef {
-      print ins; inserted=1
-    }
-    { print }
-  ' "$file" > "$tmpfile"
-  mv "$tmpfile" "$file"
+  local current sep=0 inserted='' out=''
+  while IFS= read -r current || [[ -n "$current" ]]; do
+    if [[ "$current" == '---' ]]; then
+      sep=$(( sep + 1 ))
+      if [[ $sep -eq 2 && -z "$inserted" ]]; then
+        out+="$line"$'\n'
+        inserted=1
+      fi
+    elif [[ $sep -eq 1 && -n "$before" && -z "$inserted" && "$current" =~ $before ]]; then
+      out+="$line"$'\n'
+      inserted=1
+    fi
+    out+="$current"$'\n'
+  done < "$file"
+  printf '%s' "$out" > "$file"
 }
 
 # _frontmatter__append_context FILE CTX_ID
@@ -253,23 +275,33 @@ _frontmatter__append_subtask() {
 # lines inside the frontmatter block are considered: a body line that looks
 # like a subtask entry is left untouched. Removing an entry that does not
 # exist leaves the file unchanged and returns 0.
-# Uses temp file + mv for atomicity.
+# Rewritten in place, in bash: the file is a staged copy nothing else reads.
 _frontmatter__remove_subtask() {
   local file="$1" task_id="$2"
-  local tmpfile
-  tmpfile="$(mktemp)"
-  awk -v id="$task_id" '
-    BEGIN { sep = 0 }
-    /^---$/ { sep++; print; next }
-    sep == 1 && /^subtask:/ {
-      rest = $0
-      sub(/^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]*/, "", rest)
-      split(rest, parts, /[[:space:]]/)
-      if (parts[1] == id) next
-    }
-    { print }
-  ' "$file" > "$tmpfile"
-  mv "$tmpfile" "$file"
+  local current sep=0 rest out=''
+  while IFS= read -r current || [[ -n "$current" ]]; do
+    if [[ "$current" == '---' ]]; then
+      sep=$(( sep + 1 ))
+    elif [[ $sep -eq 1 && "$current" == subtask:* ]]; then
+      rest="$(__frontmatter__subtask_rest "$current")"
+      [[ "${rest%%[[:space:]]*}" == "$task_id" ]] && continue
+    fi
+    out+="$current"$'\n'
+  done < "$file"
+  printf '%s' "$out" > "$file"
+}
+
+# Usage: __frontmatter__subtask_rest LINE
+# Prints a `subtask:` line with its key and checkbox prefix removed — the
+# task ID and whatever follows it. A line without a well-formed checkbox is
+# printed unchanged.
+__frontmatter__subtask_rest() {
+  local line="$1"
+  local checkbox='^subtask:[[:space:]]*\[[[:space:]x-]\][[:space:]]*'
+  if [[ "$line" =~ $checkbox ]]; then
+    line="${line#"${BASH_REMATCH[0]}"}"
+  fi
+  printf '%s' "$line"
 }
 
 # _frontmatter__rename_subtask FILE OLD_ID NEW_ID
@@ -281,45 +313,41 @@ _frontmatter__remove_subtask() {
 # lines inside the frontmatter block are considered: a body line that looks
 # like a subtask entry is left untouched. Renaming an entry that does not
 # exist leaves the file unchanged and returns 0.
-# Uses temp file + mv for atomicity.
+# Rewritten in place, in bash: the file is a staged copy nothing else reads.
 _frontmatter__rename_subtask() {
   local file="$1" old_id="$2" new_id="$3"
-  local tmpfile
-  tmpfile="$(mktemp)"
-  awk -v old_id="$old_id" -v new_id="$new_id" '
-    BEGIN { sep = 0 }
-    /^---$/ { sep++; print; next }
-    sep == 1 && /^subtask:/ {
-      rest = $0
-      # The checkbox prefix is fixed-width once normalized, so capture it by
-      # removing the remainder rather than by pattern-matching the ID itself.
-      sub(/^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]*/, "", rest)
-      prefix = substr($0, 1, length($0) - length(rest))
-      split(rest, parts, /[[:space:]]/)
-      if (parts[1] == old_id) {
-        print prefix new_id substr(rest, length(old_id) + 1)
-        next
-      }
-    }
-    { print }
-  ' "$file" > "$tmpfile"
-  mv "$tmpfile" "$file"
+  local current sep=0 rest prefix out=''
+  while IFS= read -r current || [[ -n "$current" ]]; do
+    if [[ "$current" == '---' ]]; then
+      sep=$(( sep + 1 ))
+    elif [[ $sep -eq 1 && "$current" == subtask:* ]]; then
+      rest="$(__frontmatter__subtask_rest "$current")"
+      if [[ "${rest%%[[:space:]]*}" == "$old_id" ]]; then
+        # The checkbox prefix is whatever precedes the remainder.
+        prefix="${current:0:$(( ${#current} - ${#rest} ))}"
+        current="${prefix}${new_id}${rest:${#old_id}}"
+      fi
+    fi
+    out+="$current"$'\n'
+  done < "$file"
+  printf '%s' "$out" > "$file"
 }
 
 # _frontmatter__update_timestamp FILE TIMESTAMP
 #
 # Updates the 'updated:' field in the frontmatter of FILE to TIMESTAMP.
-# Uses temp file + mv for atomicity.
+# Rewritten in place, in bash: the file is a staged copy nothing else reads.
 _frontmatter__update_timestamp() {
   local file="$1"
   local ts="$2"
-  local tmpfile
-  tmpfile="$(mktemp)"
-  awk -v ts="$ts" '
-    BEGIN { sep=0 }
-    /^---$/ { sep++; print; next }
-    sep == 1 && /^updated:/ { print "updated: " ts; next }
-    { print }
-  ' "$file" > "$tmpfile"
-  mv "$tmpfile" "$file"
+  local current sep=0 out=''
+  while IFS= read -r current || [[ -n "$current" ]]; do
+    if [[ "$current" == '---' ]]; then
+      sep=$(( sep + 1 ))
+    elif [[ $sep -eq 1 && "$current" == updated:* ]]; then
+      current="updated: $ts"
+    fi
+    out+="$current"$'\n'
+  done < "$file"
+  printf '%s' "$out" > "$file"
 }

@@ -22,12 +22,47 @@
 #
 # Public surface:
 #   _history__init                 — create an empty .tt/history file if absent
+#   _history__replace_last_line    — rewrite the file's last line when it matches
+#   _history__delete_lines         — rewrite the file without a given line
 #   _history__resolve_file         — path to the canonical .tt/history file
 #   _history__resolve_operation    — identifier of the repository's current operation
 #   _history__restore_operation    — return the repository to a recorded operation
 #   _history__begin_transaction    — record an in-progress entry and set the rollback trap
 #   _history__commit_transaction   — finalize the in-progress entry with the after-op-id
 #   _history__rollback_transaction — restore the before-op state and drop the entry
+
+# Usage: _history__replace_last_line FILE EXPECTED NEW
+# Rewrites FILE so that its last line, when it is exactly EXPECTED, becomes
+# NEW; any other last line is left as it is. Pure bash: the file is small.
+_history__replace_last_line() {
+  local file="$1" expected="$2" new="$3"
+  local content
+  content="$(<"$file")"
+  [[ -n "$content" ]] || return 0
+  local head='' last="$content"
+  if [[ "$content" == *$'\n'* ]]; then
+    head="${content%$'\n'*}"
+    last="${content##*$'\n'}"
+  fi
+  [[ "$last" == "$expected" ]] && last="$new"
+  if [[ -n "$head" ]]; then
+    printf '%s\n%s\n' "$head" "$last" > "$file"
+  else
+    printf '%s\n' "$last" > "$file"
+  fi
+}
+
+# Usage: _history__delete_lines FILE LINE
+# Rewrites FILE without any line that is exactly LINE. Pure bash.
+_history__delete_lines() {
+  local file="$1" match="$2"
+  local line out=''
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == "$match" ]] && continue
+    out+="$line"$'\n'
+  done < "$file"
+  printf '%s' "$out" > "$file"
+}
 
 # Usage: _history__init REPO
 # Creates an empty .tt/history file in REPO if it does not already exist.
@@ -119,7 +154,8 @@ _history__begin_transaction() {
   # Check for in-progress transaction (last line has empty after-op-id)
   if [[ -f "$history_file" && -s "$history_file" ]]; then
     local last_line
-    last_line="$(tail -n 1 "$history_file" 2>/dev/null)" || true
+    last_line="$(<"$history_file")"
+    last_line="${last_line##*$'\n'}"
     if [[ -n "$last_line" ]]; then
       local last_after="${last_line#*:}"
       if [[ -z "$last_after" ]]; then
@@ -171,7 +207,7 @@ _history__commit_transaction() {
   # This is safe even if $repo (a worktree) has been deleted, since history_file
   # is always inside the canonical repo which remains on disk.
   local canonical_repo
-  canonical_repo="$(cd "$(dirname "$history_file")" && _repo__find_repository_root)" || {
+  canonical_repo="$(cd "${history_file%/*}" && _repo__find_repository_root)" || {
     _ui__log "Warning: Could not derive canonical repo from history file path; history may be incomplete"
     canonical_repo="$repo"
   }
@@ -184,11 +220,7 @@ _history__commit_transaction() {
   }
 
   # Replace the last line (in-progress: "<before>:") with the completed entry ("<before>:<after>")
-  if [[ "$(uname)" == "Darwin" ]]; then
-    sed -i '' "$ s|^${before_op}:\$|${before_op}:${after_op}|" "$history_file"
-  else
-    sed -i "$ s|^${before_op}:\$|${before_op}:${after_op}|" "$history_file"
-  fi
+  _history__replace_last_line "$history_file" "${before_op}:" "${before_op}:${after_op}"
 
   # Clear ERR trap and ownership flag
   trap - ERR
@@ -228,7 +260,7 @@ _history__rollback_transaction() {
 
   # Derive canonical repo from the history file path (walk up from .tt/ to find .jj/).
   local canonical_repo
-  canonical_repo="$(cd "$(dirname "$history_file")" && _repo__find_repository_root)" || canonical_repo="$repo"
+  canonical_repo="$(cd "${history_file%/*}" && _repo__find_repository_root)" || canonical_repo="$repo"
 
   _ui__log "Rolling back transaction (restoring VCS operation: ${before_op:0:12}...)"
 
@@ -249,7 +281,7 @@ _history__rollback_transaction() {
       while IFS= read -r rel; do
         [[ -z "$rel" ]] && continue
         if [[ -e "$wc_worktree/$rel" || -L "$wc_worktree/$rel" ]]; then
-          mkdir -p "$preserve_dir/files/$(dirname "$rel")" 2>/dev/null || continue
+          mkdir -p "$preserve_dir/files/$(_path__parent_dir "$rel")" 2>/dev/null || continue
           cp -pRP "$wc_worktree/$rel" "$preserve_dir/files/$rel" 2>/dev/null || true
         else
           # The working-copy change is a deletion: remember it so the file
@@ -277,7 +309,7 @@ _history__rollback_transaction() {
           | while IFS= read -r rel; do
               rel="${rel#./}"
               [[ -z "$rel" ]] && continue
-              mkdir -p "$wc_worktree/$(dirname "$rel")" 2>/dev/null || continue
+              mkdir -p "$wc_worktree/$(_path__parent_dir "$rel")" 2>/dev/null || continue
               rm -f "$wc_worktree/$rel" 2>/dev/null
               cp -pRP "$preserve_dir/files/$rel" "$wc_worktree/$rel" 2>/dev/null || \
                 _ui__log "Warning: Could not preserve uncommitted change to $rel; it may still be recoverable from the VCS operation log"
@@ -295,11 +327,7 @@ _history__rollback_transaction() {
 
   # Remove the in-progress line from history
   if [[ -f "$history_file" ]]; then
-    if [[ "$(uname)" == "Darwin" ]]; then
-      sed -i '' "/^${before_op}:\$/d" "$history_file"
-    else
-      sed -i "/^${before_op}:\$/d" "$history_file"
-    fi
+    _history__delete_lines "$history_file" "${before_op}:"
   fi
 
   # Clear ERR trap and ownership flag

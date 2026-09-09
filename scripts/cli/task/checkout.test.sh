@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 test_task_checkout__basic_checkout_of_todo_task() {
   setup_workspace "checkout-basic"

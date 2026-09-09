@@ -678,13 +678,25 @@ _task__full_range_symlink_diff() {
 # Usage: _task__full_range_parse_symlink_removed DIFF_TEXT
 # Prints the removed symlink target from a Git-format TASK.md diff, or nothing.
 _task__full_range_parse_symlink_removed() {
-  printf '%s\n' "$1" | grep -E '^-[^-]' | head -1 | cut -c2-
+  local line
+  while IFS= read -r line; do
+    if [[ "$line" == -* && "$line" != --* ]]; then
+      printf '%s\n' "${line#-}"
+      return 0
+    fi
+  done <<< "$1"
 }
 
 # Usage: _task__full_range_parse_symlink_added DIFF_TEXT
 # Prints the added symlink target from a Git-format TASK.md diff, or nothing.
 _task__full_range_parse_symlink_added() {
-  printf '%s\n' "$1" | grep -E '^\+[^+]' | head -1 | cut -c2-
+  local line
+  while IFS= read -r line; do
+    if [[ "$line" == +* && "$line" != ++* ]]; then
+      printf '%s\n' "${line#+}"
+      return 0
+    fi
+  done <<< "$1"
 }
 
 # Usage: _task__full_range_span_empty REPO BASE TIP
@@ -1332,15 +1344,20 @@ __task__commit_staged() {
   shift
 
   # The remainder runs in a subshell so an EXIT trap can remove the staging
-  # directory on every path without leaking the trap into the caller.
+  # directory on every path without leaking the trap into the caller. The
+  # variables the trap reads are deliberately not `local`: an explicit exit
+  # from inside a function unwinds its locals before the trap runs, and the
+  # subshell already confines them.
   (
-    local stage
-    stage="$(mktemp -d)" || exit 1
+    # A private staging directory named from this process and the shell's
+    # generator.
+    stage="${TMPDIR:-/tmp}/tt-stage-$$-$RANDOM$RANDOM"
     trap 'rm -rf "$stage"' EXIT
+    mkdir -p "$stage" || exit 1
 
     local modify_path
     for modify_path in "${modify_paths[@]+"${modify_paths[@]}"}"; do
-      mkdir -p "$stage/$(dirname "$modify_path")" || exit 1
+      mkdir -p "$stage/$(_path__parent_dir "$modify_path")" || exit 1
       if ! _repo__read_file_at_revision "$repo" "$tip" "$modify_path" \
           > "$stage/$modify_path"; then
         _ui__log "Error: '$modify_path' does not exist on '$tip'."
@@ -1418,7 +1435,7 @@ _task__resolve_current() {
 _task__resolve_current_revision() {
   local resolve_output
   resolve_output="$(_task__resolve_current "$@")" || return $?
-  printf '%s' "$resolve_output" | sed -n '1p'
+  printf '%s' "${resolve_output%%$'\n'*}"
 }
 
 # Usage: _task__resolve_current_file REPO TASK_PREFIX PROJECT_PREFIX
@@ -1429,7 +1446,9 @@ _task__resolve_current_revision() {
 _task__resolve_current_file() {
   local resolve_output
   resolve_output="$(_task__resolve_current "$@")" || return $?
-  printf '%s' "$resolve_output" | sed -n '2p'
+  local _rev line=''
+  { read -r _rev; read -r line; } <<< "$resolve_output" || true
+  printf '%s' "$line"
 }
 
 # Usage: _task__resolve_current_branch REPO TASK_PREFIX PROJECT_PREFIX
@@ -1440,7 +1459,9 @@ _task__resolve_current_file() {
 _task__resolve_current_branch() {
   local resolve_output
   resolve_output="$(_task__resolve_current "$@")" || return $?
-  printf '%s' "$resolve_output" | sed -n '3p'
+  local _rev _file line=''
+  { read -r _rev; read -r _file; read -r line; } <<< "$resolve_output" || true
+  printf '%s' "$line"
 }
 
 # ---------------------------------------------------------------------------
@@ -1457,6 +1478,22 @@ _task__resolve_current_branch() {
 # followed; unknown entries are skipped silently.
 #
 # Does not output the task's own directory (the caller already handles that).
+# Usage: __task__list_subtask_ids CONTENT
+# Prints the remainder of every frontmatter `subtask:` entry in CONTENT after
+# its checkbox, one per line. Internal helper for the descendant walk.
+__task__list_subtask_ids() {
+  local content="$1" line sep=0
+  local checkbox='^subtask:[[:space:]]*\[[[:space:]x-]\][[:space:]]*'
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == '---' ]]; then sep=$(( sep + 1 )); continue; fi
+    [[ $sep -eq 1 && "$line" == subtask:* ]] || continue
+    if [[ "$line" =~ $checkbox ]]; then
+      line="${line#"${BASH_REMATCH[0]}"}"
+    fi
+    printf '%s\n' "$line"
+  done <<< "$content"
+}
+
 _task__collect_descendant_dirs() {
   local repo="$1" branch="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
 
@@ -1510,13 +1547,7 @@ _task__collect_descendant_dirs() {
 
       # Enqueue for further traversal
       queue+=("$subtask_id")
-    done < <(printf '%s' "$content" | awk '
-      /^---$/ { n++; next }
-      n == 1 && /^subtask:/ {
-        sub(/^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]*/, "")
-        print
-      }
-    ')
+    done < <(__task__list_subtask_ids "$content")
   done
 }
 

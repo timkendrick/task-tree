@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 # shellcheck source=common.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/common.sh"
 
 # ---------------------------------------------------------------------------
 # Unit tests for user interaction helpers in lib/ui.sh

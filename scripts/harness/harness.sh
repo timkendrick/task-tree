@@ -16,7 +16,7 @@ fi
 unset TT_LOG
 
 # Resolve paths
-HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HARNESS_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 REPO_ROOT="$(cd "$HARNESS_DIR/../.." && pwd)"
 TT="$REPO_ROOT/scripts/cli/tt"
 
@@ -165,7 +165,7 @@ run_tt_in_worktree() {
 # Usage: edit_file PATH CONTENT
 edit_file() {
   local path="$1" content="$2"
-  mkdir -p "$(dirname "$path")"
+  [[ "$path" == */* ]] && mkdir -p "${path%/*}"
   printf '%s\n' "$content" > "$path"
 }
 
@@ -173,7 +173,7 @@ edit_file() {
 # Usage: append_file PATH CONTENT
 append_file() {
   local path="$1" content="$2"
-  mkdir -p "$(dirname "$path")"
+  [[ "$path" == */* ]] && mkdir -p "${path%/*}"
   printf '%s\n' "$content" >> "$path"
 }
 
@@ -185,21 +185,27 @@ append_file() {
 # Usage: id=$(create_project SLUG TITLE [BODY])
 create_project() {
   local slug="$1" title="$2" body="${3:-}"
-  run_tt task create --project --slug "$slug" --title "$title" <<< "$body" 2>/dev/null | tail -1
+  local out
+  out="$(run_tt task create --project --slug "$slug" --title "$title" <<< "$body" 2>/dev/null)" || return $?
+  printf '%s\n' "${out##*$'\n'}"
 }
 
 # Create a child task under the current branch and return its ID on stdout.
 # Usage: id=$(create_task SLUG TITLE [BODY])
 create_task() {
   local slug="$1" title="$2" body="${3:-}"
-  run_tt task create --slug "$slug" --title "$title" <<< "$body" 2>/dev/null | tail -1
+  local out
+  out="$(run_tt task create --slug "$slug" --title "$title" <<< "$body" 2>/dev/null)" || return $?
+  printf '%s\n' "${out##*$'\n'}"
 }
 
 # Create a child task under a specific parent and return its ID on stdout.
 # Usage: id=$(create_task_under PARENT_ID SLUG TITLE [BODY])
 create_task_under() {
   local parent="$1" slug="$2" title="$3" body="${4:-}"
-  run_tt task create --parent "$parent" --slug "$slug" --title "$title" <<< "$body" 2>/dev/null | tail -1
+  local out
+  out="$(run_tt task create --parent "$parent" --slug "$slug" --title "$title" <<< "$body" 2>/dev/null)" || return $?
+  printf '%s\n' "${out##*$'\n'}"
 }
 
 # Checkout a task (switches WC to it).
@@ -247,7 +253,8 @@ checkin_task() {
 # Capture the task ID from the last line of stdout.
 # Usage: TASK_ID=$(last_line "$output")
 last_line() {
-  printf '%s' "$1" | tail -1
+  local text="${1%$'\n'}"
+  printf '%s' "${text##*$'\n'}"
 }
 
 # ---------------------------------------------------------------------------
@@ -380,7 +387,10 @@ get_all_task_bookmarks() {
 # Count the number of commits in a revset.
 # Usage: count_commits REVSET
 count_commits() {
-  jj -R "$REPO" log -r "$1" --no-graph -T '"x\n"' 2>/dev/null | wc -l | tr -d ' '
+  local marks
+  marks="$(jj -R "$REPO" log -r "$1" --no-graph -T '"x\n"' 2>/dev/null)"
+  marks="${marks//[!x]/}"
+  printf '%s' "${#marks}"
 }
 
 # Check if a revset contains any conflicts.
@@ -458,9 +468,46 @@ assert_neq() {
 }
 
 # assert_contains LABEL HAYSTACK NEEDLE
+# _harness_contains HAYSTACK NEEDLE
+# Fixed-string containment, as `grep -F` sees it: any line of NEEDLE present
+# in HAYSTACK. A single-line needle is a plain substring test.
+_harness_contains() {
+  local haystack="$1" needle="$2" part
+  if [[ "$needle" != *$'\n'* ]]; then
+    [[ "$haystack" == *"$needle"* ]]
+    return
+  fi
+  while IFS= read -r part || [[ -n "$part" ]]; do
+    [[ "$haystack" == *"$part"* ]] && return 0
+  done <<< "$needle"
+  return 1
+}
+
+# _harness_line_matches STRING ERE
+# Whether any line of STRING matches ERE, as `grep -E` sees it.
+_harness_line_matches() {
+  local string="$1" pattern="$2" line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ $pattern ]] && return 0
+  done <<< "$string"
+  return 1
+}
+
+# _harness_id_pattern PATTERN
+# Expands every %…% placeholder in PATTERN to the ERE for a task ID suffix.
+_harness_id_pattern() {
+  local pattern="$1"
+  while [[ "$pattern" == *%*%* ]]; do
+    local head="${pattern%%%*}" rest="${pattern#*%}"
+    rest="${rest#*%}"
+    pattern="${head}[a-z0-9-]+-[0-9a-f]{8}${rest}"
+  done
+  printf '%s' "$pattern"
+}
+
 assert_contains() {
   local label="$1" haystack="$2" needle="$3"
-  if printf '%s' "$haystack" | grep -qF -- "$needle"; then
+  if _harness_contains "$haystack" "$needle"; then
     _log_pass "$label"
     _record_pass
   else
@@ -473,7 +520,7 @@ assert_contains() {
 # assert_not_contains LABEL HAYSTACK NEEDLE
 assert_not_contains() {
   local label="$1" haystack="$2" needle="$3"
-  if ! printf '%s' "$haystack" | grep -qF -- "$needle"; then
+  if ! _harness_contains "$haystack" "$needle"; then
     _log_pass "$label"
     _record_pass
   else
@@ -488,8 +535,8 @@ assert_not_contains() {
 assert_matches() {
   local label="$1" string="$2" pattern="$3"
   local ere_pattern
-  ere_pattern="$(printf '%s' "$pattern" | sed 's/%[^%]*%/[a-z0-9-]+-[0-9a-f]{8}/g')"
-  if printf '%s' "$string" | grep -qE "$ere_pattern"; then
+  ere_pattern="$(_harness_id_pattern "$pattern")"
+  if _harness_line_matches "$string" "$ere_pattern"; then
     _log_pass "$label"
     _record_pass
   else
@@ -503,8 +550,8 @@ assert_matches() {
 assert_not_matches() {
   local label="$1" string="$2" pattern="$3"
   local ere_pattern
-  ere_pattern="$(printf '%s' "$pattern" | sed 's/%[^%]*%/[a-z0-9-]+-[0-9a-f]{8}/g')"
-  if ! printf '%s' "$string" | grep -qE "$ere_pattern"; then
+  ere_pattern="$(_harness_id_pattern "$pattern")"
+  if ! _harness_line_matches "$string" "$ere_pattern"; then
     _log_pass "$label"
     _record_pass
   else
@@ -799,20 +846,38 @@ read_task_file() {
 
 # Extract a single-value frontmatter field.
 get_frontmatter_field() {
-  local content="$1" field="$2"
-  printf '%s' "$content" | sed -n "s/^${field}: *//p" | head -1
+  local content="$1" field="$2" line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$field:"* ]]; then
+      line="${line#"$field:"}"
+      printf '%s\n' "${line#"${line%%[! ]*}"}"
+      return 0
+    fi
+  done <<< "$content"
 }
 
 # Extract all values for a repeatable frontmatter field.
 get_frontmatter_field_all() {
-  local content="$1" field="$2"
-  printf '%s' "$content" | sed -n "s/^${field}: *//p"
+  local content="$1" field="$2" line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$field:"* ]]; then
+      line="${line#"$field:"}"
+      printf '%s\n' "${line#"${line%%[! ]*}"}"
+    fi
+  done <<< "$content"
 }
 
 # Extract the body (everything after the second ---).
 get_task_body() {
-  local content="$1"
-  printf '%s' "$content" | awk '/^---$/{n++; if(n==2){found=1; next}} found{print}'
+  local content="$1" line sep=0 found=''
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -n "$found" ]]; then
+      printf '%s\n' "$line"
+    elif [[ "$line" == '---' ]]; then
+      sep=$(( sep + 1 ))
+      [[ $sep -eq 2 ]] && found=1
+    fi
+  done <<< "$content"
 }
 
 # ---------------------------------------------------------------------------
@@ -843,7 +908,9 @@ assert_task_title() {
     _record_fail "$label: could not read task file for '$task_id'"
     return
   }
-  actual="$(get_frontmatter_field "$content" "title" | sed 's/^"//;s/"$//')"
+  actual="$(get_frontmatter_field "$content" "title")"
+  actual="${actual#\"}"
+  actual="${actual%\"}"
   assert_eq "$label" "$actual" "$expected"
 }
 

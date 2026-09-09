@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
@@ -261,7 +261,7 @@ main() {
   move_new_parent_writer() {
     local root="$1"
     _frontmatter__append_subtask "$root/$new_parent_task_file" "$task_id"
-    mkdir -p "$root/$(dirname "$task_file")"
+    mkdir -p "$root/$(_path__parent_dir "$task_file")"
     if _task__read_file "$repo" "$old_parent_tip" "$task_file" > "$root/$task_file"; then
       _ui__log "Copied task stub from old parent to new parent: $task_file"
     else

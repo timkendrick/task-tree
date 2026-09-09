@@ -12,7 +12,7 @@
 # Every operation takes the repository root — or, for the working-copy group,
 # the worktree root — as its first argument.
 
-_TT_REPO_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_TT_REPO_LIB_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$_TT_REPO_LIB_DIR/vcs/jj.sh"
 
 # --- Repository discovery ---

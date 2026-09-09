@@ -148,7 +148,7 @@ _workspace__get_dir() {
       # Resolve relative targets against the symlink's parent directory,
       # then canonicalise to strip OS-level symlinks (e.g. /var -> /private/var).
       if [[ "$ws_dir" != /* ]]; then
-        ws_dir="$(_path__resolve_symlinks "$(cd "$(dirname "$symlink")" && cd "$ws_dir" && pwd)")"
+        ws_dir="$(_path__resolve_symlinks "$(cd "${symlink%/*}" && cd "$ws_dir" && pwd)")"
       else
         ws_dir="$(_path__resolve_symlinks "$ws_dir")"
       fi
