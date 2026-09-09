@@ -863,8 +863,14 @@ _task__commit_new_branch() {
     shift
   fi
 
+  # A full commit ID is already resolved; the bare commit verifies it names a
+  # commit in the store.
   local parent_commit
-  parent_commit="$(_repo__resolve_commit "$repo" "$parent_rev")" || parent_commit=''
+  if [[ "$parent_rev" =~ ^[0-9a-f]{40}$ ]]; then
+    parent_commit="$parent_rev"
+  else
+    parent_commit="$(_repo__resolve_commit "$repo" "$parent_rev")" || parent_commit=''
+  fi
   if [[ -z "$parent_commit" ]]; then
     _ui__log "Error: Could not resolve revision '$parent_rev'."
     return 1
@@ -1385,18 +1391,15 @@ _task__resolve_current() {
   local repo="$1"
   local task_prefix="$2"
   local project_prefix="$3"
-  local current_branch
+  local nearest current_branch parent_rev
 
-  current_branch="$(_repo__find_nearest_bookmark "$repo" '@')" || current_branch=''
+  nearest="$(_repo__resolve_nearest_bookmark "$repo" '@')" || nearest=''
+  parent_rev="${nearest%%$'\t'*}"
+  current_branch="${nearest#*$'\t'}"
 
-  if [[ -z "$current_branch" ]]; then
+  if [[ -z "$nearest" ]]; then
     printf '%s\n\n\n' '@'
   else
-    local parent_rev
-    if ! parent_rev="$(_repo__resolve_commit "$repo" "$current_branch")"; then
-      _ui__log "Error: Could not resolve current branch: $current_branch"
-      exit 1
-    fi
     if _task__check_is_task_branch "$current_branch" "$task_prefix"; then
       printf '%s\n%s\n%s\n' "$parent_rev" "$(_path__task_file "${current_branch#$task_prefix}")" "$current_branch"
     elif _task__check_is_project_branch "$current_branch" "$project_prefix"; then

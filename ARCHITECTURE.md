@@ -176,7 +176,7 @@ Signatures, argument conventions and return values are documented on the backend
 | `check_is_ancestor` | Whether one revision is an ancestor of another |
 | `filter_commits_reachable_from` | Which of the given commits a revision can reach |
 | `find_fork_point_commit` | Where two revisions' histories diverge |
-| `find_nearest_bookmark` | Closest bookmarked ancestor of a revision |
+| `resolve_nearest_bookmark` | Commit ID and name of the closest bookmarked ancestor of a revision |
 | `list_commits_in_range` | Commit IDs in a range, oldest first |
 | `list_commits_in_dag_range` | Commits descended from a base, up to a tip |
 | `count_commits_in_range` | Size of a range |
@@ -316,26 +316,28 @@ directory enumerates its contents first.
 verify the backing store is git, else fail "Unsupported repository backend: <type>"
 resolve GIT_DIR from the store pointer
 
-index ← the parent revision's tree
-for each deletion path:      remove it from the index
-for each staged file:        mode ← 120000 symlink | 100755 executable | 100644 regular
-                             blob ← its content, or the link target for a symlink
-                             add (mode, blob, path) to the index
-tree   ← write the index
-commit ← commit the tree with the given message and parent, stamping the
-         repository-configured identity rather than the ambient git identity
-make the commit visible through a uniquely named temporary ref, import it,
-then drop the ref and reconcile the deletion within the same transaction
+blobs  ← hash every staged regular file into the object store, in one call
+stream ← a fast-import commit: the parent revision as its base, the
+         repository-configured identity rather than the ambient git identity,
+         then for each deletion path:   D path
+         then for each staged file:     M 100755|100644 <blob> path
+         then for each staged symlink:  M 120000 inline path, with the link target
+commit ← run fast-import over the stream; it writes the tree and the commit and
+         points a uniquely named temporary ref at the result
+import the ref so the backend learns the commit, then drop the ref, forget the
+bookmark it became, and reconcile the deletion within the same transaction
 ```
 
 Deletions are applied before the overlay, so one call may delete a path and stage a replacement
 beneath the same prefix. Granularity is one bare commit per logical tt commit; a command writing to
 two branches makes two calls.
 
-The index is assembled in a private scratch directory, so no working tree or index is involved on
-either side. Reconciling the temporary ref's deletion is part of the operation rather than a
-follow-up: leaving it unreconciled makes the *next* command mint a surprise import operation outside
-any tt transaction, which would break undo integrity.
+No working tree or index is involved on either side: the tree is described to a single
+`fast-import` run rather than assembled through per-file plumbing, and a result this small is
+unpacked into loose objects, so the store does not gain a packfile per commit. Reconciling the
+temporary ref's deletion is part of the operation rather than a follow-up: leaving it unreconciled
+makes the *next* command mint a surprise import operation outside any tt transaction, which would
+break undo integrity.
 
 The facade wrapper is `_task__commit_on_branch`, which resolves the branch tip, materialises any
 files the caller wants to read-modify-write, expands delete-prefixes into exact paths, runs the

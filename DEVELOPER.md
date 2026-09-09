@@ -102,6 +102,18 @@ Test output shows a global `[n/N]` counter across all running tests, per-test ti
 ══════════════════════════════════════════════════════════════
 ```
 
+### What a test costs
+
+Every `tt` command is a bash process that shells out to `jj` and `git` several dozen times, and
+each test runs a handful of commands. Process creation is therefore the cost that matters: on
+macOS it is slow and it does not scale across cores — spawning from fourteen workers at once gives
+only about four times the throughput of one — so past four workers extra concurrency buys nothing,
+and the way to make the suite faster is to make it spawn fewer processes.
+
+The runner builds one template workspace per run and every `setup_workspace` copies it (two
+symlinks re-pointed) instead of initialising a repository and running `tt workspace init` from
+scratch. A suite run directly, outside `scripts/test`, builds its workspaces the slow way.
+
 ### Speeding up the test suite with a RAM disk
 
 When running the full test suite, it is strongly recommended to provide a RAM disk to prevent unnecessary I/O thrashing.
