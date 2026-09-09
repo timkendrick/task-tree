@@ -91,11 +91,28 @@ main() {
     _export_filters
   fi
 
+  _build_template
+
   if [[ "$mode" == "parallel" ]]; then
     _run_parallel "${test_files[@]}"
   else
     _run_series "${test_files[@]}"
   fi
+}
+
+# Build the template workspace every test's setup_workspace copies, and export
+# its location as _TT_TEST_TEMPLATE. Built once per run, beside the per-test
+# directories (under TT_TEST_ROOT when set), and removed on exit. The build
+# runs in a subshell so the harness's own bookkeeping stays out of the runner.
+_build_template() {
+  local template
+  template="$(mktemp -d "${TT_TEST_ROOT:-${TMPDIR:-/tmp}}/tt-template-XXXXXX")"
+  trap "rm -rf '$template'" EXIT
+  (
+    . "$SCRIPT_DIR/harness/harness.sh"
+    build_workspace "$template/repo" "$template/virtual"
+  ) || { log "Failed to build the template workspace."; exit 1; }
+  export _TT_TEST_TEMPLATE="$template"
 }
 
 # ---------------------------------------------------------------------------

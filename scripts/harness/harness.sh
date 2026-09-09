@@ -80,26 +80,54 @@ trap 'rm -rf "$_TEST_ROOT"' EXIT
 REPO=""
 VIRTUAL=""
 
+# Build a fresh jj repo + tt workspace: an initial commit on `main`, then
+# `tt workspace init` against a sibling virtual folder. REPO must not yet
+# exist; VIRTUAL is created by workspace init.
+# Usage: build_workspace REPO VIRTUAL
+build_workspace() {
+  local repo="$1" virtual="$2"
+  mkdir -p "$repo"
+  # Resolve any symlinks in the path (e.g. /var -> /private/var on macOS)
+  repo="$(cd "$repo" && pwd -P)"
+
+  jj git init "$repo" >/dev/null 2>&1
+
+  echo "initial" > "$repo/README.md"
+  jj -R "$repo" commit -m "Initial commit" >/dev/null 2>&1
+  jj -R "$repo" bookmark set main >/dev/null 2>&1
+
+  "$TT" workspace init "$repo" "$virtual" >/dev/null 2>&1
+  # workspace init creates .tt/workspace symlink automatically; no further setup needed.
+}
+
 # Create a fresh jj repo + tt workspace for a test.
 # Sets REPO, VIRTUAL, and exports TT_REPO, changes CWD to REPO.
+#
+# When the runner has built a template workspace (_TT_TEST_TEMPLATE names a
+# directory holding `repo` and `virtual` as build_workspace leaves them), the
+# workspace is a copy of that template rather than a fresh build: every test
+# starts from the identical state, and a copy is a single process where a
+# build is a dozen. Only the two absolute symlinks — `.tt/workspace` in the
+# repo and `HEAD` in the virtual folder — are re-pointed at the copy; nothing
+# else in a workspace records where it lives.
 # Usage: setup_workspace [name]
 setup_workspace() {
   local name="${1:-test-$$-$RANDOM}"
-  REPO="$_TEST_ROOT/$name/repo"
-  VIRTUAL="$_TEST_ROOT/$name/virtual"
-  mkdir -p "$REPO"
-  # Resolve any symlinks in the path (e.g. /var -> /private/var on macOS)
-  REPO="$(cd "$REPO" && pwd -P)"
-
-  jj git init "$REPO" >/dev/null 2>&1
+  local root="$_TEST_ROOT/$name"
+  REPO="$root/repo"
+  VIRTUAL="$root/virtual"
+  if [[ -n "${_TT_TEST_TEMPLATE:-}" && -d "$_TT_TEST_TEMPLATE/repo" ]]; then
+    mkdir -p "$root"
+    cp -R "$_TT_TEST_TEMPLATE/repo" "$_TT_TEST_TEMPLATE/virtual" "$root/"
+    # Resolve any symlinks in the path (e.g. /var -> /private/var on macOS)
+    REPO="$(cd "$REPO" && pwd -P)"
+    ln -sfn "$VIRTUAL" "$REPO/.tt/workspace"
+    ln -sfn "$REPO" "$VIRTUAL/HEAD"
+  else
+    build_workspace "$REPO" "$VIRTUAL"
+    REPO="$(cd "$REPO" && pwd -P)"
+  fi
   cd "$REPO"
-
-  echo "initial" > README.md
-  jj -R "$REPO" commit -m "Initial commit" >/dev/null 2>&1
-  jj -R "$REPO" bookmark set main >/dev/null 2>&1
-
-  "$TT" workspace init "$REPO" "$VIRTUAL" >/dev/null 2>&1
-  # workspace init creates .tt/workspace symlink automatically; no further setup needed.
 
   # Export so run_tt forwards it as --repo to all tt commands
   export TT_REPO="$REPO"
