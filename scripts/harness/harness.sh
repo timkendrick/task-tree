@@ -32,10 +32,13 @@ declare -a _FAILURES=()
 _RESULTS_DIR="$(mktemp -d)"
 trap 'rm -rf "$_RESULTS_DIR"' EXIT
 
-# Suite start time in milliseconds. Uses python3 for sub-second precision;
-# falls back to whole seconds via date if python3 is unavailable.
+# Suite start time in milliseconds. Uses perl for sub-second precision (it
+# starts in a few milliseconds, where python3 takes tens); falls back to
+# python3, then to whole seconds via date.
 _ms_now() {
-  if command -v python3 >/dev/null 2>&1; then
+  if command -v perl >/dev/null 2>&1; then
+    perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'
+  elif command -v python3 >/dev/null 2>&1; then
     python3 -c 'import time; print(int(time.time()*1000))'
   else
     printf '%d000' "$(date +%s)"
