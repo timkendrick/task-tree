@@ -29,6 +29,27 @@ test__workspace__resolve_repo__flag_beats_env() {
   assert_eq "--repo value wins over TT_REPO" "$resolved" "$REPO"
 }
 
+test__workspace__resolve_repo__absolutizes_a_relative_flag_value() {
+  # The backend's working-directory-relative operations require an absolute
+  # root and reject anything else, so this is a guarantee they depend on
+  # rather than cosmetic tidying.
+  setup_workspace "resolve-repo-relative-flag"
+  local parent relative resolved
+  parent="$(dirname "$REPO")"
+  relative="$(basename "$REPO")"
+  resolved="$(cd "$parent" && _workspace__resolve_repo "$relative")"
+  assert_eq "a relative --repo value resolves to the absolute root" "$resolved" "$REPO"
+}
+
+test__workspace__resolve_repo__absolutizes_a_relative_env_value() {
+  setup_workspace "resolve-repo-relative-env"
+  local parent relative resolved
+  parent="$(dirname "$REPO")"
+  relative="$(basename "$REPO")"
+  resolved="$(cd "$parent" && TT_REPO="$relative" _workspace__resolve_repo "")"
+  assert_eq "a relative TT_REPO resolves to the absolute root" "$resolved" "$REPO"
+}
+
 test__workspace__resolve_repo__env_beats_walk_up() {
   setup_workspace "resolve-repo-env"
   local other

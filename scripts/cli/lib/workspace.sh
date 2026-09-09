@@ -19,7 +19,8 @@
 #   2. $TT_REPO        — the TT_REPO environment variable (if set and non-empty)
 #   3. _repo__find_repository_root — walk up from CWD to find the enclosing repo
 #
-# Prints the resolved repo path to stdout.
+# Prints the resolved repo path to stdout as an absolute, symlink-resolved path.
+#
 # Exits 1 with an error message if the path cannot be resolved or is not a
 # version-control repository.
 _workspace__resolve_repo() {
@@ -44,7 +45,7 @@ _workspace__resolve_repo() {
     exit 1
   fi
 
-  # Canonicalize to match jj's own path representation (e.g. /var → /private/var on macOS)
+  # Canonicalize the path so that it matches the VCS-backed repository root unambiguously
   repo="$(_path__resolve_symlinks "$repo")"
   printf '%s' "$repo"
 }

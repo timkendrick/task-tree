@@ -5,11 +5,12 @@
 # active backend (currently jj, lib/vcs/jj.sh). The wrapper list below is the
 # backend contract: a backend must implement a same-suffix function for every
 # wrapper, and nothing outside this file may call backend functions directly.
-# Backend-internal helpers (double-underscore names such as __jj__run) are not
-# part of the contract and have no wrappers.
 #
 # Public surface: every _repo__* function declared below. Argument and output
 # conventions are documented on the backend implementations.
+#
+# Every operation takes the repository root — or, for the working-copy group,
+# the worktree root — as its first argument.
 
 _TT_REPO_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_TT_REPO_LIB_DIR/vcs/jj.sh"
