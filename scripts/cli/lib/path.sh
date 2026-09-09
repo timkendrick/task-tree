@@ -22,6 +22,9 @@ TT_METADATA_DIR='.tt'
 # lives outside TT_METADATA_DIR it is tt metadata, not project content.
 TT_TASK_SYMLINK_FILENAME='TASK.md'
 
+# The repo-relative directory containing all task directories.
+TT_TASK_ROOT_DIR="$TT_METADATA_DIR/task"
+
 # Usage: _path__metadata [SUBPATH]
 # Returns the repo-relative path to the tt metadata directory, optionally with
 # SUBPATH appended (e.g. _path__metadata "config.toml" -> ".tt/config.toml").
@@ -37,7 +40,7 @@ _path__metadata() {
 # Usage: _path__task_root
 # Returns the canonical directory path containing all task directories.
 _path__task_root() {
-  _path__metadata 'task'
+  printf '%s' "$TT_TASK_ROOT_DIR"
 }
 
 # Usage: _path__metadata_exclusions
@@ -52,14 +55,14 @@ _path__metadata_exclusions() {
 # SUFFIX is the slug-hex part (e.g. "my-task-abc12345").
 _path__task_file() {
   local suffix="$1"
-  printf '%s/%s/%s' "$(_path__task_root)" "$suffix" "$TT_TASK_SYMLINK_FILENAME"
+  printf '%s/%s/%s' "$TT_TASK_ROOT_DIR" "$suffix" "$TT_TASK_SYMLINK_FILENAME"
 }
 
 # Usage: _path__task_dir SUFFIX
 # Returns the canonical directory path for a task.
 _path__task_dir() {
   local suffix="$1"
-  printf '%s/%s' "$(_path__task_root)" "$suffix"
+  printf '%s/%s' "$TT_TASK_ROOT_DIR" "$suffix"
 }
 
 # Usage: _path__task_context SUFFIX CTX_ID
@@ -68,7 +71,7 @@ _path__task_dir() {
 _path__task_context() {
   local suffix="$1"
   local ctx_id="$2"
-  printf '%s/%s/%s.md' "$(_path__task_root)" "$suffix" "$ctx_id"
+  printf '%s/%s/%s.md' "$TT_TASK_ROOT_DIR" "$suffix" "$ctx_id"
 }
 
 # Resolve DIR to a canonical absolute path, following OS-level symlinks (pwd -P).
