@@ -47,25 +47,145 @@ _fixture_divergent_branches() {
 }
 
 # ---------------------------------------------------------------------------
-# Internal runners: TT_VERBOSE
+# Internal runners: TT_LOG
+#
+# TT_LOG=info narrates the mutations tt performs on the repository; verbose
+# additionally narrates reads and internal plumbing. In every case TT_LOG is
+# pinned explicitly so an ambient value cannot skew a comparison.
 # ---------------------------------------------------------------------------
 
-test___jj__run__verbose_logs_command_and_preserves_stdout() {
+test___jj__read__is_silent_at_info_and_traced_at_verbose() {
   setup_workspace
-  local plain_err_file="$_TEST_ROOT/plain-stderr.txt"
-  local verbose_err_file="$_TEST_ROOT/verbose-stderr.txt"
-  # TT_VERBOSE is pinned explicitly in both runs so an ambient value cannot
-  # skew either side of the comparison.
-  local plain_out verbose_out
-  plain_out="$(TT_VERBOSE= _jj__get_commit_description "$REPO" main 2>"$plain_err_file")"
-  verbose_out="$(TT_VERBOSE=1 _jj__get_commit_description "$REPO" main 2>"$verbose_err_file")"
-  assert_eq "stdout is byte-identical with TT_VERBOSE=1" "$verbose_out" "$plain_out"
-  assert_output_empty "no stderr chatter without TT_VERBOSE" \
-    "$(cat "$plain_err_file")"
+  local off_err="$_TEST_ROOT/read-off.txt"
+  local info_err="$_TEST_ROOT/read-info.txt"
+  local verbose_err="$_TEST_ROOT/read-verbose.txt"
+  local off_out info_out verbose_out
+  off_out="$(TT_LOG= _jj__get_commit_description "$REPO" main 2>"$off_err")"
+  info_out="$(TT_LOG=info _jj__get_commit_description "$REPO" main 2>"$info_err")"
+  verbose_out="$(TT_LOG=verbose _jj__get_commit_description "$REPO" main 2>"$verbose_err")"
+
+  assert_eq "stdout is byte-identical at info" "$info_out" "$off_out"
+  assert_eq "stdout is byte-identical at verbose" "$verbose_out" "$off_out"
+  assert_output_empty "no stderr chatter when logging is off" "$(cat "$off_err")"
+  assert_output_empty "a read is not narrated at info" "$(cat "$info_err")"
+
   local err
-  err="$(cat "$verbose_err_file")"
-  assert_contains "command line echoed to stderr" "$err" "+ jj -R"
+  err="$(cat "$verbose_err")"
+  assert_contains "command line echoed to stderr at verbose" "$err" "+ jj -R"
   assert_contains "command arguments echoed to stderr" "$err" "log -r main"
+}
+
+test___jj__write__is_traced_at_info() {
+  setup_workspace
+  local off_err="$_TEST_ROOT/write-off.txt"
+  local info_err="$_TEST_ROOT/write-info.txt"
+  jj -R "$REPO" bookmark set trace-target -r main >/dev/null 2>&1
+
+  TT_LOG= _jj__set_bookmark "$REPO" trace-target main 2>"$off_err"
+  assert_output_empty "a mutation is silent when logging is off" "$(cat "$off_err")"
+
+  TT_LOG=info _jj__set_bookmark "$REPO" trace-target main 2>"$info_err"
+  local err
+  err="$(cat "$info_err")"
+  assert_contains "mutation command line narrated at info" "$err" "+ jj -R"
+  assert_contains "mutation arguments narrated at info" "$err" "bookmark set trace-target"
+}
+
+test___jj__write__forwards_the_commands_own_output_at_info() {
+  # At info the point is to narrate what happened to the repository, so the
+  # mutation's own reporting is forwarded rather than discarded.
+  setup_workspace
+  local err_file="$_TEST_ROOT/write-forward.txt"
+  jj -R "$REPO" bookmark set doomed -r main >/dev/null 2>&1
+  TT_LOG=info _jj__delete_bookmark "$REPO" doomed 2>"$err_file"
+  assert_contains "jj's own reporting reaches stderr" "$(cat "$err_file")" "Deleted"
+}
+
+test___jj__write__never_leaks_output_to_stdout() {
+  setup_workspace
+  jj -R "$REPO" bookmark set quiet-target -r main >/dev/null 2>&1
+  local level
+  for level in '' info verbose; do
+    local out
+    out="$(TT_LOG="$level" _jj__set_bookmark "$REPO" quiet-target main 2>/dev/null)"
+    assert_output_empty "mutation stdout suppressed at TT_LOG=${level:-off}" "$out"
+  done
+}
+
+test___jj__write_internal__is_traced_only_at_verbose() {
+  # The deliberate working-copy snapshot is private mechanism, not an effect a
+  # user would recognize, so it must not appear at info even though it mutates.
+  setup_workspace
+  local info_err="$_TEST_ROOT/internal-info.txt"
+  local verbose_err="$_TEST_ROOT/internal-verbose.txt"
+  TT_LOG=info _jj__snapshot_worktree "$REPO" 2>"$info_err"
+  TT_LOG=verbose _jj__snapshot_worktree "$REPO" 2>"$verbose_err"
+  assert_output_empty "internal mutation not narrated at info" "$(cat "$info_err")"
+  assert_contains "internal mutation narrated at verbose" \
+    "$(cat "$verbose_err")" "+ jj -R"
+}
+
+test__jj__operations_that_change_directory__accept_a_relative_root() {
+  # These operations run their jj invocation from inside the repository, and
+  # name it with $PWD rather than the caller's argument. jj resolves -R after
+  # the working directory changes, so passing the argument through would make a
+  # relative root resolve against itself (cd foo, then -R foo means foo/foo);
+  # $PWD is absolute by construction once the cd has happened.
+  setup_workspace
+  local parent relative
+  parent="$(dirname "$REPO")"
+  relative="$(basename "$REPO")"
+
+  local code=0
+  ( cd "$parent" && _jj__get_operation_id "$relative" ) >/dev/null 2>/dev/null || code=$?
+  assert_success "_jj__get_operation_id accepts a relative root" "$code"
+
+  code=0
+  ( cd "$parent" && _jj__list_changed_files "$relative" '@' ) >/dev/null 2>/dev/null || code=$?
+  assert_success "_jj__list_changed_files accepts a relative root" "$code"
+
+  local listed
+  listed="$(cd "$parent" && _jj__list_files_at_revision "$relative" '@' 2>/dev/null)"
+  assert_not_contains "a relative root still yields repo-relative paths" "$listed" "../"
+  assert_eq "and the same listing as an absolute root" \
+    "$listed" "$(_jj__list_files_at_revision "$REPO" '@')"
+}
+
+test__jj__list_files_at_revision__paths_do_not_depend_on_the_callers_directory() {
+  # The reason most of the directory-changing call sites exist: jj reports
+  # paths relative to the working directory, so without the cd this output
+  # would depend on where the user invoked tt from.
+  setup_workspace
+  local from_root from_elsewhere
+  from_root="$(cd "$REPO" && _jj__list_files_at_revision "$REPO" '@')"
+  from_elsewhere="$(cd "$_TEST_ROOT" && _jj__list_files_at_revision "$REPO" '@')"
+  assert_eq "paths do not depend on the caller's directory" \
+    "$from_elsewhere" "$from_root"
+  assert_not_contains "paths are not relativized outward" "$from_elsewhere" "../"
+}
+
+test__jj__list_files_at_revision__prefix_filters_the_listing() {
+  # The prefix and no-prefix forms share one invocation via an optional
+  # fileset argument; both paths need covering.
+  setup_workspace
+  local all filtered
+  all="$(_jj__list_files_at_revision "$REPO" '@')"
+  filtered="$(_jj__list_files_at_revision "$REPO" '@' "$TT_METADATA_DIR")"
+  assert_contains "unfiltered listing includes a metadata file" "$all" "$TT_METADATA_DIR/"
+  assert_contains "filtered listing includes the metadata file" "$filtered" "$TT_METADATA_DIR/"
+  assert_not_contains "filtered listing excludes the repo-root task symlink" \
+    "$(printf '%s\n' "$filtered")" "$(printf '%s\n' "$TT_TASK_SYMLINK_FILENAME")"
+}
+
+test___jj__read__preserves_exit_status_at_every_level() {
+  setup_workspace
+  local level
+  for level in '' info verbose; do
+    local code=0
+    TT_LOG="$level" _jj__resolve_commit "$REPO" no-such-revision \
+      >/dev/null 2>/dev/null || code=$?
+    assert_failure "failure reported at TT_LOG=${level:-off}" "$code"
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -980,23 +1100,47 @@ test__jj__commit_changeset__basic_commit_from_stage() {
     "$(_jj__read_file_at_revision "$REPO" "$commit" README.md)" "initial"
 }
 
-test__jj__commit_changeset__git_runner_verbosity() {
+test__jj__commit_changeset__is_entirely_silent_at_info() {
+  # A bare write is built from git plumbing plus a temporary-ref import hop.
+  # None of that is an effect a user would recognize, and jj reports the
+  # temporary ref's removal as "Abandoned 1 commits that are no longer
+  # reachable" — alarming out of context. The whole sequence is therefore
+  # verbose-only; what a user sees at info is the bookmark move that follows.
+  setup_workspace
+  local stage="$_TEST_ROOT/stage-info"
+  mkdir -p "$stage"
+  printf 'v\n' > "$stage/v.txt"
+  local info_err="$_TEST_ROOT/changeset-info-err.txt"
+  local commit
+  commit="$(TT_LOG=info _jj__commit_changeset "$REPO" main "info run" "$stage" \
+    2>"$info_err")"
+  local err
+  err="$(cat "$info_err")"
+  assert_output_empty "bare write is silent at info" "$err"
+  assert_eq "commit id still returned on stdout" "${#commit}" 40
+}
+
+test__jj__commit_changeset__traces_plumbing_at_verbose() {
   setup_workspace
   local stage="$_TEST_ROOT/stage-verbose"
   mkdir -p "$stage"
   printf 'v\n' > "$stage/v.txt"
   local plain_err="$_TEST_ROOT/plain-git-err.txt"
   local verbose_err="$_TEST_ROOT/verbose-git-err.txt"
-  TT_VERBOSE= _jj__commit_changeset "$REPO" main "quiet run" "$stage" \
-    >/dev/null 2>"$plain_err"
-  TT_VERBOSE=1 _jj__commit_changeset "$REPO" main "verbose run" "$stage" \
-    >/dev/null 2>"$verbose_err"
-  assert_output_empty "no stderr chatter without TT_VERBOSE" \
+  local plain_commit verbose_commit
+  plain_commit="$(TT_LOG= _jj__commit_changeset "$REPO" main "quiet run" "$stage" \
+    2>"$plain_err")"
+  verbose_commit="$(TT_LOG=verbose _jj__commit_changeset "$REPO" main "verbose run" "$stage" \
+    2>"$verbose_err")"
+  assert_output_empty "no stderr chatter when logging is off" \
     "$(cat "$plain_err")"
-  assert_contains "git command lines echoed with TT_VERBOSE=1" \
+  assert_contains "git plumbing narrated at verbose" \
     "$(cat "$verbose_err")" "+ git"
-  assert_contains "jj command lines echoed with TT_VERBOSE=1" \
+  assert_contains "the import hop narrated at verbose" \
     "$(cat "$verbose_err")" "+ jj"
+  # Tracing must not disturb the operation's return value.
+  assert_eq "commit id returned while tracing" "${#verbose_commit}" 40
+  assert_eq "commit id returned when quiet" "${#plain_commit}" 40
 }
 
 test__jj__commit_changeset__dirty_working_copy_not_involved() {

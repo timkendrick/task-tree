@@ -13,6 +13,37 @@ scripts/test    --filter 'partial|complete'          # test filter: ERE — matc
 scripts/test    --filter basic --filter force        # test filter: OR — matches "basic" or "force"
 ```
 
+## Tracing VCS activity
+
+`TT_LOG` narrates the version-control commands `tt` runs underneath. It takes one of two values;
+anything else — including an uppercase spelling — leaves tracing off.
+
+| Value | What is traced |
+|-------|----------------|
+| `info` | The mutations `tt` performs on the repository, each shown as the command line that was run, followed by that command's own output. |
+| `verbose` | Everything: reads, the git plumbing behind a bare write, and the internal bookkeeping a mutation needs, in addition to everything `info` shows. |
+
+```bash
+TT_LOG=info tt task edit          # what did tt change?
+TT_LOG=verbose tt task edit       # what did tt actually run?
+TT_LOG=verbose scripts/test lib/vcs --filter symlink
+```
+
+A routine `tt task edit` traces one line at `info` and roughly forty at `verbose`, because a
+branch write is built from git plumbing plus a temporary-ref import hop. That machinery is
+deliberately hidden at `info`: it is the mechanism rather than the effect, and the temporary ref
+makes `jj` report `Abandoned 1 commits that are no longer reachable`, which is alarming out of
+context. What `info` shows is the branch move the user asked for.
+
+**`TT_LOG` affects diagnostics only.** Everything it emits goes to stderr; stdout and the exit
+status are byte-for-byte identical at every level, so tracing can be switched on for a command
+whose output is being piped or captured. The level is chosen per call site inside
+`lib/vcs/jj.sh` rather than derived from the command, so whether an operation is worth narrating
+is an editorial decision recorded in that file.
+
+Note that the test harness unsets `TT_LOG`, so an exported value cannot leak into assertions.
+Suites that exercise tracing set it explicitly per invocation.
+
 ## Test suite performance
 
 The entire test suite takes some time to run: make sure to filter test commands to ensure only the necessary set of tests are invoked.
