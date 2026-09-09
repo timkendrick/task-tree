@@ -79,6 +79,7 @@ _repo__abandon_commit()            { _jj__abandon_commit "$@"; }
 _repo__set_bookmark()              { _jj__set_bookmark "$@"; }
 _repo__list_bookmark_names()       { _jj__list_bookmark_names "$@"; }
 _repo__list_bookmarks_at()         { _jj__list_bookmarks_at "$@"; }
+_repo__find_branch_for_commit()    { _jj__find_branch_for_commit "$@"; }
 _repo__check_bookmark_exists()     { _jj__check_bookmark_exists "$@"; }
 _repo__rename_bookmark()           { _jj__rename_bookmark "$@"; }
 _repo__delete_bookmark()           { _jj__delete_bookmark "$@"; }

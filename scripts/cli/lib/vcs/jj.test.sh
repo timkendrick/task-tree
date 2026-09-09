@@ -860,6 +860,44 @@ test__jj__list_bookmarks_at__names_at_revision() {
   assert_failure "absent revision rejected" "$exit_code"
 }
 
+# ---------------------------------------------------------------------------
+# _jj__find_branch_for_commit
+# ---------------------------------------------------------------------------
+
+test__jj__find_branch_for_commit__working_copy_on_its_branch() {
+  setup_workspace
+  _fixture_linear_history
+  # @ sits directly on feature, which itself descends from main: the deepest
+  # fork point wins, so the answer is feature rather than the outer branch.
+  assert_eq "branch of a working copy sitting on its tip" \
+    "$(_jj__find_branch_for_commit "$REPO" '@')" "feature"
+}
+
+test__jj__find_branch_for_commit__branch_advanced_past_working_copy() {
+  setup_workspace
+  _fixture_linear_history
+  local wc_commit
+  wc_commit="$(get_full_commit_id '@')"
+  # A bare write puts a new commit on feature as a sibling of @, taking the
+  # bookmark out of @'s ancestry entirely. @ is now behind feature, and the
+  # nearest bookmarked ancestor would degrade to main.
+  jj -R "$REPO" new feature -m "advanced" --no-edit >/dev/null 2>&1
+  jj -R "$REPO" bookmark set feature -r 'feature+ ~ @' >/dev/null 2>&1
+
+  assert_eq "a behind working copy still resolves to its own branch" \
+    "$(_jj__find_branch_for_commit "$REPO" "$wc_commit")" "feature"
+}
+
+test__jj__find_branch_for_commit__no_qualifying_bookmark() {
+  setup_workspace
+  _fixture_linear_history
+  local out='' exit_code=0
+  # Every bookmark descends from the root, so none of them sits on it.
+  out="$(_jj__find_branch_for_commit "$REPO" 'root()')" || exit_code=$?
+  assert_failure "commit with no branch rejected" "$exit_code"
+  assert_output_empty "nothing printed without a branch" "$out"
+}
+
 test__jj__check_bookmark_exists__present_and_absent() {
   setup_workspace
   local exit_code=0
