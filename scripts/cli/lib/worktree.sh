@@ -575,46 +575,18 @@ _worktree__list_holding_descendants() {
 # Usage: __worktree__resolve_branch REPO WC_COMMIT
 #
 # Prints the name of the branch that the working-copy commit WC_COMMIT sits
-# on. Internal helper for the sync machinery below.
+# on, or returns 1 when no branch qualifies. Internal helper for the sync
+# machinery below.
 #
-# The naive resolution — the nearest bookmarked ancestor of the commit —
-# breaks down for exactly the worktrees this machinery exists for: a bare
-# write advances the branch bookmark past the worktree's position, so the
-# bookmark leaves the working-copy commit's ancestry entirely and the nearest
-# bookmarked ancestor degrades to some outer branch (e.g. main). Instead,
-# every bookmark is ranked by where its history forks from the working-copy
-# commit's history: the bookmark with the deepest fork point is the branch
-# the worktree sits on, whether the bookmark still sits at that fork point
-# (worktree in sync) or has moved past it (worktree behind). When two
-# bookmarks share a fork point, one still sitting at it (a plain bookmarked
-# ancestor) wins over one that has diverged from it.
-#
-# A bookmark whose fork point is WC_COMMIT itself is skipped: that means the
-# working-copy commit is part of the bookmark's own ancestry rather than a
-# working copy sitting on top of it. Returns 1 (nothing printed) when no
-# bookmark qualifies.
+# Deliberately not the nearest bookmarked ancestor: a bare write advances the
+# branch bookmark to a sibling of the worktree's working-copy commit, which
+# takes the bookmark out of that commit's ancestry altogether, so a worktree
+# left behind would be misattributed to whichever outer branch remains
+# reachable. _repo__find_branch_for_commit ranks by fork point instead and
+# documents the rules.
 __worktree__resolve_branch() {
   local repo="$1" wc_commit="$2"
-  local best_name='' best_fork='' best_at_fork=''
-  local name tip fork at_fork
-  while IFS= read -r name; do
-    [[ -z "$name" ]] && continue
-    tip="$(_repo__resolve_commit "$repo" "$name")" || continue
-    fork="$(_repo__find_fork_point_commit "$repo" "$wc_commit" "$name")" || continue
-    [[ -n "$fork" && "$fork" != "$wc_commit" ]] || continue
-    if [[ "$tip" == "$fork" ]]; then at_fork=1; else at_fork=''; fi
-    if [[ -z "$best_name" ]]; then
-      best_name="$name" best_fork="$fork" best_at_fork="$at_fork"
-    elif [[ "$fork" == "$best_fork" ]]; then
-      if [[ -n "$at_fork" && -z "$best_at_fork" ]]; then
-        best_name="$name" best_at_fork="$at_fork"
-      fi
-    elif _repo__check_is_ancestor "$repo" "$best_fork" "$fork"; then
-      best_name="$name" best_fork="$fork" best_at_fork="$at_fork"
-    fi
-  done < <(_repo__list_bookmark_names "$repo")
-  [[ -n "$best_name" ]] || return 1
-  printf '%s' "$best_name"
+  _repo__find_branch_for_commit "$repo" "$wc_commit"
 }
 
 # Usage: _worktree__resolve_branch REPO WORKTREE
