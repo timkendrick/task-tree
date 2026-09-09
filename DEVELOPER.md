@@ -35,8 +35,8 @@ Every module and every command has a co-located `*.test.sh` suite. `scripts/test
 
 ```bash
 scripts/test                                         # run every suite serially (very slow!)
-scripts/test    --parallel                           # run all tests in a worker pool (default: 4 workers)
-TT_TEST_CONCURRENCY=8 scripts/test    --parallel     # limit to 8 concurrent tests
+scripts/test    --parallel                           # run all tests in a worker pool (default: one worker per CPU)
+TT_TEST_CONCURRENCY=4 scripts/test    --parallel     # limit to 4 concurrent tests
 scripts/test    task/checkpoint                      # suite filter: suites matching "task/checkpoint"
 scripts/test    --filter basic                       # test filter: only tests whose label matches "basic"
 scripts/test    task/checkout --filter basic         # combine both filter types
@@ -79,7 +79,7 @@ Suites that exercise tracing set it explicitly per invocation.
 
 The entire test suite takes some time to run: make sure to filter test commands to ensure only the necessary set of tests are invoked.
 
-`--parallel` runs all tests across all suites in a single flat worker pool. The pool size is controlled by `TT_TEST_CONCURRENCY` (default: `4`). This caps the number of concurrent bash+jj processes regardless of how many suites or tests exist. Increase the value on machines with many cores; decrease it if you observe resource contention.
+`--parallel` runs all tests across all suites in a single flat worker pool. The pool size is controlled by `TT_TEST_CONCURRENCY` (default: the number of CPUs). This caps the number of concurrent bash+jj processes regardless of how many suites or tests exist. Decrease it if you observe resource contention.
 
 **Suite filters** (positional arguments) are substring-matched against the suite file path relative to `scripts/cli/`. Multiple suite filters are OR-ed; a suite is included if it matches any of them.
 
@@ -107,12 +107,40 @@ Test output shows a global `[n/N]` counter across all running tests, per-test ti
 Every `tt` command is a bash process that shells out to `jj` and `git` several dozen times, and
 each test runs a handful of commands. Process creation is therefore the cost that matters: on
 macOS it is slow and it does not scale across cores — spawning from fourteen workers at once gives
-only about four times the throughput of one — so past four workers extra concurrency buys nothing,
-and the way to make the suite faster is to make it spawn fewer processes.
+only about four times the throughput of one — so the way to make the suite faster is to make it
+spawn fewer processes. Extra workers pay off only because the command cache below leaves workers
+waiting on each other rather than spawning.
 
 The runner builds one template workspace per run and every `setup_workspace` copies it (two
 symlinks re-pointed) instead of initialising a repository and running `tt workspace init` from
 scratch. A suite run directly, outside `scripts/test`, builds its workspaces the slow way.
+
+### The command cache
+
+Most tests reach their starting point through the same commands applied to the same workspace
+state, so the runner keeps a cache of what each `run_tt` invocation did. The first time a command
+runs against a given state it runs for real and its resulting repo, stdout, stderr and exit status
+are recorded; every later run of the same command against the same state receives a copy of that
+result instead, with the recording test's paths replaced by its own.
+
+"The same state" is checked rather than assumed. The cache key covers the repository's current
+operation ID, a manifest of the working copy (every path outside the `.jj` and `.git` stores,
+with file content), the command line, whatever is on stdin, and the `TT_*`, editor and colour
+settings a command's behaviour can depend on. A test that changed the workspace by any means —
+a harness helper, a file written directly, a `jj` command — therefore runs its next command
+live, and from then on its history is its own. Workspaces with a dedicated worktree are never
+cached in either direction, because the backend records worktree paths absolutely.
+
+Two tests reaching the same command against the same state at the same time do not both run it:
+the first claims the cache entry and the second waits for the recording, so that both continue
+from identical histories and keep sharing entries afterwards. This is why the suite now benefits
+from more workers than the process-creation ceiling alone would allow.
+
+The cache only ever replays a command that some test in the same run executed against the
+identical state, so a test never sees a workspace no `tt` command produced, and every distinct
+command-against-state in the suite still runs once per run. What it gives up is repetition: a
+command that several tests would each have run is run by one of them. Set `TT_TEST_NO_CACHE=1`
+to run every command live; a suite run directly, outside `scripts/test`, has no cache.
 
 ### Speeding up the test suite with a RAM disk
 

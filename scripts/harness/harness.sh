@@ -149,7 +149,11 @@ setup_workspace() {
 # Run a tt command, with stdout and stderr captured separately.
 # Usage: run_tt [args...]
 run_tt() {
-  TT_REPO="${TT_REPO:-${REPO:-}}" "$TT" "$@"
+  if _harness_cache_ready && _harness_read_stdin; then
+    _harness_run_cached "$_HARNESS_STDIN" "$@"
+  else
+    TT_REPO="${TT_REPO:-${REPO:-}}" "$TT" "$@"
+  fi
 }
 
 # Run a tt command from within a worktree, simulating a user who has cd'd into
@@ -255,6 +259,199 @@ checkin_task() {
 last_line() {
   local text="${1%$'\n'}"
   printf '%s' "${text##*$'\n'}"
+}
+
+# ---------------------------------------------------------------------------
+# Command cache
+#
+# Every tt command a test runs through run_tt costs dozens of processes, and
+# process creation is what bounds the suite, while most tests reach their
+# starting point through the same commands applied to the same state. The
+# runner therefore keeps a cache (_TT_TEST_CACHE) of what each command did:
+# the first time a command runs against a given workspace state it is run for
+# real and its resulting repo, stdout, stderr and exit status are recorded.
+# Any later run of the same command against the same state receives a
+# copy of the 'memoized' recording instead.
+#
+# "The same state" is determined by computing a hash of the repository's
+# current operation ID, a manifest of the working copy (every path outside
+# the .jj and .git stores, with file content), the command line, whatever is
+# on stdin, and the environment a command's behaviour can depend on.
+#
+# A workspace with a dedicated worktree is never cached in either direction:
+# the backend records worktree paths absolutely, so such a state cannot be
+# copied elsewhere. Nor is a command whose stdin is a terminal or a pipe,
+# since its input cannot be read up front.
+#
+# TT_TEST_NO_CACHE=1 runs every command live; a suite run outside the runner
+# has no cache.
+# ---------------------------------------------------------------------------
+
+# Whether the current workspace can take part in the cache: a template copy
+# with no dedicated worktree, addressed by TT_REPO, from a working directory
+# the restore leaves intact, and at a single operation head.
+_harness_cache_ready() {
+  [[ -n "${_TT_TEST_CACHE:-}" && -z "${TT_TEST_NO_CACHE:-}" && -n "${REPO:-}" ]] || return 1
+  [[ "${TT_REPO:-$REPO}" == "$REPO" ]] || return 1
+  [[ "$PWD" == "$REPO" || "$PWD" != "$REPO"/* ]] || return 1
+  _harness_no_worktrees || return 1
+  [[ -n "$(_harness_op_head)" ]]
+}
+
+# Whether the virtual folder holds nothing but a HEAD link back to the repo.
+_harness_no_worktrees() {
+  local entry
+  for entry in "$VIRTUAL"/* "$VIRTUAL"/.[!.]* "$VIRTUAL"/..?*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    [[ "${entry##*/}" == 'HEAD' ]] || return 1
+  done
+  [[ "$VIRTUAL/HEAD" -ef "$REPO" ]]
+}
+
+# Reads stdin into _HARNESS_STDIN when it can be read without blocking (a
+# file, a here-string, /dev/null); returns 1 for a terminal or a pipe.
+_harness_read_stdin() {
+  _HARNESS_STDIN=''
+  [[ -t 0 ]] && return 1
+  [[ -p /dev/stdin ]] && return 1
+  _HARNESS_STDIN="$(</dev/stdin)" 2>/dev/null || _HARNESS_STDIN=''
+  return 0
+}
+
+# The repository's current operation ID, read from the operation store's
+# head directory; empty when there is not exactly one head.
+_harness_op_head() {
+  local entry head='' count=0
+  for entry in "$REPO/.jj/repo/op_heads/heads"/*; do
+    [[ -e "$entry" ]] || continue
+    head="${entry##*/}"
+    count=$(( count + 1 ))
+  done
+  [[ $count -eq 1 ]] && printf '%s' "$head"
+}
+
+# A manifest of the working copy: every entry outside the .jj and .git
+# stores, with regular files' content, so two workspaces whose manifests
+# agree hold the same files.
+_harness_manifest() {
+  __harness_manifest_dir "$REPO" ''
+}
+__harness_manifest_dir() {
+  local dir="$1" rel="$2" entry name
+  for entry in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    name="${entry##*/}"
+    if [[ -z "$rel" && ( "$name" == '.jj' || "$name" == '.git' ) ]]; then continue; fi
+    if [[ -L "$entry" ]]; then
+      printf 'L %s\n' "$rel$name"
+    elif [[ -d "$entry" ]]; then
+      __harness_manifest_dir "$entry" "$rel$name/"
+    elif [[ -f "$entry" ]]; then
+      printf 'F %s\n%s\n' "$rel$name" "$(<"$entry")"
+    fi
+  done
+}
+
+# _harness_restore DIR
+# Replaces the workspace with the state recorded in DIR. The repo directory
+# itself survives (it is the test's working directory); everything inside it
+# is replaced, and the two absolute symlinks are re-pointed at this copy.
+_harness_restore() {
+  local dir="$1" entry
+  local -a stale=()
+  for entry in "$REPO"/* "$REPO"/.[!.]* "$REPO"/..?*; do
+    [[ -e "$entry" || -L "$entry" ]] && stale+=("$entry")
+  done
+  if [[ ${#stale[@]} -gt 0 ]]; then
+    rm -rf "${stale[@]}" || return 1
+  fi
+  cp -R "$dir/repo/." "$REPO/" || return 1
+  ln -sfn "$VIRTUAL" "$REPO/.tt/workspace" || return 1
+  ln -sfn "$REPO" "$VIRTUAL/HEAD" || return 1
+}
+
+# _harness_relocate DIR TEXT
+# Prints TEXT with the recording test's repo, virtual folder and test root
+# (in that order, so the more specific paths win) replaced by this test's.
+_harness_relocate() {
+  local dir="$1" text="$2"
+  local their_repo their_virtual their_root
+  { read -r their_repo; read -r their_virtual; read -r their_root; } < "$dir/locations" || true
+  text="${text//"$their_repo"/$REPO}"
+  text="${text//"$their_virtual"/$VIRTUAL}"
+  text="${text//"$their_root"/$_TEST_ROOT}"
+  printf '%s' "$text"
+}
+
+# _harness_run_cached INPUT ARG...
+# Runs `tt ARG...` with INPUT on stdin through the cache: replayed when the
+# command has been recorded against this state, otherwise run live and
+# recorded. Writes the command's stdout and stderr to this function's own
+# (stderr first, then stdout: tt narrates on stderr and prints its result on
+# stdout last) and returns its exit status.
+_harness_run_cached() {
+  local input="$1"; shift
+  local material arg name
+  material="$(_harness_op_head)"$'\x1f'"$(_harness_manifest)"$'\x1f'
+  # Every TT_* setting except the ones naming this test's own locations, plus
+  # the editor and colour settings tt honours.
+  for name in $(compgen -A variable TT_) GIT_EDITOR VISUAL EDITOR NO_COLOR; do
+    case "$name" in TT_REPO|TT_TEST_ROOT|TT_TEST_NO_CACHE) continue ;; esac
+    material+="${name}=${!name:-}"$'\x1f'
+  done
+  material+="$input"
+  for arg in "$@"; do material+=$'\x1e'"$arg"; done
+  local key
+  key="$(printf '%s' "$material" | cksum)"
+  key="${key// /-}"
+  local dir="$_TT_TEST_CACHE/$key"
+
+  # Claiming the entry (an atomic mkdir) decides who runs the command: the
+  # claimant records it, and a test arriving while the recording is under
+  # way waits for it rather than running the same command itself, which
+  # would leave it with a history of its own that nothing later could match.
+  local out err rc root claimed=''
+  if mkdir "$dir" 2>/dev/null; then
+    claimed=1
+  else
+    local waited=0
+    while [[ ! -f "$dir/done" && ! -f "$dir/skip" && $waited -lt 600 ]]; do
+      sleep 0.1
+      waited=$(( waited + 1 ))
+    done
+    if [[ -f "$dir/done" && "$(<"$dir/material")" == "$material" ]] && _harness_restore "$dir"; then
+      out="$(<"$dir/stdout")"; out="$(_harness_relocate "$dir" "$out")"; out="${out%x}"
+      err="$(<"$dir/stderr")"; err="$(_harness_relocate "$dir" "$err")"; err="${err%x}"
+      rc="$(<"$dir/exit")"
+      printf '%s' "$err" >&2
+      printf '%s' "$out"
+      return "$rc"
+    fi
+  fi
+
+  # The command's exit status rides on the end of its captured stdout, so
+  # that trailing newlines survive the capture as well.
+  local err_file="$_TEST_ROOT/.stderr-$$"
+  out="$(TT_REPO="${TT_REPO:-$REPO}" "$TT" "$@" <<< "$input" 2>"$err_file"; printf 'x%d' "$?")"
+  rc="${out##*x}"
+  out="${out%x*}"
+  err=''
+  IFS= read -r -d '' err < "$err_file" || true
+  if [[ -n "$claimed" ]]; then
+    if _harness_no_worktrees && cp -R "$REPO" "$dir/repo" 2>/dev/null; then
+      printf '%s' "$material" > "$dir/material"
+      printf '%s\n%s\n%s' "$REPO" "$VIRTUAL" "$_TEST_ROOT" > "$dir/locations"
+      printf '%sx' "$out" > "$dir/stdout"
+      printf '%sx' "$err" > "$dir/stderr"
+      printf '%s' "$rc" > "$dir/exit"
+      : > "$dir/done"
+    else
+      : > "$dir/skip"
+    fi
+  fi
+  printf '%s' "$err" >&2
+  printf '%s' "$out"
+  return $rc
 }
 
 # ---------------------------------------------------------------------------
