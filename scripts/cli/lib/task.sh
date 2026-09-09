@@ -379,7 +379,8 @@ _task__get_range_context() {
       return 1
     fi
 
-    if _repo__check_commit_empty "$repo" '@'; then
+    # If the WC commit is empty, the range should only extend as far as the parent of the WC commit.
+    if _worktree__check_clean "$repo"; then
       upper_bound='@-'
     else
       upper_bound='@'

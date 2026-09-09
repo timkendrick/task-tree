@@ -366,10 +366,18 @@ test__jj__check_commit_empty__empty_and_nonempty() {
   _jj__check_commit_empty "$REPO" main || exit_code=$?
   assert_failure "commit with file changes is not empty" "$exit_code"
 
+  # Backend operations leave the working copy alone, so pending on-disk changes
+  # are invisible here until a caller records them. A caller whose answer
+  # depends on uncommitted work snapshots first; one that does not, does not.
   edit_file pending.txt "pending"
   exit_code=0
   _jj__check_commit_empty "$REPO" '@' || exit_code=$?
-  assert_failure "pending filesystem changes make @ non-empty" "$exit_code"
+  assert_success "unrecorded filesystem changes leave @ empty" "$exit_code"
+
+  _jj__snapshot_worktree "$REPO"
+  exit_code=0
+  _jj__check_commit_empty "$REPO" '@' || exit_code=$?
+  assert_failure "@ is non-empty once the changes are recorded" "$exit_code"
 
   exit_code=0
   _jj__check_commit_empty "$REPO" no-such-bookmark || exit_code=$?

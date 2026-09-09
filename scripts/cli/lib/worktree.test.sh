@@ -384,6 +384,57 @@ test__worktree__sync__brings_behind_worktree_forward() {
     "$(printf 'up-to-date\t%s' feature)"
 }
 
+test__worktree__record_working_copy__records_uncommitted_work() {
+  setup_workspace "wt-record-wc"
+  _fixture_feature_checkout
+  jj -R "$REPO" new main >/dev/null 2>&1
+  local wt_path
+  wt_path="$(_create_secondary_worktree wt-record feature)"
+  assert_output_not_empty "secondary worktree created" "$wt_path"
+
+  # A file the backend has never seen: the case where the work exists only on
+  # disk and the recorded operation is the sole route back to it.
+  printf 'unsaved\n' > "$wt_path/scratch.txt"
+
+  local op
+  op="$(_worktree__record_working_copy "$wt_path")"
+  assert_output_not_empty "an operation id is returned" "$op"
+  assert_contains "the file is now in the worktree's working-copy commit" \
+    "$(jj -R "$wt_path" --ignore-working-copy log -r '@' --no-graph -T '' \
+         --summary 2>/dev/null)" \
+    "scratch.txt"
+
+  # The recording targets the named worktree, not the invoking one.
+  assert_output_empty "the invoking worktree was not recorded" \
+    "$(jj -R "$REPO" --ignore-working-copy log -r '@' --no-graph -T '' \
+         --summary 2>/dev/null)"
+}
+
+test__worktree__record_working_copy__clean_worktree_returns_nothing() {
+  setup_workspace "wt-record-wc-clean"
+  _fixture_feature_checkout
+  jj -R "$REPO" new main >/dev/null 2>&1
+  local wt_path
+  wt_path="$(_create_secondary_worktree wt-record-clean feature)"
+  assert_output_not_empty "secondary worktree created" "$wt_path"
+
+  local op exit_code=0
+  op="$(_worktree__record_working_copy "$wt_path")" || exit_code=$?
+  assert_success "recording a clean worktree succeeds" "$exit_code"
+  assert_output_empty "nothing to record yields no operation id" "$op"
+}
+
+test__worktree__record_working_copy__missing_worktree_fails() {
+  setup_workspace "wt-record-wc-missing"
+
+  # Empty output must mean "nothing to record" and nothing else, so a worktree
+  # that cannot be captured reports failure rather than an empty result.
+  local op exit_code=0
+  op="$(_worktree__record_working_copy "$REPO/does-not-exist")" || exit_code=$?
+  assert_failure "a missing worktree fails the caller" "$exit_code"
+  assert_output_empty "a missing worktree yields no operation id" "$op"
+}
+
 test__worktree__find_for_branch__finds_workspace_on_branch() {
   setup_workspace "worktree-find-branch"
   proj_id=$(create_project "proj" "Project") || true
