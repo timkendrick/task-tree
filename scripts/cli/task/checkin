@@ -22,7 +22,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --complete              Run `tt task complete` first if status is not DONE.
 #   --rebase                Rebase child onto parent before checkin.
 #   --merge                 Merge parent into child before checkin.
-#   --force                 Proceed even if conflicts occur.
+#   --force                 Proceed even if conflicts occur, and with --delete, remove
+#                           the task's worktree even if it has uncommitted changes or
+#                           commits after the bookmark.
 #   --delete                Remove child task file and subtask entry (requires DONE),
 #                           along with the task's dedicated worktree if it has one.
 #   --retain-worktree       With --delete, keep the task's dedicated worktree.
@@ -37,6 +39,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --propagate-to <id>     Limit propagation to this child (repeatable).
 
 readonly SCRIPT_NAME="${0##*/}"
+
+# Usage: deletable_child_worktrees REPO WORKTREE_PATHS
+#
+# Reads newline-separated worktree roots on stdin-substituted WORKTREE_PATHS and
+# emits the subset that a --delete checkin will actually remove: every one of
+# them except the canonical repository root, which is never deleted.
+#
+# Both sides of the comparison are canonicalized, so a symlinked repository root
+# does not defeat the test. Filtering here rather than at deletion time keeps the
+# set that is validated identical to the set that is removed.
+deletable_child_worktrees() {
+  local repo="$1" worktree_paths="$2"
+  [[ -z "$worktree_paths" ]] && return 0
+
+  local canonical_repo
+  canonical_repo="$(_path__resolve_symlinks "$(_worktree__resolve_repository_root "$repo")")"
+
+  local worktree canonical_worktree
+  while IFS= read -r worktree; do
+    [[ -z "$worktree" ]] && continue
+    canonical_worktree="$(realpath "$worktree" 2>/dev/null)" || canonical_worktree="$worktree"
+    [[ "$canonical_worktree" == "$canonical_repo" ]] && continue
+    printf '%s\n' "$worktree"
+  done <<< "$worktree_paths"
+}
 
 usage() {
   cat <<EOF
@@ -53,7 +80,9 @@ Options:
   --complete                Run complete first if status is not DONE.
   --rebase                  Rebase child onto parent before checkin.
   --merge                   Merge parent into child before checkin.
-  --force                   Proceed despite conflicts.
+  --force                   Proceed despite conflicts, and with --delete, remove the
+                            task's worktree even if it has uncommitted changes or
+                            commits after the bookmark.
   --delete                  Remove child task file (requires DONE status), along
                             with the task's dedicated worktree if it has one.
   --switch                  Point the HEAD symlink at the parent worktree after checkin.
@@ -210,15 +239,57 @@ main() {
     _task__assert_bookmark_current "$current_worktree" "$child_bookmark"
   fi
 
-  # --- Record the child branch's worktrees (--delete cleanup) ---
+  # --- Record and validate the child branch's worktrees (--delete cleanup) ---
   # Resolved before any mutation: once the checkin merge lands (and before
   # the delegated delete removes the child bookmark), a worktree left behind
   # on an older child tip can no longer be attributed to the child branch
   # reliably. The list is only consumed by the post-delete cleanup at the end.
   local child_worktrees=''
   if [[ "$delete" == true ]] && [[ "$retain_worktree" != true ]]; then
-    child_worktrees="$(_worktree__find_for_branch "$repo" "$child_bookmark" \
-      "$task_prefix" "$project_prefix")"
+    child_worktrees="$(deletable_child_worktrees "$repo" \
+      "$(_worktree__find_for_branch "$repo" "$child_bookmark" \
+        "$task_prefix" "$project_prefix")")"
+
+    # --delete removes these worktrees from disk, so they are held to the same
+    # standard as `tt worktree delete` holds its target. Work that is only on
+    # disk has never been recorded anywhere, and by the time the removal runs
+    # the delegated `tt task delete` has already deregistered the workspace, so
+    # `tt history undo` cannot bring it back either.
+    #
+    # --force trades the refusal for a snapshot: the work is captured into the
+    # worktree's own working-copy commit and the operation holding it reported,
+    # so it stays reachable in the operation log after the files are gone. That
+    # snapshot must succeed, since proceeding without it would discard work the
+    # command has just failed to make recoverable.
+    #
+    # Checked here, before the transaction opens, so a refusal leaves the
+    # repository untouched and the snapshot survives a later `tt history undo`
+    # of the checkin itself.
+    local child_worktree snapshot_op
+    while IFS= read -r child_worktree; do
+      [[ -z "$child_worktree" ]] && continue
+      if [[ "$force" != true ]]; then
+        if ! _task__check_bookmark_current "$child_worktree" "$child_bookmark"; then
+          _ui__log "Error: Worktree '$child_worktree' has commits after the task bookmark '$child_bookmark'."
+          _ui__log "  Checkpoint or discard these commits first, pass --retain-worktree to keep the worktree, or use --force."
+          exit 1
+        fi
+        if ! _worktree__check_clean "$child_worktree"; then
+          _ui__log "Error: Worktree '$child_worktree' has uncommitted changes."
+          _ui__log "  Commit or discard changes first, pass --retain-worktree to keep the worktree, or use --force."
+          exit 1
+        fi
+      else
+        if ! snapshot_op="$(_worktree__record_working_copy "$child_worktree")"; then
+          _ui__log "Error: Could not record uncommitted changes in worktree '$child_worktree'."
+          exit 1
+        fi
+        if [[ -n "$snapshot_op" ]]; then
+          _ui__log "Uncommitted changes in '$child_worktree' recorded before deleting (restore it to recover them):"
+          _ui__log "  $snapshot_op"
+        fi
+      fi
+    done <<< "$child_worktrees"
   fi
 
   # --- Read current task state from bookmark ---
@@ -570,25 +641,20 @@ main() {
 
   # --- Post-checkin worktree cleanup ---
   # Only with --delete: the task is being removed from the repository, so its
-  # dedicated worktrees (recorded above, before the delete removed the
-  # branch) are forgotten from the repository model and deleted from disk.
-  # Suppressed by --retain-worktree. A checkin without --delete never removes
-  # a worktree; use `tt worktree delete` for that. The canonical repository
-  # root is never removed, so a checkin run from the primary workspace with
-  # its working copy on the child branch cleans up nothing here. The root
-  # comparison must canonicalize both sides: when checkin runs from inside
-  # the child's own worktree, $repo resolves to that worktree.
+  # dedicated worktrees (resolved and validated above, before the delete
+  # removed the branch) are forgotten from the repository model and deleted
+  # from disk. Suppressed by --retain-worktree. A checkin without --delete
+  # never removes a worktree; use `tt worktree delete` for that. The list has
+  # already had the canonical repository root filtered out, so a checkin run
+  # from the primary workspace with its working copy on the child branch
+  # cleans up nothing here.
   # IMPORTANT: This MUST be the last thing main() does. After _worktree__delete,
   # the script's own files may have been deleted from disk (if the checkin
   # was run from within the child worktree), so no further commands should run.
   if [[ -n "$child_worktrees" ]]; then
-    local canon_repo
-    canon_repo="$(_path__resolve_symlinks "$(_worktree__resolve_repository_root "$repo")")"
-    local child_worktree canon_child ws_name
+    local ws_name
     while IFS= read -r child_worktree; do
       [[ -z "$child_worktree" ]] && continue
-      canon_child="$(realpath "$child_worktree" 2>/dev/null)" || canon_child="$child_worktree"
-      [[ "$canon_child" == "$canon_repo" ]] && continue
       # The delegated `tt task delete` deregisters the workspaces of every
       # task in the deleted subtree but leaves their files on disk, so the
       # workspace name usually no longer resolves by this point; remove the
