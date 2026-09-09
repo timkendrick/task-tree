@@ -93,6 +93,7 @@
 #     _jj__set_bookmark              — move a bookmark to an explicit revision
 #     _jj__list_bookmark_names       — all local bookmark names
 #     _jj__list_bookmarks_at         — local bookmark names at a revision
+#     _jj__find_branch_for_commit    — the branch a working-copy commit sits on
 #     _jj__check_bookmark_exists     — whether a local bookmark exists
 #     _jj__rename_bookmark           — rename a bookmark
 #     _jj__delete_bookmark           — delete a bookmark
@@ -1095,6 +1096,66 @@ _jj__list_bookmarks_at() {
     -T 'local_bookmarks.map(|b| b.name()).join("\n")')" || return 1
   [[ -n "$names" ]] && printf '%s\n' "$names"
   return 0
+}
+
+# Usage: _jj__find_branch_for_commit REPO COMMIT
+#
+# Prints the name of the branch that COMMIT — a worktree's working-copy commit —
+# sits on. Returns 1 (nothing printed) when no bookmark qualifies.
+#
+# The obvious answer, the nearest bookmarked ancestor, breaks down for exactly
+# the worktrees this is needed for: a bare write advances the branch bookmark
+# to a sibling of the worktree's working-copy commit, so the bookmark leaves
+# that commit's ancestry entirely and the nearest bookmarked ancestor degrades
+# to some outer branch (e.g. main). Bookmarks are therefore ranked by where
+# their history forks from COMMIT's: the bookmark with the deepest fork point
+# is the branch, whether it still sits at that fork point (worktree in sync) or
+# has moved past it (worktree behind). Where several bookmarks share the
+# deepest fork point, one still sitting at it wins over one that has diverged.
+#
+# A bookmark at or ahead of COMMIT is excluded rather than ranked: its fork
+# point is COMMIT itself, which says COMMIT is part of that bookmark's own
+# history rather than a working copy sitting on top of it.
+#
+# Two queries answer this for any number of bookmarks. The candidate set is
+# every bookmark not at or ahead of COMMIT; the deepest fork point is the heads
+# of what COMMIT's ancestry (itself excluded) shares with theirs; and every
+# candidate descended from that fork point forks from COMMIT exactly there,
+# because a head admits nothing deeper below it. Ranking one bookmark at a time
+# would instead cost two queries per bookmark in the repository.
+#
+# Ties between forks that are incomparable — neither an ancestor of the other,
+# reachable only through divergence — resolve arbitrarily, to whichever the
+# backend lists first.
+_jj__find_branch_for_commit() {
+  local repo="$1" commit="$2"
+  local candidates="bookmarks() ~ descendants(${commit})"
+
+  local fork
+  fork="$(__jj__read "$repo" --ignore-working-copy log \
+    -r "heads((::(${commit}) ~ (${commit})) & ::(${candidates}))" \
+    -n 1 --no-graph -T 'commit_id')" || return 1
+  [[ -n "$fork" ]] || return 1
+
+  local records
+  records="$(__jj__read "$repo" --ignore-working-copy log \
+    -r "(${candidates}) & descendants(${fork})" --no-graph \
+    -T 'commit_id ++ "\t" ++ local_bookmarks.map(|b| b.name()).join(",") ++ "\n"')" || return 1
+  [[ -n "$records" ]] || return 1
+
+  local tip names diverged=''
+  while IFS=$'\t' read -r tip names; do
+    names="${names%%,*}"
+    [[ -n "$names" ]] || continue
+    if [[ "$tip" == "$fork" ]]; then
+      printf '%s' "$names"
+      return 0
+    fi
+    [[ -n "$diverged" ]] || diverged="$names"
+  done <<< "$records"
+
+  [[ -n "$diverged" ]] || return 1
+  printf '%s' "$diverged"
 }
 
 # Usage: _jj__check_bookmark_exists REPO NAME
