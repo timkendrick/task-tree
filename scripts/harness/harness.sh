@@ -28,9 +28,15 @@ declare -a _FAILURES=()
 
 
 
-# Temp dir for accumulating results across subshells
-_RESULTS_DIR="$(mktemp -d)"
-trap 'rm -rf "$_RESULTS_DIR"' EXIT
+# Temp dir for accumulating results across subshells. The runner supplies a
+# shared one as _TT_TEST_RESULTS_DIR; a suite run on its own creates its own.
+if [[ -n "${_TT_TEST_RESULTS_DIR:-}" ]]; then
+  _RESULTS_DIR="$_TT_TEST_RESULTS_DIR"
+  _OWN_RESULTS_DIR=''
+else
+  _RESULTS_DIR="$(mktemp -d)"
+  _OWN_RESULTS_DIR="$_RESULTS_DIR"
+fi
 
 # Suite start time in milliseconds. Uses perl for sub-second precision (it
 # starts in a few milliseconds, where python3 takes tens); falls back to
@@ -77,7 +83,7 @@ if [[ -n "${TT_TEST_ROOT:-}" ]]; then
 else
   _TEST_ROOT="$(mktemp -d)"
 fi
-trap 'rm -rf "$_TEST_ROOT"' EXIT
+trap 'rm -rf "$_TEST_ROOT" ${_OWN_RESULTS_DIR:+"$_OWN_RESULTS_DIR"}' EXIT
 
 # Per-test workspace vars (set by setup_workspace)
 REPO=""
@@ -1412,7 +1418,7 @@ run_tests() {
   local -a all_tests=()
   while IFS= read -r fn; do
     all_tests+=("$fn")
-  done < <(declare -F | awk '{print $3}' | grep '^test_')
+  done < <(compgen -A function test_)
 
   # Apply --filter patterns if any are set.
   local -a tests=()
