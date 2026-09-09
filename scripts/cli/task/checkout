@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
@@ -257,7 +257,7 @@ main() {
       _ui__log "Using existing workspace: $target_worktree"
     else
       new_worktree=true
-      mkdir -p "$(dirname "$target_worktree")"
+      mkdir -p "$(_path__parent_dir "$target_worktree")"
     fi
   else
     # No --worktree: use current workspace

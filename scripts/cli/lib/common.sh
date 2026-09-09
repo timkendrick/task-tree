@@ -1,7 +1,7 @@
 # Common functions for tt bootstrap CLI scripts.
 # Source this file; do not execute directly.
 
-_TT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_TT_LIB_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$_TT_LIB_DIR/ui.sh"
 . "$_TT_LIB_DIR/string.sh"
 . "$_TT_LIB_DIR/format.sh"

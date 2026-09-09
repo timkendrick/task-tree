@@ -102,6 +102,7 @@ main() {
     _export_filters
   fi
 
+  _front_load_path
   _build_template
 
   if [[ "$mode" == "parallel" ]]; then
@@ -109,6 +110,35 @@ main() {
   else
     _run_series "${test_files[@]}"
   fi
+}
+
+# Move the directories holding the tools every test launches — the VCS
+# binaries and the shell — to the front of PATH, followed by the system
+# directories. Nothing is removed: every other directory follows in its
+# original order. Each tt command is a fresh shell whose first use of a tool
+# name walks PATH directory by directory, and on a long PATH that walk is a
+# measurable share of a command that runs for a fraction of a second.
+_front_load_path() {
+  local -a front=()
+  local tool dir seen
+  for tool in jj git bash perl; do
+    dir="$(command -v "$tool" 2>/dev/null)" || continue
+    dir="${dir%/*}"
+    front+=("$dir")
+  done
+  front+=(/usr/bin /bin /usr/sbin /sbin)
+  local new_path='' entry
+  for entry in "${front[@]}"; do
+    case ":$new_path:" in *":$entry:"*) continue ;; esac
+    new_path="${new_path:+$new_path:}$entry"
+  done
+  local IFS=':'
+  for entry in $PATH; do
+    [[ -n "$entry" ]] || continue
+    case ":$new_path:" in *":$entry:"*) continue ;; esac
+    new_path="$new_path:$entry"
+  done
+  export PATH="$new_path"
 }
 
 # Build the template workspace every test's setup_workspace copies, and export
@@ -341,7 +371,7 @@ _run_parallel() {
         _TT_TEST_TOTAL="$global_total" \
         bash "${flat_suite_files[$j]}" >"$out" 2>&1
         printf '%d' $? > "$exit_file"
-        touch "$done_file"
+        : > "$done_file"
       ) &
       pids+=("$!")
       (( submitted++ )) || true
@@ -353,8 +383,8 @@ _run_parallel() {
     for (( k=0; k<submitted; k++ )); do
       local printed_file="$tmp_dir/test-$k.printed"
       if [[ -f "${done_files[$k]}" && ! -f "$printed_file" ]]; then
-        cat "${out_files[$k]}" >&2
-        touch "$printed_file"
+        [[ -s "${out_files[$k]}" ]] && printf '%s\n' "$(<"${out_files[$k]}")" >&2
+        : > "$printed_file"
         (( completed++ )) || true
         (( active-- )) || true
         (( flushed++ )) || true
@@ -372,7 +402,7 @@ _run_parallel() {
   local failed=0
   for (( k=0; k<total; k++ )); do
     local exit_code=0
-    [[ -f "${exit_files[$k]}" ]] && exit_code="$(cat "${exit_files[$k]}")"
+    [[ -f "${exit_files[$k]}" ]] && exit_code="$(<"${exit_files[$k]}")"
     if [[ "$exit_code" != "0" ]]; then
       (( failed++ )) || true
     fi

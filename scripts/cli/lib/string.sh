@@ -46,14 +46,10 @@ _string__validate_slug() {
 
 # Generate an 8-character random hex string for task/context IDs.
 _string__generate_hex() {
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 4
-  elif [[ -r /dev/urandom ]]; then
-    od -An -N4 -tx1 /dev/urandom | tr -d ' \n' | head -c 8
-  else
-    _ui__log "Error: Need openssl or /dev/urandom to generate ID"
-    exit 1
-  fi
+  # Three draws of the shell's 15-bit generator, spread across 32 bits: the
+  # ID only has to be unlikely to collide, and creation checks that it does
+  # not.
+  printf '%08x' "$(( ((RANDOM << 17) ^ (RANDOM << 2) ^ RANDOM) & 0xffffffff ))"
 }
 
 # Generate an ISO 8601 UTC timestamp (e.g. 2026-03-12T23:04:57Z).

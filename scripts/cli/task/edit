@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
@@ -177,7 +177,7 @@ main() {
     final_body="$edited_body"
   elif [[ ! -t 0 ]]; then
     # Non-terminal stdin (pipe or redirect): read body from stdin
-    final_body="$(cat)"
+    final_body="$(</dev/stdin)"
   else
     # Terminal stdin but not interactive mode (metadata flags given): preserve current body
     final_body="$current_body"
