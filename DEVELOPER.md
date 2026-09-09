@@ -1,9 +1,40 @@
 # Developer guide
 
+## Library layout
+
+The CLI under `scripts/cli/` is organised into four tiers:
+
+```
+scripts/cli/**                 commands — argument parsing, control flow, user-facing output
+      ↓
+lib/{task,workspace,           semantic facades — the task, workspace, worktree and
+     worktree,history}.sh      history models, expressed in domain terms
+      ↓
+lib/repo.sh                    backend-neutral VCS interface (_repo__*)
+      ↓
+lib/vcs/jj.sh                  backend implementation (_jj__*) — the only place `jj`
+                               or `git` is invoked
+```
+
+Utility modules — `ui`, `string`, `format`, `path`, `frontmatter`, `commit`, `hook` — sit beside the
+facades and perform no VCS access. `lib/common.sh` is the single entry point every command sources;
+it contains nothing but `source` directives.
+
+Library functions are named `_<namespace>__<verb>[_<noun>]`, where the namespace is the module name
+followed by a double underscore. A *leading* double underscore (`__jj__read`) marks a module-private
+helper. Each module's header states its responsibility and lists its public surface.
+
+See `ARCHITECTURE.md` for the module inventory, the rules governing what each tier may call, the
+backend contract, and the working-copy invariants that branch writes depend on.
+
 ## Running the tests
 
+Every module and every command has a co-located `*.test.sh` suite. `scripts/test` discovers
+`scripts/cli/**/*.test.sh` automatically, so a suite filter narrows to one module or command:
+`scripts/test lib/vcs`, `scripts/test lib/frontmatter`, `scripts/test task/checkpoint`.
+
 ```bash
-scripts/test                                         # run all 25 suites serially (very slow!)
+scripts/test                                         # run every suite serially (very slow!)
 scripts/test    --parallel                           # run all tests in a worker pool (default: 4 workers)
 TT_TEST_CONCURRENCY=8 scripts/test    --parallel     # limit to 8 concurrent tests
 scripts/test    task/checkpoint                      # suite filter: suites matching "task/checkpoint"
