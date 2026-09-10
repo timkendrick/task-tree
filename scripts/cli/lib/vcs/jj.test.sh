@@ -456,6 +456,24 @@ test__jj__find_fork_point_commit__finds_divergence_point() {
 }
 
 # ---------------------------------------------------------------------------
+# _jj__check_is_canonical_commit_id
+# ---------------------------------------------------------------------------
+
+test__jj__check_is_canonical_commit_id__form_only() {
+  local ec=0
+  _jj__check_is_canonical_commit_id "0123456789abcdef0123456789abcdef01234567" || ec=$?
+  assert_success "forty lowercase hex digits" "$ec"
+  ec=0; _jj__check_is_canonical_commit_id "0123456789abcdef0123456789abcdef0123456" || ec=$?
+  assert_failure "thirty-nine digits rejected" "$ec"
+  ec=0; _jj__check_is_canonical_commit_id "0123456789ABCDEF0123456789ABCDEF01234567" || ec=$?
+  assert_failure "uppercase rejected" "$ec"
+  ec=0; _jj__check_is_canonical_commit_id "main" || ec=$?
+  assert_failure "bookmark name rejected" "$ec"
+  ec=0; _jj__check_is_canonical_commit_id "" || ec=$?
+  assert_failure "empty rejected" "$ec"
+}
+
+# ---------------------------------------------------------------------------
 # _jj__resolve_nearest_bookmark
 # ---------------------------------------------------------------------------
 

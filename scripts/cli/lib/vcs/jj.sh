@@ -51,6 +51,7 @@
 #     _jj__resolve_change            — stable change ID of a revision
 #     _jj__get_commit_timestamp      — committer timestamp of a revision (ISO 8601 UTC)
 #     _jj__check_revision_exists     — whether a revision resolves
+#     _jj__check_is_canonical_commit_id — whether text has the form of a full commit ID
 #     _jj__check_commit_empty        — whether a revision has no file changes
 #     _jj__check_has_conflicts       — whether a single revision has conflicts
 #     _jj__check_descendants_have_conflicts — whether a revision or any descendant has conflicts
@@ -385,6 +386,14 @@ _jj__get_commit_timestamp() {
   local repo="$1" rev="$2"
   __jj__read "$repo" --ignore-working-copy log --no-graph -r "$rev" \
     -T 'committer.timestamp().utc().format("%Y-%m-%dT%H:%M:%SZ")'
+}
+
+# Usage: _jj__check_is_canonical_commit_id TEXT
+# Returns 0 when TEXT has the form of a full commit ID in this backend — forty
+# lowercase hex digits — and 1 otherwise. A check of form only: it says the
+# text needs no resolution, not that the commit exists. Status only.
+_jj__check_is_canonical_commit_id() {
+  [[ "$1" =~ ^[0-9a-f]{40}$ ]]
 }
 
 # Usage: _jj__check_revision_exists REPO REV
@@ -870,7 +879,7 @@ _jj__commit_changeset() {
   # A full commit ID needs no resolution: fast-import verifies it names a
   # commit in the store, which is the same guarantee the backend query gives.
   local parent_commit
-  if [[ "$parent_rev" =~ ^[0-9a-f]{40}$ ]]; then
+  if _jj__check_is_canonical_commit_id "$parent_rev"; then
     parent_commit="$parent_rev"
   else
     parent_commit="$(_jj__resolve_commit "$repo" "$parent_rev")" || return 1

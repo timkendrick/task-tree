@@ -177,6 +177,7 @@ Signatures, argument conventions and return values are documented on the backend
 | `filter_commits_reachable_from` | Which of the given commits a revision can reach |
 | `find_fork_point_commit` | Where two revisions' histories diverge |
 | `resolve_nearest_bookmark` | Commit ID and name of the closest bookmarked ancestor of a revision |
+| `check_is_canonical_commit_id` | Whether text has the form of a full commit ID, so it needs no resolution |
 | `list_commits_in_range` | Commit IDs in a range, oldest first |
 | `list_commits_in_dag_range` | Commits descended from a base, up to a tip |
 | `count_commits_in_range` | Size of a range |
