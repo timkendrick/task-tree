@@ -153,7 +153,7 @@ Each test section creates a fresh jj repository on disk. Because every `tt` comm
 `scripts/ramdisk` manages a macOS RAM disk for this purpose:
 
 ```bash
-# Create a 512 MiB RAM disk (default size) and store the mount path
+# Create a 2 GiB RAM disk (default size) and store the mount path
 RAMDISK=$(scripts/ramdisk create)        # prints e.g. /Volumes/tt-f1f311fa
 
 # Run tests against it
@@ -171,8 +171,11 @@ RAMDISK=$(scripts/ramdisk create) && TT_TEST_ROOT=$RAMDISK scripts/test    --par
 
 The volume name is randomly generated so multiple RAM disks can coexist (e.g. two terminal sessions or CI jobs running in parallel). The RAM disk is not persisted across reboots; create a fresh one each session.
 
-A larger `--size` (bytes) is only needed if you run the full parallel suite and hit space pressure:
+The default size covers a full parallel run with room to spare: the command cache keeps a copy of
+the workspace for every distinct command-against-state the suite produces, and a full run peaks at
+a little over 1 GiB. A disk that fills up shows as slow, failing tests rather than an explicit
+error, so pass a larger `--size` (bytes) rather than a smaller one if in doubt:
 
 ```bash
-RAMDISK=$(scripts/ramdisk create --size $(( 1024 * 1024 * 1024 )))
+RAMDISK=$(scripts/ramdisk create --size $(( 4 * 1024 * 1024 * 1024 )))
 ```
