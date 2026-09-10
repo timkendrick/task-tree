@@ -8,7 +8,7 @@ set -euo pipefail
 #   scripts/ramdisk list
 #   scripts/ramdisk destroy <device-or-mountpoint>
 
-DEFAULT_SIZE=$(( 512 * 1024 * 1024 ))
+DEFAULT_SIZE=$(( 2 * 1024 * 1024 * 1024 ))
 
 log() { printf '%s\n' "$*" >&2; }
 
@@ -18,7 +18,7 @@ Usage: ${0##*/} <subcommand> [options]
 
 Subcommands:
   create [--size <bytes>]   Create a RAM disk and print its mount path to stdout.
-                            Defaults to $DEFAULT_SIZE bytes (512 MiB).
+                            Defaults to $DEFAULT_SIZE bytes (2 GiB).
                             Logs "Created <path>" to stderr as confirmation.
 
   list                      List all active RAM disks (device path and mount point).
