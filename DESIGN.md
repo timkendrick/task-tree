@@ -156,6 +156,8 @@ subtask:     (zero or more; each on its own line)
 
 All tool commands that read task file frontmatter apply the delimitation rules above uniformly, and all tool commands that mutate it maintain this field ordering automatically.
 
+**Quoted values.** `title` is written as a double-quoted string using JSON's basic escapes: a backslash and a double quote are backslash-escaped, and a newline, carriage return, tab, backspace or form feed in the title is written as `\n`, `\r`, `\t`, `\b` or `\f`, so the value occupies one line and reads back unchanged. Readers decode those escapes (and `\/`); any other escape, `\uXXXX` included, is kept as written.
+
 At merge time, the parent task's frontmatter is updated with the completed child (e.g. `subtask: [x] <task-id>`). The user may request full removal of the child task from the parent branch using `tt task delete` (or `tt task checkin --delete`, which runs the normal checkin and then delegates to `tt task delete`). This removes the child task directory and its `subtask:` entry from the parent's frontmatter entirely, making the task invisible in the todo list. If `--delete` is not used, the task directory remains in the repository and the `subtask: [x]` entry is preserved.
 
 ### 4.3 Metadata storage and TASK.md

@@ -395,6 +395,36 @@ test__frontmatter__parse_quoted_field__strips_matched_pair_only() {
     "$(_frontmatter__parse_quoted_field "$content" status)" '"unmatched'
 }
 
+test__frontmatter__parse_quoted_field__decodes_json_escapes() {
+  local content
+  content="$(printf '%s\n' '---' 'title: "line\nbreak \/ slash \\ back \"q\" \t tab \u00e9 kept \x odd"' '---')"
+  assert_eq "basic escapes decoded, others kept as written" \
+    "$(_frontmatter__parse_quoted_field "$content" title)" \
+    $'line\nbreak / slash \\ back "q" \t tab \\u00e9 kept \\x odd'
+}
+
+test__frontmatter__parse_quoted_field__no_backslash_is_stripped_only() {
+  local content
+  content="$(printf '%s\n' '---' 'title: "plain title: with colon"' '---')"
+  assert_eq "quotes stripped, value untouched" \
+    "$(_frontmatter__parse_quoted_field "$content" title)" "plain title: with colon"
+}
+
+test__frontmatter__write_task_file__quoted_title_round_trips_escapes() {
+  local file="$_TEST_ROOT/escapes.md" title
+  title=$'He said "hi" \\ there\tand more'
+  local REWRITE_LABELS=() REWRITE_CONTEXTS=() REWRITE_SUBTASKS=()
+  _frontmatter__write_task_file "$file" "$title" "TODO" "" \
+    "2026-01-01T00:00:00Z" "2026-01-01T00:00:00Z"
+  local content
+  content="$(<"$file")"
+  assert_eq "title written with JSON escapes on one line" \
+    "$(_frontmatter__parse_field "$content" title)" \
+    '"He said \"hi\" \\ there\tand more"'
+  assert_eq "title reads back unchanged" \
+    "$(_frontmatter__parse_quoted_field "$content" title)" "$title"
+}
+
 test__frontmatter__parse_repeated_field__all_values_in_order() {
   local out
   out="$(_frontmatter__parse_repeated_field "$(_content_with_body_fence)" subtask)"

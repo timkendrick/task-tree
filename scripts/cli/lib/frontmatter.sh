@@ -89,16 +89,73 @@ _frontmatter__parse_field() {
 }
 
 # Usage: _frontmatter__parse_quoted_field CONTENT FIELD
-# As _frontmatter__parse_field, but strips a matched pair of surrounding
-# double quotes from the value.
+# As _frontmatter__parse_field, but for a value written as a quoted string:
+# strips a matched pair of surrounding double quotes and decodes the escapes
+# __frontmatter__quote writes. A value without a matched pair is returned as
+# it is.
 _frontmatter__parse_quoted_field() {
   local value
   value="$(_frontmatter__parse_field "$1" "$2")"
-  if [[ "$value" == \"*\" ]]; then
-    value="${value#\"}"
-    value="${value%\"}"
+  __frontmatter__unquote "$value"
+}
+
+# Usage: __frontmatter__quote VALUE
+# Prints VALUE as a double-quoted string using JSON's basic escapes: a
+# backslash and a double quote are backslash-escaped, and newline, carriage
+# return, tab, backspace and form feed become \n, \r, \t, \b and \f, so the
+# value fits on one frontmatter line and reads back unchanged.
+__frontmatter__quote() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  value="${value//$'\b'/\\b}"
+  value="${value//$'\f'/\\f}"
+  printf '"%s"' "$value"
+}
+
+# Usage: __frontmatter__unquote TEXT
+# The inverse of __frontmatter__quote for TEXT that is a matched pair of
+# double quotes around a value: the quotes are removed and the escapes \" \\
+# \/ \n \r \t \b \f are decoded. Any other escape — \uXXXX among them — is
+# kept as written. A value with no backslash is returned as soon as the
+# quotes are stripped; text without a matched pair is returned unchanged.
+__frontmatter__unquote() {
+  local text="$1"
+  if [[ "$text" != \"*\" ]]; then
+    printf '%s' "$text"
+    return 0
   fi
-  printf '%s' "$value"
+  text="${text#\"}"
+  text="${text%\"}"
+  if [[ "$text" != *\\* ]]; then
+    printf '%s' "$text"
+    return 0
+  fi
+  local out='' i ch next
+  for (( i = 0; i < ${#text}; i++ )); do
+    ch="${text:$i:1}"
+    if [[ "$ch" != '\' ]]; then
+      out+="$ch"
+      continue
+    fi
+    i=$(( i + 1 ))
+    next="${text:$i:1}"
+    case "$next" in
+      '"') out+='"' ;;
+      '\') out+='\' ;;
+      '/') out+='/' ;;
+      n) out+=$'\n' ;;
+      r) out+=$'\r' ;;
+      t) out+=$'\t' ;;
+      b) out+=$'\b' ;;
+      f) out+=$'\f' ;;
+      *) out+="\\$next" ;;
+    esac
+  done
+  printf '%s' "$out"
 }
 
 # Usage: _frontmatter__parse_repeated_field CONTENT FIELD
@@ -187,7 +244,7 @@ _frontmatter__write_task_file() {
 
   {
     echo '---'
-    echo "title: \"${title//\"/\\\"}\""
+    printf 'title: %s\n' "$(__frontmatter__quote "$title")"
     [[ -n "$status" ]] && echo "status: $status"
     echo "created: $created"
     echo "updated: $updated"
