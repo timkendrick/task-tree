@@ -32,6 +32,7 @@ _repo__get_commit_description()    { _jj__get_commit_description "$@"; }
 _repo__resolve_commit()            { _jj__resolve_commit "$@"; }
 _repo__resolve_change()            { _jj__resolve_change "$@"; }
 _repo__get_commit_timestamp()      { _jj__get_commit_timestamp "$@"; }
+_repo__check_is_canonical_commit_id() { _jj__check_is_canonical_commit_id "$@"; }
 _repo__check_revision_exists()     { _jj__check_revision_exists "$@"; }
 _repo__check_commit_empty()        { _jj__check_commit_empty "$@"; }
 _repo__check_has_conflicts()       { _jj__check_has_conflicts "$@"; }

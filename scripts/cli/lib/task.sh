@@ -878,7 +878,7 @@ _task__commit_new_branch() {
   # A full commit ID is already resolved; the bare commit verifies it names a
   # commit in the store.
   local parent_commit
-  if [[ "$parent_rev" =~ ^[0-9a-f]{40}$ ]]; then
+  if _repo__check_is_canonical_commit_id "$parent_rev"; then
     parent_commit="$parent_rev"
   else
     parent_commit="$(_repo__resolve_commit "$repo" "$parent_rev")" || parent_commit=''
