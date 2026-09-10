@@ -74,7 +74,7 @@ _<namespace>__<verb>[_<noun>]
 Examples: `_frontmatter__parse_field`, `_path__resolve_symlinks`, `_repo__read_file_at_revision`,
 `_worktree__reattach_current`, `_history__begin_transaction`.
 
-A **leading** double underscore — `__jj__read`, `__worktree__resolve_branch` — marks a helper private
+A **leading** double underscore — `__jj__read`, `__worktree__list_behind` — marks a helper private
 to its own module. Those are not part of any public surface and have no wrappers in `lib/repo.sh`.
 
 Names describe **what** an operation does, never how a backend achieves it. `_repo__create_worktree`,

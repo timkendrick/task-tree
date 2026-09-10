@@ -345,7 +345,7 @@ _worktree__record_working_copy() {
 # Usage: _worktree__find_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
 # Outputs one worktree root path per line for each worktree whose
 # working-copy commit sits on BOOKMARK. Classification uses the fork-point
-# ranking of __worktree__resolve_branch rather than the nearest bookmarked
+# ranking of _repo__find_branch_for_commit rather than the nearest bookmarked
 # ancestor, so a worktree that a branch write has left behind (its branch tip
 # no longer in the working copy's ancestry) is still attributed to its own
 # branch instead of to whichever ancestor bookmark remains reachable.
@@ -357,7 +357,7 @@ _worktree__find_for_branch() {
   while IFS=$'\t' read -r _ ws_root; do
     [[ -z "$ws_root" || ! -d "$ws_root" ]] && continue
     wc_commit="$(_repo__resolve_commit "$ws_root" '@' 2>/dev/null)" || continue
-    ws_bookmark="$(__worktree__resolve_branch "$repo" "$wc_commit" 2>/dev/null)" || continue
+    ws_bookmark="$(_repo__find_branch_for_commit "$repo" "$wc_commit" 2>/dev/null)" || continue
     [[ "$ws_bookmark" == "$bookmark" ]] && printf '%s\n' "$ws_root"
   done <<< "$entries"
   return 0
@@ -464,7 +464,7 @@ _worktree__reattach_current() {
 # typically the very worktree the command is invoked from — onto the merge
 # commit. A check-in must affect the target branch, never relocate the
 # invoking worktree, so the worktree's own branch is resolved first by
-# fork-point ranking (__worktree__resolve_branch) and anything not on BRANCH
+# fork-point ranking (_repo__find_branch_for_commit) and anything not on BRANCH
 # is left alone (status 0). The descent check from OLD_TIP is still applied
 # after that, so a worktree already left behind on an older tip of BRANCH is
 # reported by _worktree__report_unsynced rather than silently rewritten.
@@ -481,7 +481,7 @@ _worktree__reattach_current_on_branch() {
   wc_change="$(_repo__resolve_change "$worktree" '@')" || return 1
   wc_commit="$(_repo__resolve_commit "$worktree" '@')" || return 1
   local wc_branch
-  wc_branch="$(__worktree__resolve_branch "$repo" "$wc_commit")" || return 0
+  wc_branch="$(_repo__find_branch_for_commit "$repo" "$wc_commit")" || return 0
   [[ "$wc_branch" == "$branch" ]] || return 0
   _repo__check_is_ancestor "$repo" "$old_tip" "$wc_change" || return 0
   _repo__reattach_worktree "$worktree" "$wc_change" "$new_rev"
@@ -566,28 +566,12 @@ _worktree__list_holding_descendants() {
     wc_commit="$(_repo__resolve_commit "$ws_path" '@')" || continue
     [[ -n "$wc_commit" ]] || continue
     _repo__check_is_ancestor "$repo" "$base_rev" "$wc_commit" || continue
-    wt_branch="$(__worktree__resolve_branch "$repo" "$wc_commit")" || wt_branch=''
+    wt_branch="$(_repo__find_branch_for_commit "$repo" "$wc_commit")" || wt_branch=''
     printf '%s\t%s\n' "$ws_path" "$wt_branch"
   done <<< "$entries"
   return 0
 }
 
-# Usage: __worktree__resolve_branch REPO WC_COMMIT
-#
-# Prints the name of the branch that the working-copy commit WC_COMMIT sits
-# on, or returns 1 when no branch qualifies. Internal helper for the sync
-# machinery below.
-#
-# Deliberately not the nearest bookmarked ancestor: a bare write advances the
-# branch bookmark to a sibling of the worktree's working-copy commit, which
-# takes the bookmark out of that commit's ancestry altogether, so a worktree
-# left behind would be misattributed to whichever outer branch remains
-# reachable. _repo__find_branch_for_commit ranks by fork point instead and
-# documents the rules.
-__worktree__resolve_branch() {
-  local repo="$1" wc_commit="$2"
-  _repo__find_branch_for_commit "$repo" "$wc_commit"
-}
 
 # Usage: _worktree__resolve_branch REPO WORKTREE
 #
@@ -601,7 +585,7 @@ _worktree__resolve_branch() {
   local wc_commit
   wc_commit="$(_repo__resolve_commit "$worktree" '@')" || return 1
   [[ -n "$wc_commit" ]] || return 1
-  __worktree__resolve_branch "$repo" "$wc_commit"
+  _repo__find_branch_for_commit "$repo" "$wc_commit"
 }
 
 # Usage: _worktree__check_behind REPO WORKTREE
@@ -616,7 +600,7 @@ _worktree__check_behind() {
   local wc_commit branch
   wc_commit="$(_repo__resolve_commit "$worktree" '@')" || return 1
   [[ -n "$wc_commit" ]] || return 1
-  branch="$(__worktree__resolve_branch "$repo" "$wc_commit")" || return 1
+  branch="$(_repo__find_branch_for_commit "$repo" "$wc_commit")" || return 1
   [[ -n "$branch" ]] || return 1
   ! _repo__check_is_ancestor "$repo" "$branch" "$wc_commit"
 }
@@ -652,7 +636,7 @@ __worktree__list_behind() {
     [[ -n "$current_worktree" && "$ws_path" == "$current_worktree" ]] && continue
     wc_commit="$(_repo__resolve_commit "$ws_path" '@')" || continue
     [[ -n "$wc_commit" ]] || continue
-    wt_branch="$(__worktree__resolve_branch "$repo" "$wc_commit")" || continue
+    wt_branch="$(_repo__find_branch_for_commit "$repo" "$wc_commit")" || continue
     [[ -n "$branch" && "$wt_branch" != "$branch" ]] && continue
     _repo__check_is_ancestor "$repo" "$wt_branch" "$wc_commit" && continue
     printf '%s\t%s\n' "$ws_path" "$wt_branch"
@@ -730,7 +714,7 @@ _worktree__report_unsynced() {
 # running inside WORKTREE itself. The worktree is snapshotted first so
 # changes the VCS has not yet captured — including files it has never seen — ride
 # along with the reattach instead of being lost. The branch is then resolved
-# from the worktree's working-copy commit (__worktree__resolve_branch) and,
+# from the worktree's working-copy commit (_repo__find_branch_for_commit) and,
 # unless the branch tip is already an ancestor of that commit, the commit is
 # rebased onto the tip; because the rebase runs inside the worktree, its
 # on-disk files are updated in the same step.
@@ -747,7 +731,7 @@ _worktree__sync() {
   wc_change="$(_repo__resolve_change "$worktree" '@')" || return 1
   wc_commit="$(_repo__resolve_commit "$worktree" '@')" || return 1
   local branch
-  branch="$(__worktree__resolve_branch "$repo" "$wc_commit")" || {
+  branch="$(_repo__find_branch_for_commit "$repo" "$wc_commit")" || {
     _ui__log "Error: Worktree is not checked out on any branch: $worktree"
     return 1
   }
