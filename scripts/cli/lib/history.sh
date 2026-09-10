@@ -207,7 +207,7 @@ _history__commit_transaction() {
   # This is safe even if $repo (a worktree) has been deleted, since history_file
   # is always inside the canonical repo which remains on disk.
   local canonical_repo
-  canonical_repo="$(cd "${history_file%/*}" && _repo__find_repository_root)" || {
+  canonical_repo="$(cd "$(_path__dirname "$history_file")" && _repo__find_repository_root)" || {
     _ui__log "Warning: Could not derive canonical repo from history file path; history may be incomplete"
     canonical_repo="$repo"
   }
@@ -260,7 +260,7 @@ _history__rollback_transaction() {
 
   # Derive canonical repo from the history file path (walk up from .tt/ to find .jj/).
   local canonical_repo
-  canonical_repo="$(cd "${history_file%/*}" && _repo__find_repository_root)" || canonical_repo="$repo"
+  canonical_repo="$(cd "$(_path__dirname "$history_file")" && _repo__find_repository_root)" || canonical_repo="$repo"
 
   _ui__log "Rolling back transaction (restoring VCS operation: ${before_op:0:12}...)"
 
@@ -281,7 +281,7 @@ _history__rollback_transaction() {
       while IFS= read -r rel; do
         [[ -z "$rel" ]] && continue
         if [[ -e "$wc_worktree/$rel" || -L "$wc_worktree/$rel" ]]; then
-          mkdir -p "$preserve_dir/files/$(_path__parent_dir "$rel")" 2>/dev/null || continue
+          mkdir -p "$preserve_dir/files/$(_path__dirname "$rel")" 2>/dev/null || continue
           cp -pRP "$wc_worktree/$rel" "$preserve_dir/files/$rel" 2>/dev/null || true
         else
           # The working-copy change is a deletion: remember it so the file
@@ -309,7 +309,7 @@ _history__rollback_transaction() {
           | while IFS= read -r rel; do
               rel="${rel#./}"
               [[ -z "$rel" ]] && continue
-              mkdir -p "$wc_worktree/$(_path__parent_dir "$rel")" 2>/dev/null || continue
+              mkdir -p "$wc_worktree/$(_path__dirname "$rel")" 2>/dev/null || continue
               rm -f "$wc_worktree/$rel" 2>/dev/null
               cp -pRP "$preserve_dir/files/$rel" "$wc_worktree/$rel" 2>/dev/null || \
                 _ui__log "Warning: Could not preserve uncommitted change to $rel; it may still be recoverable from the VCS operation log"

@@ -228,8 +228,7 @@ _jj__find_repository_root() {
       return 0
     fi
     [[ "$dir" == '/' ]] && break
-    dir="${dir%/*}"
-    [[ -n "$dir" ]] || dir='/'
+    dir="$(_path__dirname "$dir")"
   done
   return 1
 }
@@ -250,8 +249,7 @@ _jj__resolve_repository_root() {
     target="$(cd "$repo/.jj" && cd "$pointer" && pwd -P)" \
       || { _ui__log "Error: Could not resolve canonical repo from $repo_entry"; return 1; }
     # target = /path/to/canonical/.jj/repo — strip /.jj/repo to get repo root
-    target="${target%/*}"
-    printf '%s' "${target%/*}"
+    _path__dirname "$(_path__dirname "$target")"
   else
     # Canonical repo: .jj/repo is a directory (the actual op store)
     printf '%s' "$repo"

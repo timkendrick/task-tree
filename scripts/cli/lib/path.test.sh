@@ -136,4 +136,17 @@ test__path__make_absolute_symlink__missing_target_errors() {
   assert_file_not_exists "no symlink created" "$dir/link"
 }
 
+# ---------------------------------------------------------------------------
+# _path__dirname
+# ---------------------------------------------------------------------------
+
+test__path__dirname__matches_dirname() {
+  assert_eq "nested path" "$(_path__dirname .tt/task/abc-123/TASK.md)" ".tt/task/abc-123"
+  assert_eq "single segment" "$(_path__dirname README.md)" "."
+  assert_eq "top-level absolute entry" "$(_path__dirname /repo)" "/"
+  assert_eq "absolute path" "$(_path__dirname /a/b/c)" "/a/b"
+  assert_eq "trailing slash dropped" "$(_path__dirname a/b/)" "a"
+  assert_eq "root stays root" "$(_path__dirname /)" "/"
+}
+
 run_tests "tt lib/path (unit)"
