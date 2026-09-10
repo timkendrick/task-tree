@@ -11,7 +11,7 @@
 #   _path__task_context           — canonical path to a context file
 #   _path__metadata_exclusions    — tt-metadata paths that diffs should exclude
 #   _path__resolve_symlinks       — canonicalize a directory path (pwd -P)
-#   _path__parent_dir             — directory part of a path, without a process
+#   _path__dirname             — directory part of a path, without a process
 #   _path__make_absolute_symlink  — create/replace a symlink with an absolute target
 
 # The tt metadata directory, relative to the repository root. All task files,
@@ -82,11 +82,13 @@ _path__resolve_symlinks() {
   (cd "$1" && pwd -P)
 }
 
-# Usage: _path__parent_dir PATH
+# Usage: _path__dirname PATH
 # Prints the directory part of PATH as `dirname` would: trailing slashes
 # dropped, "." for a bare name, "/" for a top-level entry. Pure bash, so it
-# costs no process.
-_path__parent_dir() {
+# costs no process. The only places that strip a path inline instead are the
+# script-directory lines that run before this module is loaded, and the test
+# harness, which does not load it.
+_path__dirname() {
   local path="$1"
   while [[ "$path" == */ && "$path" != '/' ]]; do path="${path%/}"; done
   if [[ "$path" != */* ]]; then

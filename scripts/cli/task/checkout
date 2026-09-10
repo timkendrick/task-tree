@@ -257,7 +257,7 @@ main() {
       _ui__log "Using existing workspace: $target_worktree"
     else
       new_worktree=true
-      mkdir -p "$(_path__parent_dir "$target_worktree")"
+      mkdir -p "$(_path__dirname "$target_worktree")"
     fi
   else
     # No --worktree: use current workspace

@@ -209,7 +209,7 @@ main() {
   # new context file and records it in the task file's frontmatter.
   ctx_add_writer() {
     local root="$1"
-    mkdir -p "$(_path__parent_dir "$root/$ctx_file")"
+    mkdir -p "$(_path__dirname "$root/$ctx_file")"
     _frontmatter__write_context_file "$root/$ctx_file" "$ctx_title" "$body" "$ctx_ts" "$ctx_ts"
     # Add context reference to task file frontmatter and update 'updated' timestamp
     _frontmatter__append_context "$root/$task_file" "$ctx_id"
