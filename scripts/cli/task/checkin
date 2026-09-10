@@ -525,10 +525,10 @@ main() {
   checkin_handoff_writer() {
     local root="$1"
     ln -s "$(_path__task_file "$parent_slug")" "$root/$TT_TASK_SYMLINK_FILENAME"
-    mkdir -p "$root/$(_path__parent_dir "$parent_task_file")"
+    mkdir -p "$root/$(_path__dirname "$parent_task_file")"
     printf '%s\n' "$updated_parent_content" > "$root/$parent_task_file"
     if [[ -n "$ctx_id" ]]; then
-      mkdir -p "$root/$(_path__parent_dir "$ctx_file")"
+      mkdir -p "$root/$(_path__dirname "$ctx_file")"
       _frontmatter__write_context_file "$root/$ctx_file" "$ctx_title" "$context_text" "$ctx_ts" "$ctx_ts"
       _frontmatter__append_context "$root/$parent_task_file" "$ctx_id"
     fi

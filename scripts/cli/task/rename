@@ -281,7 +281,7 @@ main() {
     while IFS= read -r path; do
       [[ -z "$path" ]] && continue
       rel="${path#"$old_dir"/}"
-      mkdir -p "$root/$new_dir/$(_path__parent_dir "$rel")" || return 1
+      mkdir -p "$root/$new_dir/$(_path__dirname "$rel")" || return 1
       _task__read_file "$repo" "$rev" "$path" > "$root/$new_dir/$rel" || return 1
     done <<< "$listing"
 
@@ -298,7 +298,7 @@ main() {
     # branch and its siblings inherited that copy and would otherwise keep
     # pointing at a task ID that no longer exists.
     if [[ -n "$parent_task_file" ]]; then
-      mkdir -p "$root/$(_path__parent_dir "$parent_task_file")" || return 1
+      mkdir -p "$root/$(_path__dirname "$parent_task_file")" || return 1
       if _task__read_file "$repo" "$rev" "$parent_task_file" > "$root/$parent_task_file"; then
         _frontmatter__rename_subtask "$root/$parent_task_file" "$old_id" "$new_id"
       else

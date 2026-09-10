@@ -1357,7 +1357,7 @@ __task__commit_staged() {
 
     local modify_path
     for modify_path in "${modify_paths[@]+"${modify_paths[@]}"}"; do
-      mkdir -p "$stage/$(_path__parent_dir "$modify_path")" || exit 1
+      mkdir -p "$stage/$(_path__dirname "$modify_path")" || exit 1
       if ! _repo__read_file_at_revision "$repo" "$tip" "$modify_path" \
           > "$stage/$modify_path"; then
         _ui__log "Error: '$modify_path' does not exist on '$tip'."
