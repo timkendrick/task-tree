@@ -28,6 +28,38 @@ _fixture_linear_history() {
   SECOND_COMMIT="$(get_full_commit_id 'feature')"
 }
 
+# Create a commit described MESSAGE on top of PARENT_REV (a second PARENT_REV
+# makes it a merge, the first parent given first) without moving the working
+# copy, and print its full commit ID.
+# Usage: _make_commit MESSAGE PARENT_REV [PARENT_REV]
+_make_commit() {
+  local message="$1"; shift
+  jj -R "$REPO" new --no-edit -m "$message" "$@" >/dev/null 2>&1
+  jj -R "$REPO" log --ignore-working-copy -r "description(substring:\"$message\")" \
+    --no-graph -T 'commit_id'
+}
+
+# Build the shape a check-in leaves behind on the receiving branch, as seen by a
+# worktree parked on that branch's previous tip:
+#   FORK_COMMIT (was bookmark "parent") -- WC_COMMIT   <- the parked working copy
+#                                       \- CHILD_COMMIT (bookmark "child") -- handoff
+#                                                                                \
+#   FORK_COMMIT ------------------------------------------- MERGE_COMMIT (bookmark "parent")
+# The merge lists the receiving branch first, as every tt merge does. Sets
+# FORK_COMMIT, WC_COMMIT, CHILD_COMMIT and MERGE_COMMIT.
+_fixture_checkin_merge() {
+  FORK_COMMIT="$(_make_commit 'parent work' '@-')"
+  jj -R "$REPO" bookmark set parent -r "$FORK_COMMIT" >/dev/null 2>&1
+  jj -R "$REPO" new "$FORK_COMMIT" >/dev/null 2>&1
+  WC_COMMIT="$(get_full_commit_id '@')"
+  CHILD_COMMIT="$(_make_commit 'child work' "$FORK_COMMIT")"
+  jj -R "$REPO" bookmark set child -r "$CHILD_COMMIT" >/dev/null 2>&1
+  local handoff
+  handoff="$(_make_commit 'child handoff' "$CHILD_COMMIT")"
+  MERGE_COMMIT="$(_make_commit 'child checkin' "$FORK_COMMIT" "$handoff")"
+  jj -R "$REPO" bookmark set parent -r "$MERGE_COMMIT" >/dev/null 2>&1
+}
+
 # Build two divergent branches off the current working-copy parent:
 #   BASE_COMMIT -- side a (bookmark "sidea")
 #              \- side b (bookmark "sideb")
@@ -905,6 +937,102 @@ test__jj__find_branch_for_commit__branch_advanced_past_working_copy() {
 
   assert_eq "a behind working copy still resolves to its own branch" \
     "$(_jj__find_branch_for_commit "$REPO" "$wc_commit")" "feature"
+}
+
+test__jj__find_branch_for_commit__child_rebased_onto_receiving_branch() {
+  setup_workspace
+  _fixture_checkin_merge
+  # Propagation reparents the child onto the check-in merge, so the child's
+  # bookmark and the receiving branch's bookmark both descend from the parked
+  # working copy's fork point. The child is built on top of the receiving
+  # branch, so the fork point belongs to the receiving branch.
+  local rebased
+  rebased="$(_make_commit 'child rebased' "$MERGE_COMMIT")"
+  jj -R "$REPO" bookmark set child -r "$rebased" >/dev/null 2>&1
+
+  assert_eq "receiving branch wins over a child rebased on top of it" \
+    "$(_jj__find_branch_for_commit "$REPO" "$WC_COMMIT")" "parent"
+}
+
+test__jj__find_branch_for_commit__child_checked_in_below_receiving_tip() {
+  setup_workspace
+  _fixture_checkin_merge
+  # A check-in leaves the child's bookmark where it was, below the merge: the
+  # child's work is subsumed by the receiving branch, which is the branch the
+  # parked working copy sits on.
+  assert_eq "receiving branch wins over a child it has absorbed" \
+    "$(_jj__find_branch_for_commit "$REPO" "$WC_COMMIT")" "parent"
+}
+
+test__jj__find_branch_for_commit__several_children_rebased_onto_receiving_branch() {
+  setup_workspace
+  _fixture_checkin_merge
+  local sibling_a sibling_b
+  sibling_a="$(_make_commit 'sibling a rebased' "$MERGE_COMMIT")"
+  jj -R "$REPO" bookmark set sibling-a -r "$sibling_a" >/dev/null 2>&1
+  sibling_b="$(_make_commit 'sibling b rebased' "$MERGE_COMMIT")"
+  jj -R "$REPO" bookmark set sibling-b -r "$sibling_b" >/dev/null 2>&1
+
+  assert_eq "a whole propagated sibling set loses to the receiving branch" \
+    "$(_jj__find_branch_for_commit "$REPO" "$WC_COMMIT")" "parent"
+}
+
+test__jj__find_branch_for_commit__descendant_chain_above_receiving_branch() {
+  setup_workspace
+  _fixture_checkin_merge
+  # A rebased child carrying its own child: neither is the branch, however far
+  # the chain runs past the receiving branch's tip.
+  local rebased grandchild
+  rebased="$(_make_commit 'child rebased' "$MERGE_COMMIT")"
+  jj -R "$REPO" bookmark set child -r "$rebased" >/dev/null 2>&1
+  grandchild="$(_make_commit 'grandchild rebased' "$rebased")"
+  jj -R "$REPO" bookmark set grandchild -r "$grandchild" >/dev/null 2>&1
+
+  assert_eq "a chain of descendants loses to the receiving branch" \
+    "$(_jj__find_branch_for_commit "$REPO" "$WC_COMMIT")" "parent"
+}
+
+test__jj__find_branch_for_commit__behind_own_branch_after_it_was_checked_in() {
+  setup_workspace
+  # A worktree left behind on its own branch, whose branch has since been
+  # checked in to its parent. The parent's tip descends from the working copy's
+  # fork point too, but only through the merge's second parent, so the fork
+  # point is not on the parent's own line and the branch is still the child.
+  local parent_tip child_create wc_commit child_edit handoff merge
+  parent_tip="$(_make_commit 'parent work' '@-')"
+  jj -R "$REPO" bookmark set parent -r "$parent_tip" >/dev/null 2>&1
+  child_create="$(_make_commit 'child create' "$parent_tip")"
+  jj -R "$REPO" bookmark set child -r "$child_create" >/dev/null 2>&1
+  jj -R "$REPO" new "$child_create" >/dev/null 2>&1
+  wc_commit="$(get_full_commit_id '@')"
+  child_edit="$(_make_commit 'child edit' "$child_create")"
+  jj -R "$REPO" bookmark set child -r "$child_edit" >/dev/null 2>&1
+  handoff="$(_make_commit 'child handoff' "$child_edit")"
+  merge="$(_make_commit 'child checkin' "$parent_tip" "$handoff")"
+  jj -R "$REPO" bookmark set parent -r "$merge" >/dev/null 2>&1
+
+  assert_eq "own branch wins over the parent that absorbed it" \
+    "$(_jj__find_branch_for_commit "$REPO" "$wc_commit")" "child"
+}
+
+test__jj__find_branch_for_commit__merge_landed_on_own_branch() {
+  setup_workspace
+  # Propagating by merge lands the merge on the child branch, which lists the
+  # child first: the working copy parked below it is still on the child branch.
+  local parent_tip child_create wc_commit parent_edit merge
+  parent_tip="$(_make_commit 'parent work' '@-')"
+  jj -R "$REPO" bookmark set parent -r "$parent_tip" >/dev/null 2>&1
+  child_create="$(_make_commit 'child create' "$parent_tip")"
+  jj -R "$REPO" bookmark set child -r "$child_create" >/dev/null 2>&1
+  jj -R "$REPO" new "$child_create" >/dev/null 2>&1
+  wc_commit="$(get_full_commit_id '@')"
+  parent_edit="$(_make_commit 'parent edit' "$parent_tip")"
+  jj -R "$REPO" bookmark set parent -r "$parent_edit" >/dev/null 2>&1
+  merge="$(_make_commit 'propagate merge' "$child_create" "$parent_edit")"
+  jj -R "$REPO" bookmark set child -r "$merge" >/dev/null 2>&1
+
+  assert_eq "a merge received by the own branch keeps the worktree on it" \
+    "$(_jj__find_branch_for_commit "$REPO" "$wc_commit")" "child"
 }
 
 test__jj__find_branch_for_commit__no_qualifying_bookmark() {

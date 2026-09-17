@@ -116,6 +116,40 @@ test_worktree_sync__second_sync_is_up_to_date() {
 }
 
 
+# A check-in followed by propagation leaves the receiving branch's worktree
+# behind a merge, with every reparented sibling branch descending from that
+# worktree's fork point. A sync must carry it onto its own branch's tip and not
+# onto a sibling's, which would import unrelated work into it.
+test_worktree_sync__parent_worktree_lands_on_its_own_branch() {
+  setup_workspace "sync-after-propagate"
+  local proj_id sibling incoming wt out exit_code=0
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null 2>&1 || true
+  sibling=$(create_task "sib" "Sibling") || true
+  incoming=$(create_task "incoming" "Incoming") || true
+
+  checkout_task "$sibling" >/dev/null 2>&1 || true
+  printf 'work\n' > "$REPO/sibling-work.txt"
+  checkpoint_task "Sibling work" >/dev/null 2>&1 || true
+
+  # The default workspace is left on the project branch, parked above its tip.
+  checkout_task "$proj_id" >/dev/null 2>&1 || true
+
+  wt=$(create_task_worktree "$incoming")
+  printf 'work\n' > "$wt/incoming-work.txt"
+  run_tt_in_worktree "$wt" task checkpoint -m "Incoming work" >/dev/null 2>&1 || true
+  run_tt_in_worktree "$wt" task checkin --complete --propagate >/dev/null 2>&1 || true
+
+  out=$(run_tt worktree sync "$REPO" 2>&1) || exit_code=$?
+  assert_success "sync succeeds" "$exit_code"
+  assert_contains "names the project branch" "$out" "$proj_id"
+  assert_not_contains "does not name the sibling branch" "$out" "$sibling"
+  assert_eq "project worktree sits on the project tip" \
+    "$(worktree_parent "$REPO")" "$(get_full_commit_id "$proj_id")"
+  assert_file_not_exists "the sibling's work was not imported" "$REPO/sibling-work.txt"
+}
+
+
 test_worktree_sync__all_synchronizes_every_behind_worktree() {
   setup_workspace "sync-all"
   local proj_id wt_a wt_b task_a task_b

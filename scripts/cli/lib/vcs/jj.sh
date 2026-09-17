@@ -1210,25 +1210,47 @@ _jj__list_bookmarks_at() {
 # to a sibling of the worktree's working-copy commit, so the bookmark leaves
 # that commit's ancestry entirely and the nearest bookmarked ancestor degrades
 # to some outer branch (e.g. main). Bookmarks are therefore ranked by where
-# their history forks from COMMIT's: the bookmark with the deepest fork point
-# is the branch, whether it still sits at that fork point (worktree in sync) or
-# has moved past it (worktree behind). Where several bookmarks share the
-# deepest fork point, one still sitting at it wins over one that has diverged.
+# their history forks from COMMIT's: only a bookmark whose history forks from
+# COMMIT's at the deepest such point can be the branch, whether it still sits
+# at that fork point (worktree in sync) or has moved past it (worktree behind).
 #
 # A bookmark at or ahead of COMMIT is excluded rather than ranked: its fork
 # point is COMMIT itself, which says COMMIT is part of that bookmark's own
 # history rather than a working copy sitting on top of it.
 #
-# Two queries answer this for any number of bookmarks. The candidate set is
-# every bookmark not at or ahead of COMMIT; the deepest fork point is the heads
-# of what COMMIT's ancestry (itself excluded) shares with theirs; and every
-# candidate descended from that fork point forks from COMMIT exactly there,
-# because a head admits nothing deeper below it. Ranking one bookmark at a time
-# would instead cost two queries per bookmark in the repository.
+# The fork point alone does not always name one bookmark. A check-in advances
+# the receiving branch onto a merge that is a sibling of COMMIT, and a
+# subsequent propagation reparents the other task branches onto that merge, so
+# every one of them shares COMMIT's fork point. Plain ancestry cannot separate
+# them either, because whether the receiving branch's tip ends up above or
+# below a task branch's tip depends on which of the two moved last. First-parent
+# structure can, because a tt merge always lists the receiving branch first
+# (see _task__merge_branch): a branch's own line is its first-parent mainline,
+# and anything reachable only through a second parent was merged in from
+# elsewhere. Two rules follow, applied to the candidates that descend from the
+# fork point:
 #
-# Ties between forks that are incomparable — neither an ancestor of the other,
-# reachable only through divergence — resolve arbitrarily, to whichever the
-# backend lists first.
+#   1. The fork point must lie on the candidate's mainline. A candidate that
+#      reaches it only through a merge's second parent has the fork point on
+#      some other branch's line, so the working copy was never parked on it.
+#   2. A candidate with another candidate's tip on its own mainline between the
+#      fork point and itself is built on top of that branch, which means the
+#      fork point belongs to the branch underneath.
+#
+# A candidate sitting exactly at the fork point is the branch outright: the
+# working copy is parked directly on its tip. Where several candidates survive
+# both rules, the descendant-most wins, a branch merged into another being
+# subsumed by it. Survivors that are ancestrally incomparable resolve
+# arbitrarily, to whichever the backend lists first; tt's own commands do not
+# produce that shape, because a task branch forks above a commit on its
+# parent's line, which rule 2 then eliminates.
+#
+# The query count is fixed rather than per-bookmark: the fork point, the
+# candidate tips descending from it, one listing of the region between the two
+# carrying each commit's parents, and a final heads() only when more than one
+# candidate survives. The mainline walk itself runs in a single awk pass over
+# that listing. Testing one bookmark at a time would instead cost a query per
+# bookmark in the repository.
 _jj__find_branch_for_commit() {
   local repo="$1" commit="$2"
   local candidates="bookmarks() ~ descendants(${commit})"
@@ -1239,25 +1261,71 @@ _jj__find_branch_for_commit() {
     -n 1 --no-graph -T 'commit_id')" || return 1
   [[ -n "$fork" ]] || return 1
 
-  local records
-  records="$(__jj__read "$repo" --ignore-working-copy log \
+  # Candidate tips as "<commit-id>\t<bookmark-name>", one bookmark per commit:
+  # where several sit on the same commit they name the same branch position, so
+  # the first is as good as any.
+  local tips
+  tips="$(__jj__read "$repo" --ignore-working-copy log \
     -r "(${candidates}) & descendants(${fork})" --no-graph \
-    -T 'commit_id ++ "\t" ++ local_bookmarks.map(|b| b.name()).join(",") ++ "\n"')" || return 1
-  [[ -n "$records" ]] || return 1
+    -T 'commit_id ++ "\t" ++ local_bookmarks.map(|b| b.name()).join(",") ++ "\n"' \
+    | awk -F'\t' '$1 != "" && $2 != "" { sub(/,.*$/, "", $2); print $1 "\t" $2 }')" || return 1
+  [[ -n "$tips" ]] || return 1
 
-  local tip names diverged=''
-  while IFS=$'\t' read -r tip names; do
-    names="${names%%,*}"
-    [[ -n "$names" ]] || continue
-    if [[ "$tip" == "$fork" ]]; then
-      printf '%s' "$names"
-      return 0
-    fi
-    [[ -n "$diverged" ]] || diverged="$names"
-  done <<< "$records"
+  # A candidate at the fork point, or the only candidate there is, is the answer
+  # without any ranking.
+  local resolved
+  resolved="$(printf '%s\n' "$tips" | awk -F'\t' -v fork="$fork" '$1 == fork { print $2; exit }')"
+  if [[ -z "$resolved" ]] && [[ "$(printf '%s\n' "$tips" | grep -c . || true)" -eq 1 ]]; then
+    resolved="${tips#*$'\t'}"
+  fi
+  if [[ -n "$resolved" ]]; then
+    printf '%s' "$resolved"
+    return 0
+  fi
 
-  [[ -n "$diverged" ]] || return 1
-  printf '%s' "$diverged"
+  local region
+  region="$(__jj__read "$repo" --ignore-working-copy log \
+    -r "(${fork})::($(__jj__join_revisions "$tips"))" --no-graph \
+    -T 'commit_id ++ "\t" ++ parents.map(|p| p.commit_id()).join(" ") ++ "\n"')" || return 1
+  [[ -n "$region" ]] || return 1
+
+  # Walk each candidate's mainline down from its tip: reaching the fork point
+  # without passing another candidate's tip is what survives both rules.
+  local survivors
+  survivors="$(awk -F'\t' -v fork="$fork" '
+    FNR == NR { branch[$1] = $2; next }
+    { split($2, parents, " "); mainline[$1] = parents[1] }
+    END {
+      for (tip in branch) {
+        for (rev = mainline[tip]; rev != "" && rev != fork; rev = mainline[rev]) {
+          if (rev in branch) break
+        }
+        if (rev == fork) print tip
+      }
+    }' <(printf '%s\n' "$tips") <(printf '%s\n' "$region"))"
+  [[ -n "$survivors" ]] || return 1
+
+  local winner
+  if [[ "$(printf '%s\n' "$survivors" | grep -c . || true)" -eq 1 ]]; then
+    winner="$survivors"
+  else
+    winner="$(__jj__read "$repo" --ignore-working-copy log \
+      -r "heads($(__jj__join_revisions "$survivors"))" -n 1 --no-graph -T 'commit_id')" || return 1
+  fi
+  [[ -n "$winner" ]] || return 1
+
+  resolved="$(printf '%s\n' "$tips" | awk -F'\t' -v winner="$winner" '$1 == winner { print $2; exit }')"
+  [[ -n "$resolved" ]] || return 1
+  printf '%s' "$resolved"
+}
+
+# Usage: __jj__join_revisions RECORDS
+# Prints the first tab-separated field of each non-empty line of RECORDS joined
+# into a revset union expression ("a | b | c"), so that a listing of commits can
+# be fed back to the backend as a single revset. Internal helper for
+# _jj__find_branch_for_commit.
+__jj__join_revisions() {
+  printf '%s\n' "$1" | awk -F'\t' '$1 != "" { printf "%s%s", separator, $1; separator = " | " }'
 }
 
 # Usage: _jj__check_bookmark_exists REPO NAME

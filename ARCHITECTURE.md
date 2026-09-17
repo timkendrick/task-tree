@@ -353,7 +353,26 @@ is writing may be an *ancestor* of the branch the invoking worktree is on: plain
 the line that moved from a line that forked off it further back, and would drag the worktree onto the
 wrong branch.
 
-### 5.1 Constraints
+### 5.1 Merge parent order
+
+Every merge tt creates lists **the receiving branch first and the incoming line second**. Check-in
+and publish merge a handoff into the branch that receives it; `tt task propagate --merge` merges a
+parent's tip into the child that receives it. `_task__merge_branch` is the single facade that builds
+them, and it takes the receiving tip as its first parent argument.
+
+The order is load-bearing, not cosmetic. A branch's own line is its **first-parent mainline**, and
+anything reachable only through a second parent arrived from somewhere else. Two mechanisms read the
+graph that way:
+
+- **Full-range discovery** (`_task__get_full_range_records`) classifies historical check-ins by the
+  shape of a merge's second parent, so a handoff must never appear first.
+- **Worktree branch attribution** (§6.3) separates a branch that was built on top of another from one
+  that was merged into it, which plain ancestry cannot do.
+
+A merge built with the parents reversed would silently misreport both, so the order is asserted in
+the test suites of the three commands that create merges.
+
+### 5.2 Constraints
 
 - **bash 3.2.** The only interpreter available on macOS is bash 3.2, so `mapfile`/`readarray` and
   associative arrays (`declare -A`) are unavailable. Keyed lookups use parallel arrays or files in a
@@ -422,6 +441,23 @@ for `tt history undo` to restore uncommitted work faithfully.
 Because only the invoking worktree is reattached, a write to a branch leaves any other worktree on
 that branch sitting on the previous tip. Such a worktree is **behind**, not broken: fully usable, and
 still descending from where it was. The command output reports a hint to re-sync the affected branches.
+
+Reporting a behind worktree, and later syncing it, both need the branch it is **on**, which the
+bookmarks alone no longer say: the write moved the bookmark to a sibling of the worktree's
+working-copy commit, so the nearest bookmarked ancestor degrades to some outer branch.
+`_jj__find_branch_for_commit` answers it from the graph instead, by locating the **fork point** —
+the deepest commit the working copy's ancestry shares with any bookmark's — and then ranking the
+bookmarks that descend from it:
+
+- a bookmark sitting **at** the fork point is the branch: the working copy is parked on its tip;
+- the fork point must lie on a candidate's **mainline** (§5.1), since a candidate reaching it only
+  through a merge holds it on some other branch's line;
+- a candidate with another candidate's tip on its mainline **between** the fork point and itself was
+  built on top of that branch, so the fork point belongs to the branch underneath.
+
+The last two rules are what keep a propagation — which reparents every sibling branch onto the tip a
+check-in just created — from re-attributing the receiving branch's own worktree to each sibling in
+turn.
 
 ## 7. Working-copy-bound commands
 
