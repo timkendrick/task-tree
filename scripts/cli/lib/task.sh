@@ -975,9 +975,13 @@ _task__commit_detached() {
 # Prints the merge commit's ID; the caller advances the receiving branch's
 # bookmark to it separately (_task__advance_branch).
 #
-# The parent order is semantic, not cosmetic: full-range discovery
-# (_task__get_full_range_records) classifies historical check-ins by the shape
-# of a merge's second parent, so the handoff must always be second.
+# The parent order is semantic, not cosmetic. A branch's own line is its
+# first-parent mainline, and two mechanisms read the graph that way: full-range
+# discovery (_task__get_full_range_records) classifies historical check-ins by
+# the shape of a merge's second parent, and worktree branch attribution
+# (_repo__find_branch_for_commit) tells a branch built on top of another from
+# one merged into it. The receiving branch must therefore always be first and
+# the incoming line second, whichever of the two is being merged into which.
 #
 # The merge carries no file writes of its own: the backend computes the
 # merged tree from the two parents and represents any conflicts natively.
