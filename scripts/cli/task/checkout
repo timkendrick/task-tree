@@ -234,7 +234,7 @@ main() {
         done <<< "$existing_wts"
         if [[ "$match_found" != true ]]; then
           local first_existing
-          first_existing="$(printf '%s' "$existing_wts" | head -1)"
+          first_existing="$(_string__first_line "$existing_wts")"
           _ui__log "Error: Task '$task_id' already has a workspace at '$first_existing'."
           _ui__log "  Multiple worktrees per task are not supported."
           exit 1

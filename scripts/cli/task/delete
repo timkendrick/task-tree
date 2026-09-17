@@ -64,7 +64,7 @@ collect_subtree() {
 
   while [[ -n "$to_visit" ]]; do
     local current
-    current="$(printf '%s' "$to_visit" | head -1)"
+    current="$(_string__first_line "$to_visit")"
     to_visit="$(printf '%s' "$to_visit" | tail -n +2)"
     [[ -z "$current" ]] && continue
 

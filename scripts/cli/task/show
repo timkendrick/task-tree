@@ -116,13 +116,6 @@ main() {
     task_file="$(_path__task_file "$suffix")"
   fi
 
-  # --- Find worktree ---
-  local worktree
-  worktree="$(_worktree__find_for_branch "$repo" "$branch" "$task_prefix" "$project_prefix" | head -1)"
-  if [[ -z "$worktree" ]]; then
-    worktree="$repo"
-  fi
-
   # --- Read task file ---
   local content
   if ! content="$(_task__read_file "$repo" "$branch" "$task_file")"; then
