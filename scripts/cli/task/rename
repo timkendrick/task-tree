@@ -18,17 +18,6 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 
 readonly SCRIPT_NAME="${0##*/}"
 
-# Scratch directory holding the change-ID -> staging-commit mapping built
-# below. Held in a global (rather than a local of main) so the EXIT trap can
-# still see it, and removed on every exit path including a failed rewrite.
-RENAME_SCRATCH=''
-rename_cleanup() {
-  [[ -n "$RENAME_SCRATCH" ]] && rm -rf "$RENAME_SCRATCH"
-  RENAME_SCRATCH=''
-  return 0
-}
-trap rename_cleanup EXIT
-
 usage() {
   cat <<EOF
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} --slug <new-slug> [--task <task-id>] [--repo PATH]
@@ -256,9 +245,6 @@ main() {
   # Begin transaction (records before-op for undo)
   _history__begin_transaction "$repo"
 
-  RENAME_SCRATCH="$(mktemp -d)"
-  mkdir -p "$RENAME_SCRATCH/map"
-
   local rewrite_range
   rewrite_range="$(_task__list_rewrite_range "$repo" "$introduction")"
 
@@ -316,49 +302,58 @@ main() {
   # original objects: no step of the rewrite below can observe state that the
   # rewrite itself has already disturbed. bash 3.2 has no associative arrays,
   # so the mapping lives as one file per change ID in a scratch directory.
+  #
+  # Both phases and the bookmark rename run inside a subshell that owns that
+  # directory, so its EXIT trap removes it on every path out without competing
+  # for the trap the enclosing transaction installs. A failure inside leaves
+  # the subshell alone, so the exit status is propagated explicitly.
   # ---------------------------------------------------------------------------
-  _ui__log "Planning rename: $old_id -> $new_id"
+  (
+    scratch="$(mktemp -d)" || exit 1
+    trap 'rm -rf "$scratch"' EXIT
+    mkdir -p "$scratch/map" || exit 1
 
-  local change_id staging_commit staging_change
-  while IFS= read -r change_id; do
-    [[ -z "$change_id" ]] && continue
-    staging_commit="$(_task__commit_detached "$repo" "$change_id" "$rename_message" \
-      --delete-prefix "$old_dir" -- rename_stage_writer "$change_id")" || exit 1
-    # Record the staging commit by change ID too: rewriting the range below
-    # rebases the staging commits along with everything else, so their commit
-    # IDs do not survive to the point where they are consumed.
-    staging_change="$(_task__resolve_change "$repo" "$staging_commit")" || exit 1
-    printf '%s\n' "$staging_change" > "$RENAME_SCRATCH/map/$change_id"
-  done <<< "$rewrite_range"
+    _ui__log "Planning rename: $old_id -> $new_id"
 
-  # ---------------------------------------------------------------------------
-  # Phase 2: replace each commit's tree with the one computed for it, oldest
-  # first, addressing commits by change ID because each replacement rebases the
-  # rest of the range and invalidates their commit IDs. Every commit keeps its
-  # identity, description and position; only what it records changes. No diff
-  # is ever replayed, so nothing can conflict.
-  # ---------------------------------------------------------------------------
-  _ui__log "Rewriting task history..."
+    local change_id staging_commit staging_change
+    while IFS= read -r change_id; do
+      [[ -z "$change_id" ]] && continue
+      staging_commit="$(_task__commit_detached "$repo" "$change_id" "$rename_message" \
+        --delete-prefix "$old_dir" -- rename_stage_writer "$change_id")" || exit 1
+      # Record the staging commit by change ID too: rewriting the range below
+      # rebases the staging commits along with everything else, so their commit
+      # IDs do not survive to the point where they are consumed.
+      staging_change="$(_task__resolve_change "$repo" "$staging_commit")" || exit 1
+      printf '%s\n' "$staging_change" > "$scratch/map/$change_id"
+    done <<< "$rewrite_range"
 
-  while IFS= read -r change_id; do
-    [[ -z "$change_id" ]] && continue
-    staging_change="$(cat "$RENAME_SCRATCH/map/$change_id")"
-    _task__replace_tree "$repo" "$staging_change" "$change_id" || exit 1
-  done <<< "$rewrite_range"
+    # ---------------------------------------------------------------------------
+    # Phase 2: replace each commit's tree with the one computed for it, oldest
+    # first, addressing commits by change ID because each replacement rebases the
+    # rest of the range and invalidates their commit IDs. Every commit keeps its
+    # identity, description and position; only what it records changes. No diff
+    # is ever replayed, so nothing can conflict.
+    # ---------------------------------------------------------------------------
+    _ui__log "Rewriting task history..."
 
-  _ui__log "Renaming bookmark..."
-  _task__rename_branch "$repo" "$old_id" "$new_id"
+    while IFS= read -r change_id; do
+      [[ -z "$change_id" ]] && continue
+      staging_change="$(cat "$scratch/map/$change_id")"
+      _task__replace_tree "$repo" "$staging_change" "$change_id" || exit 1
+    done <<< "$rewrite_range"
 
-  # Retire the staging commits. Abandoning them is what removes them: they are
-  # already unreferenced by this point, and an unreferenced commit stays a
-  # visible head until it is abandoned.
-  while IFS= read -r change_id; do
-    [[ -z "$change_id" ]] && continue
-    staging_change="$(cat "$RENAME_SCRATCH/map/$change_id")"
-    _task__discard_commit "$repo" "$staging_change" || true
-  done <<< "$rewrite_range"
+    _ui__log "Renaming bookmark..."
+    _task__rename_branch "$repo" "$old_id" "$new_id"
 
-  rename_cleanup
+    # Retire the staging commits. Abandoning them is what removes them: they are
+    # already unreferenced by this point, and an unreferenced commit stays a
+    # visible head until it is abandoned.
+    while IFS= read -r change_id; do
+      [[ -z "$change_id" ]] && continue
+      staging_change="$(cat "$scratch/map/$change_id")"
+      _task__discard_commit "$repo" "$staging_change" || true
+    done <<< "$rewrite_range"
+  ) || exit 1
 
   # The rewrite above was a bare graph mutation, so the invoking worktree's
   # files are still those of the pre-rename tree; bring them forward now, while

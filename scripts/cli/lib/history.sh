@@ -30,6 +30,9 @@
 #   _history__begin_transaction    — record an in-progress entry and set the rollback trap
 #   _history__commit_transaction   — finalize the in-progress entry with the after-op-id
 #   _history__rollback_transaction — restore the before-op state and drop the entry
+#
+# Functions named with a double underscore (__history__*) are internal helpers
+# private to this module and not part of the public surface.
 
 # Usage: _history__replace_last_line FILE EXPECTED NEW
 # Rewrites FILE so that its last line, when it is exactly EXPECTED, becomes
@@ -118,10 +121,10 @@ _history__restore_operation() {
 # Usage: _history__begin_transaction REPO
 # Begins a tt transaction. No-op if TT_TRANSACTION_ID is already set (nested call).
 # Captures the current VCS operation ID, checks for in-progress transactions,
-# appends "<before-op-id>:" to .tt/history, exports TT_TRANSACTION_ID, sets an
-# ERR trap to auto-rollback on failure, and finally snapshots the current
-# worktree's working copy so pending on-disk changes are captured as part of
-# the transaction. The ordering is deliberate: the before-op ID is recorded
+# appends "<before-op-id>:" to .tt/history, exports TT_TRANSACTION_ID, sets the
+# abort trap (see __history__abort_transaction), and finally snapshots the
+# current worktree's working copy so pending on-disk changes are captured as
+# part of the transaction. The ordering is deliberate: the before-op ID is recorded
 # first, so the operation created by the snapshot falls inside the transaction
 # and `tt history undo` reverts it along with everything else.
 #
@@ -178,8 +181,8 @@ _history__begin_transaction() {
   # been deleted by then (e.g. worktree delete).
   _TT_TRANSACTION_OWNER="$history_file"
 
-  # Set ERR trap to auto-rollback on failure
-  trap '_history__rollback_transaction "'"$repo"'"' ERR
+  # Auto-rollback on any exit that does not pass through the commit
+  trap '__history__abort_transaction "'"$repo"'"' ERR EXIT
 
   # Capture pending working-copy changes into the working-copy commit. This
   # must run AFTER the before-op ID is recorded above so that undoing the
@@ -222,9 +225,40 @@ _history__commit_transaction() {
   # Replace the last line (in-progress: "<before>:") with the completed entry ("<before>:<after>")
   _history__replace_last_line "$history_file" "${before_op}:" "${before_op}:${after_op}"
 
-  # Clear ERR trap and ownership flag
-  trap - ERR
+  # Clear the abort trap and ownership flag
+  trap - ERR EXIT
   unset _TT_TRANSACTION_OWNER
+}
+
+# Usage: __history__abort_transaction REPO
+#
+# Trap handler installed by _history__begin_transaction, for an open
+# transaction that the shell is leaving without having committed it.
+#
+# It is installed on ERR *and* EXIT because neither alone is enough. An ERR
+# trap does not fire for `exit`, which is how every command reports a failed
+# precondition, so an ERR-only trap leaves the repository half-written and the
+# in-progress entry in the log, where it blocks the next command as a stale
+# lock. An EXIT trap alone would catch that, but a command killed by `set -e`
+# fires ERR first, so both are taken and the handler disarms both before doing
+# anything: a set -e failure would otherwise roll back twice, and the handler's
+# own `exit` would re-enter it.
+#
+# The status that triggered the trap is captured first and re-raised last, so
+# the command's own exit code survives the rollback. A rollback that itself
+# fails warns from within _history__rollback_transaction and does not change
+# the status: the caller asked about its command, not about the recovery.
+#
+# Any exit reaching the handler rolls back, a successful one included, because
+# an open transaction means the command never reached its commit point: its
+# writes are half-applied by definition, and exiting zero with one open is a
+# bug that would otherwise leave the lock behind silently.
+__history__abort_transaction() {
+  local status=$?
+  local repo="$1"
+  trap - ERR EXIT
+  _history__rollback_transaction "$repo"
+  exit "$status"
 }
 
 # Usage: _history__rollback_transaction REPO
@@ -330,7 +364,7 @@ _history__rollback_transaction() {
     _history__delete_lines "$history_file" "${before_op}:"
   fi
 
-  # Clear ERR trap and ownership flag
-  trap - ERR
+  # Clear the abort trap and ownership flag
+  trap - ERR EXIT
   unset _TT_TRANSACTION_OWNER
 }

@@ -296,8 +296,8 @@ main() {
     "$old_target_tip" "$handoff_commit")"
 
   # Check for conflicts (unless --force)
-  # On conflict, exit 1 triggers the ERR trap → _history__rollback_transaction →
-  # backend operation restore, which cleanly reverts this transaction's writes.
+  # Exiting here leaves the transaction open, so its abort trap rolls back to
+  # the before-op state, cleanly reverting this transaction's writes.
   if [[ "$force" != true ]] && _task__check_conflicts "$repo" "$merge_commit"; then
     _ui__log "Error: Merge conflicts detected. Resolve conflicts or use --force."
     exit 1
