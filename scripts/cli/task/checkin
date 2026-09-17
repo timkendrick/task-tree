@@ -364,9 +364,10 @@ main() {
     status_check="$(_frontmatter__parse_field "$task_content_check" "status")"
     if [[ "$status_check" != "DONE" ]]; then
       _ui__log "Running complete for $child_bookmark..."
-      "$SCRIPT_DIR/complete" --repo "$repo" \
-        ${task_id_arg:+"$task_id_arg"} \
-        ${force:+--force}
+      local complete_args=(--repo "$repo")
+      [[ -n "$task_id_arg" ]] && complete_args+=("$task_id_arg")
+      [[ "$force" == true ]] && complete_args+=(--force)
+      "$SCRIPT_DIR/complete" "${complete_args[@]}"
     fi
 
     # Re-read the task file: `complete` advanced the child bookmark, and the refreshed
@@ -390,18 +391,27 @@ main() {
   # --- Optional: rebase/merge propagation ---
   if [[ -n "$strategy" ]]; then
     _ui__log "Propagating parent ($strategy) into child before checkin..."
-    "$SCRIPT_DIR/propagate" \
-      --from "$parent_bookmark" \
-      --to "$child_bookmark" \
-      --"$strategy" \
-      ${force:+--force} \
-      --repo "$repo"
+    local propagate_in_args=(--from "$parent_bookmark" --to "$child_bookmark" --"$strategy")
+    [[ "$force" == true ]] && propagate_in_args+=(--force)
+    propagate_in_args+=(--repo "$repo")
+    "$SCRIPT_DIR/propagate" "${propagate_in_args[@]}"
     # Re-check the same-branch clean precondition after propagation, which
     # may have rewritten the line the invoking worktree sits on.
     if [[ -z "$task_id_arg" ]] && ! _worktree__check_clean "$current_worktree"; then
       _ui__log "Error: Working copy not clean after propagation."
       exit 1
     fi
+  fi
+
+  # --- Refuse to carry conflicts into the parent ---
+  # The merge below brings the child's whole unmerged range into the parent's
+  # history, so a conflict anywhere in that range would land there — including
+  # one a propagation above has just introduced.
+  if [[ "$force" != true ]] && \
+     _task__check_range_conflicts "$repo" "$parent_bookmark" "$child_bookmark"; then
+    _ui__log "Error: $child_bookmark has unresolved conflicts and cannot be checked in."
+    _ui__log "  Resolve them on the task branch, or use --force to check in anyway."
+    exit 1
   fi
 
   # --- Validate unmerged range: must not touch other task files ---

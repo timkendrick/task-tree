@@ -727,6 +727,7 @@ Before attempting any merge, `tt task checkin` performs validation and refuses i
 - Current branch is a task branch (not a project branch — use `tt task publish` for project branches)
 - Current task has exactly one parent
 - No conflicts with parent once the handoff commit has been applied (unless `--force`), or after the optional pre-checkin propagate step when using `--rebase`/`--merge`
+- No conflicted commit anywhere in the unmerged range (unless `--force`). The merge carries the whole range into the parent's history rather than the child's tip alone, so a conflict that a later commit resolves would still land there. The check runs after the optional pre-checkin propagate step, so it also catches conflicts that step has just introduced.
 - No modifications to non-editable task files in the unmerged range: only the current task file may be modified by the user. Any changes to any other `.tt/task` file in the unmerged range cause checkin to abort. (The parent task file is updated by the tool itself via the `[tt:task:<id>:handoff]` and `[tt:task:<id>:checkin]` commits, which are on the parent branch and are not part of the child's unmerged range.)
 - The only change to `TASK.md` in the unmerged range from the child is the symlink pointing to the child's task file, then reverted by the handoff commit
 

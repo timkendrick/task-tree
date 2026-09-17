@@ -915,6 +915,28 @@ test__jj__list_bookmarks_at__names_at_revision() {
 # _jj__find_branch_for_commit
 # ---------------------------------------------------------------------------
 
+test__jj__check_range_has_conflicts__within_and_outside_the_range() {
+  setup_workspace
+  _fixture_divergent_branches
+  local merge exit_code=0
+  merge="$(_make_commit 'conflicting merge' sidea sideb)"
+  jj -R "$REPO" bookmark set merged -r "$merge" >/dev/null 2>&1
+
+  _jj__check_range_has_conflicts "$REPO" "$BASE_COMMIT" merged || exit_code=$?
+  assert_success "a conflicted commit in the range is found" "$exit_code"
+
+  # The same conflicted commit outside the range does not count: a range
+  # excluding it contributes no conflicted commits.
+  exit_code=0
+  _jj__check_range_has_conflicts "$REPO" "$BASE_COMMIT" sidea || exit_code=$?
+  assert_failure "a conflict-free range is reported clean" "$exit_code"
+
+  # Conflicts below the range's base are equally out of scope.
+  exit_code=0
+  _jj__check_range_has_conflicts "$REPO" merged merged || exit_code=$?
+  assert_failure "an empty range is reported clean" "$exit_code"
+}
+
 test__jj__find_branch_for_commit__working_copy_on_its_branch() {
   setup_workspace
   _fixture_linear_history

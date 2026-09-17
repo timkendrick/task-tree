@@ -219,12 +219,10 @@ main() {
   # --- Optional: rebase/merge propagation from target ---
   if [[ -n "$strategy" ]]; then
     _ui__log "Propagating target ($strategy) into project before publishing..."
-    "$SCRIPT_DIR/propagate" \
-      --from "$target" \
-      --to "$child_bookmark" \
-      --"$strategy" \
-      ${force:+--force} \
-      --repo "$repo"
+    local propagate_args=(--from "$target" --to "$child_bookmark" --"$strategy")
+    [[ "$force" == true ]] && propagate_args+=(--force)
+    propagate_args+=(--repo "$repo")
+    "$SCRIPT_DIR/propagate" "${propagate_args[@]}"
   fi
 
   # --- Resolve the publish commit message ---

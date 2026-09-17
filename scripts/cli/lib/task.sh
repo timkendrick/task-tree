@@ -48,6 +48,7 @@
 #   _task__commit_resume             — empty commit advancing a branch onto a revision
 #   _task__check_conflicts           — whether a revision has merge conflicts
 #   _task__check_descendant_conflicts — whether a revision or its descendants conflict
+#   _task__check_range_conflicts     — whether a task's unmerged range carries conflicts
 #   _task__advance_branch            — move a branch bookmark forward to a revision
 #   _task__list_unmerged_changes     — paths changed by a branch's unmerged range
 #   _task__list_unmerged_roots       — attachment points of a task's unmerged range
@@ -1069,6 +1070,18 @@ _task__check_conflicts() {
 _task__check_descendant_conflicts() {
   local repo="$1" rev="$2"
   _repo__check_descendants_have_conflicts "$repo" "$rev"
+}
+
+# Usage: _task__check_range_conflicts REPO PARENT_BRANCH CHILD_BRANCH
+# Returns 0 when any commit of CHILD_BRANCH's unmerged range — everything in
+# CHILD_BRANCH's ancestry that PARENT_BRANCH does not already have — carries
+# merge conflicts. A check-in merges that whole range into the parent rather
+# than only the child's tip, so a conflict anywhere in it would land in the
+# parent's history even when the tip itself resolves cleanly. Documented
+# pass-through to _repo__check_range_has_conflicts.
+_task__check_range_conflicts() {
+  local repo="$1" parent="$2" child="$3"
+  _repo__check_range_has_conflicts "$repo" "$parent" "$child"
 }
 
 # Usage: _task__advance_branch REPO BRANCH REV
