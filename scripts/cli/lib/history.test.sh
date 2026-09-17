@@ -31,9 +31,9 @@ run_command() {
 # Usage: write_subcommand
 # Writes the script that stands in for a tt sub-command and exports its path as
 # TT_TEST_SUBCOMMAND, for a command body to invoke as "$TT_TEST_SUBCOMMAND"
-# <repo> <exit-status>. It begins a transaction of its own, which is a no-op
-# because TT_TRANSACTION_ID reaches it through the environment, and then exits
-# with the status it was given.
+# <repo> <exit-status>. It behaves as any tt command does: it begins a
+# transaction — a no-op while TT_TRANSACTION_ID reaches it through the
+# environment — commits it on success, and exits with the status it was given.
 write_subcommand() {
   export TT_TEST_SUBCOMMAND="$_TEST_ROOT/subcommand.sh"
   cat > "$TT_TEST_SUBCOMMAND" <<'SUBCOMMAND'
@@ -41,7 +41,9 @@ write_subcommand() {
 set -euo pipefail
 . "$TT_TEST_COMMON_SH"
 _history__begin_transaction "$1"
-exit "${2:-0}"
+status="${2:-0}"
+[[ "$status" -eq 0 ]] && _history__commit_transaction "$1"
+exit "$status"
 SUBCOMMAND
   chmod +x "$TT_TEST_SUBCOMMAND"
 }
@@ -253,6 +255,45 @@ test__history__transaction__nested_exit_leaves_the_parent_running() {
     "$(get_commit_message 'all()')" "history txn parent work"
   assert_history_count "one completed entry for the whole run" 1
   assert_history_integrity "history after a nested sub-command"
+}
+
+test__history__transaction__work_after_the_commit_is_recorded_separately() {
+  setup_workspace "history-after-commit"
+  write_subcommand
+
+  local exit_code=0
+  # A command that keeps working past its own commit — as a check-in does when
+  # it propagates to the siblings — must not leave its sub-commands believing
+  # they are nested: their work needs a transaction of its own.
+  run_command "$REPO" '
+    _history__begin_transaction "$1"
+    '"$_RECORD_COMMIT"' "history txn committed work" >/dev/null 2>&1
+    _history__commit_transaction "$1"
+    "$TT_TEST_SUBCOMMAND" "$1" 0
+  ' 2>/dev/null || exit_code=$?
+
+  assert_success "the run completes" "$exit_code"
+  assert_history_count "the sub-command recorded a transaction of its own" 2
+  assert_history_integrity "history after post-commit sub-command work"
+}
+
+test__history__transaction__failure_after_the_commit_unwinds_only_the_later_work() {
+  setup_workspace "history-after-commit-failure"
+  write_subcommand
+
+  local exit_code=0
+  run_command "$REPO" '
+    _history__begin_transaction "$1"
+    '"$_RECORD_COMMIT"' "history txn committed work" >/dev/null 2>&1
+    _history__commit_transaction "$1"
+    "$TT_TEST_SUBCOMMAND" "$1" 1
+  ' 2>/dev/null || exit_code=$?
+
+  assert_failure "the sub-command's failure is reported" "$exit_code"
+  assert_contains "work committed before it still stands" \
+    "$(get_commit_message 'all()')" "history txn committed work"
+  assert_history_count "the committed transaction survives alone" 1
+  assert_no_pending_transaction "the sub-command left no open transaction"
 }
 
 test__history__transaction__nested_failure_rolls_the_parent_back_once() {
