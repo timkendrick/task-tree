@@ -501,9 +501,15 @@ a tidiness: an entry left open is a lock nobody holds, and every later branch wr
 until `tt history undo --force` or `tt history unlock --force` clears it.
 
 Sub-commands inherit `TT_TRANSACTION_ID` through the environment, so their own `begin` is a no-op and
-the whole run — `tt task checkin --complete --propagate` invoking `complete` and `propagate`, say —
-records a single entry. Only the process that opened the transaction owns it: `_TT_TRANSACTION_OWNER`
-is deliberately not exported, so a sub-command can neither commit nor roll back its parent's work.
+the whole run — `tt task checkin --complete` invoking `complete`, say — records a single entry. Only
+the process that opened the transaction owns it: `_TT_TRANSACTION_OWNER` is deliberately not
+exported, so a sub-command can neither commit nor roll back its parent's work.
+
+Closing a transaction releases the ID as well as the ownership flag. A command does not necessarily
+stop when its own transaction commits — a check-in propagates to the sibling branches once the merge
+has landed, and `--delete` removes the task afterwards — and that later work is still work that must
+be recorded and unwound on failure. Leaving the ID set would make each of those sub-commands believe
+it was nested: no entry of its own, no abort trap, and a failure that unwinds nothing.
 
 ### 8.1 Leaving a transaction open is not an option
 
