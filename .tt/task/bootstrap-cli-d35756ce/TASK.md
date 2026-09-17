@@ -150,6 +150,7 @@ subtask: [ ] task/tt-task-status-beb8a9e2
 subtask: [ ] task/propagate-hooks-b39b48fb
 subtask: [ ] task/tt-task-create-hooks-8c853c34
 subtask: [ ] task/publish-propagate-noop-70c5246e
+subtask: [ ] task/stale-workspace-precondition-842a32f4
 ---
 Implement shell script implementations of all `tt` CLI commands
 
