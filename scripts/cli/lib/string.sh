@@ -2,10 +2,27 @@
 # Source this file; do not execute directly.
 #
 # Public surface:
+#   _string__first_line          — the first line of a multi-line string
 #   _string__to_slug             — derive a slug from a free-form title
 #   _string__validate_slug       — validate slug shape (errors to stderr)
 #   _string__generate_hex        — random 8-character hex string for IDs
 #   _string__generate_timestamp  — current ISO 8601 UTC timestamp
+
+# Usage: _string__first_line TEXT
+# Prints the first line of TEXT, without a trailing newline. Empty output for
+# empty input.
+#
+# This is what a caller wanting one line of a line-oriented result uses, rather
+# than piping it to `head`. Under `set -o pipefail` a truncated read is fatal:
+# `head` closes the pipe once it has its line, the producer is killed by SIGPIPE
+# on its next write, and the pipeline's status — 141 — fails the command that
+# only wanted to look at the first line. Whether that happens depends on how
+# much the producer still had to write and whether it fit the pipe buffer, so
+# the bug surfaces only once a listing grows past one entry.
+_string__first_line() {
+  local text="$1"
+  printf '%s' "${text%%$'\n'*}"
+}
 
 # Generate slug from title: replace non-alphanumeric with -, collapse consecutive, lowercase, trim.
 _string__to_slug() {

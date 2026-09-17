@@ -10,6 +10,21 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
+# _string__first_line
+# ---------------------------------------------------------------------------
+
+test__string__first_line__takes_the_first_of_many() {
+  assert_eq "first of several lines" \
+    "$(_string__first_line "$(printf 'one\ntwo\nthree')")" "one"
+  assert_eq "a trailing newline is not a second line" \
+    "$(_string__first_line "$(printf 'only\n')")" "only"
+  assert_eq "a single line is itself" "$(_string__first_line 'only')" "only"
+  assert_output_empty "empty input yields nothing" "$(_string__first_line '')"
+  assert_output_empty "a leading newline yields an empty first line" \
+    "$(_string__first_line "$(printf '\nsecond')")"
+}
+
+# ---------------------------------------------------------------------------
 # _string__to_slug
 # ---------------------------------------------------------------------------
 
