@@ -16,7 +16,7 @@ subtask: [ ] task/tt-history-truncate-b37bc2e3
 subtask: [ ] task/tt-worktree-prune-2c7055f6
 subtask: [ ] task/tt-task-checkin-delete-worktree-bb7f3e3f
 subtask: [ ] task/standardize-filesystem-operations-efdeb08e
-subtask: [ ] task/standardize-vcs-operations-d5419005
+subtask: [x] task/standardize-vcs-operations-d5419005
 subtask: [ ] task/standardize-metadata-operations-cc4f8cab
 subtask: [ ] task/standardize-command-output-a1c39913
 subtask: [ ] task/tt-task-checkin-reorder-766c71b4
