@@ -479,7 +479,70 @@ it. `tt history undo` is neither: it rewinds the whole repository to a recorded 
 moves the working copy and rewrites its files as a matter of course — which is why it requires a
 clean working copy unless forced.
 
-## 8. Testing
+## 8. Transactions
+
+Every mutating command wraps its work in a **transaction**, so that `tt history undo` can rewind it
+and so that a failure part-way through leaves nothing half-applied. A transaction is one line in
+`.tt/history`, holding the backend operation ID before the command ran and the one after it
+finished:
+
+```
+_history__begin_transaction   record "<before-op>:" — an entry with no after-op
+                              install the abort trap
+                              snapshot the invoking worktree
+   ... the command's writes ...
+_history__commit_transaction  rewrite the entry as "<before-op>:<after-op>"
+                              disarm the abort trap
+```
+
+An entry with no after-op means a command is in progress, and the next command to begin refuses
+rather than interleave with it. That makes the closing of every transaction an invariant rather than
+a tidiness: an entry left open is a lock nobody holds, and every later branch write fails against it
+until `tt history undo --force` or `tt history unlock --force` clears it.
+
+Sub-commands inherit `TT_TRANSACTION_ID` through the environment, so their own `begin` is a no-op and
+the whole run — `tt task checkin --complete --propagate` invoking `complete` and `propagate`, say —
+records a single entry. Only the process that opened the transaction owns it: `_TT_TRANSACTION_OWNER`
+is deliberately not exported, so a sub-command can neither commit nor roll back its parent's work.
+
+### 8.1 Leaving a transaction open is not an option
+
+`_history__begin_transaction` installs `__history__abort_transaction` on **ERR and EXIT**, and that
+handler rolls back whenever the shell leaves with a transaction still open — whatever the exit
+status. An open transaction means the command never reached its commit point, so its writes are
+half-applied by definition; a zero exit with one open is a bug, and rolling back is what keeps it
+from silently leaving the lock behind.
+
+Both signals are needed, and the handler disarms both before doing anything:
+
+- an ERR trap does not fire for `exit`, which is how every command reports a failed precondition, so
+  ERR alone leaves the repository half-written;
+- a command killed by `set -e` fires ERR *and then* EXIT, so without disarming both the rollback
+  would run twice, and the handler's own `exit` would re-enter it.
+
+The status that triggered the trap is captured first and re-raised last, so the command's exit code
+survives the rollback.
+
+A command that needs a cleanup of its own must not install a competing EXIT trap, since bash keeps
+one handler per signal and the last one installed wins. Such cleanups run in a subshell that owns
+its own trap instead — `tt task rename`'s staging directory and the staging area inside
+`_task__commit_on_branch` are both handled that way.
+
+### 8.2 What a rollback restores
+
+Rolling back restores the backend operation recorded at `begin` and deletes the in-progress entry.
+The restore also resets the working copy on disk, which would discard whatever the begin-time
+snapshot captured, so the files the working-copy commit changed are copied aside first and put back
+afterwards — but only when the restore lands on the same working-copy commit, since a transaction
+that deliberately moved the working copy has no business putting the old files back. Preservation is
+best-effort throughout: each step degrades to a plain restore, which is still recoverable from the
+operation log.
+
+Restoring an operation *creates* an operation, so after a rollback the repository's current operation
+is not the one recorded as the previous transaction's after-op. Tests therefore assert that no
+in-progress entry survives a failure, not that the log's tail matches the current operation.
+
+## 9. Testing
 
 Each module and command has a co-located `*.test.sh` suite; `scripts/test` discovers them
 automatically. The backend suite, `lib/vcs/jj.test.sh`, is the load-bearing one: besides covering
