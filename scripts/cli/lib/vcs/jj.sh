@@ -55,6 +55,7 @@
 #     _jj__check_commit_empty        — whether a revision has no file changes
 #     _jj__check_has_conflicts       — whether a single revision has conflicts
 #     _jj__check_descendants_have_conflicts — whether a revision or any descendant has conflicts
+#     _jj__check_range_has_conflicts — whether any commit in a range has conflicts
 #     _jj__check_is_ancestor         — whether one revision is an ancestor of another
 #     _jj__filter_commits_reachable_from — the given commits that REV can reach
 #     _jj__find_fork_point_commit    — commit ID where two revisions' histories fork
@@ -432,6 +433,18 @@ _jj__check_descendants_have_conflicts() {
   local repo="$1" rev="$2"
   local result
   result="$(__jj__read "$repo" --ignore-working-copy log -r "descendants(${rev})" \
+    --no-graph -T 'if(conflict, "yes\n")')" || true
+  [[ -n "$result" ]]
+}
+
+# Usage: _jj__check_range_has_conflicts REPO FROM TO
+# Returns 0 (true) if any commit reachable from TO but not from FROM (FROM
+# exclusive, TO inclusive) has conflicts. An unresolvable range counts as
+# conflict-free, since it contributes no commits.
+_jj__check_range_has_conflicts() {
+  local repo="$1" from="$2" to="$3"
+  local result
+  result="$(__jj__read "$repo" --ignore-working-copy log -r "${from}..${to}" \
     --no-graph -T 'if(conflict, "yes\n")')" || true
   [[ -n "$result" ]]
 }

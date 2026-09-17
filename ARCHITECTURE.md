@@ -173,6 +173,7 @@ Signatures, argument conventions and return values are documented on the backend
 | `check_commit_empty` | Whether a revision changes no files |
 | `check_has_conflicts` | Whether a revision has conflicts |
 | `check_descendants_have_conflicts` | Whether a revision or any descendant has conflicts |
+| `check_range_has_conflicts` | Whether any commit in a range has conflicts |
 | `check_is_ancestor` | Whether one revision is an ancestor of another |
 | `filter_commits_reachable_from` | Which of the given commits a revision can reach |
 | `find_fork_point_commit` | Where two revisions' histories diverge |
