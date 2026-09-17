@@ -3,6 +3,77 @@ set -euo pipefail
 # shellcheck source=../../harness/harness.sh
 . "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
+# Build a parent and child that have edited the same file differently since the
+# child forked, so bringing the parent's tip into the child cannot merge
+# cleanly. Leaves the working copy on the project branch and sets proj_id and
+# task_id.
+_setup_conflicting_child() {
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  edit_file "shared.txt" "base"
+  checkpoint_task "Base" >/dev/null || true
+
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  edit_file "shared.txt" "child version"
+  checkpoint_task "Child edit" >/dev/null || true
+
+  checkout_task "$proj_id" >/dev/null || true
+  edit_file "shared.txt" "parent version"
+  checkpoint_task "Parent edit" >/dev/null || true
+}
+
+
+# The pre-checkin propagation is subject to the same conflict rule as a
+# standalone `tt task propagate`: without --force it refuses, and the checkin it
+# was preparing for must not proceed on a conflicted branch.
+test_task_checkin__rebase_propagation_conflict_aborts() {
+  setup_workspace "ci-rebase-conflict"
+  _setup_conflicting_child
+  parent_before=$(get_full_commit_id "$proj_id")
+
+  output="" exit_code=0
+  output=$(run_tt task checkin "$task_id" --rebase 2>&1) || exit_code=$?
+  assert_failure "checkin aborts on a conflicting propagation" "$exit_code"
+  assert_contains "reports the conflict" "$output" "Conflicts detected"
+  assert_eq "parent branch did not move" "$(get_full_commit_id "$proj_id")" "$parent_before"
+  assert_subtask_entry "subtask entry untouched" "$proj_id" "$task_id" "[ ]"
+  assert_no_conflicts "repository left conflict-free"
+}
+
+
+# A conflicted branch must never be merged into its parent, whether the
+# conflicts arrived through a forced propagation or any other route: the merge
+# carries the child's whole unmerged range into the parent's history.
+test_task_checkin__conflicted_range_refused() {
+  setup_workspace "ci-conflicted-range"
+  _setup_conflicting_child
+  run_tt task propagate --from "$proj_id" --to "$task_id" --force >/dev/null 2>&1 || true
+  parent_before=$(get_full_commit_id "$proj_id")
+
+  output="" exit_code=0
+  output=$(run_tt task checkin "$task_id" 2>&1) || exit_code=$?
+  assert_failure "checkin of a conflicted branch refused" "$exit_code"
+  assert_contains "reports the unresolved conflicts" "$output" "unresolved conflicts"
+  assert_contains "points at --force" "$output" "--force"
+  assert_eq "parent branch did not move" "$(get_full_commit_id "$proj_id")" "$parent_before"
+  assert_subtask_entry "subtask entry untouched" "$proj_id" "$task_id" "[ ]"
+}
+
+
+test_task_checkin__conflicted_range_forced() {
+  setup_workspace "ci-conflicted-forced"
+  _setup_conflicting_child
+  run_tt task propagate --from "$proj_id" --to "$task_id" --force >/dev/null 2>&1 || true
+  parent_before=$(get_full_commit_id "$proj_id")
+
+  output="" exit_code=0
+  output=$(run_tt task checkin "$task_id" --force 2>&1) || exit_code=$?
+  assert_success "--force checks the conflicted branch in anyway" "$exit_code"
+  assert_neq "parent branch advanced" "$(get_full_commit_id "$proj_id")" "$parent_before"
+}
+
+
 test_task_checkin__basic_checkin_of_completed_task() {
   setup_workspace "ci-basic"
   proj_id=$(create_project "proj" "Project") || true
