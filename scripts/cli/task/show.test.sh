@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 
 test_task_show__show_current_task() {
@@ -15,6 +15,26 @@ test_task_show__show_current_task() {
   output=$(run_tt task show 2>&1) || exit_code=$?
   assert_success "show succeeds" "$exit_code"
   assert_contains "task ID in output" "$output" "task/t-"
+  assert_contains "title in output" "$output" "My Task"
+  assert_contains "body in output" "$output" "Task description"
+}
+
+
+# A task checked out in a worktree of its own is also, until something else is
+# checked out there, under the workspace that was parked above its tip: two
+# worktrees then sit on one branch, which must not disturb the command.
+test_task_show__task_checked_out_in_several_worktrees() {
+  setup_workspace "show-two-worktrees"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "My Task" "Task description") || true
+  create_task_worktree "$task_id" >/dev/null
+  # The repo workspace is parked above the task's tip as well.
+  jj -R "$REPO" new "$task_id" >/dev/null 2>&1
+
+  output="" exit_code=0
+  output=$(run_tt task show 2>&1) || exit_code=$?
+  assert_success "show succeeds with two worktrees on the branch" "$exit_code"
   assert_contains "title in output" "$output" "My Task"
   assert_contains "body in output" "$output" "Task description"
 }

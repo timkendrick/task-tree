@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 
 test_task_create__create_project() {
@@ -104,6 +104,86 @@ test_task_create__wc_position_preserved_without_checkout() {
 
   task_id=$(create_task "child" "Child") || true
   assert_current_task "WC still on parent" "$proj_id"
+}
+
+
+test_task_create__refuses_bookmark_on_working_copy() {
+  setup_workspace "create-bm-refusal"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  # Clean working copy carrying the parent's own bookmark
+  jj -R "$REPO" bookmark set "$proj_id" -r '@' >/dev/null 2>&1
+  output="" exit_code=0
+  output=$(run_tt task create --slug "blocked" --title "Blocked" <<< "" 2>&1) || exit_code=$?
+  assert_failure "parent bookmark on @ refused" "$exit_code"
+  assert_contains "error names the bookmark" "$output" "tip of bookmark"
+  assert_no_subtask_entry "no subtask entry added" "$proj_id" "task/blocked"
+
+  # Bookmark unrelated to the parent being written (explicit --parent, so the
+  # working-copy guard itself is what refuses)
+  jj -R "$REPO" bookmark set "$proj_id" -r '@-' --allow-backwards >/dev/null 2>&1
+  jj -R "$REPO" bookmark set unrelated -r '@' >/dev/null 2>&1
+  exit_code=0
+  output=$(run_tt task create --parent "$proj_id" --slug "blocked" --title "Blocked" <<< "" 2>&1) || exit_code=$?
+  assert_failure "unrelated bookmark on @ refused" "$exit_code"
+  assert_contains "error names the unrelated bookmark" "$output" "unrelated"
+}
+
+
+test_task_create__dirty_wc_preserved_not_absorbed() {
+  setup_workspace "create-dirty-keep"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  # Dirty WC: the branch writes must neither reject nor absorb it
+  edit_file "scratch.txt" "uncommitted scratch"
+
+  task_id=$(create_task "child" "Child" "Body") || true
+  assert_matches "task created with dirty WC" "$task_id" "task/%child%"
+  assert_subtask_entry "subtask registered on parent" "$proj_id" "$task_id" "[ ]"
+  assert_file_exists "dirty file still on disk" "$REPO/scratch.txt"
+  assert_wc_dirty "WC still dirty"
+  assert_file_not_on_branch "dirty file not on parent branch" "$proj_id" "scratch.txt"
+  assert_file_not_on_branch "dirty file not on child branch" "$task_id" "scratch.txt"
+}
+
+
+test_task_create__working_copy_commit_stays_put() {
+  setup_workspace "create-wc-stays"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  # With @ sitting on the parent branch's line, a create keeps @ attached to
+  # the advanced parent tip: same change ID, parent is the create commit.
+  change_before=$(get_wc_change_id)
+  task_a=$(create_task "ta" "Task A") || true
+  change_after=$(get_wc_change_id)
+  assert_eq "same WC change after create on current branch" "$change_after" "$change_before"
+  parent_commit=$(jj -R "$REPO" log -r '@-' --no-graph -T 'commit_id.short(8)' 2>/dev/null)
+  assert_eq "@ parent is new parent tip" "$parent_commit" "$(get_bookmark_commit "$proj_id")"
+  assert_current_task "WC still on parent" "$proj_id"
+}
+
+
+test_task_create__wc_untouched_when_other_branch_checked_out() {
+  setup_workspace "create-wc-other-branch"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "ta" "Task A") || true
+  task_b=$(create_task "tb" "Task B") || true
+  checkout_task "$task_a" >/dev/null || true
+
+  # Creating under a branch that is not in @'s ancestry line must leave @
+  # entirely untouched (identical commit ID — nothing moved, so nothing was
+  # restored either).
+  wc_before=$(get_wc_commit)
+  task_c=$(create_task_under "$proj_id" "tc" "Task C") || true
+  wc_after=$(get_wc_commit)
+  assert_eq "@ commit unchanged after cross-branch create" "$wc_after" "$wc_before"
+  assert_matches "task created" "$task_c" "task/%tc%"
+  assert_subtask_entry "subtask registered on parent" "$proj_id" "$task_c" "[ ]"
+  assert_current_task "WC still on task A" "$task_a"
 }
 
 

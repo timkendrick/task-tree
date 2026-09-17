@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
@@ -62,34 +62,34 @@ main() {
     usage >&2; exit 1
   fi
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local ws_path
-  if ! ws_path="$(resolve_workspace_path "$repo" "$name")"; then
-    log "Error: No worktree named '$name'"
+  if ! ws_path="$(_worktree__resolve_path "$repo" "$name")"; then
+    _ui__log "Error: No worktree named '$name'"
     exit 1
   fi
 
   # An unusable path must be rejected before the repository root comparison:
-  # resolve_path_symlinks cd's into the path, so it fails on a missing directory.
+  # _path__resolve_symlinks cd's into the path, so it fails on a missing directory.
   if [[ -z "$ws_path" || ! -d "$ws_path" ]]; then
-    log "Error: Worktree '$name' has an invalid path"
+    _ui__log "Error: Worktree '$name' has an invalid path"
     exit 1
   fi
-  ws_path="$(resolve_path_symlinks "$ws_path")"
+  ws_path="$(_path__resolve_symlinks "$ws_path")"
 
-  # $repo is whichever workspace resolve_repo landed on, which is NOT necessarily
+  # $repo is whichever workspace _workspace__resolve_repo landed on, which is NOT necessarily
   # the canonical repo: invoked from inside a dedicated worktree without TT_REPO
-  # set, find_repo_root walks up to the worktree's own .jj and returns the
-  # worktree. Resolve to the canonical repo before comparing.
+  # set, repository discovery walks up to the worktree's own metadata directory
+  # and returns the worktree. Resolve to the canonical repo before comparing.
   local canonical_repo
-  if ! canonical_repo="$(resolve_canonical_repo_path "$repo")"; then
-    log "Error: Could not resolve the repository root for '$repo'"
+  if ! canonical_repo="$(_worktree__resolve_repository_path "$repo")"; then
+    _ui__log "Error: Could not resolve the repository root for '$repo'"
     exit 1
   fi
 
   if [[ "$ws_path" == "$canonical_repo" ]]; then
-    log "Error: Worktree '$name' is the repository root, not a dedicated worktree"
+    _ui__log "Error: Worktree '$name' is the repository root, not a dedicated worktree"
     exit 1
   fi
 

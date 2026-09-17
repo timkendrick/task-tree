@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 
 test_history_undo__undo_last_command() {
@@ -73,7 +73,7 @@ test_history_undo__preserves_outgoing_op_id_in_output() {
   output="" exit_code=0
   output=$(run_tt history undo 2>&1) || exit_code=$?
   assert_success "undo succeeds" "$exit_code"
-  assert_contains "shows op restore command" "$output" "jj op restore"
+  assert_contains "names the outgoing operation" "$output" "Outgoing operation"
 }
 
 

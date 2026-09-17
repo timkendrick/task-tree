@@ -19,7 +19,7 @@ set -euo pipefail
 
 readonly SCRIPT_NAME="${0##*/}"
 
-log() {
+_ui__log() {
   printf '%s\n' "$*" >&2
 }
 
@@ -96,6 +96,7 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} undo         →  tt history undo
   ${SCRIPT_NAME} init         →  tt workspace init
   ${SCRIPT_NAME} switch       →  tt worktree switch
+  ${SCRIPT_NAME} sync         →  tt worktree sync
   ${SCRIPT_NAME} active       →  tt worktree active
   ${SCRIPT_NAME} repo         →  tt workspace repo
   ${SCRIPT_NAME} root         →  tt workspace root
@@ -111,13 +112,14 @@ EOF
 
 main() {
   local script_dir
-  script_dir="$(cd "$(dirname "$0")" && pwd)"
+  script_dir="$(cd "${0%/*}" && pwd)"
 
   # Resolve top-level aliases before dispatching
   case "${1:-}" in
     undo)        set -- history  undo         "${@:2}" ;;
     init)        set -- workspace init        "${@:2}" ;;
     switch)      set -- worktree switch      "${@:2}" ;;
+    sync)        set -- worktree sync        "${@:2}" ;;
     current)     set -- task     current      "${@:2}" ;;
     edit)        set -- task     edit         "${@:2}" ;;
     create)      set -- task     create       "${@:2}" ;;
@@ -199,9 +201,9 @@ main() {
 
       # Neither directory nor executable → error
       if [[ -z "$accumulated_name" ]]; then
-        log "Error: ${SCRIPT_NAME}: command not found: $arg"
+        _ui__log "Error: ${SCRIPT_NAME}: command not found: $arg"
       else
-        log "Error: ${SCRIPT_NAME}: subcommand not found: $arg"
+        _ui__log "Error: ${SCRIPT_NAME}: subcommand not found: $arg"
       fi
       exit 1
     fi

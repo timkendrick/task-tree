@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
@@ -67,9 +67,9 @@ index_of() {
 # Prints the slug-hex portion of TASK_ID, or nothing if it carries neither prefix.
 resolve_task_suffix() {
   local task_id="$1" task_prefix="$2" project_prefix="$3"
-  if is_task_branch "$task_id" "$task_prefix"; then
+  if _task__check_is_task_branch "$task_id" "$task_prefix"; then
     printf '%s' "${task_id#"$task_prefix"}"
-  elif is_project_branch "$task_id" "$project_prefix"; then
+  elif _task__check_is_project_branch "$task_id" "$project_prefix"; then
     printf '%s' "${task_id#"$project_prefix"}"
   fi
 }
@@ -109,12 +109,12 @@ read_task_metadata() {
   [[ -z "$suffix" ]] && return 0
 
   local content
-  content="$(jj_show_at_revision "$repo" "$rev" "$(task_file_path "$suffix")")" || return 0
+  content="$(_task__read_file "$repo" "$rev" "$(_path__task_file "$suffix")")" || return 0
   [[ -z "$content" ]] && return 0
 
   printf '%s\t%s\n' \
-    "$(parse_frontmatter_field "$content" 'status')" \
-    "$(parse_quoted_frontmatter_field "$content" 'title')"
+    "$(_frontmatter__parse_field "$content" 'status')" \
+    "$(_frontmatter__parse_quoted_field "$content" 'title')"
 }
 
 # Usage: record_operation_fields RECORD OPERATION
@@ -129,7 +129,7 @@ record_operation_fields() {
   [[ -z "$commit_id" ]] && return 1
 
   local parsed
-  parsed="$(parse_commit_message "$description")" || return 1
+  parsed="$(_commit__parse_message "$description")" || return 1
   local namespace entity record_operation text
   IFS=$'\t' read -r namespace entity record_operation text <<< "$parsed"
   [[ "$namespace" == 'task' && "$record_operation" == "$operation" ]] || return 1
@@ -206,7 +206,7 @@ render_entries() {
     local child_records='' arm
     for arm in ${entry_arms[$entry_index]}; do
       local arm_records
-      arm_records="$(mainline_commit_records "$repo" "${arm##*:}" "${arm%%:*}")" || arm_records=''
+      arm_records="$(_task__list_mainline_commits "$repo" "${arm##*:}" "${arm%%:*}")" || arm_records=''
       if [[ -n "$arm_records" ]]; then
         child_records="${child_records}${arm_records}"$'\n'
       fi
@@ -228,20 +228,20 @@ resolve_reference_commit() {
 
   if [[ -z "$since" ]]; then
     local exit_code=0
-    since="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || exit_code=$?
+    since="$(_task__find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || exit_code=$?
     if [[ $exit_code -ne 0 ]]; then
       if [[ $exit_code -eq 1 ]]; then
-        log "Error: No parent branch found for '$task_id'."
-        log "  Pass --since <revision> to choose the reference commit explicitly."
+        _ui__log "Error: No parent branch found for '$task_id'."
+        _ui__log "  Pass --since <revision> to choose the reference commit explicitly."
       fi
       return 1
     fi
-  elif ! jj -R "$repo" --ignore-working-copy log -r "$since" --no-graph -T '' 2>/dev/null; then
-    log "Error: Could not resolve revision '$since'."
+  elif ! _task__check_revision_exists "$repo" "$since"; then
+    _ui__log "Error: Could not resolve revision '$since'."
     return 1
   fi
 
-  resolve_task_fork_point "$repo" "$since" "$task_id"
+  _task__resolve_fork_point "$repo" "$since" "$task_id"
 }
 
 main() {
@@ -269,41 +269,40 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # --- Resolve the branch to report on ---
   local task_id
   if [[ -n "$task_id_arg" ]]; then
     task_id="$task_id_arg"
-    if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
-      log "Error: '$task_id' is not a task or project branch."
+    if ! _task__check_is_task_branch "$task_id" "$task_prefix" && ! _task__check_is_project_branch "$task_id" "$project_prefix"; then
+      _ui__log "Error: '$task_id' is not a task or project branch."
       exit 1
     fi
   else
-    task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+    task_id="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$task_id" ]]; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
   fi
 
-  if ! jj -R "$repo" --ignore-working-copy log -r "$task_id" --no-graph -T '' 2>/dev/null; then
-    log "Error: Bookmark '$task_id' not found."
+  if ! _task__check_branch_exists "$repo" "$task_id"; then
+    _ui__log "Error: Bookmark '$task_id' not found."
     exit 1
   fi
 
-  if "$all_mode" && ! is_task_branch "$task_id" "$task_prefix"; then
-    log "Error: --all does not support project branches."
+  if "$all_mode" && ! _task__check_is_task_branch "$task_id" "$task_prefix"; then
+    _ui__log "Error: --all does not support project branches."
     exit 1
   fi
 
-  if [[ -n "$since_arg" ]] && \
-     ! jj -R "$repo" --ignore-working-copy log -r "$since_arg" --no-graph -T '' 2>/dev/null; then
-    log "Error: Could not resolve revision '$since_arg'."
+  if [[ -n "$since_arg" ]] && ! _task__check_revision_exists "$repo" "$since_arg"; then
+    _ui__log "Error: Could not resolve revision '$since_arg'."
     exit 1
   fi
 
@@ -316,14 +315,14 @@ main() {
     # default mode, the upper bound is always the task bookmark itself: this
     # command never reports trailing commits beyond it. ---
     local parent_bookmark upper_bound="$task_id" find_exit=0
-    parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || find_exit=$?
+    parent_bookmark="$(_task__find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || find_exit=$?
     if [[ $find_exit -ne 0 ]]; then
-      [[ $find_exit -eq 1 ]] && log "Error: No parent branch found for '$task_id'."
+      [[ $find_exit -eq 1 ]] && _ui__log "Error: No parent branch found for '$task_id'."
       exit $find_exit
     fi
 
     local range_records
-    range_records="$(get_full_task_range_records "$repo" "$task_id" "$parent_bookmark" "$upper_bound")" || exit 1
+    range_records="$(_task__get_full_range_records "$repo" "$task_id" "$parent_bookmark" "$upper_bound")" || exit 1
 
     local base tip _kind _order _ts
     local -a raw_records=()
@@ -331,7 +330,7 @@ main() {
       [[ -z "$base" ]] && continue
       while IFS= read -r record; do
         [[ -n "$record" ]] && raw_records+=("$record")
-      done < <(mainline_commit_records "$repo" "$tip" "$base")
+      done < <(_task__list_mainline_commits "$repo" "$tip" "$base")
     done <<< "$range_records"
 
     local -a seen_ids=()
@@ -347,14 +346,12 @@ main() {
 
     # --- Apply --since as a boundary over the complete selection ---
     if [[ -n "$since_arg" && ${#records[@]} -gt 0 ]]; then
-      local id_union=""
+      local -a selected_ids=()
       for record in "${records[@]}"; do
-        local commit_id="${record%%$'\t'*}"
-        if [[ -z "$id_union" ]]; then id_union="$commit_id"; else id_union="${id_union} | ${commit_id}"; fi
+        selected_ids+=("${record%%$'\t'*}")
       done
       local excluded
-      excluded="$(jj -R "$repo" --ignore-working-copy log --no-graph \
-        -r "(${id_union}) & ::${since_arg}" -T 'commit_id ++ "\n"' 2>/dev/null)"
+      excluded="$(_task__filter_reachable_commits "$repo" "$since_arg" "${selected_ids[@]}")"
       if [[ -n "$excluded" ]]; then
         local -a filtered=()
         for record in "${records[@]}"; do
@@ -375,7 +372,7 @@ main() {
     # --- Collect the branch's own commits since the reference commit ---
     while IFS= read -r record; do
       [[ -n "$record" ]] && records+=("$record")
-    done < <(mainline_commit_records "$repo" "$task_id" "$reference_commit")
+    done < <(_task__list_mainline_commits "$repo" "$task_id" "$reference_commit")
   fi
 
   # --- Checkpoints recorded directly on the branch ---
