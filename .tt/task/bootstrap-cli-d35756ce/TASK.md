@@ -149,6 +149,7 @@ subtask: [ ] task/prompt-editor-line-stripping-af3fc142
 subtask: [ ] task/tt-task-status-beb8a9e2
 subtask: [ ] task/propagate-hooks-b39b48fb
 subtask: [ ] task/tt-task-create-hooks-8c853c34
+subtask: [ ] task/publish-propagate-noop-70c5246e
 ---
 Implement shell script implementations of all `tt` CLI commands
 
