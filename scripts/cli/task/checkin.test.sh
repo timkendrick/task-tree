@@ -39,6 +39,7 @@ test_task_checkin__rebase_propagation_conflict_aborts() {
   assert_eq "parent branch did not move" "$(get_full_commit_id "$proj_id")" "$parent_before"
   assert_subtask_entry "subtask entry untouched" "$proj_id" "$task_id" "[ ]"
   assert_no_conflicts "repository left conflict-free"
+  assert_no_pending_transaction "transaction closed by the rollback"
 }
 
 
@@ -58,6 +59,13 @@ test_task_checkin__conflicted_range_refused() {
   assert_contains "points at --force" "$output" "--force"
   assert_eq "parent branch did not move" "$(get_full_commit_id "$proj_id")" "$parent_before"
   assert_subtask_entry "subtask entry untouched" "$proj_id" "$task_id" "[ ]"
+  assert_no_pending_transaction "transaction closed by the rollback"
+
+  # The refusal must leave the repository usable: a later command that writes
+  # to a branch would fail against a stale in-progress entry.
+  output="" exit_code=0
+  output=$(run_tt task checkpoint -m "After a refused checkin" 2>&1) || exit_code=$?
+  assert_success "a later branch write still works" "$exit_code"
 }
 
 
