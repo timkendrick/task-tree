@@ -152,7 +152,7 @@ emit_tree() {
 
   local source_branch="$branch"
   local merged_line
-  merged_line="$(printf '%s' "$merged_map" | grep -E "^${task_id}:" | head -1)" || true
+  merged_line="$(_string__first_line "$(printf '%s' "$merged_map" | grep -E "^${task_id}:" || true)")"
   if [[ -n "$merged_line" ]]; then
     source_branch="${merged_line#*:}"
   fi
@@ -190,7 +190,7 @@ emit_tree() {
     fi
     local child_branch="$sub_id"
     local child_merged
-    child_merged="$(printf '%s' "$merged_map" | grep -E "^${sub_id}:" | head -1)" || true
+    child_merged="$(_string__first_line "$(printf '%s' "$merged_map" | grep -E "^${sub_id}:" || true)")"
     [[ -n "$child_merged" ]] && child_branch="${child_merged#*:}"
     emit_tree "$repo" "$child_branch" "$sub_id" "$child_indent" "$task_prefix" "$project_prefix" "$merged_map" "$current_task_id" "$focus_chain" "$((focus_index + 1))"
   done <<< "$subs_output" || true
@@ -242,7 +242,7 @@ collect_task_ids() {
 
   while [[ -n "$to_visit" ]]; do
     local current
-    current="$(printf '%s' "$to_visit" | head -1)"
+    current="$(_string__first_line "$to_visit")"
     to_visit="$(printf '%s' "$to_visit" | tail -n +2)"
     [[ -z "$current" ]] && continue
     if printf '%s' "$seen" | grep -qFx "$current"; then
@@ -252,7 +252,7 @@ collect_task_ids() {
 
     local source_branch="$current"
     local merged_line
-    merged_line="$(printf '%s' "$merged_map" | grep -E "^${current}:" | head -1)" || true
+    merged_line="$(_string__first_line "$(printf '%s' "$merged_map" | grep -E "^${current}:" || true)")"
     [[ -n "$merged_line" ]] && source_branch="${merged_line#*:}"
 
     local suffix
@@ -377,7 +377,7 @@ main() {
     done
 
     local root
-    root="$(printf '%s' "$chain" | head -1)"
+    root="$(_string__first_line "$chain")"
     emit_tree "$repo" "$root" "$root" "" "$task_prefix" "$project_prefix" "$merged_map" "$current_task_id" "$chain" "0"
     exit 0
   fi
@@ -433,7 +433,7 @@ main() {
       for o in $orphaned; do
         [[ -z "$o" ]] && continue
         local o_merged
-        o_merged="$(printf '%s' "$merged_map" | grep -E "^${o}:" | head -1)" || true
+        o_merged="$(_string__first_line "$(printf '%s' "$merged_map" | grep -E "^${o}:" || true)")"
         o_merged="${o_merged#*:}"
         [[ -z "$o_merged" ]] && o_merged="$o"
         emit_tree "$repo" "$o_merged" "$o" "" "$task_prefix" "$project_prefix" "$merged_map" "$current_task_id"

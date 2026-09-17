@@ -349,17 +349,43 @@ _worktree__record_working_copy() {
 # ancestor, so a worktree that a branch write has left behind (its branch tip
 # no longer in the working copy's ancestry) is still attributed to its own
 # branch instead of to whichever ancestor bookmark remains reachable.
+#
+# More than one worktree can legitimately sit on a branch — a task checked out
+# in a worktree of its own is also, for as long as nothing else is checked out
+# there, under whatever workspace was parked above its tip. The result is
+# therefore ordered by how well each worktree answers "where is this task
+# checked out", so that a caller wanting one of them takes the first line:
+#
+#   1. the task's own dedicated worktree, whose workspace is named for the
+#      branch (that is the name `tt task checkout --worktree` gives it);
+#   2. any other dedicated worktree sitting on the branch;
+#   3. the primary workspace — the canonical repository itself — last, since a
+#      task is checked out there by default rather than by choice.
+#
+# Worktrees keep the order of the workspace listing within each group.
 _worktree__find_for_branch() {
   local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
   local entries
   entries="$(_worktree__list_entries "$repo")" || return 0
-  local ws_root wc_commit ws_bookmark
-  while IFS=$'\t' read -r _ ws_root; do
+  local primary_path
+  primary_path="$(_worktree__resolve_repository_path "$repo")" || primary_path=''
+  local ws_name ws_root ws_path wc_commit ws_bookmark
+  local named='' other='' primary=''
+  while IFS=$'\t' read -r ws_name ws_root; do
     [[ -z "$ws_root" || ! -d "$ws_root" ]] && continue
     wc_commit="$(_repo__resolve_commit "$ws_root" '@' 2>/dev/null)" || continue
     ws_bookmark="$(_repo__find_branch_for_commit "$repo" "$wc_commit" 2>/dev/null)" || continue
-    [[ "$ws_bookmark" == "$bookmark" ]] && printf '%s\n' "$ws_root"
+    [[ "$ws_bookmark" == "$bookmark" ]] || continue
+    ws_path="$(_path__resolve_symlinks "$ws_root" 2>/dev/null)" || ws_path="$ws_root"
+    if [[ "$ws_name" == "$bookmark" ]]; then
+      named="${named}${ws_root}"$'\n'
+    elif [[ -n "$primary_path" && "$ws_path" == "$primary_path" ]]; then
+      primary="${primary}${ws_root}"$'\n'
+    else
+      other="${other}${ws_root}"$'\n'
+    fi
   done <<< "$entries"
+  printf '%s' "${named}${other}${primary}"
   return 0
 }
 

@@ -452,4 +452,25 @@ test__worktree__find_for_branch__finds_workspace_on_branch() {
   assert_output_empty "no workspace is on main" "$found"
 }
 
+test__worktree__find_for_branch__ranks_the_dedicated_worktree_first() {
+  setup_workspace "worktree-find-branch-order"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  local wt
+  wt=$(create_task_worktree "$task_id")
+  # Park the repo workspace above the task's tip as well, so two worktrees sit
+  # on the branch: its own, and the one that happens to be based on it.
+  jj -R "$REPO" new "$task_id" >/dev/null 2>&1
+
+  local task_prefix project_prefix
+  task_prefix="$(_workspace__get_task_prefix "$REPO")"
+  project_prefix="$(_workspace__get_project_prefix "$REPO")"
+
+  local found
+  found="$(_worktree__find_for_branch "$REPO" "$task_id" "$task_prefix" "$project_prefix")"
+  assert_contains "the repo workspace is on the branch too" "$found" "$REPO"
+  assert_eq "the task's own worktree comes first" "$(_string__first_line "$found")" "$wt"
+}
+
 run_tests "tt lib/worktree (unit)"
