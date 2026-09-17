@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
@@ -51,17 +51,15 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
-  # List all bookmarks from jj
+  # List every branch in the repository
   local all_bookmarks
-  all_bookmarks="$(jj -R "$repo" --ignore-working-copy log -r 'bookmarks()' \
-    -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' \
-    --no-graph 2>/dev/null)" || true
+  all_bookmarks="$(_task__list_branch_names "$repo")" || true
 
   # Filter to task/project branches only, exclude DONE tasks
   local active_items=""
@@ -69,27 +67,27 @@ main() {
     [[ -z "$b" ]] && continue
     
     # Check if this is a task or project branch
-    if ! is_task_branch "$b" "$task_prefix" && ! is_project_branch "$b" "$project_prefix"; then
+    if ! _task__check_is_task_branch "$b" "$task_prefix" && ! _task__check_is_project_branch "$b" "$project_prefix"; then
       continue
     fi
     
     # Get task file path
     local suffix
-    if is_task_branch "$b" "$task_prefix"; then
+    if _task__check_is_task_branch "$b" "$task_prefix"; then
       suffix="${b#$task_prefix}"
     else
       suffix="${b#$project_prefix}"
     fi
     local tf
-    tf="$(task_file_path "$suffix")"
+    tf="$(_path__task_file "$suffix")"
     
     # Read task file content
     local content
-    content="$(jj_show_at_revision "$repo" "$b" "$tf")" || continue
+    content="$(_task__read_file "$repo" "$b" "$tf")" || continue
     
     # Check status - exclude DONE tasks
     local status
-    status="$(parse_frontmatter_field "$content" "status")"
+    status="$(_frontmatter__parse_field "$content" "status")"
     [[ "$status" == "DONE" ]] && continue
     
     # Add to active items
@@ -102,8 +100,8 @@ main() {
     exit 1
   fi
 
-  # Sort alphabetically and pipe to select_value
-  printf '%s' "$active_items" | sort | select_value
+  # Sort alphabetically and pipe to _ui__select
+  printf '%s' "$active_items" | sort | _ui__select
 }
 
 main "$@"

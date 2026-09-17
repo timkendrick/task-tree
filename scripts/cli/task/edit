@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
@@ -15,7 +15,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   --title TITLE         New title (preserves existing if omitted)
 #   --label LABEL         Append a label (repeatable)
 #   --delete-label LABEL  Remove a label if present (repeatable, silent no-op if absent)
-#   --worktree PATH       Specify worktree when multiple exist for the task
 #   --repo PATH           Repository root (overrides TT_REPO; default: walk up to .jj)
 #
 # Body is read from stdin (via pipe or redirect) if stdin is not a terminal.
@@ -34,7 +33,6 @@ Options:
   --title TITLE          New title (preserves existing if omitted).
   --label LABEL          Append a label (repeatable).
   --delete-label LABEL   Remove a label if present (repeatable, silent no-op if absent).
-  --worktree PATH        Worktree path when multiple exist for the task.
   --repo PATH            Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Body is read from stdin (via pipe or redirect) if stdin is not a terminal;
@@ -69,7 +67,6 @@ main() {
   local has_title=false
   local -a add_labels=()
   local -a delete_labels=()
-  local worktree_arg=''
   local repo=''
 
   while [[ $# -gt 0 ]]; do
@@ -83,9 +80,6 @@ main() {
       --delete-label)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         delete_labels+=("$2"); shift 2 ;;
-      --worktree)
-        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
-        worktree_arg="$2"; shift 2 ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
@@ -101,64 +95,51 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Resolve bookmark and task_file
   local bookmark task_file
   if [[ -z "$task_id_arg" ]]; then
-    { read -r _rev; read -r task_file; read -r bookmark; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
+    { read -r _rev; read -r task_file; read -r bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
 
     if [[ -z "$bookmark" ]]; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
   else
     bookmark="$task_id_arg"
     local suffix
-    if is_task_branch "$bookmark" "$task_prefix"; then
+    if _task__check_is_task_branch "$bookmark" "$task_prefix"; then
       suffix="${bookmark#$task_prefix}"
-    elif is_project_branch "$bookmark" "$project_prefix"; then
+    elif _task__check_is_project_branch "$bookmark" "$project_prefix"; then
       suffix="${bookmark#$project_prefix}"
     else
-      log "Error: '$task_id_arg' is not a task or project branch."
+      _ui__log "Error: '$task_id_arg' is not a task or project branch."
       exit 1
     fi
-    if ! jj -R "$repo" log -r "$bookmark" --no-graph -T '' 2>/dev/null; then
-      log "Error: Branch '$bookmark' not found in repository."
+    if ! _task__check_branch_exists "$repo" "$bookmark"; then
+      _ui__log "Error: Branch '$bookmark' not found in repository."
       exit 1
     fi
-    task_file="$(task_file_path "$suffix")"
+    task_file="$(_path__task_file "$suffix")"
   fi
 
-  # Resolve worktree
-  local current_worktree
-  current_worktree="$(resolve_current_worktree "$repo")"
-
-  local target_worktree
-  if ! target_worktree="$(resolve_task_worktree "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
-      "$current_worktree" "$worktree_arg")"; then
-    exit 1
-  fi
-
-  # Precondition: WC must be clean
-  if ! is_wc_clean "$target_worktree"; then
-    log "Error: Working copy has uncommitted changes. Commit or discard first."
-    exit 1
-  fi
+  # Precondition: the working-copy commit must not carry a bookmark
+  _worktree__ensure_working_copy "$repo" || exit 1
 
   # Read current task file content from bookmark
   local task_content
-  task_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || {
-    log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
+  task_content="$(_task__read_file "$repo" "$bookmark" "$task_file")" || {
+    _ui__log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
     exit 1
   }
 
   # Parse current values from frontmatter
-  parse_task_frontmatter "$task_content"
+  _frontmatter__parse_task "$task_content"
   local current_title="$PARSED_TITLE"
   local current_status="$PARSED_STATUS"
   local current_created="$PARSED_CREATED"
@@ -172,7 +153,7 @@ main() {
 
   # If created is empty (old format task file), generate one now
   if [[ -z "$current_created" ]]; then
-    current_created="$(generate_timestamp)"
+    current_created="$(_string__generate_timestamp)"
   fi
 
   # Determine interactive mode: no metadata flags and stdin is a terminal → open editor
@@ -189,14 +170,14 @@ main() {
   if [[ "$interactive" == true ]]; then
     # Interactive mode with terminal stdin: open editor pre-populated with current body
     local edited_body
-    edited_body="$(printf '%s' "${current_body}" | prompt)" || {
-      log "Error: Editor exited with non-zero status."
+    edited_body="$(printf '%s' "${current_body}" | _ui__prompt)" || {
+      _ui__log "Error: Editor exited with non-zero status."
       exit 1
     }
     final_body="$edited_body"
   elif [[ ! -t 0 ]]; then
     # Non-terminal stdin (pipe or redirect): read body from stdin
-    final_body="$(cat)"
+    final_body="$(</dev/stdin)"
   else
     # Terminal stdin but not interactive mode (metadata flags given): preserve current body
     final_body="$current_body"
@@ -218,69 +199,50 @@ main() {
     final_labels+=("$lbl")
   done
 
-  # Determine if the target task is the current branch in the current worktree.
-  # If not, write_and_commit_on_branch commits directly on the target branch via
-  # jj edit+new, since committing in the current worktree and then moving the
-  # target bookmark sideways would be refused by jj. Resolve this BEFORE starting
-  # the transaction, since resolve_current may trigger a jj snapshot.
-  local current_bookmark
-  current_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
-  local cross_branch=false
-  if [[ "$target_worktree" == "$current_worktree" && "$current_bookmark" != "$bookmark" ]]; then
-    cross_branch=true
-  fi
-
-  # Export arrays for write_task_file
+  # Export arrays for _frontmatter__write_task_file
   export REWRITE_LABELS=("${final_labels[@]+"${final_labels[@]}"}")
   export REWRITE_SUBTASKS=("${current_subtasks[@]+"${current_subtasks[@]}"}")
   export REWRITE_CONTEXTS=("${current_contexts[@]+"${current_contexts[@]}"}")
 
   # Generate the updated timestamp once so all write calls in this invocation are consistent.
   local updated
-  updated="$(generate_timestamp)"
+  updated="$(_string__generate_timestamp)"
 
-  # Check for a no-op BEFORE beginning the transaction (avoids orphaned in-progress
-  # entries, and avoids writing to disk before the transaction starts which would
-  # cause a jj snapshot gap in the history chain). Compare against the current file
-  # content: from the bookmark for a cross-branch edit, from disk otherwise.
+  # Check for a no-op BEFORE beginning the transaction (avoids orphaned
+  # in-progress entries). Compare against the file content at the bookmark,
+  # which is what the commit would be built on.
   local tmpfile
   tmpfile="$(mktemp)"
-  write_task_file "$tmpfile" \
+  _frontmatter__write_task_file "$tmpfile" \
     "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
 
-  local current_file_content
-  if [[ "$cross_branch" == true ]]; then
-    current_file_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
-  else
-    current_file_content="$(cat "$target_worktree/$task_file" 2>/dev/null)" || true
-  fi
-
-  if ! task_file_changed "$current_file_content" "$tmpfile"; then
+  if ! task_file_changed "$task_content" "$tmpfile"; then
     rm -f "$tmpfile"
-    log "No changes to task $bookmark."
+    _ui__log "No changes to task $bookmark."
     printf '%s\n' "$bookmark"
     unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
     return 0
   fi
   rm -f "$tmpfile"
 
-  # Writer invoked by write_and_commit_on_branch with the destination worktree root.
+  # Writer invoked by _task__commit_on_branch with the staging root.
   task_edit_writer() {
     local root="$1"
-    write_task_file "$root/$task_file" \
+    _frontmatter__write_task_file "$root/$task_file" \
       "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
   }
 
-  # Begin transaction (records before-op for undo) BEFORE writing to disk
-  tt_begin_transaction "$repo"
+  # Begin transaction (records before-op for undo)
+  _history__begin_transaction "$repo"
 
-  write_and_commit_on_branch "$repo" "$target_worktree" "$bookmark" \
-    "$current_worktree" "$current_bookmark" \
-    "$(format_commit_message "task" "edit" "$bookmark" "$final_title")" \
-    task_edit_writer
+  _task__commit_on_branch "$repo" "$bookmark" \
+    "$(_commit__format_message "task" "edit" "$bookmark" "$final_title")" \
+    --modify "$task_file" -- task_edit_writer >/dev/null
 
   # Commit transaction (records after-op for undo)
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
+
+  _worktree__report_unsynced "$repo" "$bookmark"
 
   unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
   printf '%s\n' "$bookmark"

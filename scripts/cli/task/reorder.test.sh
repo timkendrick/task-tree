@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 # ---------------------------------------------------------------------------
 # Helper: get subtask order as a space-separated string of task IDs
@@ -191,7 +191,7 @@ test_task_reorder__before_sibling_not_found() {
 }
 
 
-test_task_reorder__dirty_wc_fails() {
+test_task_reorder__dirty_wc_preserved_not_absorbed() {
   setup_workspace "reorder-dirty-wc"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
@@ -199,12 +199,16 @@ test_task_reorder__dirty_wc_fails() {
   task_b=$(create_task "tb" "Task B") || true
   checkout_task "$task_a" >/dev/null || true
 
-  # Make the WC dirty
+  # Make the WC dirty: the bare branch write must neither reject nor absorb it
   echo "dirty" > "$REPO/dirty-file.txt"
 
   local exit_code=0
-  output=$(run_tt task reorder "$task_a" --up 2>&1) || exit_code=$?
-  assert_failure "dirty wc fails" "$exit_code"
+  output=$(run_tt task reorder "$task_b" --up 2>&1) || exit_code=$?
+  assert_success "reorder succeeds with dirty WC" "$exit_code"
+  assert_eq "b moved up" "$(subtask_order "$proj_id")" "$task_b $task_a"
+  assert_file_exists "dirty file still on disk" "$REPO/dirty-file.txt"
+  assert_wc_dirty "WC still dirty"
+  assert_file_not_on_branch "dirty file not on parent branch" "$proj_id" "dirty-file.txt"
 }
 
 
@@ -232,7 +236,7 @@ test_task_reorder__commit_message() {
   checkout_task "$task_a" >/dev/null || true
 
   run_tt task reorder "$task_a" --down >/dev/null 2>&1 || true
-  assert_commit_message "commit message" "@-" "[tt:task:$proj_id:reorder] Project"
+  assert_commit_message "commit message" "$proj_id" "[tt:task:$proj_id:reorder] Project"
 }
 
 
@@ -265,6 +269,9 @@ test_task_reorder__tidy_basic() {
   checkout_task "$task_b" >/dev/null || true
   run_tt task complete "$task_b" >/dev/null 2>&1 || true
   run_tt task checkin "$task_b" >/dev/null 2>&1 || true
+  # Checkin leaves the working copy on the child branch, so return to the
+  # project before creating task_a — otherwise it lands under task_b.
+  checkout_task "$proj_id" >/dev/null || true
   task_a=$(create_task "ta" "Task A") || true
 
   # Run tidy on the project
@@ -382,6 +389,9 @@ test_task_reorder__tidy_commit_message() {
   checkout_task "$task_b" >/dev/null || true
   run_tt task complete "$task_b" >/dev/null 2>&1 || true
   run_tt task checkin "$task_b" >/dev/null 2>&1 || true
+  # Checkin leaves the working copy on the child branch, so return to the
+  # project before creating task_a — otherwise it lands under task_b.
+  checkout_task "$proj_id" >/dev/null || true
   task_a=$(create_task "ta" "Task A") || true
 
   run_tt task reorder "$proj_id" >/dev/null 2>&1 || true
@@ -399,6 +409,9 @@ test_task_reorder__tidy_transaction_recorded() {
   checkout_task "$task_b" >/dev/null || true
   run_tt task complete "$task_b" >/dev/null 2>&1 || true
   run_tt task checkin "$task_b" >/dev/null 2>&1 || true
+  # Checkin leaves the working copy on the child branch, so return to the
+  # project before creating task_a — otherwise it lands under task_b.
+  checkout_task "$proj_id" >/dev/null || true
   task_a=$(create_task "ta" "Task A") || true
 
   get_history_lines; hc_before="${#HISTORY_LINES[@]}"
@@ -423,18 +436,33 @@ test_task_reorder__tidy_defaults_to_current_task() {
 }
 
 
-test_task_reorder__tidy_dirty_wc_fails() {
+test_task_reorder__tidy_dirty_wc_preserved_not_absorbed() {
   setup_workspace "reorder-tidy-dirty"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
-  task_a=$(create_task "ta" "Task A") || true
-  checkout_task "$task_a" >/dev/null || true
 
+  # Create task_b first, complete+checkin it, then create task_a.
+  # Result: [x] task_b, [ ] task_a — DONE before TODO = non-canonical, so the
+  # tidy below performs a real branch write.
+  task_b=$(create_task "tb" "Task B") || true
+  checkout_task "$task_b" >/dev/null || true
+  run_tt task complete "$task_b" >/dev/null 2>&1 || true
+  run_tt task checkin "$task_b" >/dev/null 2>&1 || true
+  # Checkin leaves the working copy on the child branch, so return to the
+  # project before creating task_a — otherwise it lands under task_b.
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "ta" "Task A") || true
+
+  # Dirty WC: tidy must neither reject nor absorb it into the branch commit
   echo "dirty" > "$REPO/dirty-file.txt"
 
   local exit_code=0
-  output=$(run_tt task reorder "$task_a" 2>&1) || exit_code=$?
-  assert_failure "dirty wc fails tidy" "$exit_code"
+  output=$(run_tt task reorder "$proj_id" 2>&1) || exit_code=$?
+  assert_success "tidy succeeds with dirty WC" "$exit_code"
+  assert_eq "subtasks sorted by status" "$(subtask_order "$proj_id")" "$task_a $task_b"
+  assert_file_exists "dirty file still on disk" "$REPO/dirty-file.txt"
+  assert_wc_dirty "WC still dirty"
+  assert_file_not_on_branch "dirty file not on branch" "$proj_id" "dirty-file.txt"
 }
 
 
@@ -456,6 +484,61 @@ test_task_reorder__tidy_merged_task() {
   order="$(subtask_order "$proj_id")"
   # IN-PROGRESS/TODO first, then DONE: task_a [ ] then task_b [x]
   assert_eq "merged task tidy" "$order" "$task_a $task_b"
+}
+
+
+test_task_reorder__refuses_bookmark_on_working_copy() {
+  setup_workspace "reorder-bm-refusal"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "ta" "Task A") || true
+  task_b=$(create_task "tb" "Task B") || true
+  checkout_task "$task_a" >/dev/null || true
+
+  # Clean working copy carrying the checked-out task's own bookmark
+  jj -R "$REPO" bookmark set "$task_a" -r '@' >/dev/null 2>&1
+  local output exit_code=0
+  output=$(run_tt task reorder "$task_b" --up 2>&1) || exit_code=$?
+  assert_failure "own bookmark on @ refused" "$exit_code"
+  assert_contains "error names the bookmark" "$output" "tip of bookmark"
+  assert_eq "order unchanged" "$(subtask_order "$proj_id")" "$task_a $task_b"
+
+  # Bookmark unrelated to the branch being written
+  jj -R "$REPO" bookmark set "$task_a" -r '@-' --allow-backwards >/dev/null 2>&1
+  jj -R "$REPO" bookmark set unrelated -r '@' >/dev/null 2>&1
+  exit_code=0
+  output=$(run_tt task reorder "$task_b" --up 2>&1) || exit_code=$?
+  assert_failure "unrelated bookmark on @ refused" "$exit_code"
+  assert_contains "error names the unrelated bookmark" "$output" "unrelated"
+  assert_eq "order still unchanged" "$(subtask_order "$proj_id")" "$task_a $task_b"
+}
+
+
+test_task_reorder__working_copy_commit_stays_put() {
+  setup_workspace "reorder-wc-stays"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "ta" "Task A") || true
+  task_b=$(create_task "tb" "Task B") || true
+  checkout_task "$task_a" >/dev/null || true
+
+  # Reorder writes to the parent branch, which is not in @'s ancestry line:
+  # @ must be entirely untouched (identical commit ID).
+  wc_before=$(get_wc_commit)
+  run_tt task reorder "$task_b" --up >/dev/null 2>&1 || true
+  wc_after=$(get_wc_commit)
+  assert_eq "@ commit unchanged after cross-branch reorder" "$wc_after" "$wc_before"
+  assert_eq "b moved up" "$(subtask_order "$proj_id")" "$task_b $task_a"
+
+  # With @ sitting on the parent branch's line, a reorder keeps @ attached to
+  # the advanced parent tip: same change ID, parent is the reorder commit.
+  checkout_task "$proj_id" >/dev/null || true
+  change_before=$(get_wc_change_id)
+  run_tt task reorder "$task_a" --up >/dev/null 2>&1 || true
+  change_after=$(get_wc_change_id)
+  assert_eq "same WC change after parent-line reorder" "$change_after" "$change_before"
+  parent_commit=$(jj -R "$REPO" log -r '@-' --no-graph -T 'commit_id.short(8)' 2>/dev/null)
+  assert_eq "@ parent is new parent-branch tip" "$parent_commit" "$(get_bookmark_commit "$proj_id")"
 }
 
 

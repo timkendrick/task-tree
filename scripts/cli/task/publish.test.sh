@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 
 # Build a project branch holding task A, with subtask A1 checked into it, plus a
@@ -85,15 +85,102 @@ test_task_publish__non_existent_target_rejected() {
 }
 
 
-test_task_publish__dirty_wc_rejected() {
+# Publish writes nothing through any working copy and validates no unmerged
+# range, so it has no clean-working-copy precondition: uncommitted changes in
+# the invoking worktree survive on disk and are absorbed into no branch.
+test_task_publish__dirty_wc_preserved_not_absorbed() {
   setup_workspace "pub-dirty"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   edit_file "dirty.txt" "dirty"
 
+  main_before=$(get_bookmark_commit "main")
+
   output="" exit_code=0
   output=$(run_tt task publish "$proj_id" --target "main" -m "Ship it" 2>&1) || exit_code=$?
-  assert_failure "dirty WC rejected" "$exit_code"
+  assert_success "publish succeeds with dirty WC" "$exit_code"
+  assert_neq "main advanced" "$(get_bookmark_commit "main")" "$main_before"
+  assert_file_exists "dirty file still on disk" "$REPO/dirty.txt"
+  assert_wc_dirty "WC still dirty"
+  assert_file_not_on_branch "dirty file not on main" "main" "dirty.txt"
+  assert_file_not_on_branch "dirty file not on project branch" "$proj_id" "dirty.txt"
+}
+
+
+test_task_publish__refuses_bookmark_on_working_copy() {
+  setup_workspace "pub-bm-refusal"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+
+  main_before=$(get_bookmark_commit "main")
+
+  # Clean working copy carrying the project's own bookmark
+  jj -R "$REPO" bookmark set "$proj_id" -r '@' >/dev/null 2>&1
+  output="" exit_code=0
+  output=$(run_tt task publish "$proj_id" --target "main" -m "Ship it" 2>&1) || exit_code=$?
+  assert_failure "own bookmark on @ refused" "$exit_code"
+  assert_contains "error names the bookmark" "$output" "tip of bookmark"
+  assert_eq "main did not advance" "$(get_bookmark_commit "main")" "$main_before"
+
+  # Bookmark unrelated to the publish; the working-copy guard alone refuses
+  jj -R "$REPO" bookmark set "$proj_id" -r '@-' --allow-backwards >/dev/null 2>&1
+  jj -R "$REPO" bookmark set unrelated -r '@' >/dev/null 2>&1
+  exit_code=0
+  output=$(run_tt task publish "$proj_id" --target "main" -m "Ship it" 2>&1) || exit_code=$?
+  assert_failure "unrelated bookmark on @ refused" "$exit_code"
+  assert_contains "error names the unrelated bookmark" "$output" "unrelated"
+  assert_eq "main still did not advance" "$(get_bookmark_commit "main")" "$main_before"
+}
+
+
+# Publish affects the target branch, not the invoking worktree: @ does not
+# move, and the target advances to a merge whose first parent is the old
+# target tip and whose second parent is the scaffolding-removal handoff.
+test_task_publish__wc_does_not_move_and_merge_shape() {
+  setup_workspace "pub-wc-shape"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  edit_file "src/main.sh" "echo hello"
+  checkpoint_task "Work" >/dev/null || true
+
+  main_before=$(get_bookmark_commit "main")
+  proj_tip=$(get_bookmark_commit "$proj_id")
+  wc_before=$(get_wc_commit)
+
+  output="" exit_code=0
+  output=$(run_tt task publish "$proj_id" --target "main" -m "Ship it" 2>&1) || exit_code=$?
+  assert_success "publish succeeds" "$exit_code"
+
+  # @ does not move
+  assert_eq "@ commit unchanged" "$(get_wc_commit)" "$wc_before"
+  assert_current_task "WC still on project branch" "$proj_id"
+  assert_eq "project bookmark unchanged" "$(get_bookmark_commit "$proj_id")" "$proj_tip"
+
+  # Merge shape: exactly two parents, old target tip first, handoff second;
+  # the merge itself introduces no file changes beyond the auto-merge.
+  merge_parents=$(jj -R "$REPO" log -r 'main' --no-graph \
+    -T 'parents.map(|c| c.commit_id().short(8)).join(" ")' 2>/dev/null)
+  assert_eq "merge has exactly two parents" \
+    "$(printf '%s\n' "$merge_parents" | wc -w | tr -d ' ')" "2"
+  assert_eq "first parent is the old target tip" "${merge_parents%% *}" "$main_before"
+  handoff_commit="${merge_parents##* }"
+  assert_eq "second parent is the handoff" \
+    "$(get_commit_message_first_line "$handoff_commit")" \
+    "[tt:task:${proj_id}:handoff] Project"
+  assert_commit_empty "merge introduces no file changes" "main"
+
+  # Handoff shape: a single linear commit on the project tip that only
+  # removes the scaffolding (root TASK.md symlink and the .tt/task/ tree).
+  handoff_parents=$(jj -R "$REPO" log -r "$handoff_commit" --no-graph \
+    -T 'parents.map(|c| c.commit_id().short(8)).join(" ")' 2>/dev/null)
+  assert_eq "handoff sits on the project tip" "$handoff_parents" "$proj_tip"
+  handoff_files=$(get_modified_files "$handoff_commit")
+  assert_contains "handoff removes the root TASK.md symlink" "$handoff_files" "TASK.md"
+  assert_contains "handoff removes the project task file" "$handoff_files" ".tt/task/${proj_id#*/}/TASK.md"
+  stray=$(printf '%s\n' "$handoff_files" | grep -v -e '^TASK\.md$' -e '^\.tt/task/' || true)
+  assert_output_empty "handoff touches only scaffolding" "$stray"
+  assert_file_on_branch "workspace config kept on main" "main" ".tt/config.toml"
 }
 
 

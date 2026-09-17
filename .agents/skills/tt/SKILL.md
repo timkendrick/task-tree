@@ -29,6 +29,41 @@ tt task --help           # List available task subcommands
 tt --help                # General usage
 ```
 
+## Working copy rules
+
+Two rules govern how `tt` treats the working copy. Both are worth knowing before running anything, because they explain the most common failure and the most common surprise.
+
+**Commands that write to a branch do not move the working copy.** They build the commit on the branch directly, leaving `@` exactly where it was and never absorbing uncommitted changes into what they commit. Only `tt task checkout`, `tt task checkpoint`, `tt workspace init`, `tt worktree sync` and `tt history undo` move a working copy at all. (`tt worktree switch` moves no working copy either — it only redirects the `HEAD` symlink.)
+
+A dirty working copy is therefore fine for most commands, including `tt task edit`, `tt task create`, `tt task complete`, `tt task delete`, `tt task reorder`, `tt task publish`, `tt task propagate` and the context commands. These still require a clean one:
+
+| Command | Condition |
+|---|---|
+| `tt task checkin` | Only when called without an explicit task ID |
+| `tt task move`, `tt task rename` | Always |
+| `tt task checkout` | Unless `--force`, or when creating a new worktree |
+| `tt worktree delete`, `tt history undo` | Unless `--force` |
+| `tt worktree switch` | Unless `--force`; applies to the worktree `HEAD` points at |
+| `tt workspace init` | Always |
+
+The corollary: a worktree sitting on a branch that some other command advanced is left on the old tip. It is usable, just **behind**. Commands report this by name after a write:
+
+```
+The following worktrees are now out of sync:
+  <path> (<task-id>)
+Run 'tt worktree sync' in each of them to bring them up to date.
+```
+
+`tt worktree sync --all` does the whole set in one go, and preserves uncommitted work in each target worktree.
+
+**A branch write refuses while the working-copy commit carries a bookmark.** `tt` expects `@` to sit *above* the branch tip, not to be it. If `@` is itself a bookmarked commit, commands abort with:
+
+```
+Error: The working-copy commit is the tip of bookmark '<name>'.
+```
+
+This happens after driving `jj` directly — typically `jj edit <bookmark>`. Recover by starting a new working-copy commit on top of it (`jj new`), then re-run the `tt` command. The refusal covers any bookmark on `@`, not just the branch being written.
+
 ### Task commands
 
 #### `tt task create`
@@ -53,7 +88,7 @@ Record the current state of work. `--squash` collapses all commits since the las
 
 #### `tt task complete`
 ```
-tt task complete [<task-id>] [--worktree=<path>] [--force]
+tt task complete [<task-id>] [--force]
 ```
 Mark a task DONE. Requires all child tasks to be done, unless `--force` is given.
 
@@ -97,6 +132,12 @@ tt task parent [<task-id>] [--project]
 ```
 Print the parent task ID. `--project` walks up to find the nearest ancestor project.
 
+#### `tt task revset`  (alias: `tt revset`)
+```
+tt task revset [--task <task-id>] [--all] [--git] [--repo PATH]
+```
+Print the revision range covering all unmerged commits on a task branch since it diverged from its parent — the same range `tt task diff` shows the contents of. Without `--task`, uses the current task and extends the range to any trailing commits beyond the task bookmark. `--git` prints a `<from>..<to>` commit-ID range instead of the native revset, for feeding to tools that expect Git syntax. `--all` prints the task's complete range across every connected component, and is not supported for project branches.
+
 #### `tt task diff`  (alias: `tt diff`)
 ```
 tt task diff [--task <task-id>] [--include-metadata] [--repo PATH]
@@ -129,9 +170,9 @@ Reparent a task by moving it to a different parent.
 
 #### `tt task delete`
 ```
-tt task delete [<task-id>] [--worktree=<path>] [--force]
+tt task delete [<task-id>] [--force]
 ```
-Remove a task from its parent branch. `--force` skips DONE and clean working-copy checks.
+Remove a task from its parent branch. `--force` skips the DONE status check.
 
 #### `tt task propagate`
 ```
@@ -193,6 +234,12 @@ Delete a context file and remove its `context:` entry from the task frontmatter.
 tt worktree switch [<worktree-path>] [--force]
 ```
 Redirect the virtual project's HEAD symlink to an existing worktree. The worktree must already exist (run `tt task checkout --worktree` first).
+
+#### `tt worktree sync`  (alias: `tt sync`)
+```
+tt worktree sync [<worktree-path>] [--all]
+```
+Bring a worktree forward onto the head of the branch it is checked out on, updating its files to match. Use it when a command reports that worktrees are out of sync: a branch write advances the bookmark without moving any working copy but the invoking one. Uncommitted changes in the target worktree are preserved. Defaults to the worktree containing the current directory; `--all` synchronizes every out-of-sync worktree in the repository. Reports the files added, modified and removed. Fires no hooks — the checked-out task does not change.
 
 #### `tt worktree list`
 ```
@@ -318,26 +365,14 @@ Instead of implementing child tasks sequentially, spawn one agent per child task
 2. Each spawned agent follows the Large Tasks Phase 2 steps for its assigned child task, **with the following differences for parallel operation**:
 
    - **Stay in the assigned worktree.** Agents must not check out other tasks or switch workspaces. Each agent is responsible only for its own task. In particular, never pass `--switch` to `tt task checkin`: it would move the shared `HEAD` symlink out from under the other agents.
-   - **Use the rebase-refresh idiom** when checking in, to avoid merge conflicts and stale working copies. Instead of a plain `tt task checkin`, run:
+   - **Use the rebase-sync idiom** when checking in, to avoid merge conflicts and leaving sibling worktrees behind. Instead of a plain `tt task checkin`, run:
      ```shell
-     tt task checkin --complete --rebase --propagate \
-       && jj workspace update-stale && jj workspace list --template 'name ++ "\n"' \
-         | while read workspace; do
-            echo "Updating workspace: $workspace"
-            (cd $(jj workspace root --name "$workspace") && jj workspace update-stale)
-            done
+     tt task checkin --complete --rebase --propagate && tt worktree sync --all
      ```
-     This sequence ensures the latest parent tip is rebased into the child branch before check-in, and that all workspaces are brought up to date afterward.
+     `--rebase` pulls the latest parent tip into the child branch before the check-in, and `tt worktree sync --all` brings every worktree the propagation left behind onto its branch head afterwards, preserving each one's uncommitted work.
 
 ### Caveats
 
 - **Worktree isolation is strict.** The only mechanism of communication between agents is via propagated task context (handoff notes). Agents must not attempt to change worktree, or to read or write files in another agent's worktree.
-- **Stale workspaces.** After any checkin that propagates to sibling branches, all other workspaces that share those branches may become stale. Run `jj workspace update-stale` in each affected workspace after propagation. If needed, this can be automated with a shell alias:
-  ```shell
-  jj workspace update-stale && jj workspace list --template 'name ++ "\n"' \
-    | while read workspace; do
-        echo "Updating workspace: $workspace"
-        (cd $(jj workspace root --name "$workspace") && jj workspace update-stale)
-      done
-  ```
-- **Conflict prevention.** Conflicts typically arise when the parent task has not been propagated into the child branch before check-in. Always use the rebase-refresh idiom above to prevent this.
+- **Worktrees left behind.** A checkin that propagates to sibling branches advances those branches without touching the worktrees sitting on them, so those worktrees are left on the old tip. The command names each one it left behind; run `tt worktree sync --all` afterwards to bring them all forward. Do not hand-roll this with `jj` — `tt worktree sync` snapshots each worktree before moving it, so uncommitted work survives.
+- **Conflict prevention.** Conflicts typically arise when the parent task has not been propagated into the child branch before check-in. Always use the rebase-sync idiom above to prevent this.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
@@ -25,7 +25,7 @@ Usage: ${COMMAND_NAME:-$SCRIPT_NAME} --slug <new-slug> [--task <task-id>] [--rep
 Rename a task's slug (the human-readable part of the task ID), preserving the hex suffix.
 For example: task/old-name-abc123 → task/new-name-abc123.
 
-Renames the jj bookmark, the task directory, and updates the parent's subtask reference.
+Renames the branch bookmark, the task directory, and updates the parent's subtask reference.
 Requires a clean working copy. If the task has no parent (e.g., a project), only the
 bookmark and directory are renamed. Silently succeeds if the new slug matches the
 current slug. Errors if the new ID would conflict with an existing bookmark.
@@ -80,18 +80,16 @@ main() {
   fi
 
   # Validate slug format
-  if ! validate_slug "$slug"; then
+  if ! _string__validate_slug "$slug"; then
     exit 1
   fi
 
-  repo="$(resolve_repo "$repo")"
-
-  local -a jj_opts=(-R "$repo")
+  repo="$(_workspace__resolve_repo "$repo")"
 
   # Resolve task prefix and project prefix from config
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Resolve target task
   local old_id old_slug old_hex
@@ -100,22 +98,22 @@ main() {
     old_id="$task_id"
   else
     # Use current task
-    old_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+    old_id="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$old_id" ]]; then
-      log "Error: No current task found. Use --task to specify."
+      _ui__log "Error: No current task found. Use --task to specify."
       exit 1
     fi
   fi
 
   # Validate old_id is a valid task or project branch
-  if ! is_task_branch "$old_id" "$task_prefix" && ! is_project_branch "$old_id" "$project_prefix"; then
-    log "Error: Invalid task ID: $old_id"
+  if ! _task__check_is_task_branch "$old_id" "$task_prefix" && ! _task__check_is_project_branch "$old_id" "$project_prefix"; then
+    _ui__log "Error: Invalid task ID: $old_id"
     exit 1
   fi
 
   # Extract old slug and hex from the ID
   local prefix
-  if is_task_branch "$old_id" "$task_prefix"; then
+  if _task__check_is_task_branch "$old_id" "$task_prefix"; then
     prefix="$task_prefix"
   else
     prefix="$project_prefix"
@@ -131,38 +129,52 @@ main() {
 
   # Construct new task ID
   local new_id="${prefix}${slug}-${old_hex}"
+  local new_suffix="${slug}-${old_hex}"
 
   # Pre-validate: check if new ID already exists as a bookmark
-  if jj "${jj_opts[@]}" --ignore-working-copy log -r "$new_id" -n 1 --no-graph -T '' 2>/dev/null; then
-    log "Error: Task or project '$new_id' already exists. Choose a different slug."
+  if _task__check_branch_exists "$repo" "$new_id"; then
+    _ui__log "Error: Task or project '$new_id' already exists. Choose a different slug."
     exit 1
   fi
 
-  # Check for clean working copy
-  if ! is_wc_clean "$repo"; then
-    log "Error: Working copy is not clean. Commit or discard changes first."
+  local current_worktree
+  current_worktree="$(_worktree__resolve_current "$repo")"
+
+  # Precondition: the working copy must be clean. A rename rewrites every
+  # commit that carries the task directory, and the invoking worktree's
+  # working-copy commit is one of them: it is carried through the rewrite, so
+  # uncommitted edits would be replayed onto a tree they were never written
+  # against.
+  if ! _worktree__check_clean "$current_worktree"; then
+    _ui__log "Error: Working copy is not clean. Commit or discard changes first."
     exit 1
   fi
 
   # Find parent branch (optional - may not exist for projects)
   local parent_bookmark
-  parent_bookmark="$(find_parent_branch "$repo" "$old_id" "$task_prefix" "$project_prefix")" || true
+  parent_bookmark="$(_task__find_parent_branch "$repo" "$old_id" "$task_prefix" "$project_prefix")" || true
 
   # Find parent task file path
-  local parent_task_file
+  local parent_task_file=''
   if [[ -n "$parent_bookmark" ]]; then
     local parent_suffix
-    if is_task_branch "$parent_bookmark" "$task_prefix"; then
+    if _task__check_is_task_branch "$parent_bookmark" "$task_prefix"; then
       parent_suffix="${parent_bookmark#$task_prefix}"
     else
       parent_suffix="${parent_bookmark#$project_prefix}"
     fi
-    parent_task_file="$(task_file_path "$parent_suffix")"
+    parent_task_file="$(_path__task_file "$parent_suffix")"
   fi
 
+  local old_dir new_dir old_task_file
+  old_dir="$(_path__task_dir "$suffix")"
+  new_dir="$(_path__task_dir "$new_suffix")"
+  old_task_file="$(_path__task_file "$suffix")"
+
   # Get task title for commit message
-  local task_title
-  task_title="$(jj_show_at_revision "$repo" "$old_id" "$(task_file_path "$suffix")" \
+  local task_content='' task_title=''
+  task_content="$(_task__read_file "$repo" "$old_id" "$old_task_file")" || task_content=''
+  task_title="$(printf '%s\n' "$task_content" \
     | awk '/^title:/ { for(i=2;i<=NF;i++) printf "%s ", $i; print ""; exit }')"
 
   if [[ -z "$task_title" ]]; then
@@ -171,148 +183,195 @@ main() {
     task_title="${task_title% }"  # Remove trailing space
   fi
 
-  local old_dir="${repo}/$(task_dir_path "$suffix")"
-  local new_dir="${repo}/$(task_dir_path "${slug}-${old_hex}")"
-  local old_rel="$(task_dir_path "$suffix")"
+  local rename_message
+  rename_message="$(_commit__format_message "task" "rename" "$new_id" "$task_title")"
+
+  # ---------------------------------------------------------------------------
+  # Determine the region of history the rename has to rewrite: the commit that
+  # introduced the task directory, plus every visible commit descended from it.
+  #
+  # Anchoring on the introducing commit is what makes the set complete. The
+  # directory is recorded in every one of those commits and in no other, so
+  # each of them has to change; and because the set is closed under descent it
+  # necessarily contains the parent branch's tip (which advanced past the fork
+  # point), the task's own commits, any commits made past the task bookmark,
+  # sibling branches that inherited the task's stub, and the invoking
+  # worktree's working-copy commit — which must be included, or it would keep
+  # a diff that puts the old paths straight back on the next checkpoint.
+  # ---------------------------------------------------------------------------
+  local introduction
+  introduction="$(_task__find_directory_introduction "$repo" "$old_dir")" || introduction=''
+  if [[ -z "$introduction" ]]; then
+    _ui__log "Error: Could not resolve a unique creation boundary for '$old_id'."
+    exit 1
+  fi
+
+  # ---------------------------------------------------------------------------
+  # Refuse when another worktree is parked inside the rewrite range.
+  #
+  # A rename is the one task operation that has to rewrite commits it does not
+  # own, so it cannot limit itself to the invoking worktree's own line the way
+  # every other branch write does. It carries its own worktree across the
+  # rewrite, but another worktree's uncommitted work exists only on that
+  # worktree's disk, and rewriting the commit under it would destroy the work.
+  # There is no flag for this: overriding it is never the right answer.
+  #
+  # Runs before the transaction begins, and reads other worktrees without
+  # snapshotting them, so a refusal leaves the repository and every other
+  # worktree exactly as they were.
+  # ---------------------------------------------------------------------------
+  local blocking_worktrees
+  blocking_worktrees="$(_worktree__list_holding_descendants "$repo" "$introduction")"
+  if [[ -n "$blocking_worktrees" ]]; then
+    _ui__log "Error: Cannot rename while other worktrees hold commits in the rewrite range:"
+    local blocked_path blocked_task
+    while IFS=$'\t' read -r blocked_path blocked_task; do
+      [[ -z "$blocked_path" ]] && continue
+      _ui__log "  $blocked_path ($blocked_task)"
+    done <<< "$blocking_worktrees"
+    _ui__log ""
+    _ui__log "Rewriting these would discard uncommitted work in those worktrees. Resolve each first:"
+    _ui__log "  tt worktree sync <path>"
+    _ui__log "  tt worktree delete <path>"
+    _ui__log ""
+    _ui__log "There is no override: rewriting a worktree's commits from outside it"
+    _ui__log "destroys any uncommitted work it holds."
+    exit 1
+  fi
+
+  # Precondition: the working-copy commit must not carry a bookmark
+  _worktree__ensure_working_copy "$repo" || exit 1
 
   # Begin transaction (records before-op for undo)
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
-  # ---------------------------------------------------------------------------
-  # Step 0: Pre-save all file content under <old-dir>/ for every commit in the
-  # task's unmerged range, before any jj operations modify the tree.
-  #
-  # Use --at-operation to read pre-rename content even after auto-rebase
-  # introduces conflict markers. Use `{ head -1; cat >/dev/null; }` to drain
-  # the pipe without triggering SIGPIPE / pipefail.
-  # ---------------------------------------------------------------------------
-  local pre_op saved_dir range
-  pre_op=$(jj "${jj_opts[@]}" op log --no-graph -T 'id ++ "\n"' | { head -1; cat > /dev/null; })
-  saved_dir=$(mktemp -d)
+  local rewrite_range
+  rewrite_range="$(_task__list_rewrite_range "$repo" "$introduction")"
 
-  if [[ -n "$parent_bookmark" ]]; then
-    range=$(jj "${jj_opts[@]}" log -r "::${old_id} ~ ::${parent_bookmark}" \
-        --no-graph -T 'change_id ++ "\n"' | tail -r)
-  else
-    # No parent: range is the full ancestry of the task branch
-    range=$(jj "${jj_opts[@]}" log -r "::${old_id}" \
-        --no-graph -T 'change_id ++ "\n"' | tail -r)
-  fi
+  # Writer invoked by _task__commit_detached with a staging root, for the
+  # revision named by its second argument. Stages that revision's share of the
+  # rename: the task directory's files under their new path, the repo-root task
+  # symlink when it points into the old directory, and the parent's subtask
+  # entry repointed at the new task ID. The old directory itself is removed
+  # through the --delete-prefix flag rather than by omission, since a file
+  # missing from the staging root is not a deletion.
+  rename_stage_writer() {
+    local root="$1" rev="$2"
 
-  local change_id
-  while IFS= read -r change_id; do
-    local file_list
-    file_list=$(jj "${jj_opts[@]}" --at-operation "$pre_op" file list -r "$change_id" 2>/dev/null \
-        | grep "^${old_rel}/" || true)
-    if [[ -n "$file_list" ]]; then
-      while IFS= read -r fpath; do
-        local rel="${fpath#${old_rel}/}"
-        mkdir -p "$saved_dir/$change_id/$(dirname "$rel")"
-        jj_show_at_op "$repo" "$pre_op" "$change_id" "$fpath" \
-            > "$saved_dir/$change_id/$rel"
-      done <<< "$file_list"
-    fi
-  done <<< "$range"
+    # Listed into a variable before the loop, so a failed listing aborts the
+    # writer: read from a process substitution it would look like an empty
+    # directory, and the commit would drop the task's files instead of moving
+    # them.
+    local listing path rel
+    listing="$(_task__list_files "$repo" "$rev" "$old_dir")" || return 1
+    while IFS= read -r path; do
+      [[ -z "$path" ]] && continue
+      rel="${path#"$old_dir"/}"
+      mkdir -p "$root/$new_dir/$(_path__dirname "$rel")" || return 1
+      _task__read_file "$repo" "$rev" "$path" > "$root/$new_dir/$rel" || return 1
+    done <<< "$listing"
 
-  # ---------------------------------------------------------------------------
-  # Step 1: Edit the parent branch commit in place — rename <old-dir> to
-  # <new-dir>, update the subtask: reference, commit. jj's auto-rebase fires
-  # immediately after, producing conflicts on task-range commits that modified
-  # files under <old-dir>/.
-  # ---------------------------------------------------------------------------
-  if [[ -n "$parent_bookmark" && -n "$parent_task_file" ]]; then
-    log "Updating parent branch..."
-    jj "${jj_opts[@]}" edit "${parent_bookmark}"
-
-    if [[ ! -d "$old_dir" ]]; then
-      log "Error: Task directory not found on parent branch: $old_dir"
-      exit 1
-    fi
-
-    # Rename the entire task directory tree
-    mv "$old_dir" "$new_dir"
-
-    # Update subtask: reference in the parent's own TASK.md
-    local parent_path="$repo/$parent_task_file"
-    if [[ -f "$parent_path" ]]; then
-      local tmpfile
-      tmpfile="$(mktemp)"
-      sed "s|^\(subtask:[[:space:]]*\[.\][[:space:]]*\)${old_id}$|\1${new_id}|" "$parent_path" > "$tmpfile"
-      mv "$tmpfile" "$parent_path"
-    fi
-
-    # Commit: jj snapshots the mv automatically; use standardized rename message
-    jj "${jj_opts[@]}" commit -m "$(format_commit_message "task" "rename" "$new_id" "$task_title")"
-    jj "${jj_opts[@]}" bookmark set "${parent_bookmark}" -r @-
-    jj "${jj_opts[@]}" new "${parent_bookmark}"
-  fi
-
-  # ---------------------------------------------------------------------------
-  # Step 2: Rename the jj bookmark.
-  # ---------------------------------------------------------------------------
-  log "Renaming bookmark..."
-  jj "${jj_opts[@]}" bookmark rename "$old_id" "$new_id"
-
-  # ---------------------------------------------------------------------------
-  # Step 3: Sweep the task range oldest-to-newest, writing pre-saved content
-  # back to <new-dir>/ and removing <old-dir>/. Each `jj edit` call snapshots
-  # the previous commit's changes and triggers auto-rebase of descendants.
-  # ---------------------------------------------------------------------------
-  log "Rewriting task branch range..."
-
-  if [[ -n "$parent_bookmark" ]]; then
-    range=$(jj "${jj_opts[@]}" log -r "::${new_id} ~ ::${parent_bookmark}" \
-        --no-graph -T 'change_id ++ "\n"' | tail -r)
-  else
-    range=$(jj "${jj_opts[@]}" log -r "::${new_id}" \
-        --no-graph -T 'change_id ++ "\n"' | tail -r)
-  fi
-
-  while IFS= read -r change_id; do
-    jj "${jj_opts[@]}" edit "$change_id"
-
-    # Write pre-saved file content to the new directory location
-    if [[ -d "$saved_dir/$change_id" ]]; then
-      local saved_file
-      while IFS= read -r saved_file; do
-        local rel="${saved_file#$saved_dir/$change_id/}"
-        local dest="$new_dir/$rel"
-        mkdir -p "$(dirname "$dest")"
-        cp "$saved_file" "$dest"
-      done < <(find "$saved_dir/$change_id" -type f)
-    fi
-
-    # Remove <old-dir> (which may exist as a conflict-marker directory after
-    # auto-rebase, or as a plain directory if this commit introduced it)
-    rm -rf "$old_dir"
-
-    # Update root TASK.md symlink if it points to the old path
-    local task_md_link="${repo}/TASK.md"
-    if [[ -L "$task_md_link" ]]; then
-      local link_target
-      link_target="$(readlink "$task_md_link")"
-      if [[ "$link_target" == *"$suffix"* ]]; then
-        local new_target
-        new_target="${link_target//$suffix/${slug}-${old_hex}}"
-        rm "$task_md_link"
-        ln -s "$new_target" "$task_md_link"
+    local link_target
+    if link_target="$(_task__read_symlink "$repo" "$rev" "$TT_TASK_SYMLINK_FILENAME")"; then
+      if [[ "$link_target" == "$old_dir"/* ]]; then
+        ln -s "${new_dir}/${link_target#"$old_dir"/}" \
+          "$root/$TT_TASK_SYMLINK_FILENAME" || return 1
       fi
     fi
 
-    # jj snapshots the above changes when the next jj command (next `jj edit`)
-    # runs, which also triggers auto-rebase of all descendants.
-  done <<< "$range"
-
-  rm -rf "$saved_dir"
+    # Every commit in the range that carries a copy of the parent task file
+    # gets the entry rewritten, not just the parent branch's own tip: the task
+    # branch and its siblings inherited that copy and would otherwise keep
+    # pointing at a task ID that no longer exists.
+    if [[ -n "$parent_task_file" ]]; then
+      mkdir -p "$root/$(_path__dirname "$parent_task_file")" || return 1
+      if _task__read_file "$repo" "$rev" "$parent_task_file" > "$root/$parent_task_file"; then
+        _frontmatter__rename_subtask "$root/$parent_task_file" "$old_id" "$new_id"
+      else
+        rm -f "$root/$parent_task_file"
+      fi
+    fi
+  }
 
   # ---------------------------------------------------------------------------
-  # Step 4: Leave the working copy as an empty child of the renamed task tip.
+  # Phase 1: compute every target tree up front, from the history as it stands.
+  #
+  # Each commit's renamed tree is built and parked in the repository as a
+  # detached staging commit, recorded against the change ID of the commit it
+  # belongs to. Nothing existing is modified yet, so every read here sees the
+  # original objects: no step of the rewrite below can observe state that the
+  # rewrite itself has already disturbed. bash 3.2 has no associative arrays,
+  # so the mapping lives as one file per change ID in a scratch directory.
+  #
+  # Both phases and the bookmark rename run inside a subshell that owns that
+  # directory, so its EXIT trap removes it on every path out without competing
+  # for the trap the enclosing transaction installs. A failure inside leaves
+  # the subshell alone, so the exit status is propagated explicitly.
   # ---------------------------------------------------------------------------
-  log "Switching to renamed task..."
-  jj "${jj_opts[@]}" new "${new_id}"
+  (
+    scratch="$(mktemp -d)" || exit 1
+    trap 'rm -rf "$scratch"' EXIT
+    mkdir -p "$scratch/map" || exit 1
+
+    _ui__log "Planning rename: $old_id -> $new_id"
+
+    local change_id staging_commit staging_change
+    while IFS= read -r change_id; do
+      [[ -z "$change_id" ]] && continue
+      staging_commit="$(_task__commit_detached "$repo" "$change_id" "$rename_message" \
+        --delete-prefix "$old_dir" -- rename_stage_writer "$change_id")" || exit 1
+      # Record the staging commit by change ID too: rewriting the range below
+      # rebases the staging commits along with everything else, so their commit
+      # IDs do not survive to the point where they are consumed.
+      staging_change="$(_task__resolve_change "$repo" "$staging_commit")" || exit 1
+      printf '%s\n' "$staging_change" > "$scratch/map/$change_id"
+    done <<< "$rewrite_range"
+
+    # ---------------------------------------------------------------------------
+    # Phase 2: replace each commit's tree with the one computed for it, oldest
+    # first, addressing commits by change ID because each replacement rebases the
+    # rest of the range and invalidates their commit IDs. Every commit keeps its
+    # identity, description and position; only what it records changes. No diff
+    # is ever replayed, so nothing can conflict.
+    # ---------------------------------------------------------------------------
+    _ui__log "Rewriting task history..."
+
+    while IFS= read -r change_id; do
+      [[ -z "$change_id" ]] && continue
+      staging_change="$(cat "$scratch/map/$change_id")"
+      _task__replace_tree "$repo" "$staging_change" "$change_id" || exit 1
+    done <<< "$rewrite_range"
+
+    _ui__log "Renaming bookmark..."
+    _task__rename_branch "$repo" "$old_id" "$new_id"
+
+    # Retire the staging commits. Abandoning them is what removes them: they are
+    # already unreferenced by this point, and an unreferenced commit stays a
+    # visible head until it is abandoned.
+    while IFS= read -r change_id; do
+      [[ -z "$change_id" ]] && continue
+      staging_change="$(cat "$scratch/map/$change_id")"
+      _task__discard_commit "$repo" "$staging_change" || true
+    done <<< "$rewrite_range"
+  ) || exit 1
+
+  # The rewrite above was a bare graph mutation, so the invoking worktree's
+  # files are still those of the pre-rename tree; bring them forward now, while
+  # its working-copy commit is guaranteed clean.
+  _worktree__refresh_current "$repo"
 
   # Commit transaction (records after-op for undo)
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
+
+  # Both bookmarks moved to rewritten commits, so a worktree that was already
+  # sitting behind either of them is now behind a different commit again. A
+  # worktree INSIDE the rewritten range cannot appear here — the refusal above
+  # rules that out — so anything reported is a worktree that was already out of
+  # sync before the rename.
+  _worktree__report_unsynced "$repo" "$new_id"
+  if [[ -n "$parent_bookmark" ]]; then
+    _worktree__report_unsynced "$repo" "$parent_bookmark"
+  fi
 
   # Success message
   printf 'Task renamed: %s > %s\n' "$old_id" "$new_id"

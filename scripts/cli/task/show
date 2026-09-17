@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
@@ -61,11 +61,11 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # --- Resolve branch and task file ---
   #
@@ -75,20 +75,20 @@ main() {
   #               for the implicit case it is the current branch.
   #   branch   — the canonical branch to *read from* ("where to read" rule).
   #               For an ongoing task branch == task_id.  For a completed
-  #               (checked-in) task, find_branch_for_task returns the parent
+  #               (checked-in) task, _task__find_branch returns the parent
   #               branch that received the checkin, so branch != task_id.
   local branch task_file task_suffix task_id
 
   if [[ -z "$task_id_arg" ]]; then
     # No task-id: use current branch
-    { read -r _rev; read -r task_file; read -r branch; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
+    { read -r _rev; read -r task_file; read -r branch; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
 
     if [[ -z "$branch" ]]; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
     task_id="$branch"
-    if is_task_branch "$branch" "$task_prefix"; then
+    if _task__check_is_task_branch "$branch" "$task_prefix"; then
       task_suffix="${branch#$task_prefix}"
     else
       task_suffix="${branch#$project_prefix}"
@@ -96,49 +96,42 @@ main() {
   else
     task_id="$task_id_arg"
     # Explicit task-id: find its canonical branch via "where to read" rule.
-    # For a merged/completed task find_branch_for_task returns the parent
+    # For a merged/completed task _task__find_branch returns the parent
     # branch (the one that received the checkin).  The task *file path* is
     # always derived from task_id_arg, not from the canonical branch.
-    if ! branch="$(find_branch_for_task "$repo" "$task_id_arg" "$task_prefix" "$project_prefix")"; then
-      log "Error: Could not locate branch for task '$task_id_arg'."
+    if ! branch="$(_task__find_branch "$repo" "$task_id_arg" "$task_prefix" "$project_prefix")"; then
+      _ui__log "Error: Could not locate branch for task '$task_id_arg'."
       exit 1
     fi
     local suffix
-    if is_task_branch "$task_id_arg" "$task_prefix"; then
+    if _task__check_is_task_branch "$task_id_arg" "$task_prefix"; then
       suffix="${task_id_arg#$task_prefix}"
-    elif is_project_branch "$task_id_arg" "$project_prefix"; then
+    elif _task__check_is_project_branch "$task_id_arg" "$project_prefix"; then
       suffix="${task_id_arg#$project_prefix}"
     else
-      log "Error: Cannot derive task file path for '$task_id_arg'."
+      _ui__log "Error: Cannot derive task file path for '$task_id_arg'."
       exit 1
     fi
     task_suffix="$suffix"
-    task_file="$(task_file_path "$suffix")"
-  fi
-
-  # --- Find worktree ---
-  local worktree
-  worktree="$(find_worktrees_for_branch "$repo" "$branch" "$task_prefix" "$project_prefix" | head -1)"
-  if [[ -z "$worktree" ]]; then
-    worktree="$repo"
+    task_file="$(_path__task_file "$suffix")"
   fi
 
   # --- Read task file ---
   local content
-  if ! content="$(jj_show_at_revision "$repo" "$branch" "$task_file")"; then
-    log "Error: Could not read task file '$task_file' from '$branch'."
+  if ! content="$(_task__read_file "$repo" "$branch" "$task_file")"; then
+    _ui__log "Error: Could not read task file '$task_file' from '$branch'."
     exit 1
   fi
 
   # --- Parse fields ---
   local title status
-  title="$(parse_quoted_frontmatter_field "$content" "title")"
-  status="$(parse_frontmatter_field "$content" "status")"
+  title="$(_frontmatter__parse_quoted_field "$content" "title")"
+  status="$(_frontmatter__parse_field "$content" "status")"
   [[ -z "$status" ]] && status="TODO"
 
   # Body is everything after the second ---
   local body
-  body="$(parse_body "$content")"
+  body="$(_frontmatter__parse_body "$content")"
   # Trim leading/trailing blank lines from body
   body="$(printf '%s' "$body" | awk 'NF{found=1} found{print}' | sed -e 's/[[:space:]]*$//')"
 
@@ -178,7 +171,7 @@ main() {
   # grandparent (which is what we'd get if we searched for the parent of the
   # already-merged parent branch).
   local parent_branch
-  parent_branch="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix" 2>/dev/null)" || parent_branch=""
+  parent_branch="$(_task__find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix" 2>/dev/null)" || parent_branch=""
 
   # --- Print header block ---
   printf -- '---\n'
@@ -198,24 +191,24 @@ main() {
       local checkbox subtask_id subtask_status subtask_title=""
       subtask_id="${line:4}"
       local subtask_branch subtask_file subtask_content
-      if subtask_branch="$(find_branch_for_task "$repo" "$subtask_id" "$task_prefix" "$project_prefix" 2>/dev/null)"; then
+      if subtask_branch="$(_task__find_branch "$repo" "$subtask_id" "$task_prefix" "$project_prefix" 2>/dev/null)"; then
         local subtask_id_suffix
-        if is_task_branch "$subtask_id" "$task_prefix"; then
+        if _task__check_is_task_branch "$subtask_id" "$task_prefix"; then
           subtask_id_suffix="${subtask_id#$task_prefix}"
-        elif is_project_branch "$subtask_id" "$project_prefix"; then
+        elif _task__check_is_project_branch "$subtask_id" "$project_prefix"; then
           subtask_id_suffix="${subtask_id#$project_prefix}"
         else
           subtask_id_suffix=""
         fi
         if [[ -n "$subtask_id_suffix" ]]; then
-          subtask_file="$(task_file_path "$subtask_id_suffix")"
-          subtask_content="$(jj_show_at_revision "$repo" "$subtask_branch" "$subtask_file" || true)"
-          subtask_status="$(parse_frontmatter_field "$subtask_content" "status" 2>/dev/null || true)"
-          subtask_title="$(parse_quoted_frontmatter_field "$subtask_content" "title" 2>/dev/null || true)"
+          subtask_file="$(_path__task_file "$subtask_id_suffix")"
+          subtask_content="$(_task__read_file "$repo" "$subtask_branch" "$subtask_file" || true)"
+          subtask_status="$(_frontmatter__parse_field "$subtask_content" "status" 2>/dev/null || true)"
+          subtask_title="$(_frontmatter__parse_quoted_field "$subtask_content" "title" 2>/dev/null || true)"
         fi
       fi
       [[ -z "$subtask_status" ]] && subtask_status="TODO"
-      checkbox="$(status_to_checkbox "$subtask_status")"
+      checkbox="$(_format__status_checkbox "$subtask_status")"
       if [[ -n "$subtask_title" ]]; then
         printf -- '- %s %s  %s\n' "$checkbox" "$subtask_id" "$subtask_title"
       else
@@ -236,10 +229,10 @@ main() {
       [[ -z "$ctx_id" ]] && continue
       # Resolve context file path on the task's branch
       local ctx_file
-      ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
+      ctx_file="$(_path__task_context "$task_suffix" "$ctx_id")"
       local ctx_content ctx_title
-      ctx_content="$(jj_show_at_revision "$repo" "$branch" "$ctx_file" || true)"
-      ctx_title="$(parse_quoted_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
+      ctx_content="$(_task__read_file "$repo" "$branch" "$ctx_file" || true)"
+      ctx_title="$(_frontmatter__parse_quoted_field "$ctx_content" "title" 2>/dev/null || true)"
       if [[ -n "$ctx_title" ]]; then
         printf -- '- %s (%s)\n' "$ctx_title" "$ctx_id"
       else
@@ -268,16 +261,16 @@ main() {
         [[ -z "$ctx_id" ]] && continue
         # Resolve context file path on the task's branch
         local ctx_file ctx_content
-        ctx_file="$(task_context_path "$task_suffix" "$ctx_id")"
-        ctx_content="$(jj_show_at_revision "$repo" "$branch" "$ctx_file" || true)"
+        ctx_file="$(_path__task_context "$task_suffix" "$ctx_id")"
+        ctx_content="$(_task__read_file "$repo" "$branch" "$ctx_file" || true)"
 
         if [[ -n "$ctx_content" ]]; then
           # Parse frontmatter fields (using raw for title to preserve formatting)
           local ctx_title ctx_created ctx_updated ctx_body
-          ctx_title="$(parse_frontmatter_field "$ctx_content" "title" 2>/dev/null || true)"
-          ctx_created="$(parse_frontmatter_field "$ctx_content" "created" 2>/dev/null || true)"
-          ctx_updated="$(parse_frontmatter_field "$ctx_content" "updated" 2>/dev/null || true)"
-          ctx_body="$(parse_body "$ctx_content")"
+          ctx_title="$(_frontmatter__parse_field "$ctx_content" "title" 2>/dev/null || true)"
+          ctx_created="$(_frontmatter__parse_field "$ctx_content" "created" 2>/dev/null || true)"
+          ctx_updated="$(_frontmatter__parse_field "$ctx_content" "updated" 2>/dev/null || true)"
+          ctx_body="$(_frontmatter__parse_body "$ctx_content")"
 
           # Output synthetic frontmatter with context id
           printf -- '---\n'

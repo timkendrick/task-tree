@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 
 test_worktree_show__dedicated_worktree_returned() {
@@ -42,7 +42,7 @@ test_worktree_show__repository_root_errors() {
 
 
 # Regression: invoked from inside a dedicated worktree with no TT_REPO set,
-# resolve_repo walks up to the worktree's own .jj and returns the worktree, not
+# _workspace__resolve_repo walks up to the worktree's own .jj and returns the worktree, not
 # the canonical repo. Comparing the match against that path rejected the
 # worktree. The repository root check must use the canonical repo root.
 test_worktree_show__from_inside_worktree_returns_own_worktree() {
