@@ -1,6 +1,6 @@
 ---
 title: "Standardize VCS operations"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-07T09:11:15Z
 updated: 2026-08-30T13:51:34Z
 context: context/jj-command-audit-c79dfc51
