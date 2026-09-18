@@ -59,7 +59,6 @@
 #     _jj__check_is_ancestor         — whether one revision is an ancestor of another
 #     _jj__filter_commits_reachable_from — the given commits that REV can reach
 #     _jj__find_fork_point_commit    — commit ID where two revisions' histories fork
-#     _jj__resolve_nearest_bookmark  — commit ID and name of the closest bookmarked ancestor
 #     _jj__list_commits_in_range     — commit IDs in FROM..TO, oldest first
 #     _jj__list_commits_in_dag_range — commit IDs descended from BASE up to TIP
 #     _jj__count_commits_in_range    — number of commits in FROM..TO
@@ -493,24 +492,6 @@ _jj__find_fork_point_commit() {
   local repo="$1" rev_a="$2" rev_b="$3"
   __jj__read "$repo" --ignore-working-copy log -r "fork_point(${rev_a} | ${rev_b})" \
     --no-graph -T 'commit_id'
-}
-
-# Usage: _jj__resolve_nearest_bookmark REPO REV
-# Prints the closest bookmarked ancestor of REV (REV itself included) as one
-# line, "<commit-id><TAB><bookmark-name>": the commit the bookmark points at
-# and the bookmark's name, read in a single query. Where several bookmarks sit
-# on that commit, the first the backend lists is named. Returns 1 (nothing
-# printed) when no ancestor carries a bookmark or REV does not resolve.
-_jj__resolve_nearest_bookmark() {
-  local repo="$1" rev="$2"
-  local record
-  record="$(__jj__read "$repo" --ignore-working-copy log \
-    -r "heads(ancestors(${rev}) & bookmarks())" -n 1 --no-graph \
-    -T 'commit_id ++ "\t" ++ local_bookmarks.map(|b| b.name()).join(",")')" || return 1
-  local commit="${record%%$'\t'*}" names="${record#*$'\t'}"
-  names="${names%%,*}"
-  [[ -n "$commit" && -n "$names" ]] || return 1
-  printf '%s\t%s' "$commit" "$names"
 }
 
 # Usage: _jj__list_commits_in_range REPO FROM TO
