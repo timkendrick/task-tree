@@ -979,10 +979,10 @@ _task__commit_detached() {
 # The parent order is semantic, not cosmetic. A branch's own line is its
 # first-parent mainline, and two mechanisms read the graph that way: full-range
 # discovery (_task__get_full_range_records) classifies historical check-ins by
-# the shape of a merge's second parent, and worktree branch attribution
-# (_repo__find_branch_for_commit) tells a branch built on top of another from
-# one merged into it. The receiving branch must therefore always be first and
-# the incoming line second, whichever of the two is being merged into which.
+# the shape of a merge's second parent, and mainline listing
+# (_repo__list_mainline_commits) reports a branch's own work by following first
+# parents. The receiving branch must therefore always be first and the incoming
+# line second, whichever of the two is being merged into which.
 #
 # The merge carries no file writes of its own: the backend computes the
 # merged tree from the two parents and represents any conflicts natively.

@@ -81,15 +81,22 @@ test__worktree__check_exists__rejects_a_plain_directory_and_a_missing_path() {
 # Fixtures for the working-copy invariant and sync machinery
 # ---------------------------------------------------------------------------
 
-# Build a "feature" branch on top of the setup_workspace state and leave the
-# current working copy as an empty commit above its tip:
-#   main -- feature work (bookmark "feature") -- @ (empty)
-# Sets FEATURE_TIP to the branch tip's full commit ID.
+# Check out a task with a commit of its own and leave the current working copy
+# as an empty commit above its tip:
+#   project -- feature work (bookmark <task>) -- @ (empty)
+# A real task rather than a hand-made bookmark, because a worktree is attributed
+# to a branch by the task its working copy records (_worktree__resolve_branch_at)
+# and a bookmark nothing was ever checked out on names no task.
+# Sets FEATURE to the task ID, FEATURE_TIP to the branch tip's full commit ID.
 _fixture_feature_checkout() {
+  local project_id
+  project_id="$(create_project "proj" "Project")"
+  checkout_task "$project_id" >/dev/null 2>&1
+  FEATURE="$(create_task "feature" "Feature")"
+  checkout_task "$FEATURE" >/dev/null 2>&1
   edit_file one.txt "one"
-  jj_commit "feature work"
-  jj -R "$REPO" bookmark set feature -r '@-' >/dev/null 2>&1
-  FEATURE_TIP="$(get_full_commit_id 'feature')"
+  checkpoint_task "feature work" >/dev/null 2>&1
+  FEATURE_TIP="$(get_full_commit_id "$FEATURE")"
 }
 
 # Usage: _advance_branch_bare BRANCH FILENAME CONTENT
@@ -170,7 +177,7 @@ test__worktree__reattach_current__follows_branch_advance() {
   _fixture_feature_checkout
 
   local new_tip
-  new_tip="$(_advance_branch_bare feature adv.txt "advanced")"
+  new_tip="$(_advance_branch_bare "$FEATURE" adv.txt "advanced")"
   assert_output_not_empty "bare advance produced a commit" "$new_tip"
 
   local exit_code=0
@@ -225,7 +232,7 @@ test__worktree__reattach_current_on_branch__follows_merge_on_own_branch() {
   merge="$(_repo__create_merge_commit "$REPO" "land child" "$FEATURE_TIP" "$child_tip")"
 
   local exit_code=0
-  _worktree__reattach_current_on_branch "$REPO" feature "$FEATURE_TIP" "$merge" \
+  _worktree__reattach_current_on_branch "$REPO" "$FEATURE" "$FEATURE_TIP" "$merge" \
     || exit_code=$?
   assert_success "reattach succeeds" "$exit_code"
   assert_eq "working-copy parent is the merge" "$(get_full_commit_id '@-')" "$merge"
@@ -271,7 +278,7 @@ test__worktree__bare_write__leaves_other_worktree_untouched() {
   # the only one on the branch.
   jj -R "$REPO" new main >/dev/null 2>&1
   local wt_path
-  wt_path="$(_create_secondary_worktree wt-other feature)"
+  wt_path="$(_create_secondary_worktree wt-other "$FEATURE")"
   assert_output_not_empty "secondary worktree created" "$wt_path"
 
   printf 'never-snapshotted\n' > "$wt_path/pending.txt"
@@ -279,7 +286,7 @@ test__worktree__bare_write__leaves_other_worktree_untouched() {
   wt_rev_before="$(_repo__get_worktree_revision "$REPO" wt-other)"
 
   local new_tip
-  new_tip="$(_advance_branch_bare feature adv.txt "advanced")"
+  new_tip="$(_advance_branch_bare "$FEATURE" adv.txt "advanced")"
   assert_output_not_empty "bare advance produced a commit" "$new_tip"
 
   assert_file_exists "worktree tracked file still on disk" "$wt_path/one.txt"
@@ -298,7 +305,7 @@ test__worktree__bare_write__leaves_other_worktree_untouched() {
   wt_desc="$(jj -R "$wt_path" log -r '@-' --no-graph -T 'description.first_line()' 2>/dev/null)" \
     || exit_code=$?
   assert_success "jj commands still work in the worktree" "$exit_code"
-  assert_eq "worktree parent is still the old feature tip" "$wt_desc" "feature work"
+  assert_contains "worktree parent is still the old feature tip" "$wt_desc" "feature work"
 }
 
 test__worktree__list_unsynced__reports_behind_worktree() {
@@ -308,27 +315,27 @@ test__worktree__list_unsynced__reports_behind_worktree() {
   # equally behind, but must be omitted from the report (callers reattach the
   # current worktree directly).
   local wt_path
-  wt_path="$(_create_secondary_worktree wt-behind feature)"
+  wt_path="$(_create_secondary_worktree wt-behind "$FEATURE")"
   assert_output_not_empty "secondary worktree created" "$wt_path"
 
   local new_tip
-  new_tip="$(_advance_branch_bare feature adv.txt "advanced")"
+  new_tip="$(_advance_branch_bare "$FEATURE" adv.txt "advanced")"
   assert_output_not_empty "bare advance produced a commit" "$new_tip"
 
   local records
-  records="$(_worktree__list_unsynced "$REPO" feature)"
+  records="$(_worktree__list_unsynced "$REPO" "$FEATURE")"
   assert_line_count "exactly one out-of-sync worktree" "$records" 1
   assert_eq "record is <path><TAB><task-id>" "$records" \
-    "$(printf '%s\t%s' "$wt_path" feature)"
+    "$(printf '%s\t%s' "$wt_path" "$FEATURE")"
 
   local err
-  err="$(_worktree__report_unsynced "$REPO" feature 2>&1 >/dev/null)"
+  err="$(_worktree__report_unsynced "$REPO" "$FEATURE" 2>&1 >/dev/null)"
   assert_eq "warning header line" \
     "$(printf '%s' "$err" | sed -n '1p')" \
     "The following worktrees are now out of sync:"
   assert_eq "indented worktree line names path and task id" \
     "$(printf '%s' "$err" | sed -n '2p')" \
-    "  $wt_path (feature)"
+    "  $wt_path ($FEATURE)"
   assert_contains "directs the user to tt worktree sync" "$err" "tt worktree sync"
 }
 
@@ -336,13 +343,13 @@ test__worktree__report_unsynced__silent_when_in_sync() {
   setup_workspace "wt-unsynced-silent"
   _fixture_feature_checkout
   local wt_path
-  wt_path="$(_create_secondary_worktree wt-insync feature)"
+  wt_path="$(_create_secondary_worktree wt-insync "$FEATURE")"
   assert_output_not_empty "secondary worktree created" "$wt_path"
 
   assert_output_empty "no unsynced records while the branch tip is unchanged" \
-    "$(_worktree__list_unsynced "$REPO" feature)"
+    "$(_worktree__list_unsynced "$REPO" "$FEATURE")"
   local err exit_code=0
-  err="$(_worktree__report_unsynced "$REPO" feature 2>&1 >/dev/null)" || exit_code=$?
+  err="$(_worktree__report_unsynced "$REPO" "$FEATURE" 2>&1 >/dev/null)" || exit_code=$?
   assert_success "report returns 0 with nothing to report" "$exit_code"
   assert_output_empty "no warning printed" "$err"
 }
@@ -352,7 +359,7 @@ test__worktree__sync__brings_behind_worktree_forward() {
   _fixture_feature_checkout
   jj -R "$REPO" new main >/dev/null 2>&1
   local wt_path
-  wt_path="$(_create_secondary_worktree wt-sync feature)"
+  wt_path="$(_create_secondary_worktree wt-sync "$FEATURE")"
   assert_output_not_empty "secondary worktree created" "$wt_path"
 
   # Uncommitted changes in the worktree: an edit to a tracked file plus a
@@ -361,14 +368,14 @@ test__worktree__sync__brings_behind_worktree_forward() {
   printf 'fresh\n' > "$wt_path/fresh.txt"
 
   local new_tip
-  new_tip="$(_advance_branch_bare feature adv.txt "advanced")"
+  new_tip="$(_advance_branch_bare "$FEATURE" adv.txt "advanced")"
   assert_output_not_empty "bare advance produced a commit" "$new_tip"
 
   local out exit_code=0
   out="$(_worktree__sync "$REPO" "$wt_path")" || exit_code=$?
   assert_success "sync succeeds" "$exit_code"
   assert_eq "synced record names branch, old parent and new tip" "$out" \
-    "$(printf 'synced\t%s\t%s\t%s' feature "$FEATURE_TIP" "$new_tip")"
+    "$(printf 'synced\t%s\t%s\t%s' "$FEATURE" "$FEATURE_TIP" "$new_tip")"
   assert_eq "worktree parent is now the branch head" \
     "$(jj -R "$wt_path" --ignore-working-copy log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)" \
     "$new_tip"
@@ -381,7 +388,7 @@ test__worktree__sync__brings_behind_worktree_forward() {
   out="$(_worktree__sync "$REPO" "$wt_path")" || exit_code=$?
   assert_success "second sync succeeds" "$exit_code"
   assert_eq "second sync reports up-to-date" "$out" \
-    "$(printf 'up-to-date\t%s' feature)"
+    "$(printf 'up-to-date\t%s' "$FEATURE")"
 }
 
 test__worktree__record_working_copy__records_uncommitted_work() {
@@ -389,7 +396,7 @@ test__worktree__record_working_copy__records_uncommitted_work() {
   _fixture_feature_checkout
   jj -R "$REPO" new main >/dev/null 2>&1
   local wt_path
-  wt_path="$(_create_secondary_worktree wt-record feature)"
+  wt_path="$(_create_secondary_worktree wt-record "$FEATURE")"
   assert_output_not_empty "secondary worktree created" "$wt_path"
 
   # A file the backend has never seen: the case where the work exists only on
@@ -415,7 +422,7 @@ test__worktree__record_working_copy__clean_worktree_returns_nothing() {
   _fixture_feature_checkout
   jj -R "$REPO" new main >/dev/null 2>&1
   local wt_path
-  wt_path="$(_create_secondary_worktree wt-record-clean feature)"
+  wt_path="$(_create_secondary_worktree wt-record-clean "$FEATURE")"
   assert_output_not_empty "secondary worktree created" "$wt_path"
 
   local op exit_code=0
@@ -433,6 +440,62 @@ test__worktree__record_working_copy__missing_worktree_fails() {
   op="$(_worktree__record_working_copy "$REPO/does-not-exist")" || exit_code=$?
   assert_failure "a missing worktree fails the caller" "$exit_code"
   assert_output_empty "a missing worktree yields no operation id" "$op"
+}
+
+test__worktree__resolve_branch__reads_the_checked_out_task() {
+  setup_workspace "worktree-resolve-branch"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  assert_eq "a project worktree resolves to the project branch" \
+    "$(_worktree__resolve_branch "$REPO" "$REPO")" "$proj_id"
+
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  assert_eq "checking out a task moves the worktree to its branch" \
+    "$(_worktree__resolve_branch "$REPO" "$REPO")" "$task_id"
+
+  # A bare write advances the branch past the worktree, taking the bookmark out
+  # of its ancestry; what the working copy records does not change.
+  run_tt task context add "$task_id" --title "n" --slug "n" <<< "body" >/dev/null 2>&1 || true
+  assert_eq "a worktree left behind is still on its own branch" \
+    "$(_worktree__resolve_branch "$REPO" "$REPO")" "$task_id"
+}
+
+test__worktree__resolve_branch__unaffected_by_bookmarked_descendants() {
+  setup_workspace "worktree-resolve-descendants"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  # The shape no ranking of bookmarks can resolve: the project's own worktree is
+  # parked above a tip that several branches now descend from — a checked-in
+  # child rebased onto it, and freshly created sibling stubs — none of which is
+  # on another's line.
+  task_a=$(create_task "a" "A") || true
+  checkout_task "$task_a" >/dev/null || true
+  edit_file "a.txt" "a"
+  checkpoint_task "A work" >/dev/null || true
+  checkin_task "$task_a" --complete >/dev/null 2>&1 || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_b=$(create_task "b" "B") || true
+  task_c=$(create_task "c" "C") || true
+  run_tt task propagate --from "$proj_id" >/dev/null 2>&1 || true
+
+  assert_eq "the project's worktree is still on the project branch" \
+    "$(_worktree__resolve_branch "$REPO" "$REPO")" "$proj_id"
+  assert_neq "and not on a sibling stub" \
+    "$(_worktree__resolve_branch "$REPO" "$REPO")" "$task_b"
+  assert_neq "and not on the checked-in child" \
+    "$(_worktree__resolve_branch "$REPO" "$REPO")" "$task_a"
+  assert_output_not_empty "the stub tasks exist" "$task_c"
+}
+
+test__worktree__resolve_branch__no_task_no_branch() {
+  setup_workspace "worktree-resolve-none"
+  # A working copy that has never had a task checked out records no task
+  # symlink, and is on no branch at all rather than on the nearest bookmark.
+  local out exit_code=0
+  out="$(_worktree__resolve_branch "$REPO" "$REPO")" || exit_code=$?
+  assert_failure "a worktree with no checked-out task has no branch" "$exit_code"
+  assert_output_empty "nothing printed without a branch" "$out"
 }
 
 test__worktree__find_for_branch__finds_workspace_on_branch() {
