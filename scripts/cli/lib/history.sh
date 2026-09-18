@@ -20,6 +20,13 @@
 # stores the resolved history file path for the owning process; it is not
 # exported so sub-processes never inherit it (they are not the transaction owner).
 #
+# Closing a transaction — by commit or by rollback — unsets TT_TRANSACTION_ID as
+# well as the ownership flag, so that a sub-command the owner runs afterwards
+# opens a transaction of its own. A command that keeps working past its own
+# commit is not unusual (a check-in propagates to the siblings once the merge
+# has landed), and work done then is still work that must be recorded and still
+# work a failure has to unwind.
+#
 # Public surface:
 #   _history__init                 — create an empty .tt/history file if absent
 #   _history__replace_last_line    — rewrite the file's last line when it matches
@@ -225,9 +232,11 @@ _history__commit_transaction() {
   # Replace the last line (in-progress: "<before>:") with the completed entry ("<before>:<after>")
   _history__replace_last_line "$history_file" "${before_op}:" "${before_op}:${after_op}"
 
-  # Clear the abort trap and ownership flag
+  # The transaction is closed: clear the abort trap, and with it every trace
+  # that would make a later sub-command believe it is running inside one.
   trap - ERR EXIT
   unset _TT_TRANSACTION_OWNER
+  unset TT_TRANSACTION_ID
 }
 
 # Usage: __history__abort_transaction REPO
@@ -364,7 +373,9 @@ _history__rollback_transaction() {
     _history__delete_lines "$history_file" "${before_op}:"
   fi
 
-  # Clear the abort trap and ownership flag
+  # The transaction is closed: clear the abort trap, and with it every trace
+  # that would make a later sub-command believe it is running inside one.
   trap - ERR EXIT
   unset _TT_TRANSACTION_OWNER
+  unset TT_TRANSACTION_ID
 }

@@ -346,13 +346,12 @@ files the caller wants to read-modify-write, expands delete-prefixes into exact 
 caller's writer function against the staging directory, commits, reattaches the current worktree,
 and only then advances the bookmark.
 
-That order matters. The caller may ask for the branch-aware reattachment variant, which decides
-whether the worktree is on the branch that moved by ranking candidate branches by fork point — and
-that ranking needs the bookmark still sitting at its old tip. The plain variant tests ancestry alone
-and is indifferent to the order. The branch-aware variant is what a command passes when the branch it
-is writing may be an *ancestor* of the branch the invoking worktree is on: plain descent cannot tell
-the line that moved from a line that forked off it further back, and would drag the worktree onto the
-wrong branch.
+That order matters, because the bookmark advance is what makes the write visible: everything before
+it can still be abandoned. The caller may also ask for the branch-aware reattachment variant, which
+is what a command passes when the branch it is writing may be an *ancestor* of the branch the
+invoking worktree is on: plain descent cannot tell the line that moved from a line that forked off it
+further back, and would drag the worktree onto the wrong branch. That variant asks which branch the
+worktree is on (§6.3) before applying the descent test; the plain variant tests ancestry alone.
 
 ### 5.1 Merge parent order
 
@@ -367,8 +366,9 @@ graph that way:
 
 - **Full-range discovery** (`_task__get_full_range_records`) classifies historical check-ins by the
   shape of a merge's second parent, so a handoff must never appear first.
-- **Worktree branch attribution** (§6.3) separates a branch that was built on top of another from one
-  that was merged into it, which plain ancestry cannot do.
+- **Mainline listing** (`list_mainline_commits`, behind `tt task changelog`) reports a branch's own
+  work by following first parents, and would otherwise attribute the merged-in branch's commits to
+  the receiving branch.
 
 A merge built with the parents reversed would silently misreport both, so the order is asserted in
 the test suites of the three commands that create merges.
@@ -444,21 +444,23 @@ that branch sitting on the previous tip. Such a worktree is **behind**, not brok
 still descending from where it was. The command output reports a hint to re-sync the affected branches.
 
 Reporting a behind worktree, and later syncing it, both need the branch it is **on**, which the
-bookmarks alone no longer say: the write moved the bookmark to a sibling of the worktree's
-working-copy commit, so the nearest bookmarked ancestor degrades to some outer branch.
-`_jj__find_branch_for_commit` answers it from the graph instead, by locating the **fork point** —
-the deepest commit the working copy's ancestry shares with any bookmark's — and then ranking the
-bookmarks that descend from it:
+bookmarks no longer say: the write moved the bookmark to a sibling of the worktree's working-copy
+commit, so the nearest bookmarked ancestor degrades to some outer branch.
 
-- a bookmark sitting **at** the fork point is the branch: the working copy is parked on its tip;
-- the fork point must lie on a candidate's **mainline** (§5.1), since a candidate reaching it only
-  through a merge holds it on some other branch's line;
-- a candidate with another candidate's tip on its mainline **between** the fork point and itself was
-  built on top of that branch, so the fork point belongs to the branch underneath.
+The answer is **read, not inferred**. A worktree's working copy carries the task symlink
+`tt task checkout` plants in it — `TASK.md -> .tt/task/<suffix>/TASK.md` — and branch names *are*
+task IDs, so the symlink recorded in the working-copy commit names the branch outright.
+`_worktree__resolve_branch_at` reads it and maps the suffix to whichever of the task or project
+bookmarks exists. A working copy recording no such symlink, or naming a task with no bookmark, is on
+**no** branch: it is reported as such, and `tt worktree sync` refuses rather than guessing.
 
-The last two rules are what keep a propagation — which reparents every sibling branch onto the tip a
-check-in just created — from re-attributing the receiving branch's own worktree to each sibling in
-turn.
+The commit graph cannot answer this question, which is why tt does not ask it. A working copy is
+parked as an empty child of a branch tip, so the branch is whichever one owned that tip — and a
+branch advancing past a commit has the same shape as a branch forked from it: a bookmark ending a
+chain whose first-parent line runs through that commit. What separates the two is which bookmark
+pointed there at the time, which is history, not shape. Any ranking of the bookmarks around a working
+copy is therefore guesswork, and guesses wrongly as soon as a commit acquires several bookmarked
+descendants — which propagation, check-in and task creation all produce.
 
 ## 7. Working-copy-bound commands
 
@@ -501,9 +503,15 @@ a tidiness: an entry left open is a lock nobody holds, and every later branch wr
 until `tt history undo --force` or `tt history unlock --force` clears it.
 
 Sub-commands inherit `TT_TRANSACTION_ID` through the environment, so their own `begin` is a no-op and
-the whole run — `tt task checkin --complete --propagate` invoking `complete` and `propagate`, say —
-records a single entry. Only the process that opened the transaction owns it: `_TT_TRANSACTION_OWNER`
-is deliberately not exported, so a sub-command can neither commit nor roll back its parent's work.
+the whole run — `tt task checkin --complete` invoking `complete`, say — records a single entry. Only
+the process that opened the transaction owns it: `_TT_TRANSACTION_OWNER` is deliberately not
+exported, so a sub-command can neither commit nor roll back its parent's work.
+
+Closing a transaction releases the ID as well as the ownership flag. A command does not necessarily
+stop when its own transaction commits — a check-in propagates to the sibling branches once the merge
+has landed, and `--delete` removes the task afterwards — and that later work is still work that must
+be recorded and unwound on failure. Leaving the ID set would make each of those sub-commands believe
+it was nested: no entry of its own, no abort trap, and a failure that unwinds nothing.
 
 ### 8.1 Leaving a transaction open is not an option
 
