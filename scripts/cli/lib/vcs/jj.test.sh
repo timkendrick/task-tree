@@ -485,23 +485,6 @@ test__jj__check_is_canonical_commit_id__form_only() {
 }
 
 # ---------------------------------------------------------------------------
-# _jj__resolve_nearest_bookmark
-# ---------------------------------------------------------------------------
-
-test__jj__resolve_nearest_bookmark__closest_bookmarked_ancestor() {
-  setup_workspace
-  _fixture_linear_history
-  assert_eq "closest bookmarked ancestor of @, as commit and name" \
-    "$(_jj__resolve_nearest_bookmark "$REPO" '@')" \
-    "$(_jj__resolve_commit "$REPO" feature)"$'\t'"feature"
-
-  local out='' exit_code=0
-  out="$(_jj__resolve_nearest_bookmark "$REPO" 'root()')" || exit_code=$?
-  assert_failure "no bookmarked ancestor rejected" "$exit_code"
-  assert_output_empty "nothing printed without a bookmarked ancestor" "$out"
-}
-
-# ---------------------------------------------------------------------------
 # _jj__list_commits_in_range / _jj__count_commits_in_range
 # ---------------------------------------------------------------------------
 

@@ -20,6 +20,30 @@ test_task_show__show_current_task() {
 }
 
 
+# A write issued from another worktree advances this worktree's branch without
+# moving its working copy, so the bookmark ends up on a sibling of the
+# working-copy commit and the nearest bookmarked ancestor is the project the
+# task forked from. Show must still report the task checked out here.
+test_task_show__after_the_branch_advanced_elsewhere() {
+  setup_workspace "show-advanced-elsewhere"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mine" "My Task" "Task description") || true
+  other_id=$(create_task "other" "Other") || true
+  other_wt=$(create_task_worktree "$other_id")
+  checkout_task "$task_id" >/dev/null || true
+
+  run_tt_in_worktree "$other_wt" task edit "$task_id" --title "My Task, advanced" >/dev/null 2>&1 || true
+  assert_not_ancestor "this worktree is left behind its branch" "$task_id" '@'
+
+  output="" exit_code=0
+  output=$(run_tt task show 2>&1) || exit_code=$?
+  assert_success "show succeeds" "$exit_code"
+  assert_contains "the task checked out here is shown" "$output" "task:     $task_id"
+  assert_contains "its metadata is read from the advanced branch" "$output" "My Task, advanced"
+}
+
+
 # A task checked out in a worktree of its own is also, until something else is
 # checked out there, under the workspace that was parked above its tip: two
 # worktrees then sit on one branch, which must not disturb the command.

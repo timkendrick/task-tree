@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # Options:
 #   --title TITLE          Task title (prompted if missing and stdin is a TTY)
 #   --slug SLUG            Human-readable slug (required in non-interactive mode; prompted otherwise)
-#   --parent TASK-ID       Parent task ID (default: current branch); mutually exclusive with --project
+#   --parent TASK-ID       Parent task ID (default: the task checked out here); mutually exclusive with --project
 #   --project              Create a parentless project task; mutually exclusive with --parent
 #   --target COMMIT-REV    (with --project) Fork project branch from this revision (default: current @)
 #   --label LABEL          Add a label (repeatable)
@@ -45,7 +45,8 @@ Create a task file and branch bookmark for task-tree bootstrap.
 Options:
   --title TITLE         Task title/summary (prompted if missing and interactive)
   --slug SLUG           Human-readable slug (required in non-interactive mode; prompted otherwise)
-  --parent TASK-ID      Parent task ID (default: current branch); mutually exclusive with --project
+  --parent TASK-ID      Parent task ID (default: the task checked out here); mutually
+                        exclusive with --project
   --project             Create a parentless project task; mutually exclusive with --parent
   --target COMMIT-REV   (with --project) Fork project branch from this revision (default: current @)
   --label LABEL         Add a label (repeatable)
@@ -90,9 +91,11 @@ EOF
 # When PARENT_ARG is non-empty: resolves that task-id/bookmark. If it's a task or project
 #   branch, derives task file path from the ID and outputs the bookmark to update.
 #
-# When PARENT_ARG is empty: calls _task__resolve_current to use the current branch.
+# When PARENT_ARG is empty: parents the task under the task this worktree has checked
+#   out, forking from that branch's tip.
 #
-# Exits 1 if parent not found.
+# Exits 1 if parent not found, and when PARENT_ARG is empty with no task checked out:
+# a task needs a parent, and nothing but the worktree's own record says which one.
 resolve_parent() {
   local parent_arg="$1"
   local repo="$2"
@@ -117,7 +120,21 @@ resolve_parent() {
       printf '%s\n\n\n' "$parent_rev"
     fi
   else
-    _task__resolve_current "$repo" "$task_prefix" "$project_prefix"
+    # Default: the task this worktree has checked out.
+    local parent_task_file parent_bookmark
+    { read -r parent_task_file; read -r parent_bookmark; } \
+      < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
+    if [[ -z "$parent_bookmark" ]]; then
+      _ui__log "Error: Not on a task or project branch."
+      _ui__log "  Pass --parent <task-id>, or --project to create a project."
+      exit 1
+    fi
+    local parent_rev
+    if ! parent_rev="$(_task__resolve_revision "$repo" "$parent_bookmark")"; then
+      _ui__log "Error: Could not resolve branch '$parent_bookmark'."
+      exit 1
+    fi
+    printf '%s\n%s\n%s\n' "$parent_rev" "$parent_task_file" "$parent_bookmark"
   fi
 }
 
