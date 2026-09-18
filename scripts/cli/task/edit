@@ -104,7 +104,7 @@ main() {
   # Resolve bookmark and task_file
   local bookmark task_file
   if [[ -z "$task_id_arg" ]]; then
-    { read -r _rev; read -r task_file; read -r bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
+    { read -r task_file; read -r bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
 
     if [[ -z "$bookmark" ]]; then
       _ui__log "Error: Not on a task or project branch."

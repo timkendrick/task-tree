@@ -34,10 +34,8 @@
 #   _task__resolve_range             — parent bookmark + upper bound only
 #   _task__resolve_fork_point        — fork point commit between parent and upper bound
 #   _task__get_full_range_records    — every commit component attributable to a task
-#   _task__resolve_current           — rev/task-file/bookmark of the current branch
-#   _task__resolve_current_revision  — commit ID of the current branch
-#   _task__resolve_current_file      — task file path of the current branch
-#   _task__resolve_current_branch    — bookmark name of the current branch
+#   _task__resolve_current           — task-file/bookmark of the task checked out here
+#   _task__resolve_current_branch    — bookmark name of the task checked out here
 #   _task__collect_descendant_dirs   — task dirs for all descendants of a task
 #   _task__write_stub                — minimal task file stub for a new task
 #   _task__commit_on_branch          — staged bare write committed onto a bookmark
@@ -1411,73 +1409,46 @@ __task__commit_staged() {
 
 # Usage: _task__resolve_current REPO TASK_PREFIX PROJECT_PREFIX
 #
-# Resolve the "current branch" (closest ancestor of the working copy @ that has a bookmark).
-# The *closest* bookmarked ancestor matters: when @ is a working-copy commit
-# (direct descendant of a task), we get the task bookmark, not a more distant
-# ancestor like main.
-# Outputs three lines to stdout:
-#   line 1: rev       — commit ID at the current branch, or '@' if no bookmarks in ancestry
-#   line 2: task_file — path to .tt/task/<slug>-<hex>.md, or empty if current branch is a root
-#   line 3: bookmark  — bookmark name, or empty if current branch is a root
+# Resolve the task REPO has checked out — the branch its working copy records,
+# read from the task symlink `tt task checkout` planted there
+# (_worktree__resolve_branch_at). REPO is whichever worktree the command is
+# operating on, so each worktree answers for itself.
 #
-# Exits 1 if the current branch cannot be resolved.
+# Outputs two lines to stdout:
+#   line 1: task_file — path to .tt/task/<slug>-<hex>/TASK.md, or empty if no task
+#   line 2: bookmark  — task or project bookmark name, or empty if no task
+#
+# Both lines are empty when the working copy records no task, or records one
+# whose branch no longer exists: the worktree is then on no branch at all. That
+# is a successful answer, not a failure — callers that need a task report the
+# absence themselves.
 _task__resolve_current() {
   local repo="$1"
   local task_prefix="$2"
   local project_prefix="$3"
-  local nearest current_branch parent_rev
 
-  nearest="$(_repo__resolve_nearest_bookmark "$repo" '@')" || nearest=''
-  parent_rev="${nearest%%$'\t'*}"
-  current_branch="${nearest#*$'\t'}"
+  local branch
+  branch="$(_worktree__resolve_branch_at "$repo" '@')" || branch=''
 
-  if [[ -z "$nearest" ]]; then
-    printf '%s\n\n\n' '@'
+  if _task__check_is_task_branch "$branch" "$task_prefix"; then
+    printf '%s\n%s\n' "$(_path__task_file "${branch#$task_prefix}")" "$branch"
+  elif _task__check_is_project_branch "$branch" "$project_prefix"; then
+    printf '%s\n%s\n' "$(_path__task_file "${branch#$project_prefix}")" "$branch"
   else
-    if _task__check_is_task_branch "$current_branch" "$task_prefix"; then
-      printf '%s\n%s\n%s\n' "$parent_rev" "$(_path__task_file "${current_branch#$task_prefix}")" "$current_branch"
-    elif _task__check_is_project_branch "$current_branch" "$project_prefix"; then
-      printf '%s\n%s\n%s\n' "$parent_rev" "$(_path__task_file "${current_branch#$project_prefix}")" "$current_branch"
-    else
-      printf '%s\n\n\n' "$parent_rev"
-    fi
+    printf '\n\n'
   fi
-}
-
-# Usage: _task__resolve_current_revision REPO TASK_PREFIX PROJECT_PREFIX
-#
-# Convenience wrapper around _task__resolve_current that returns only the commit ID
-# (line 1 of _task__resolve_current's output). Prints the commit ID to stdout, or
-# '@' if no bookmarks are found in the working copy ancestry.
-_task__resolve_current_revision() {
-  local resolve_output
-  resolve_output="$(_task__resolve_current "$@")" || return $?
-  printf '%s' "${resolve_output%%$'\n'*}"
-}
-
-# Usage: _task__resolve_current_file REPO TASK_PREFIX PROJECT_PREFIX
-#
-# Convenience wrapper around _task__resolve_current that returns only the task file path
-# (line 2 of _task__resolve_current's output). Prints the path to stdout, or an empty
-# string if the current branch is not a task or project branch.
-_task__resolve_current_file() {
-  local resolve_output
-  resolve_output="$(_task__resolve_current "$@")" || return $?
-  local _rev line=''
-  { read -r _rev; read -r line; } <<< "$resolve_output" || true
-  printf '%s' "$line"
 }
 
 # Usage: _task__resolve_current_branch REPO TASK_PREFIX PROJECT_PREFIX
 #
 # Convenience wrapper around _task__resolve_current that returns only the bookmark name
-# (line 3 of _task__resolve_current's output). Prints the bookmark name to stdout, or
-# an empty string if no bookmark is found in the working copy ancestry.
+# (line 2 of _task__resolve_current's output). Prints the bookmark name to stdout, or
+# an empty string when the worktree records no task.
 _task__resolve_current_branch() {
   local resolve_output
   resolve_output="$(_task__resolve_current "$@")" || return $?
-  local _rev _file line=''
-  { read -r _rev; read -r _file; read -r line; } <<< "$resolve_output" || true
+  local _file line=''
+  { read -r _file; read -r line; } <<< "$resolve_output" || true
   printf '%s' "$line"
 }
 

@@ -171,7 +171,7 @@ main() {
     fi
     task_file="$(_path__task_file "$task_slug")"
   else
-    { read -r _rev; read -r task_file; read -r task_id; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
+    { read -r task_file; read -r task_id; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$task_id" ]]; then
       _ui__log "Error: Not on a task or project branch. Pass a task ID explicitly."
       exit 1

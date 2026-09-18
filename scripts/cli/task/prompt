@@ -69,7 +69,7 @@ main() {
   local branch task_file task_suffix
 
   if [[ -z "$task_id_arg" ]]; then
-    { read -r _rev; read -r task_file; read -r branch; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
+    { read -r task_file; read -r branch; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$branch" ]]; then
       _ui__log "Error: Not on a task or project branch."
       exit 1

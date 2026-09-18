@@ -41,7 +41,6 @@ _repo__check_range_has_conflicts() { _jj__check_range_has_conflicts "$@"; }
 _repo__check_is_ancestor()         { _jj__check_is_ancestor "$@"; }
 _repo__filter_commits_reachable_from() { _jj__filter_commits_reachable_from "$@"; }
 _repo__find_fork_point_commit()    { _jj__find_fork_point_commit "$@"; }
-_repo__resolve_nearest_bookmark()  { _jj__resolve_nearest_bookmark "$@"; }
 _repo__list_commits_in_range()     { _jj__list_commits_in_range "$@"; }
 _repo__list_commits_in_dag_range() { _jj__list_commits_in_dag_range "$@"; }
 _repo__count_commits_in_range()    { _jj__count_commits_in_range "$@"; }
