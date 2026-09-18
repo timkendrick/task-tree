@@ -461,6 +461,15 @@ pointed there at the time, which is history, not shape. Any ranking of the bookm
 copy is therefore guesswork, and guesses wrongly as soon as a commit acquires several bookmarked
 descendants — which propagation, check-in and task creation all produce.
 
+This is the **only** mechanism. "Which task is checked out here" is one question, so reporting a
+behind worktree, naming the rows of `tt worktree list`, and resolving the current task for every
+command that defaults to it all go through the same read: `_task__resolve_current` is
+`_worktree__resolve_branch_at` applied to the invoking worktree's `@`, and returns the task file
+alongside the branch. There is no graph-derived fallback to fall back *to* — the backend carries no
+nearest-bookmark operation at all — so a worktree recording no task is reported as holding none,
+and the commands that need one (`tt task current`, `tt task checkpoint`, `tt task create` without
+`--parent`) fail instead of adopting whichever branch lies below.
+
 ## 7. Working-copy-bound commands
 
 Three commands legitimately require a working copy, and only they may reach the restricted
