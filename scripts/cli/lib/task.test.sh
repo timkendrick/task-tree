@@ -512,4 +512,62 @@ test__task__list_unmerged_changes__reports_range_paths() {
   assert_not_contains "base.txt excluded by prefix" "$filtered" "base.txt"
 }
 
+# ---------------------------------------------------------------------------
+# _task__resolve_current
+# ---------------------------------------------------------------------------
+
+# Emits the two lines _task__resolve_current prints as one tab-separated record,
+# so a single assertion covers the whole answer.
+_resolve_current_record() {
+  local task_file bookmark
+  { read -r task_file; read -r bookmark; } < <(_task__resolve_current "$REPO" \
+    "$(_workspace__get_task_prefix "$REPO")" "$(_workspace__get_project_prefix "$REPO")")
+  printf '%s\t%s' "$task_file" "$bookmark"
+}
+
+test__task__resolve_current__reports_the_checked_out_task() {
+  setup_workspace "resolve-current-checked-out"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  assert_eq "a project worktree reports the project and its task file" \
+    "$(_resolve_current_record)" \
+    "$(_path__task_file "${proj_id#project/}")"$'\t'"$proj_id"
+
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  assert_eq "checking out a task reports that task and its task file" \
+    "$(_resolve_current_record)" \
+    "$(_path__task_file "${task_id#task/}")"$'\t'"$task_id"
+}
+
+test__task__resolve_current__unaffected_by_a_branch_advance() {
+  setup_workspace "resolve-current-advanced"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  other_id=$(create_task "other" "Other") || true
+  other_wt=$(create_task_worktree "$other_id")
+  checkout_task "$task_id" >/dev/null || true
+
+  # A write issued from another worktree advances this branch without moving
+  # this working copy, leaving the bookmark on a sibling of the working-copy
+  # commit rather than an ancestor of it: the shape in which the nearest
+  # bookmarked ancestor is the project the task forked from.
+  run_tt_in_worktree "$other_wt" task context add "$task_id" --title "Note" --slug "note" \
+    <<< "body" >/dev/null 2>&1 || true
+  assert_not_ancestor "the fixture leaves the worktree behind its branch" "$task_id" '@'
+
+  assert_eq "a worktree left behind still reports its own task" \
+    "$(_resolve_current_record)" \
+    "$(_path__task_file "${task_id#task/}")"$'\t'"$task_id"
+}
+
+test__task__resolve_current__reports_no_task_when_none_is_recorded() {
+  setup_workspace "resolve-current-none"
+  # Nothing has ever been checked out here, so the working copy records no task
+  # and the worktree is on no branch — not on whichever bookmark lies below it.
+  assert_eq "a worktree with no checked-out task reports no task" \
+    "$(_resolve_current_record)" $'\t'
+}
+
 run_tests "tt lib/task (unit)"
