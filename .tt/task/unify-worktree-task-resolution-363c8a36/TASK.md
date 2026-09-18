@@ -1,6 +1,6 @@
 ---
 title: "Resolve a worktree's task the same way everywhere"
-status: TODO
+status: IN-PROGRESS
 created: 2026-09-18T10:50:35Z
 updated: 2026-09-18T10:50:35Z
 ---
