@@ -35,10 +35,11 @@ test_worktree_list__shows_task_id_for_task_workspace() {
   assert_contains "output contains task ID" "$output" "$task_id"
 }
 
-test_worktree_list__task_inferred_from_ancestry() {
-  # The workspace working copy has a plain jj commit on top of the task bookmark tip.
-  # _task__resolve_current should still find the task bookmark in the ancestry.
-  setup_workspace "list-ancestry"
+test_worktree_list__task_read_beyond_the_bookmark_tip() {
+  # The workspace working copy has a plain jj commit on top of the task bookmark
+  # tip. The task travels with the working copy that records it, so commits made
+  # beyond the bookmark do not change which task the worktree holds.
+  setup_workspace "list-beyond-tip"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "my-task" "My Task") || true
@@ -50,7 +51,47 @@ test_worktree_list__task_inferred_from_ancestry() {
   output="" exit_code=0
   output=$(run_tt worktree list 2>&1) || exit_code=$?
   assert_success "list succeeds" "$exit_code"
-  assert_contains "output infers task ID from ancestry" "$output" "$task_id"
+  assert_contains "output still names the checked-out task" "$output" "$task_id"
+}
+
+# Commit ID of the working-copy commit in the worktree at PATH, read without
+# snapshotting that worktree.
+_worktree_wc_commit() {
+  jj -R "$1" --ignore-working-copy log -r '@' --no-graph -T 'commit_id' 2>/dev/null
+}
+
+test_worktree_list__task_survives_a_sibling_branch_advance() {
+  # Two worktrees on different branches. A write issued from one of them
+  # advances the other's branch without moving its working copy, so that
+  # worktree's bookmark ends up on a sibling of its working-copy commit and the
+  # nearest bookmarked ancestor of both worktrees is the project below them.
+  # Each worktree must still be listed against the task it has checked out.
+  setup_workspace "list-sibling-advance"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  first_id=$(create_task "first" "First") || true
+  second_id=$(create_task "second" "Second") || true
+  second_wt=$(create_task_worktree "$second_id")
+  checkout_task "$first_id" >/dev/null || true
+
+  run_tt task edit "$second_id" --title "Second, advanced" >/dev/null 2>&1 || true
+  assert_not_ancestor "the dedicated worktree is left behind its branch" \
+    "$second_id" "$(_worktree_wc_commit "$second_wt")"
+
+  output="" exit_code=0
+  output=$(run_tt worktree list --quiet --task "$second_id" 2>&1) || exit_code=$?
+  assert_success "list --task on the advanced branch succeeds" "$exit_code"
+  assert_eq "the worktree left behind still holds its own task" "$output" "$second_id"
+
+  output="" exit_code=0
+  output=$(run_tt worktree list --quiet --task "$first_id" 2>&1) || exit_code=$?
+  assert_success "list --task on the other branch succeeds" "$exit_code"
+  assert_eq "the default worktree holds the task it checked out" "$output" "default"
+
+  output="" exit_code=0
+  output=$(run_tt worktree list --quiet --task "$proj_id" 2>&1) || exit_code=$?
+  assert_success "list --task on the project succeeds" "$exit_code"
+  assert_output_empty "no worktree is attributed to the project below them" "$output"
 }
 
 test_worktree_list__repo_flag() {
