@@ -1,6 +1,6 @@
 ---
 title: "Check for a stale canonical workspace before acting"
-status: TODO
+status: IN-PROGRESS
 created: 2026-09-17T17:13:34Z
 updated: 2026-09-17T17:13:34Z
 ---
