@@ -35,6 +35,7 @@ test_task_show__after_the_branch_advanced_elsewhere() {
 
   run_tt_in_worktree "$other_wt" task edit "$task_id" --title "My Task, advanced" >/dev/null 2>&1 || true
   assert_not_ancestor "this worktree is left behind its branch" "$task_id" '@'
+  assert_task_symlink "the worktree still records the task it checked out" "$task_id"
 
   output="" exit_code=0
   output=$(run_tt task show 2>&1) || exit_code=$?

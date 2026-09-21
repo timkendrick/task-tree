@@ -1334,35 +1334,56 @@ assert_frontmatter_order() {
 # ---------------------------------------------------------------------------
 # Current Task / Misc Assertions
 # ---------------------------------------------------------------------------
+#
+# Two different questions, and two sets of assertions for them:
+#
+#   Where does a working copy sit in the commit graph?  assert_wc_on_branch
+#   Which task does a worktree have checked out?        assert_task_symlink
+#
+# They agree in a healthy checkout and part company as soon as a branch write
+# moves a bookmark off the worktree's line: the working copy's nearest
+# bookmarked ancestor is then some outer branch, while the task it holds has
+# not changed. assert_current_task requires both, which is what a checkout
+# leaves behind.
 
-# assert_current_task LABEL EXPECTED_TASK_ID
+# Nearest bookmarked ancestor of WORKTREE's @ (default: $REPO), or empty when
+# nothing in its ancestry carries a bookmark.
+# Usage: branch=$(wc_branch [WORKTREE])
+wc_branch() {
+  local worktree="${1:-$REPO}"
+  local actual
+  actual="$(jj -R "$worktree" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
+    -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || true
+  printf '%s' "${actual%%,*}"
+}
+
+# assert_wc_on_branch LABEL EXPECTED_BOOKMARK [WORKTREE]
+assert_wc_on_branch() {
+  local label="$1" expected="$2" worktree="${3:-$REPO}"
+  assert_eq "$label" "$(wc_branch "$worktree")" "$expected"
+}
+
+# assert_wc_on_branch_matches LABEL EXPECTED_ERE_PATTERN [WORKTREE]
+assert_wc_on_branch_matches() {
+  local label="$1" pattern="$2" worktree="${3:-$REPO}"
+  assert_matches "$label" "$(wc_branch "$worktree")" "$pattern"
+}
+
+# The task WORKTREE (default: $REPO) has checked out, as recorded by the root
+# TASK.md symlink `tt task checkout` plants there.
+# Usage: assert_task_symlink LABEL TASK_ID [WORKTREE]
+assert_task_symlink() {
+  local label="$1" task_id="$2" worktree="${3:-$REPO}"
+  assert_symlink "$label" "$worktree/TASK.md" ".tt/task/${task_id#*/}/TASK.md"
+}
+
+# Both halves of a checkout: WORKTREE records TASK_ID as the task it holds, and
+# its working copy is parked on that task's branch.
+# Usage: assert_current_task LABEL TASK_ID [WORKTREE]
 assert_current_task() {
-  local label="$1" expected="$2"
-  local actual
-  actual="$(jj -R "$REPO" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
-    -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || true
-  actual="${actual%%,*}"
-  assert_eq "$label" "$actual" "$expected"
-}
-
-# assert_current_task_matches LABEL EXPECTED_ERE_PATTERN
-assert_current_task_matches() {
-  local label="$1" pattern="$2"
-  local actual
-  actual="$(jj -R "$REPO" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
-    -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || true
-  actual="${actual%%,*}"
-  assert_matches "$label" "$actual" "$pattern"
-}
-
-# assert_on_main LABEL
-assert_on_main() {
-  local label="$1"
-  local actual
-  actual="$(jj -R "$REPO" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
-    -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || true
-  actual="${actual%%,*}"
-  assert_eq "$label" "$actual" "main"
+  local label="$1" task_id="$2" worktree="${3:-$REPO}"
+  assert_task_symlink "$label (checked-out task)" "$task_id" "$worktree"
+  assert_wc_on_branch "$label (working copy position)" "$task_id" "$worktree"
 }
 
 # ---------------------------------------------------------------------------

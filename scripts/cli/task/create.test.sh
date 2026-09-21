@@ -42,7 +42,7 @@ test_task_create__create_with_checkout() {
   task_id=$(run_tt task create --slug "mytask" --title "My Task" --checkout <<< "" 2>/dev/null | tail -1) || true
   assert_success "create with --checkout succeeds" "$?"
   assert_matches "task ID format" "$task_id" "task/%mytask%"
-  assert_current_task_matches "WC on new task" "task/%mytask%"
+  assert_wc_on_branch_matches "WC on new task" "task/%mytask%"
   assert_task_status "status is IN-PROGRESS" "$task_id" "IN-PROGRESS"
 }
 

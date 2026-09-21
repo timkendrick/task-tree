@@ -77,6 +77,8 @@ test_worktree_list__task_survives_a_sibling_branch_advance() {
   run_tt task edit "$second_id" --title "Second, advanced" >/dev/null 2>&1 || true
   assert_not_ancestor "the dedicated worktree is left behind its branch" \
     "$second_id" "$(_worktree_wc_commit "$second_wt")"
+  assert_task_symlink "the dedicated worktree records its own task" "$second_id" "$second_wt"
+  assert_task_symlink "the default worktree records the task it checked out" "$first_id"
 
   output="" exit_code=0
   output=$(run_tt worktree list --quiet --task "$second_id" 2>&1) || exit_code=$?
