@@ -92,6 +92,36 @@ test_worktree_switch__defaults_to_current_worktree() {
   assert_eq "HEAD points to task worktree" "$resolved_head" "$canonical_worktree"
 }
 
+test_worktree_switch__previous_task_comes_from_the_head_worktree() {
+  # A switch moves HEAD, so the task it leaves behind is the one the HEAD
+  # worktree holds — not the one the worktree running the command holds.
+  setup_workspace "switch-previous-task"
+  local proj_id task_a task_b wt_b
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null 2>&1 || true
+  task_a=$(create_task "a" "A") || true
+  task_b=$(create_task "b" "B") || true
+  create_task_worktree "$task_a" --switch >/dev/null
+  wt_b=$(create_task_worktree "$task_b")
+
+  # HEAD is on task A's worktree; the repo worktree, where the command runs,
+  # still holds the project.
+  assert_task_symlink "the invoking worktree holds the project" "$proj_id"
+
+  local record="$_TEST_ROOT/switch-previous-task.txt"
+  mkdir -p "$REPO/.tt/hooks"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$TT_PREVIOUS_TASK_ID" > "%s"\n' "$record" \
+    > "$REPO/.tt/hooks/pre-checkout"
+  chmod +x "$REPO/.tt/hooks/pre-checkout"
+
+  output="" exit_code=0
+  output=$(run_tt worktree switch "$wt_b" 2>&1) || exit_code=$?
+  assert_success "switch succeeds" "$exit_code"
+  assert_eq "the outgoing task is the one HEAD pointed at" \
+    "$(cat "$record" 2>/dev/null)" "$task_a"
+}
+
+
 test_worktree_switch__no_arg_outside_worktree_fails() {
   setup_workspace "switch-no-arg-outside"
   # Run switch with no arg from a temp dir that is not inside any jj workspace
