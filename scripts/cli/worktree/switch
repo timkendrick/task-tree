@@ -114,8 +114,10 @@ main() {
   local outgoing_worktree previous_task_id
   outgoing_worktree="$(_workspace__get_active_worktree "$workspace_dir")" || outgoing_worktree="$repo"
 
-  # Resolve previous task ID from outgoing worktree
-  previous_task_id="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")" || true
+  # Resolve previous task ID from the outgoing worktree — the one HEAD points
+  # at, which is what the switch moves away from and is not necessarily the
+  # worktree the command runs in.
+  previous_task_id="$(_task__resolve_current_branch "$outgoing_worktree" "$task_prefix" "$project_prefix")" || true
 
   # Dirty check on outgoing worktree
   if ! _worktree__check_clean "$outgoing_worktree"; then

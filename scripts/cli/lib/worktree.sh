@@ -77,12 +77,15 @@ _worktree__list_entries() {
   done <<< "$ws_raw"
 }
 
-# Usage: _worktree__list REPO TASK_PREFIX PROJECT_PREFIX
+# Usage: _worktree__list REPO
 # Prints tab-separated workspace data, one line per workspace:
 #   name\tpath\ttask_id
-# path is empty string if unavailable; task_id is empty string if unresolved.
+# path is empty string if unavailable; task_id is empty string if the worktree
+# holds no task — each worktree's task is the one its own working copy records
+# (_worktree__resolve_branch), so a worktree a branch write has left behind is
+# still named by the task it has checked out.
 _worktree__list() {
-  local repo="$1" task_prefix="$2" project_prefix="$3"
+  local repo="$1"
   local entries
   entries="$(_worktree__list_entries "$repo")" || return 0
   local ws_name ws_path task_id
@@ -91,7 +94,7 @@ _worktree__list() {
 
     task_id=''
     if [[ -n "$ws_path" && -d "$ws_path" ]]; then
-      task_id="$(_task__resolve_current_branch "$ws_path" "$task_prefix" "$project_prefix" 2>/dev/null)" || true
+      task_id="$(_worktree__resolve_branch "$repo" "$ws_path" 2>/dev/null)" || true
     fi
 
     printf '%s\t%s\t%s\n' "$ws_name" "$ws_path" "$task_id"

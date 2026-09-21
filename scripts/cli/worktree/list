@@ -96,7 +96,7 @@ main() {
   local -a ws_is_current=()
 
   local ws_data
-  ws_data="$(_worktree__list "$repo" "$task_prefix" "$project_prefix")" || ws_data=''
+  ws_data="$(_worktree__list "$repo")" || ws_data=''
 
   while IFS=$'\t' read -r ws_name ws_path task_id; do
     [[ -z "$ws_name" ]] && continue

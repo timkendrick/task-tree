@@ -208,7 +208,7 @@ main() {
     child_slug="${child_bookmark#"$task_prefix"}"
     task_file="$(_path__task_file "$child_slug")"
   else
-    { read -r _rev; read -r task_file; read -r child_bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
+    { read -r task_file; read -r child_bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$child_bookmark" ]]; then
       _ui__log "Error: Not on a task or project branch."
       exit 1

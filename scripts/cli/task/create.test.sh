@@ -42,7 +42,7 @@ test_task_create__create_with_checkout() {
   task_id=$(run_tt task create --slug "mytask" --title "My Task" --checkout <<< "" 2>/dev/null | tail -1) || true
   assert_success "create with --checkout succeeds" "$?"
   assert_matches "task ID format" "$task_id" "task/%mytask%"
-  assert_current_task_matches "WC on new task" "task/%mytask%"
+  assert_wc_on_branch_matches "WC on new task" "task/%mytask%"
   assert_task_status "status is IN-PROGRESS" "$task_id" "IN-PROGRESS"
 }
 
@@ -86,6 +86,21 @@ test_task_create__invalid_slug_rejected() {
   output="" exit_code=0
   output=$(run_tt task create --slug "UPPERCASE" --title "Bad" <<< "" 2>&1) || exit_code=$?
   assert_failure "UPPERCASE slug rejected" "$exit_code"
+}
+
+
+test_task_create__no_task_checked_out_rejected() {
+  # A task needs a parent, and with nothing checked out nothing records which
+  # one it should be: the command says so rather than forking a parentless task
+  # from whichever bookmark happens to lie below the working copy.
+  setup_workspace "create-no-current"
+  output="" exit_code=0
+  output=$(run_tt task create --slug "orphan" --title "Orphan" <<< "" 2>&1) || exit_code=$?
+  assert_failure "create with nothing checked out rejected" "$exit_code"
+  assert_contains "error explains the branch requirement" "$output" "Not on a task or project branch"
+  assert_contains "error offers --parent" "$output" "--parent"
+  assert_contains "error offers --project" "$output" "--project"
+  assert_revset_count "no branch was created" 'bookmarks()' 1
 }
 
 

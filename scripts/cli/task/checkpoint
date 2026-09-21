@@ -92,8 +92,8 @@ main() {
   workspace_dir="$(_workspace__get_dir "$repo")" || true
 
   # Resolve current branch
-  local current_rev task_file bookmark
-  { read -r current_rev; read -r task_file; read -r bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
+  local task_file bookmark
+  { read -r task_file; read -r bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
 
   # Precondition: must be on a task or project branch
   if [[ -z "$bookmark" ]]; then
