@@ -23,7 +23,7 @@ test_workspace_repo__alias_tt_repo() {
 test_workspace_repo__from_worktree_resolves_canonical() {
   setup_workspace "ws-repo-from-wt"
   proj_id=$(create_project "proj" "Project") || true
-  task_id=$(create_task "my-task" "My Task") || true
+  task_id=$(create_task_under "$proj_id" "my-task" "My Task") || true
 
   # Check out the task with a dedicated worktree
   worktree_path=$(create_task_worktree "$task_id")

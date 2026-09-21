@@ -177,7 +177,6 @@ Signatures, argument conventions and return values are documented on the backend
 | `check_is_ancestor` | Whether one revision is an ancestor of another |
 | `filter_commits_reachable_from` | Which of the given commits a revision can reach |
 | `find_fork_point_commit` | Where two revisions' histories diverge |
-| `resolve_nearest_bookmark` | Commit ID and name of the closest bookmarked ancestor of a revision |
 | `check_is_canonical_commit_id` | Whether text has the form of a full commit ID, so it needs no resolution |
 | `list_commits_in_range` | Commit IDs in a range, oldest first |
 | `list_commits_in_dag_range` | Commits descended from a base, up to a tip |
@@ -461,6 +460,15 @@ chain whose first-parent line runs through that commit. What separates the two i
 pointed there at the time, which is history, not shape. Any ranking of the bookmarks around a working
 copy is therefore guesswork, and guesses wrongly as soon as a commit acquires several bookmarked
 descendants — which propagation, check-in and task creation all produce.
+
+This is the **only** mechanism. "Which task is checked out here" is one question, so reporting a
+behind worktree, naming the rows of `tt worktree list`, and resolving the current task for every
+command that defaults to it all go through the same read: `_task__resolve_current` is
+`_worktree__resolve_branch_at` applied to the invoking worktree's `@`, and returns the task file
+alongside the branch. There is no graph-derived fallback to fall back *to* — the backend carries no
+nearest-bookmark operation at all — so a worktree recording no task is reported as holding none,
+and the commands that need one (`tt task current`, `tt task checkpoint`, `tt task create` without
+`--parent`) fail instead of adopting whichever branch lies below.
 
 ## 7. Working-copy-bound commands
 

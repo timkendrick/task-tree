@@ -450,13 +450,19 @@ test__worktree__resolve_branch__reads_the_checked_out_task() {
     "$(_worktree__resolve_branch "$REPO" "$REPO")" "$proj_id"
 
   task_id=$(create_task "t" "T") || true
+  other_id=$(create_task "other" "Other") || true
+  other_wt=$(create_task_worktree "$other_id")
   checkout_task "$task_id" >/dev/null || true
   assert_eq "checking out a task moves the worktree to its branch" \
     "$(_worktree__resolve_branch "$REPO" "$REPO")" "$task_id"
 
-  # A bare write advances the branch past the worktree, taking the bookmark out
-  # of its ancestry; what the working copy records does not change.
-  run_tt task context add "$task_id" --title "n" --slug "n" <<< "body" >/dev/null 2>&1 || true
+  # A write issued from another worktree advances this branch without moving
+  # this working copy: the bookmark leaves its ancestry, and what the working
+  # copy records does not change. Issuing the write here instead would carry
+  # this worktree onto the new tip and never produce the shape.
+  run_tt_in_worktree "$other_wt" task context add "$task_id" --title "n" --slug "n" \
+    <<< "body" >/dev/null 2>&1 || true
+  assert_not_ancestor "the write leaves this worktree behind its branch" "$task_id" '@'
   assert_eq "a worktree left behind is still on its own branch" \
     "$(_worktree__resolve_branch "$REPO" "$REPO")" "$task_id"
 }

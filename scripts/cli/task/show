@@ -81,7 +81,7 @@ main() {
 
   if [[ -z "$task_id_arg" ]]; then
     # No task-id: use current branch
-    { read -r _rev; read -r task_file; read -r branch; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
+    { read -r task_file; read -r branch; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
 
     if [[ -z "$branch" ]]; then
       _ui__log "Error: Not on a task or project branch."

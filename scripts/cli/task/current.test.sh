@@ -30,6 +30,30 @@ test_task_current__on_a_project_branch() {
 }
 
 
+test_task_current__after_the_branch_advanced_elsewhere() {
+  # A write issued from another worktree advances this worktree's branch without
+  # moving its working copy, leaving the bookmark on a sibling of the
+  # working-copy commit: the nearest bookmarked ancestor is then the project the
+  # task forked from, but the task checked out here has not changed.
+  setup_workspace "current-advanced-elsewhere"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mine" "Mine") || true
+  other_id=$(create_task "other" "Other") || true
+  other_wt=$(create_task_worktree "$other_id")
+  checkout_task "$task_id" >/dev/null || true
+
+  run_tt_in_worktree "$other_wt" task edit "$task_id" --title "Mine, advanced" >/dev/null 2>&1 || true
+  assert_not_ancestor "this worktree is left behind its branch" "$task_id" '@'
+  assert_task_symlink "the worktree still records the task it checked out" "$task_id"
+
+  output="" exit_code=0
+  output=$(run_tt task current 2>&1) || exit_code=$?
+  assert_success "current succeeds" "$exit_code"
+  assert_eq "current names the task checked out here" "$output" "$task_id"
+}
+
+
 test_task_current__not_on_a_task_branch() {
   setup_workspace "current-none"
   output="" exit_code=0
