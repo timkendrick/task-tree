@@ -64,6 +64,18 @@ Error: The working-copy commit is the tip of bookmark '<name>'.
 
 This happens after driving `jj` directly — typically `jj edit <bookmark>`. Recover by starting a new working-copy commit on top of it (`jj new`), then re-run the `tt` command. The refusal covers any bookmark on `@`, not just the branch being written.
 
+**A branch write refuses while a workspace it depends on is stale.** A workspace is *stale* when its files belong to a commit whose content has since been rewritten; `jj` then refuses every command there. Commands abort with:
+
+```
+Error: The workspace is stale: <path>
+  Recover it first: tt worktree refresh <path> --force
+  Uncommitted changes in that workspace will be lost.
+```
+
+Stale is **not** the same as *behind*. A worktree left on an older tip is behind: its files are valid, `tt worktree sync` brings it forward, and uncommitted work is preserved. A stale workspace's files match no commit at all, only `tt worktree refresh --force` clears it, and **uncommitted work there is lost** — a stale working copy cannot be snapshotted first. Never reach for `refresh` when `sync` is what the situation calls for.
+
+The workspace named in the refusal is most often the canonical repository root rather than the worktree you are standing in. That is deliberate: it is the workspace a failed command's rollback restores from, and in a repository driven from task worktrees nobody is standing in it, so it can sit stale unnoticed. Recover it with `tt worktree refresh --root --force` and re-run the command.
+
 ### Task commands
 
 #### `tt task create`
@@ -240,6 +252,12 @@ Redirect the virtual project's HEAD symlink to an existing worktree. The worktre
 tt worktree sync [<worktree-path>] [--all]
 ```
 Bring a worktree forward onto the head of the branch it is checked out on, updating its files to match. Use it when a command reports that worktrees are out of sync: a branch write advances the bookmark without moving any working copy but the invoking one. Uncommitted changes in the target worktree are preserved. Defaults to the worktree containing the current directory; `--all` synchronizes every out-of-sync worktree in the repository. Reports the files added, modified and removed. Fires no hooks — the checked-out task does not change.
+
+#### `tt worktree refresh`  (alias: `tt refresh`)
+```
+tt worktree refresh [<path>] [--root] [--force]
+```
+Recover a stale workspace — one whose files belong to a rewritten commit, which `jj` refuses to load. Defaults to the worktree containing the current directory; `<path>` targets that worktree, `--root` targets the canonical repository root. There is no `--all`. Exits 0 silently when the target is not stale; without `--force` a stale target is reported and nothing changes. **Uncommitted changes in the recovered workspace are lost** — use `tt worktree sync` instead when the worktree is merely behind. Opens no transaction, so `tt history undo` does not revert it, and it stays usable while a transaction lock is present.
 
 #### `tt worktree list`
 ```

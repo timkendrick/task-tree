@@ -28,6 +28,9 @@
 #   _worktree__reattach_current_on_branch — follow a merge advance, own-branch worktree only
 #   _worktree__move_subtree     — rewrite a subtree the current working copy may sit in
 #   _worktree__refresh_current  — update the current worktree after a bare rewrite of @
+#   _worktree__refresh          — update a named worktree after a bare rewrite of its @
+#   _worktree__report_stale     — stderr refusal naming a stale worktree and its remedy
+#   _worktree__report_indeterminate — stderr refusal naming an unreadable worktree
 #   _worktree__list_holding_descendants — other worktrees positioned inside a rewrite range
 #   _worktree__resolve_branch   — the branch a worktree is sitting on
 #   _worktree__resolve_branch_at — the branch recorded by a revision's task symlink
@@ -593,6 +596,48 @@ _worktree__refresh_current() {
   local worktree
   worktree="$(_repo__resolve_worktree_root "$repo")" || return 1
   _repo__refresh_worktree "$worktree"
+}
+
+# Usage: _worktree__refresh WORKTREE
+#
+# Brings WORKTREE's on-disk files back into agreement with its working-copy
+# commit, recovering a worktree the backend is refusing to load. The named
+# counterpart of _worktree__refresh_current, for the command that recovers a
+# worktree other than the one it runs in — most often the canonical workspace,
+# which is rarely the one the user is standing in.
+#
+# Does not snapshot, and cannot: the backend will not capture a stale working
+# copy, so uncommitted work in WORKTREE is overwritten by the recovery. Callers
+# must have said so before getting here. Harmless when WORKTREE is already
+# current. Documented pass-through to _repo__refresh_worktree.
+_worktree__refresh() {
+  local worktree="$1"
+  _repo__refresh_worktree "$worktree"
+}
+
+# Usage: _worktree__report_stale WORKTREE REMEDY
+#
+# Reports WORKTREE as stale on stderr, with REMEDY as the indented line naming
+# the way out. Every refusal on staleness — the guards below and tt worktree
+# refresh itself — reports through this, so the user meets one wording for one
+# condition regardless of which check caught it, and the consequence of
+# recovering is always stated. Always returns 0.
+_worktree__report_stale() {
+  local worktree="$1" remedy="$2"
+  _ui__log "Error: The workspace is stale: $worktree"
+  _ui__log "  $remedy"
+  _ui__log "  Uncommitted changes in that workspace will be lost."
+  return 0
+}
+
+# Usage: _worktree__report_indeterminate WORKTREE
+#
+# Reports on stderr that WORKTREE's state could not be read. The backend's own
+# account of why reaches the user through TT_LOG. Always returns 0.
+_worktree__report_indeterminate() {
+  local worktree="$1"
+  _ui__log "Error: Could not determine the state of the workspace: $worktree"
+  return 0
 }
 
 # Usage: _worktree__list_holding_descendants REPO BASE_REV
