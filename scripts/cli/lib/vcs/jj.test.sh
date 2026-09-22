@@ -691,6 +691,60 @@ test__jj__read_symlink_at_revision__reads_target_and_rejects_non_symlinks() {
 }
 
 # ---------------------------------------------------------------------------
+# _jj__get_worktree_checkout_revision
+# ---------------------------------------------------------------------------
+
+test__jj__get_worktree_checkout_revision__matches_wc_commit_when_healthy() {
+  setup_workspace
+  edit_file kept.txt "original"
+  jj -R "$REPO" log -r '@' --no-graph -T '' >/dev/null 2>&1
+
+  assert_eq "healthy worktree's files match its recorded working-copy commit" \
+    "$(_jj__get_worktree_checkout_revision "$REPO")" "$(get_full_commit_id '@')"
+}
+
+test__jj__get_worktree_checkout_revision__reports_the_pre_rewrite_commit_when_stale() {
+  setup_workspace
+  edit_file kept.txt "original"
+  jj -R "$REPO" log -r '@' --no-graph -T '' >/dev/null 2>&1
+  local before
+  before="$(get_full_commit_id '@')"
+
+  make_worktree_stale "$REPO"
+
+  assert_eq "stale worktree still reports the commit its files hold" \
+    "$(_jj__get_worktree_checkout_revision "$REPO")" "$before"
+  assert_neq "the repository has moved @ on from there" \
+    "$(_jj__resolve_commit "$REPO" '@')" "$before"
+}
+
+test__jj__get_worktree_checkout_revision__records_no_operation() {
+  setup_workspace
+  # Pending on-disk edits are exactly what an ordinary working-copy command
+  # would snapshot into a new operation. This read must not. Both ends of the
+  # comparison are themselves read bare, so the probe is the only thing that
+  # could record anything.
+  edit_file pending.txt "uncommitted"
+  local before after
+  before="$(jj -R "$REPO" --ignore-working-copy op log --no-graph -T id -n 1)"
+
+  _jj__get_worktree_checkout_revision "$REPO" >/dev/null
+
+  after="$(jj -R "$REPO" --ignore-working-copy op log --no-graph -T id -n 1)"
+  assert_eq "reading the checkout revision records no operation" "$after" "$before"
+  assert_eq "the pending edit is still uncaptured" \
+    "$(jj -R "$REPO" --ignore-working-copy log -r '@' --no-graph -T 'empty')" "true"
+}
+
+test__jj__get_worktree_checkout_revision__unreadable_workspace_fails() {
+  setup_workspace
+  local output exit_code=0
+  output="$(_jj__get_worktree_checkout_revision "$_TEST_ROOT" 2>/dev/null)" || exit_code=$?
+  assert_failure "a path that is not a workspace is rejected" "$exit_code"
+  assert_output_empty "nothing printed for an unreadable workspace" "$output"
+}
+
+# ---------------------------------------------------------------------------
 # _jj__refresh_worktree
 # ---------------------------------------------------------------------------
 

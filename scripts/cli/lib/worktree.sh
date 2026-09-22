@@ -12,6 +12,7 @@
 #   _worktree__resolve_repository_root — canonical primary workspace root
 #   _worktree__resolve_repository_path — canonical primary workspace root, symlink-resolved
 #   _worktree__check_clean      — whether a worktree has no uncommitted changes
+#   _worktree__check_stale      — whether a worktree's files match the commit it records
 #   _worktree__check_exists     — whether a worktree already lives at a path
 #   _worktree__create           — add a workspace at a path, started on a revision
 #   _worktree__start_working_copy — move a worktree onto a new commit on a revision
@@ -198,6 +199,42 @@ _worktree__resolve_repository_path() {
 _worktree__check_clean() {
   local worktree="$1"
   _repo__check_working_copy_clean "$worktree"
+}
+
+# Usage: _worktree__check_stale REPO WORKTREE
+#
+# Reports whether WORKTREE is stale — its on-disk files belong to a commit the
+# repository has since rewritten, which the backend refuses to work with until
+# the worktree is refreshed (tt worktree refresh).
+#
+#   0 — WORKTREE is stale
+#   1 — WORKTREE is not stale
+#   2 — WORKTREE's state could not be determined
+#
+# Status 2 is a distinct outcome and is never folded into either boolean: a
+# workspace whose state cannot be read is not evidence that it is healthy, and
+# callers must be free to refuse rather than act on a guess. The backend's own
+# account of why the read failed reaches the user through TT_LOG.
+#
+# Reads only: nothing is snapshotted and no operation is recorded, so this is
+# safe to run ahead of every branch write and against a worktree holding
+# uncommitted work. It answers for any worktree in the repository, not only the
+# invoking one.
+#
+# Staleness is not the same condition as a worktree being *behind* its branch:
+# a bookmark advancing past a worktree leaves its files valid but old, which
+# _worktree__check_behind reports and tt worktree sync resolves.
+#
+# REPO takes the module's usual leading position so callers read alike; the
+# comparison itself is answered entirely from WORKTREE.
+_worktree__check_stale() {
+  local worktree="$2"
+  local matched current
+  matched="$(_repo__get_worktree_checkout_revision "$worktree")" || return 2
+  [[ -n "$matched" ]] || return 2
+  current="$(_repo__resolve_commit "$worktree" '@')" || return 2
+  [[ -n "$current" ]] || return 2
+  [[ "$matched" != "$current" ]]
 }
 
 # Usage: _worktree__check_exists PATH

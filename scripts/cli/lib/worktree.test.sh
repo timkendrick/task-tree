@@ -125,6 +125,66 @@ _create_secondary_worktree() {
 }
 
 # ---------------------------------------------------------------------------
+# _worktree__check_stale
+# ---------------------------------------------------------------------------
+
+test__worktree__check_stale__healthy_worktree_is_not_stale() {
+  setup_workspace "wt-stale-healthy"
+
+  local status=0
+  _worktree__check_stale "$REPO" "$REPO" || status=$?
+  assert_eq "a healthy worktree reports not stale" "$status" "1"
+}
+
+test__worktree__check_stale__worktree_behind_its_branch_is_not_stale() {
+  setup_workspace "wt-stale-behind"
+  local proj_id task_id wt
+  proj_id="$(create_project "proj" "Project")"
+  checkout_task "$proj_id"
+  task_id="$(create_task "behind" "Behind")"
+  wt="$(create_task_worktree "$task_id")"
+
+  # Advance the branch past the worktree without rewriting its @: the worktree
+  # is left behind, which is a different condition from being stale.
+  local tip
+  tip="$(get_full_commit_id "$task_id")"
+  jj -R "$REPO" --ignore-working-copy new --no-edit -m "ahead" "$tip" >/dev/null 2>&1
+  jj -R "$REPO" --ignore-working-copy bookmark set "$task_id" \
+    -r "description(substring:'ahead')" >/dev/null 2>&1
+
+  local behind=0
+  _worktree__check_behind "$REPO" "$wt" || behind=$?
+  assert_success "the worktree really is behind its branch" "$behind"
+
+  local status=0
+  _worktree__check_stale "$REPO" "$wt" || status=$?
+  assert_eq "a worktree that is merely behind is not stale" "$status" "1"
+}
+
+test__worktree__check_stale__rewritten_working_copy_is_stale() {
+  setup_workspace "wt-stale-rewritten"
+  local proj_id task_id wt
+  proj_id="$(create_project "proj" "Project")"
+  checkout_task "$proj_id"
+  task_id="$(create_task "rewritten" "Rewritten")"
+  wt="$(create_task_worktree "$task_id")"
+
+  make_worktree_stale "$wt"
+
+  local status=0
+  _worktree__check_stale "$REPO" "$wt" || status=$?
+  assert_eq "a rewritten working copy reports stale" "$status" "0"
+}
+
+test__worktree__check_stale__unreadable_state_is_undetermined() {
+  setup_workspace "wt-stale-unreadable"
+
+  local status=0
+  _worktree__check_stale "$REPO" "$_TEST_ROOT" 2>/dev/null || status=$?
+  assert_eq "an unreadable workspace is undetermined, not healthy" "$status" "2"
+}
+
+# ---------------------------------------------------------------------------
 # _worktree__ensure_working_copy
 # ---------------------------------------------------------------------------
 
