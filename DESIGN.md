@@ -198,6 +198,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt init` | `tt workspace init` |
 | `tt switch` | `tt worktree switch` |
 | `tt sync` | `tt worktree sync` |
+| `tt refresh` | `tt worktree refresh` |
 | `tt create` | `tt task create` |
 | `tt checkout` | `tt task checkout` |
 | `tt checkin` | `tt task checkin` |
@@ -409,6 +410,8 @@ Any other value — including `INFO` or `VERBOSE` — leaves narration off.
 - **`tt worktree show --name <worktree-name> [--repo PATH]`** — Output the path of the *dedicated* worktree with the given jj workspace name to stdout. The name must match exactly and is the one listed in the `NAME` column of `tt worktree list`. Dedicated worktrees are named after the task they were created for (§6.2), but the name is fixed at creation and does not track subsequent checkouts, so it identifies the workspace rather than whatever task is currently checked out in it; it is not required to be a task or project ID. Exits with an error if no workspace bears that name, if the workspace's recorded path is missing or is not a directory, or if the name resolves to the repository root — the repository root is never a valid result. Intended for use in shell command substitution.
 
 - **`tt worktree sync [<worktree-path>] [--all] [--repo PATH]`** — Bring a worktree forward onto the head of the branch it is checked out on, updating its working copy to match. A branch write advances the bookmark without touching any working copy but the invoking one (§6.1.2), so other worktrees on that branch are left sitting on an older tip; this is the command that brings them back. The target worktree is snapshotted first, so uncommitted work — including files the repository has never seen — is preserved across the move. With no argument, targets the worktree containing the current working directory and exits with an error if the CWD is not within a known worktree. With `--all`, synchronizes every out-of-sync worktree in the repository, continuing past any that fail and exiting non-zero if any did; `--all` cannot be combined with `<worktree-path>`. Exits with an error if the given path is not a worktree of the repository. Reports the files the move added, modified and removed, or that the worktree was already up to date, and warns when the move left conflicts in the working copy. Runs within a transaction, so `tt history undo` reverts it. **Fires no hooks:** the worktree stays on the branch it was already on and the checked-out task does not change, so no checkout hook is warranted.
+
+- **`tt worktree refresh [<path>] [--root] [--force] [--repo PATH]`** — Recover a **stale** workspace: one whose on-disk files belong to a commit that has since been rewritten, which the VCS backend refuses to load until the files are brought back into agreement with it (§6.16). With no argument, targets the worktree containing the current working directory and exits with an error if the CWD is not within a known worktree. `<path>` targets that worktree; `--root` targets the canonical workspace; the two cannot be combined. There is no `--all` — the command acts on exactly one workspace. Exits 0 with no output when the target is not stale. When the target is stale, refuses unless `--force` is given, naming the workspace and stating that uncommitted changes in it will be lost. With `--force`, performs the recovery and reports the workspace it recovered; `--force` skips detection entirely, so it is also the way out of a workspace state tt cannot classify. **Uncommitted work in the recovered workspace is lost:** a stale working copy cannot be captured before it is reset, so the files are replaced by the recorded tree. This is why recovery is a separate command from `tt worktree sync`, which moves a worktree forward along its branch and *does* preserve uncommitted work. Opens **no transaction**: like `tt workspace init` it is a recovery operation, and it must stay usable while a stale transaction lock is present (§6.12), so `tt history undo` does not revert it.
 
 - **`tt worktree delete <worktree-path> [--force] [--repo PATH]`** — Delete a jj worktree by its filesystem path. The path must be a valid jj workspace in the repository. If the path is the canonical (main) repository (i.e. not a dedicated jj workspace), the command exits with an error — this check is not bypassed by `--force`. The task bookmark is automatically resolved from the worktree's current bookmark for safety checks: the task must be DONE, the worktree must be clean, and no commits may exist after the bookmark — unless `--force` is specified. Forgets the jj workspace and removes all files from the worktree path. The task bookmark is NOT deleted. If the virtual project's `HEAD` symlink points to the deleted worktree, it is reset to the repository root.
 
@@ -1073,6 +1076,36 @@ Each connected component's range is expressed as `<base>..<tip>`, using immutabl
 - **`tt task revset --all`** joins the components as one parenthesized jj union, `(<base1>..<tip1>) | (<base2>..<tip2>) | ...`. With `--git`, it instead resolves each component's endpoints to immutable commit IDs and prints one `<base>..<tip>` range per line, since Git has no single expression for a discontiguous union.
 - **`tt task diff --all`** runs `jj diff --git --from <base> --to <tip>` once per component, oldest first, and concatenates the resulting patches with no headings or separators — jj cannot diff a revset with gaps in one call. The same metadata exclusion filtering applies to every component.
 - **`tt task changelog --all`** collects first-parent records (§6.14) from every component, deduplicates them by immutable commit ID, then renders them with the same tree/checkpoint/depth logic used without `--all`. `--since` filters the combined selection by excluding records already reachable from the given revision, rather than changing where collection starts.
+
+### 6.16 Stale workspaces and recovery
+
+A workspace is **stale** when its on-disk files belong to a commit whose content has since been rewritten. Every workspace records the commit its files were last updated to; a **bare** mutation — one that rewrites the commit graph without touching any working copy, which is how tt performs almost every branch write (§6.1.2) — can change the tree of a commit some workspace is sitting on. The files are then left holding content that matches no current commit, and the VCS backend refuses every command in that workspace that loads its working copy until the mismatch is resolved.
+
+**Stale is not the same as behind.** The two conditions are easy to confuse and have different remedies:
+
+| | Behind | Stale |
+|---|---|---|
+| Cause | A write advanced the branch bookmark past the worktree | A rewrite changed the tree of the worktree's own working-copy commit |
+| State of the files | Valid, just older than the branch head | Matching no current commit |
+| Backend | Works normally | Refuses every working-copy command there |
+| Remedy | `tt worktree sync` | `tt worktree refresh --force` |
+| Uncommitted work | Preserved — sync snapshots before moving | **Lost** — a stale working copy cannot be snapshotted |
+
+The asymmetry in that last row is the reason the two are separate commands rather than one command with a flag. Recovery resets the files to the recorded tree, and the backend cannot capture what was there first, so authorizing a sync must never implicitly authorize a recovery.
+
+#### Refusing on staleness
+
+tt refuses to act on a stale workspace rather than recovering it silently, because recovery destroys work. Two preconditions enforce this.
+
+**The canonical workspace.** Every command that writes to a branch first checks that the **canonical** workspace — the original repository directory, as opposed to the worktrees tasks are checked out into — is not stale. The canonical workspace is where a failed command's transaction rollback restores the repository from (§6.12), and it is the one workspace guaranteed to still exist even when the invoking worktree has just been deleted. In a repository driven from task worktrees it is rarely the one being worked in, so it can sit stale unnoticed; a rollback that then needed it would fail. Checking up front means the command refuses before writing anything, rather than discovering the problem while already failing.
+
+The check inspects the canonical workspace only. The invoking worktree is deliberately left to fail on its own terms: if it is stale, the transaction's begin-time snapshot refuses immediately and rolls back cleanly. It is also skipped when the canonical workspace *is* the invoking worktree, and inside a nested sub-command, where the outermost command has already checked.
+
+A residual gap is accepted rather than closed: a command that itself rewrites the canonical workspace's working-copy commit makes it stale during its own run, and a rollback after that point still cannot restore. This is survivable because such a rollback keeps the transaction entry (§6.12), and the recovery it names — `tt history undo --force` — restores from whichever worktree it is invoked in, which in that situation is not the stale one.
+
+**Foreign worktrees.** Four commands load a working copy other than the invoking one, and each verifies its target is not stale before any write: `tt worktree sync`, `tt task checkout --worktree`, `tt task checkin --delete`, and `tt worktree switch`. Each names the offending path and points at `tt worktree refresh`.
+
+`tt worktree sync` screens every target before opening its transaction, and a single stale target refuses the whole run — including under `--all`, where it reports every stale worktree and syncs nothing. All-or-nothing is preferred to skip-and-continue: with `tt worktree refresh` available the user can restore a consistent state deliberately, which is better than partially self-healing and committing a repository that is still inconsistent. A workspace that is stale but not behind is not a sync target at all, so it neither blocks the run nor is reported by it.
 
 ## 7. Todo list generation
 
