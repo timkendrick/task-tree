@@ -525,6 +525,65 @@ is_diff_empty() {
   [[ -z "$diff_output" ]]
 }
 
+# Print the workspace name the repository records for a worktree path.
+# Usage: get_workspace_name WORKTREE
+get_workspace_name() {
+  local worktree="$1"
+  local resolved
+  resolved="$(cd "$worktree" && pwd -P)" || return 1
+  local line name path
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    name="${line%%: *}"
+    path="${line#*: }"
+    [[ "$path" == "$resolved" ]] || continue
+    printf '%s\n' "$name"
+    return 0
+  done < <(jj -R "$REPO" --ignore-working-copy workspace list --no-pager \
+    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)
+  return 1
+}
+
+# Leave WORKTREE's on-disk files behind the commit they belong to, the way a
+# bare rewrite performed from another workspace does, so that the backend
+# refuses every command there until the worktree is refreshed.
+#
+# The rewrite addresses the target by workspace name from the canonical repo,
+# so it cannot be attributed to the target workspace and cannot update its
+# files. The resulting refusal is asserted rather than assumed: a backend that
+# stopped producing this state would otherwise silently disarm every test that
+# depends on it.
+# Usage: make_worktree_stale WORKTREE
+make_worktree_stale() {
+  local worktree="$1"
+  local name
+  name="$(get_workspace_name "$worktree")" || {
+    _log_fail "make_worktree_stale: '$worktree' is not a workspace of $REPO"
+    _record_fail "make_worktree_stale: unknown workspace $worktree"
+    return 1
+  }
+
+  # Snapshot first, so the workspace's recorded state is current and the
+  # staleness that follows is caused by the rewrite below and nothing else.
+  jj -R "$worktree" log -r '@' --no-graph -T '' >/dev/null 2>&1 || true
+
+  # Bare rewrite of the target's working-copy commit: the tree changes in the
+  # graph while the files on disk stay where they were.
+  jj -R "$REPO" --ignore-working-copy restore --from 'root()' --into "${name}@" \
+    >/dev/null 2>&1 || {
+    _log_fail "make_worktree_stale: could not rewrite the working-copy commit of $worktree"
+    _record_fail "make_worktree_stale: rewrite failed for $worktree"
+    return 1
+  }
+
+  if jj -R "$worktree" status >/dev/null 2>&1; then
+    _log_fail "make_worktree_stale: $worktree is still usable after the rewrite"
+    _record_fail "make_worktree_stale: $worktree did not become stale"
+    return 1
+  fi
+  return 0
+}
+
 # Create a plain jj commit in the current repo (does not advance any bookmarks).
 # Usage: jj_commit MESSAGE [REPO]
 jj_commit() {

@@ -134,6 +134,13 @@ pending on-disk edits as dirt because it snapshots; `check_commit_empty` asked a
 and will call a dirty working copy empty. The facades expose the former as
 `_worktree__check_clean`, so callers ask the question rather than assembling it.
 
+`get_worktree_checkout_revision` sits in the working-copy group but is the one member that does
+**not** snapshot. It reports the commit a worktree's on-disk files were last updated to, read from
+the backend's own record of that worktree's state, so the answer is available even for a worktree
+the backend otherwise refuses to load. That exception is what lets `_worktree__check_stale` run
+ahead of every branch write: a staleness check that snapshotted would fold a user's pending edits
+into a new operation on every tt command, outside any transaction.
+
 No revset expression and no template string may appear outside `lib/vcs/jj.sh`. Every query is a
 named operation taking domain arguments, with the backend syntax held inside the backend. There is no
 raw-revset escape hatch.
@@ -257,6 +264,7 @@ These take a **worktree root** and execute with the process working directory in
 | Operation | Purpose |
 | --- | --- |
 | `check_working_copy_clean` | Whether the working copy has pending changes |
+| `get_worktree_checkout_revision` | Commit ID a worktree's on-disk files were last updated to |
 | `get_working_copy_revision` | Change ID of the working-copy commit |
 | `get_working_copy_parent` | Commit ID of its parent |
 | `set_working_copy_revision` | Point the working copy at a revision |
