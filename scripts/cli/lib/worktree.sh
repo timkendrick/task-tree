@@ -24,6 +24,8 @@
 #   _worktree__delete           — forget a workspace and remove its files from disk
 #   _worktree__switch           — hooks + HEAD symlink update for a workspace switch
 #   _worktree__ensure_working_copy — refuse branch writes while @ carries a bookmark
+#   _worktree__ensure_worktree_current — refuse to act on a stale worktree
+#   _worktree__ensure_canonical_current — refuse branch writes while canonical is stale
 #   _worktree__reattach_current — follow a branch advance with the current worktree
 #   _worktree__reattach_current_on_branch — follow a merge advance, own-branch worktree only
 #   _worktree__move_subtree     — rewrite a subtree the current working copy may sit in
@@ -495,6 +497,78 @@ _worktree__ensure_working_copy() {
   _ui__log "  capturing the working copy would absorb unrelated changes into that branch."
   _ui__log "  Move off it first, by starting a new working-copy commit on top of it."
   return 1
+}
+
+# Usage: _worktree__ensure_worktree_current REPO WORKTREE
+#
+# Guards a worktree the caller is about to touch: returns 0 when WORKTREE is
+# usable, and reports a refusal on stderr and returns 1 when it is stale or
+# its state cannot be read. Both failures name WORKTREE, and the stale one
+# names the command that recovers it along with what recovering costs.
+#
+# An unreadable worktree refuses rather than passing. A workspace whose state
+# tt could not determine is not evidence of a healthy workspace, and the
+# caller is about to load it.
+#
+# This guard has no exemptions: it is asked about a worktree the command will
+# act on, which includes the case where that worktree is the invoking one.
+_worktree__ensure_worktree_current() {
+  local repo="$1" worktree="$2"
+  local status=0
+  _worktree__check_stale "$repo" "$worktree" || status=$?
+  case "$status" in
+    1)
+      return 0
+      ;;
+    0)
+      _worktree__report_stale "$worktree" \
+        "Recover it first: tt worktree refresh $worktree --force"
+      return 1
+      ;;
+    *)
+      _worktree__report_indeterminate "$worktree"
+      return 1
+      ;;
+  esac
+}
+
+# Usage: _worktree__ensure_canonical_current REPO
+#
+# Guards the precondition every branch write depends on: the CANONICAL
+# workspace must not be stale. That workspace is where a failed command's
+# rollback restores the repository from, and it is the one workspace
+# guaranteed to exist even when the invoking worktree has just been deleted.
+# A repository driven from task worktrees rarely has anyone standing in it, so
+# it can sit stale unnoticed until a rollback needs it and cannot restore.
+# Returns 0 when the write may proceed, 1 (having reported why) otherwise.
+#
+# Two cases are skipped, and both skips are load-bearing rather than
+# optimizations:
+#
+#   Inside a transaction. A parent command's own writes can make the canonical
+#   workspace stale partway through its run. A nested guard would then refuse
+#   mid-transaction, and the rollback that refusal triggers is precisely the
+#   one staleness breaks — turning a survivable situation into a locked
+#   repository. The check belongs once, before anything has been written.
+#
+#   Canonical is the invoking worktree. A stale invoking worktree is left to
+#   fail on its own terms: the transaction's begin-time snapshot refuses
+#   immediately and rolls back cleanly, which is a better failure than this
+#   one. The guard therefore runs only where it is load-bearing — a canonical
+#   workspace nobody is standing in.
+#
+# The two paths are compared with -ef, as filesystem entries rather than as
+# strings: the canonical resolver may return its argument unchanged while the
+# worktree resolver canonicalizes symlinks, so a string comparison would treat
+# two names for one directory as different workspaces.
+_worktree__ensure_canonical_current() {
+  local repo="$1"
+  [[ -z "${TT_TRANSACTION_ID:-}" ]] || return 0
+  local canonical worktree
+  canonical="$(_worktree__resolve_repository_root "$repo")" || return 1
+  worktree="$(_repo__resolve_worktree_root "$repo")" || return 1
+  [[ "$canonical" -ef "$worktree" ]] && return 0
+  _worktree__ensure_worktree_current "$repo" "$canonical"
 }
 
 # Usage: _worktree__reattach_current REPO OLD_TIP NEW_REV
