@@ -478,6 +478,35 @@ nearest-bookmark operation at all — so a worktree recording no task is reporte
 and the commands that need one (`tt task current`, `tt task checkpoint`, `tt task create` without
 `--parent`) fail instead of adopting whichever branch lies below.
 
+### 6.4 Stale workspaces
+
+A workspace is **stale** when the commit its on-disk files were updated to has had its tree
+rewritten since — something a bare mutation can do to any workspace, because a bare mutation
+deliberately touches no working copy. The backend then refuses every command in that workspace that
+loads its working copy. This is a different condition from being *behind* (§6.3): behind is a
+valid tree at an older position, stale is a tree that matches no commit.
+
+`_worktree__check_stale` reports the condition in three states — stale, not stale, and could not be
+determined — and the third is never folded into either boolean. Two guards consume it:
+
+- `_worktree__ensure_worktree_current` guards a worktree a command is about to load. No exemptions:
+  it is asked about a target that is going to be touched.
+- `_worktree__ensure_canonical_current` guards the canonical workspace ahead of a branch write. That
+  workspace is what `_history__rollback_transaction` restores from (§8.2), and a repository driven
+  from task worktrees leaves nobody standing in it, so it can sit stale until a rollback needs it.
+
+The canonical guard skips two cases, both load-bearing. **Inside a transaction** it stands aside,
+because a parent command's own writes can make the canonical workspace stale partway through; a
+nested refusal would trigger exactly the rollback that staleness breaks, converting a survivable
+failure into a locked repository. **When the canonical workspace is the invoking worktree** it also
+stands aside, leaving that worktree to fail on its own terms — the transaction's begin-time snapshot
+refuses immediately and rolls back cleanly, which is the better failure. The guard therefore runs
+only where it is load-bearing.
+
+Recovery is `tt worktree refresh`, which is destructive by nature: the backend cannot snapshot a
+stale working copy, so uncommitted work there is replaced by the recorded tree. That is why no
+command recovers a workspace implicitly.
+
 ## 7. Working-copy-bound commands
 
 Three commands legitimately require a working copy, and only they may reach the restricted
