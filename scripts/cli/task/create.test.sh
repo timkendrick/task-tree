@@ -308,4 +308,12 @@ test_task_create__subtask_after_existing_context() {
   assert_frontmatter_order "canonical order after subtask added to parent with context" "$content"
 }
 
+test_task_create__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "create-stale-canonical"
+  setup_stale_canonical "created"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task create --slug "child" --title "Child"
+}
+
 run_tests "tt task create"

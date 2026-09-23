@@ -367,4 +367,14 @@ test_task_publish__changelog_depth_requires_changelog() {
 }
 
 
+test_task_publish__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "publish-stale-canonical"
+  setup_stale_canonical "published"
+
+  # -m keeps the command out of the editor, which it would otherwise open
+  # before reaching its preconditions.
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task publish "$STALE_PROJ_ID" --target main -m "publish"
+}
+
 run_tests "tt task publish"

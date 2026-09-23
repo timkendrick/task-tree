@@ -385,4 +385,12 @@ test_task_propagate__help() {
 }
 
 
+test_task_propagate__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "propagate-stale-canonical"
+  setup_stale_canonical "propagated"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task propagate --from "$STALE_PROJ_ID"
+}
+
 run_tests "tt task propagate"

@@ -136,6 +136,7 @@ main() {
 
   # Precondition: the working-copy commit must not carry a bookmark
   _worktree__ensure_working_copy "$repo" || exit 1
+  _worktree__ensure_canonical_current "$repo" || exit 1
 
   # Prompt for title if not provided
   if [[ -z "$ctx_title" ]]; then

@@ -499,4 +499,12 @@ test_task_checkout__help() {
 }
 
 
+test_task_checkout__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "checkout-stale-canonical"
+  setup_stale_canonical "checkedout"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task checkout "$STALE_PROJ_ID"
+}
+
 run_tests "tt task checkout"

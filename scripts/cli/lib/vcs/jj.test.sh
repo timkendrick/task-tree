@@ -726,11 +726,11 @@ test__jj__get_worktree_checkout_revision__records_no_operation() {
   # could record anything.
   edit_file pending.txt "uncommitted"
   local before after
-  before="$(jj -R "$REPO" --ignore-working-copy op log --no-graph -T id -n 1)"
+  before="$(get_jj_op_bare)"
 
   _jj__get_worktree_checkout_revision "$REPO" >/dev/null
 
-  after="$(jj -R "$REPO" --ignore-working-copy op log --no-graph -T id -n 1)"
+  after="$(get_jj_op_bare)"
   assert_eq "reading the checkout revision records no operation" "$after" "$before"
   assert_eq "the pending edit is still uncaptured" \
     "$(jj -R "$REPO" --ignore-working-copy log -r '@' --no-graph -T 'empty')" "true"
