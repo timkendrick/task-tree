@@ -219,4 +219,17 @@ test_context_delete__preserves_other_context_entries() {
 }
 
 
+test_task_context_delete__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "ctx-del-stale-canonical"
+  setup_guard_fixture "ctxdeleted"
+  # The context has to exist before the workspace goes stale: a delete of an
+  # unknown context is rejected before any precondition runs.
+  run_tt task context add "$STALE_TASK_ID" --title "Notes" --slug "notes" \
+    <<< "body" >/dev/null 2>&1
+  make_worktree_stale "$REPO"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task context delete "context/notes" --task "$STALE_TASK_ID"
+}
+
 run_tests "tt task context delete"

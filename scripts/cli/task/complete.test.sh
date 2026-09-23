@@ -199,4 +199,12 @@ test_task_complete__help() {
 }
 
 
+test_task_complete__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "complete-stale-canonical"
+  setup_stale_canonical "completed"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task complete "$STALE_TASK_ID"
+}
+
 run_tests "tt task complete"

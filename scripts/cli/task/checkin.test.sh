@@ -1000,4 +1000,12 @@ test_task_checkin__delete_with_retain_worktree_skips_checks() {
   assert_file_exists "uncommitted file untouched" "$worktree_path/scratch.txt"
 }
 
+test_task_checkin__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "checkin-stale-canonical"
+  setup_stale_canonical "checkedin"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task checkin "$STALE_TASK_ID"
+}
+
 run_tests "tt task checkin"

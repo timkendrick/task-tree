@@ -163,4 +163,12 @@ test_task_checkpoint__help() {
 }
 
 
+test_task_checkpoint__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "cp-stale-canonical"
+  setup_stale_canonical "checkpointed"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task checkpoint -m "should not be recorded"
+}
+
 run_tests "tt task checkpoint"

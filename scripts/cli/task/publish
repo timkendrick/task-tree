@@ -255,6 +255,7 @@ main() {
 
   # Precondition: the working-copy commit must not carry a bookmark
   _worktree__ensure_working_copy "$repo" || exit 1
+  _worktree__ensure_canonical_current "$repo" || exit 1
 
   # Begin transaction (records before-op for undo)
   _history__begin_transaction "$repo"

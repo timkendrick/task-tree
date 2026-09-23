@@ -219,4 +219,12 @@ test_task_delete__help() {
 }
 
 
+test_task_delete__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "delete-stale-canonical"
+  setup_stale_canonical "deleted"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task delete "$STALE_TASK_ID" --force
+}
+
 run_tests "tt task delete"

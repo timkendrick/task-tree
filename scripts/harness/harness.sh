@@ -525,6 +525,16 @@ is_diff_empty() {
   [[ -z "$diff_output" ]]
 }
 
+# Read the repository's current operation ID without loading any working copy.
+# Unlike get_jj_op this records nothing, and it still answers when the
+# canonical workspace is stale — which is exactly when a test needs to prove
+# that a command wrote nothing.
+# Usage: get_jj_op_bare [REPO]
+get_jj_op_bare() {
+  local repo="${1:-$REPO}"
+  jj -R "$repo" --ignore-working-copy op log --no-graph -T id -n 1 2>/dev/null
+}
+
 # Print the workspace name the repository records for a worktree path.
 # Usage: get_workspace_name WORKTREE
 get_workspace_name() {
@@ -582,6 +592,56 @@ make_worktree_stale() {
     return 1
   fi
   return 0
+}
+
+# Build the state a canonical-guard refusal test acts on: a project, a task
+# beneath it, and that task checked out into its own dedicated worktree.
+# Sets STALE_PROJ_ID, STALE_TASK_ID and STALE_WORKTREE. Makes nothing stale,
+# so a test needing further setup can do it before calling
+# make_worktree_stale "$REPO" itself.
+# Usage: setup_guard_fixture [SLUG]
+setup_guard_fixture() {
+  local slug="${1:-guarded}"
+  STALE_PROJ_ID="$(create_project "proj-$slug" "Project")"
+  checkout_task "$STALE_PROJ_ID"
+  STALE_TASK_ID="$(create_task "$slug" "Task $slug")"
+  STALE_WORKTREE="$(create_task_worktree "$STALE_TASK_ID")"
+}
+
+# setup_guard_fixture followed by making the canonical workspace stale — the
+# starting state of a canonical-guard refusal test that needs no extra setup.
+# Usage: setup_stale_canonical [SLUG]
+setup_stale_canonical() {
+  setup_guard_fixture "$@"
+  make_worktree_stale "$REPO"
+}
+
+# Run a branch-writing command from WORKTREE with the canonical workspace
+# stale, and assert the standard refusal: non-zero exit, a message naming the
+# stale workspace and the command that recovers it, no history entry created,
+# and no operation recorded.
+#
+# The operation check is what proves the command wrote nothing at all, and it
+# is read bare — an ordinary read would be refused by the stale workspace it
+# is asking about.
+# Usage: assert_refuses_stale_canonical WORKTREE COMMAND...
+assert_refuses_stale_canonical() {
+  local worktree="$1"; shift
+  get_history_lines
+  local history_before="${#HISTORY_LINES[@]}"
+  local op_before
+  op_before="$(get_jj_op_bare)"
+
+  local output exit_code=0
+  output="$(run_tt_in_worktree "$worktree" "$@" </dev/null 2>&1)" || exit_code=$?
+
+  assert_failure "refused while the canonical workspace is stale" "$exit_code"
+  assert_contains "the refusal names the stale workspace" "$output" \
+    "Error: The workspace is stale: $REPO"
+  assert_contains "the refusal names the recovery command" "$output" \
+    "tt worktree refresh"
+  assert_history_count "no transaction was opened" "$history_before"
+  assert_eq "the repository was not written to" "$(get_jj_op_bare)" "$op_before"
 }
 
 # Create a plain jj commit in the current repo (does not advance any bookmarks).

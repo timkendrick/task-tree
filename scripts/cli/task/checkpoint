@@ -160,6 +160,7 @@ main() {
   # if the working copy were itself a branch tip there would be nothing above
   # the tip to record, and the capture would amend that branch instead.
   _worktree__ensure_working_copy "$repo" || exit 1
+  _worktree__ensure_canonical_current "$repo" || exit 1
 
   # Pre-checkpoint hook (blocking)
   # Begin transaction (records before-op for undo)

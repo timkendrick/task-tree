@@ -201,4 +201,12 @@ test_task_edit__frontmatter_canonical_order() {
   assert_frontmatter_order "canonical order after edit" "$content"
 }
 
+test_task_edit__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "edit-stale-canonical"
+  setup_stale_canonical "edited"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task edit "$STALE_TASK_ID" --title "Renamed"
+}
+
 run_tests "tt task edit"
