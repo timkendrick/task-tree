@@ -277,6 +277,7 @@ main() {
   # that working copy, and a bookmark sitting on it would follow the snapshot,
   # absorbing whatever is uncommitted there into the branch it names.
   _worktree__ensure_working_copy "$repo" || exit 1
+  _worktree__ensure_canonical_current "$repo" || exit 1
 
   # Begin transaction (records before-op for undo)
   _history__begin_transaction "$repo"

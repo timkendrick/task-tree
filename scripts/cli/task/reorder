@@ -419,6 +419,7 @@ main() {
 
   # Precondition: the working-copy commit must not carry a bookmark
   _worktree__ensure_working_copy "$repo" || exit 1
+  _worktree__ensure_canonical_current "$repo" || exit 1
 
   if [[ -n "$modifier" ]]; then
     reorder_subtask "$repo" "$task_id" "$modifier" "$sibling_id" \

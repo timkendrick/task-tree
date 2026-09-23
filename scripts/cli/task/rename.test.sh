@@ -526,4 +526,17 @@ test_task_rename__help() {
 }
 
 
+test_task_rename__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "rename-stale-canonical"
+  setup_guard_fixture "renamed"
+  # A rename refuses outright when another worktree sits inside the range it
+  # rewrites, and that check runs first. Park the canonical workspace outside
+  # the range so the staleness guard is what this test exercises.
+  jj -R "$REPO" new main >/dev/null 2>&1
+  make_worktree_stale "$REPO"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task rename --slug "renamed-again" --task "$STALE_TASK_ID"
+}
+
 run_tests "tt task rename"
