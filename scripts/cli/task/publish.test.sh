@@ -277,8 +277,8 @@ test_task_publish__changelog_summarizes_work_since_target() {
   body=$(get_commit_message "main")
   assert_matches "message line is preserved" "$body" "^\[tt:task:${proj_id}:publish\] Ship it$"
   assert_matches "change summary header" "$body" '^Change summary:$'
-  assert_matches "checked-in task reported" "$body" "^- \`${task_a}\` - Task A$"
-  assert_matches "nested subtask keeps its indentation" "$body" "^  - \`${task_a1}\` - Task A1$"
+  assert_matches "checked-in task reported" "$body" "^- \`${task_a}\` \(\`[0-9a-f]{8}\`\) - Task A$"
+  assert_matches "nested subtask keeps its indentation" "$body" "^  - \`${task_a1}\` \(\`[0-9a-f]{8}\`\) - Task A1$"
   assert_matches "project checkpoint reported" "$body" '^- `[0-9a-f]{8}` - project work$'
   assert_not_contains "no placeholder when work exists" "$body" "No code changes"
 }
@@ -309,7 +309,7 @@ test_task_publish__changelog_covers_history_before_first_publish() {
 
   first_body=$(get_commit_message "main")
   assert_matches "first publish reports the whole project history" \
-    "$first_body" "^- \`${task_a}\` - Task A$"
+    "$first_body" "^- \`${task_a}\` \(\`[0-9a-f]{8}\`\) - Task A$"
   assert_matches "first publish reports the project checkpoint" \
     "$first_body" '^- `[0-9a-f]{8}` - project work$'
 
@@ -340,7 +340,7 @@ test_task_publish__changelog_depth_limits_levels() {
   assert_success "publish succeeds" "$exit_code"
 
   body=$(get_commit_message "main")
-  assert_matches "checked-in task reported" "$body" "^- \`${task_a}\` - Task A$"
+  assert_matches "checked-in task reported" "$body" "^- \`${task_a}\` \(\`[0-9a-f]{8}\`\) - Task A$"
   assert_not_contains "nested subtask omitted at depth 1" "$body" "$task_a1"
 }
 
