@@ -591,6 +591,13 @@ that deliberately moved the working copy has no business putting the old files b
 best-effort throughout: each step degrades to a plain restore, which is still recoverable from the
 operation log.
 
+A restore that **fails** keeps the in-progress entry instead of deleting it, and reports an error naming the
+operation to restore and both recovery commands. The entry is then a lock, which is the only thing that makes a
+half-written repository visible to the next command; the transaction state is still cleared so the process does
+not roll back twice. The preserved working-copy files are discarded unapplied, because the re-apply is gated on
+a working-copy comparison that is meaningless once the restore did not happen. `_worktree__ensure_canonical_current`
+(§6.4) exists to stop the common cause of this — a stale canonical workspace — from being reached at all.
+
 Restoring an operation *creates* an operation, so after a rollback the repository's current operation
 is not the one recorded as the previous transaction's after-op. Tests therefore assert that no
 in-progress entry survives a failure, not that the log's tail matches the current operation.

@@ -74,6 +74,15 @@ Error: The workspace is stale: <path>
 
 Stale is **not** the same as *behind*. A worktree left on an older tip is behind: its files are valid, `tt worktree sync` brings it forward, and uncommitted work is preserved. A stale workspace's files match no commit at all, only `tt worktree refresh --force` clears it, and **uncommitted work there is lost** — a stale working copy cannot be snapshotted first. Never reach for `refresh` when `sync` is what the situation calls for.
 
+If a command fails and its rollback cannot restore, it says so and **leaves the transaction lock in place** on purpose, so the next `tt` command refuses rather than running against a half-written repository:
+
+```
+Error: Could not restore the VCS operation state.
+  The repository was left mid-transaction at operation <op-id>.
+```
+
+Recover with `tt history undo --force` to retry the revert, or `tt history unlock --force` once you have fixed the repository by hand. `tt history undo` restores from whichever worktree you run it in, so run it from a healthy one.
+
 The workspace named in the refusal is most often the canonical repository root rather than the worktree you are standing in. That is deliberate: it is the workspace a failed command's rollback restores from, and in a repository driven from task worktrees nobody is standing in it, so it can sit stale unnoticed. Recover it with `tt worktree refresh --root --force` and re-run the command.
 
 ### Task commands
