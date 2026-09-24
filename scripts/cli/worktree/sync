@@ -63,6 +63,12 @@ EOF
 sync_one() {
   local repo="$1" worktree="$2"
 
+  # Defensive: the screening below ran before the transaction opened, so a
+  # worktree could have gone stale between then and its turn here. Reports the
+  # same refusal as the screening — which check caught it is not the user's
+  # concern — and is counted by the per-target failure accounting.
+  _worktree__ensure_worktree_current "$repo" "$worktree" || return 1
+
   local record
   record="$(_worktree__sync "$repo" "$worktree")" || {
     _ui__log "Error: Could not synchronize worktree: $worktree"
@@ -201,6 +207,22 @@ main() {
       exit 0
     fi
     targets+=("$canonical_worktree_path")
+  fi
+
+  # Screen every target before the transaction opens. A stale worktree cannot
+  # be synced — sync snapshots its working copy first, which is precisely what
+  # the backend refuses — and refreshing it would destroy uncommitted work, so
+  # the run refuses instead of recovering. It is all-or-nothing rather than
+  # skip-and-continue: with tt worktree refresh available the user can restore
+  # a consistent state deliberately, which beats partially self-healing and
+  # leaving the repository inconsistent.
+  local stale_targets=0 screened
+  for screened in "${targets[@]}"; do
+    _worktree__ensure_worktree_current "$repo" "$screened" || stale_targets=$((stale_targets + 1))
+  done
+  if [[ "$stale_targets" -gt 0 ]]; then
+    _ui__log "Error: $stale_targets of ${#targets[@]} worktrees are stale; nothing was synchronized."
+    exit 1
   fi
 
   _history__begin_transaction "$repo"

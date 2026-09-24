@@ -245,6 +245,11 @@ main() {
     target_worktree="$worktree_path"
 
     if _worktree__check_exists "$target_worktree"; then
+      # A worktree about to be created cannot be stale, so only an existing one
+      # is guarded. The check precedes the cleanliness test below, which loads
+      # the target's working copy and would fail there with a backend error.
+      _worktree__ensure_worktree_current "$repo" "$target_worktree" || exit 1
+
       # Existing workspace: check for local changes
       if ! _worktree__check_clean "$target_worktree"; then
         if [[ "$force" != true ]]; then

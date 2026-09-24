@@ -132,4 +132,19 @@ test_worktree_switch__no_arg_outside_worktree_fails() {
 }
 
 
+test_worktree_switch__refuses_a_stale_outgoing_worktree() {
+  setup_workspace "switch-stale-outgoing"
+  setup_guard_fixture "outgoing"
+  # HEAD follows --switch, so the task worktree becomes the outgoing one.
+  run_tt task checkout "$STALE_TASK_ID" --worktree --switch >/dev/null 2>&1
+  make_worktree_stale "$STALE_WORKTREE"
+
+  local out exit_code=0
+  out=$(run_tt worktree switch "$REPO" 2>&1) || exit_code=$?
+  assert_failure "a stale outgoing worktree is refused" "$exit_code"
+  assert_contains "the refusal names the outgoing worktree" "$out" \
+    "Error: The workspace is stale: $STALE_WORKTREE"
+  assert_contains "the refusal names the recovery command" "$out" "tt worktree refresh"
+}
+
 run_tests "tt worktree switch"
