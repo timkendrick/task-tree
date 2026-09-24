@@ -275,6 +275,14 @@ __history__abort_transaction() {
 # removing the in-progress line from .tt/history.
 # No-op when called from a nested sub-command (not the transaction owner).
 #
+# When the restore itself fails, the in-progress line is KEPT rather than
+# removed: it locks the repository so the next tt command refuses with the
+# existing "Another tt command is in progress" error instead of running
+# against a half-written repository. The failure is reported as an error
+# carrying the operation to restore and both ways out (tt history undo
+# --force, or tt history unlock --force once recovered by hand). The calling
+# command's own exit status is unaffected either way.
+#
 # Working-copy preservation: restoring an operation also resets the on-disk
 # working copy, which would strip the changes captured by the transaction's
 # begin-time snapshot (and any captured later) from disk. To keep the user's
@@ -338,8 +346,31 @@ _history__rollback_transaction() {
   # Restore the VCS to the before-op state. The backend operation works even
   # when the caller's working directory has been deleted (e.g. after
   # worktree delete).
-  _repo__restore_operation "$canonical_repo" "$before_op" || \
-    _ui__log "Warning: Could not restore the VCS operation state; manual recovery may be needed"
+  #
+  # A restore that fails leaves the repository mid-transaction, so the
+  # in-progress entry is KEPT: it is the lock that makes the next tt command
+  # refuse instead of running against a half-written repository.
+  if ! _repo__restore_operation "$canonical_repo" "$before_op"; then
+    # Discard the preserved copies without re-applying them. A failed restore
+    # never disturbed the files, and the re-apply is gated on a working-copy
+    # comparison that means nothing once the restore did not happen.
+    if [[ -n "$preserve_dir" ]]; then
+      rm -rf "$preserve_dir"
+    fi
+
+    _ui__log "Error: Could not restore the VCS operation state."
+    _ui__log "  The repository was left mid-transaction at operation $before_op."
+    _ui__log "  The transaction is still recorded, so the next tt command will refuse."
+    _ui__log "  To retry the revert:        tt history undo --force"
+    _ui__log "  Or, once recovered by hand: tt history unlock --force"
+
+    # Close out this process's transaction state so no second rollback runs;
+    # only the history entry survives, which is what makes the damage visible.
+    trap - ERR EXIT
+    unset _TT_TRANSACTION_OWNER
+    unset TT_TRANSACTION_ID
+    return 0
+  fi
 
   # Re-apply the preserved working-copy changes when the restore landed on
   # the same change (i.e. the transaction never moved the working copy).
