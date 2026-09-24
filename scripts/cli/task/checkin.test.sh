@@ -1008,4 +1008,21 @@ test_task_checkin__refuses_when_the_canonical_workspace_is_stale() {
     task checkin "$STALE_TASK_ID"
 }
 
+test_task_checkin__delete_refuses_a_stale_child_worktree() {
+  setup_workspace "checkin-stale-child"
+  setup_guard_fixture "childwt"
+  run_tt task complete "$STALE_TASK_ID" >/dev/null 2>&1
+  make_worktree_stale "$STALE_WORKTREE"
+
+  local before_op
+  before_op="$(get_jj_op_bare)"
+  local out exit_code=0
+  out=$(run_tt task checkin "$STALE_TASK_ID" --delete 2>&1) || exit_code=$?
+
+  assert_failure "--delete refuses a stale child worktree" "$exit_code"
+  assert_contains "the refusal names the child worktree" "$out" \
+    "Error: The workspace is stale: $STALE_WORKTREE"
+  assert_eq "nothing was written" "$(get_jj_op_bare)" "$before_op"
+}
+
 run_tests "tt task checkin"

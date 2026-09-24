@@ -563,6 +563,12 @@ get_workspace_name() {
 # files. The resulting refusal is asserted rather than assumed: a backend that
 # stopped producing this state would otherwise silently disarm every test that
 # depends on it.
+#
+# Only one marker path is rewritten, never the whole tree. A worktree's branch
+# is read from the task symlink recorded in its working-copy commit, so wiping
+# the tree would leave it on no branch at all / a different condition, and one
+# that quietly removes the worktree from the target list of commands like
+# tt worktree sync.
 # Usage: make_worktree_stale WORKTREE
 make_worktree_stale() {
   local worktree="$1"
@@ -573,14 +579,18 @@ make_worktree_stale() {
     return 1
   }
 
-  # Snapshot first, so the workspace's recorded state is current and the
-  # staleness that follows is caused by the rewrite below and nothing else.
+  # Give the working-copy commit a file of its own, snapshotting it so the
+  # workspace's recorded state is current: the staleness that follows is then
+  # caused by the rewrite below and nothing else.
+  local marker='.tt-stale-marker'
+  printf 'marker\n' > "$worktree/$marker"
   jj -R "$worktree" log -r '@' --no-graph -T '' >/dev/null 2>&1 || true
 
-  # Bare rewrite of the target's working-copy commit: the tree changes in the
-  # graph while the files on disk stay where they were.
+  # Bare rewrite of just that path out of the target's working-copy commit:
+  # the tree changes in the graph while the files on disk stay where they
+  # were, which is what the backend calls stale.
   jj -R "$REPO" --ignore-working-copy restore --from 'root()' --into "${name}@" \
-    >/dev/null 2>&1 || {
+    "$marker" >/dev/null 2>&1 || {
     _log_fail "make_worktree_stale: could not rewrite the working-copy commit of $worktree"
     _record_fail "make_worktree_stale: rewrite failed for $worktree"
     return 1
