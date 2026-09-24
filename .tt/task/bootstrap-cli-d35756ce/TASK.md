@@ -154,6 +154,7 @@ subtask: [ ] task/inline-child-task-completed-checkin-e8b06da2
 subtask: [ ] task/tt-task-reorder-propagate-c60ed18c
 subtask: [x] task/changelog-task-commit-ids-216386e1
 subtask: [ ] task/parallel-runner-hangs-on-crashed-test-c77d2074
+subtask: [ ] task/tt-task-find-506a2320
 ---
 Implement shell script implementations of all `tt` CLI commands
 
