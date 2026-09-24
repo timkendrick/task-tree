@@ -564,6 +564,10 @@ get_workspace_name() {
 # stopped producing this state would otherwise silently disarm every test that
 # depends on it.
 #
+# Sets STALE_PRE_REWRITE_COMMIT to the commit the worktree's files are left
+# holding — the one the rewrite moved the graph off. Callers cannot capture it
+# themselves, since the marker snapshot below advances the working-copy commit.
+#
 # Only one marker path is rewritten, never the whole tree. A worktree's branch
 # is read from the task symlink recorded in its working-copy commit, so wiping
 # the tree would leave it on no branch at all / a different condition, and one
@@ -585,6 +589,9 @@ make_worktree_stale() {
   local marker='.tt-stale-marker'
   printf 'marker\n' > "$worktree/$marker"
   jj -R "$worktree" log -r '@' --no-graph -T '' >/dev/null 2>&1 || true
+
+  STALE_PRE_REWRITE_COMMIT="$(jj -R "$worktree" --ignore-working-copy \
+    log -r '@' --no-graph -T 'commit_id' 2>/dev/null)"
 
   # Bare rewrite of just that path out of the target's working-copy commit:
   # the tree changes in the graph while the files on disk stay where they

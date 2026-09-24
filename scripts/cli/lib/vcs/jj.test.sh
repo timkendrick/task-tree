@@ -706,16 +706,15 @@ test__jj__get_worktree_checkout_revision__matches_wc_commit_when_healthy() {
 test__jj__get_worktree_checkout_revision__reports_the_pre_rewrite_commit_when_stale() {
   setup_workspace
   edit_file kept.txt "original"
-  jj -R "$REPO" log -r '@' --no-graph -T '' >/dev/null 2>&1
-  local before
-  before="$(get_full_commit_id '@')"
 
+  # make_worktree_stale reports the commit the files are left holding; it
+  # cannot be captured beforehand, since staling the worktree advances @.
   make_worktree_stale "$REPO"
 
   assert_eq "stale worktree still reports the commit its files hold" \
-    "$(_jj__get_worktree_checkout_revision "$REPO")" "$before"
+    "$(_jj__get_worktree_checkout_revision "$REPO")" "$STALE_PRE_REWRITE_COMMIT"
   assert_neq "the repository has moved @ on from there" \
-    "$(_jj__resolve_commit "$REPO" '@')" "$before"
+    "$(_jj__resolve_commit "$REPO" '@')" "$STALE_PRE_REWRITE_COMMIT"
 }
 
 test__jj__get_worktree_checkout_revision__records_no_operation() {
