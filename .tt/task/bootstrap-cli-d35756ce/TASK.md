@@ -156,6 +156,7 @@ subtask: [x] task/changelog-task-commit-ids-216386e1
 subtask: [ ] task/parallel-runner-hangs-on-crashed-test-c77d2074
 subtask: [ ] task/tt-task-find-506a2320
 subtask: [ ] task/move-task-md-into-tt-directory-1c1a89f7
+subtask: [ ] task/tt-prompt-omit-summary-line-1ba84f08
 ---
 Implement shell script implementations of all `tt` CLI commands
 
