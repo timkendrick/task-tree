@@ -74,13 +74,28 @@ resolve_task_suffix() {
   fi
 }
 
-# Usage: render_entry DEPTH TASK_ID TITLE STATUS
-# Prints one task tree line, indented two spaces per depth level. TITLE and STATUS
-# may be empty, in which case the line carries the task ID alone.
+# Usage: render_commit_id COMMIT_ID
+# Prints the 8-character, backtick-quoted form of a Git commit ID.
+render_commit_id() {
+  local commit_id="$1"
+  printf -- '`%s`' "${commit_id:0:8}"
+}
+
+# Usage: render_entry DEPTH TASK_ID CHECKIN_IDS TITLE STATUS
+# Prints one task tree line, indented two spaces per depth level. CHECKIN_IDS is a
+# space-separated list of the task's checkin commit IDs, oldest first. TITLE and
+# STATUS may be empty, in which case the line carries the task and checkin IDs alone.
 render_entry() {
-  local depth="$1" task_id="$2" title="$3" status="$4"
+  local depth="$1" task_id="$2" checkin_ids="$3" title="$4" status="$5"
+
+  local checkins='' commit_id
+  for commit_id in $checkin_ids; do
+    [[ -n "$checkins" ]] && checkins="$checkins, "
+    checkins="$checkins$(render_commit_id "$commit_id")"
+  done
+
   local line
-  line="$(printf -- '- `%s`' "$task_id")"
+  line="$(printf -- '- `%s` (%s)' "$task_id" "$checkins")"
   if [[ "$status" == "$IN_PROGRESS_STATUS" ]]; then
     line="$line [$IN_PROGRESS_STATUS]"
   fi
@@ -94,7 +109,7 @@ render_entry() {
 # Prints one checkpoint line, identified by the 8-character Git commit ID.
 render_checkpoint() {
   local commit_id="$1" message="$2"
-  printf -- '- `%s` - %s\n' "${commit_id:0:8}" "$message"
+  printf -- '- %s - %s\n' "$(render_commit_id "$commit_id")" "$message"
 }
 
 # Usage: read_task_metadata REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
@@ -146,8 +161,8 @@ record_operation_fields() {
 #
 # Checkins of the same task are grouped, so a task checked in more than once (a
 # partial checkin followed by a later one) appears once: the entry keeps the
-# position of the task's first checkin, its title and status come from its most
-# recent checkin, and its children are rendered from the ranges merged by all of
+# position of the task's first checkin, lists the commit IDs of all its checkins,
+# its title and status come from its most recent checkin, and its children are rendered from the ranges merged by all of
 # its checkins combined.
 render_entries() {
   local repo="$1" task_prefix="$2" project_prefix="$3" depth="$4" max_depth="$5"
@@ -195,7 +210,7 @@ render_entries() {
       IFS=$'\t' read -r status title <<< "$metadata"
     fi
 
-    render_entry "$depth" "$task_id" "$title" "$status"
+    render_entry "$depth" "$task_id" "${entry_commits[$entry_index]}" "$title" "$status"
 
     # Stop before gathering the next level's records once the limit is reached, so
     # a shallow report costs no extra queries.
