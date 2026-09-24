@@ -4,6 +4,22 @@ set -euo pipefail
 . "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 
+# Usage: _checkin_ids TASK_ID
+# Prints the checkin commit IDs of TASK_ID as a changelog task entry renders them:
+# backtick-quoted 8-character Git commit IDs, oldest first, joined by ", ".
+_checkin_ids() {
+  local task_id="$1"
+  local joined='' commit_id
+  while IFS= read -r commit_id; do
+    [[ -n "$joined" ]] && joined="$joined, "
+    joined="$joined\`$commit_id\`"
+  done < <(jj -R "$TT_REPO" log --ignore-working-copy --no-graph --reversed \
+    -r "description(substring:'[tt:task:${task_id}:checkin]')" \
+    -T 'commit_id.short(8) ++ "\n"')
+  printf '%s' "$joined"
+}
+
+
 # Builds a project branch holding a two-level task tree (task A, with subtask A1
 # checked into it) plus a checkpoint recorded directly on the project branch.
 # Sets proj_id, task_a and task_a1.
@@ -35,8 +51,8 @@ test_task_changelog__nested_tree_and_checkpoints() {
   output="" exit_code=0
   output=$(run_tt task changelog --since main 2>/dev/null) || exit_code=$?
   assert_success "changelog succeeds" "$exit_code"
-  assert_matches "task A at top level" "$output" "^- \`${task_a}\` - Task A$"
-  assert_matches "task A1 nested below A" "$output" "^  - \`${task_a1}\` - Task A1$"
+  assert_matches "task A at top level" "$output" "^- \`${task_a}\` \($(_checkin_ids "$task_a")\) - Task A$"
+  assert_matches "task A1 nested below A" "$output" "^  - \`${task_a1}\` \($(_checkin_ids "$task_a1")\) - Task A1$"
   assert_matches "checkpoint line with 8-char git id" "$output" '^- `[0-9a-f]{8}` - project work$'
   assert_not_contains "no in-progress markers" "$output" "[IN-PROGRESS]"
   # The checkpoint section follows the tree section directly, with no blank line.
@@ -61,11 +77,11 @@ test_task_changelog__depth_limits_subtask_levels() {
   assert_eq "depth 0 reports checkpoints only" \
     "$depth_0" "$(printf -- '- `%s` - project work' "$(get_bookmark_commit "$proj_id" | cut -c1-8)")"
 
-  assert_matches "depth 1 reports the checked-in task" "$depth_1" "^- \`${task_a}\` - Task A$"
+  assert_matches "depth 1 reports the checked-in task" "$depth_1" "^- \`${task_a}\` \($(_checkin_ids "$task_a")\) - Task A$"
   assert_not_contains "depth 1 omits its subtask" "$depth_1" "$task_a1"
   assert_contains "depth 1 still reports checkpoints" "$depth_1" "project work"
 
-  assert_matches "depth 2 reports the nested subtask" "$depth_2" "^  - \`${task_a1}\` - Task A1$"
+  assert_matches "depth 2 reports the nested subtask" "$depth_2" "^  - \`${task_a1}\` \($(_checkin_ids "$task_a1")\) - Task A1$"
   assert_eq "omitted --depth matches the deepest level" "$unlimited" "$depth_2"
 }
 
@@ -159,7 +175,30 @@ test_task_changelog__checkins_only() {
   output=$(run_tt task changelog --task "$proj_id" --since main 2>/dev/null) || exit_code=$?
   assert_success "changelog succeeds" "$exit_code"
   assert_eq "tree section alone" \
-    "$output" "$(printf -- '- `%s` - T' "$task_id")"
+    "$output" "$(printf -- '- `%s` (%s) - T' "$task_id" "$(_checkin_ids "$task_id")")"
+}
+
+
+test_task_changelog__checkin_id_is_the_checkin_merge_commit() {
+  setup_workspace "changelog-checkin-id"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "work" > "$TT_REPO/work.txt"
+  checkpoint_task "t work" >/dev/null || true
+  run_tt task checkin "$task_id" --complete >/dev/null 2>&1 || true
+
+  checkin_commit=$(get_bookmark_commit "$proj_id")
+  handoff_commit=$(jj -R "$TT_REPO" log --ignore-working-copy --no-graph \
+    -r "description(substring:'[tt:task:${task_id}:handoff]')" -T 'commit_id.short(8)')
+
+  output="" exit_code=0
+  output=$(run_tt task changelog --task "$proj_id" --since main 2>/dev/null) || exit_code=$?
+  assert_success "changelog succeeds" "$exit_code"
+  assert_eq "entry carries the checkin merge commit id" \
+    "$output" "$(printf -- '- `%s` (`%s`) - T' "$task_id" "$checkin_commit")"
+  assert_not_contains "handoff commit id not used" "$output" "$handoff_commit"
 }
 
 
@@ -177,7 +216,7 @@ test_task_changelog__partial_checkin_flagged_in_progress() {
   output=$(run_tt task changelog --task "$proj_id" --since main 2>/dev/null) || exit_code=$?
   assert_success "changelog succeeds" "$exit_code"
   assert_eq "in-progress task flagged" \
-    "$output" "$(printf -- '- `%s` [IN-PROGRESS] - T' "$task_id")"
+    "$output" "$(printf -- '- `%s` (%s) [IN-PROGRESS] - T' "$task_id" "$(_checkin_ids "$task_id")")"
 }
 
 
@@ -212,9 +251,11 @@ test_task_changelog__repeat_checkin_deduplicated() {
   output=$(run_tt task changelog --task "$proj_id" --since main 2>/dev/null) || exit_code=$?
   assert_success "changelog succeeds" "$exit_code"
   assert_line_count "each task listed once" "$output" 2
-  assert_eq "entry keeps its first checkin position" \
+  assert_eq "entry keeps its first checkin position and lists every checkin" \
     "$(printf '%s\n' "$output" | sed -n '2p')" \
-    "$(printf -- '- `%s` - Repeat' "$repeat_id")"
+    "$(printf -- '- `%s` (%s) - Repeat' "$repeat_id" "$(_checkin_ids "$repeat_id")")"
+  assert_matches "both checkins listed, comma-separated" \
+    "$output" "^- \`${repeat_id}\` \(\`[0-9a-f]{8}\`, \`[0-9a-f]{8}\`\) - Repeat$"
   assert_not_contains "status taken from the latest checkin" "$output" "[IN-PROGRESS]"
 }
 
@@ -234,7 +275,7 @@ test_task_changelog__deleted_task_still_listed() {
   output=$(run_tt task changelog --task "$proj_id" --since main 2>/dev/null) || exit_code=$?
   assert_success "changelog succeeds" "$exit_code"
   assert_eq "deleted task still listed with its title" \
-    "$output" "$(printf -- '- `%s` - T' "$task_id")"
+    "$output" "$(printf -- '- `%s` (%s) - T' "$task_id" "$(_checkin_ids "$task_id")")"
 }
 
 
@@ -258,7 +299,8 @@ test_task_changelog__unreadable_task_file_lists_id_only() {
   output="" exit_code=0
   output=$(run_tt task changelog --task "$proj_id" --since main 2>/dev/null) || exit_code=$?
   assert_success "changelog succeeds" "$exit_code"
-  assert_eq "task listed by id alone" "$output" "$(printf -- '- `%s`' "$task_id")"
+  assert_eq "task listed by task and checkin ids alone" \
+    "$output" "$(printf -- '- `%s` (%s)' "$task_id" "$(_checkin_ids "$task_id")")"
 }
 
 
@@ -471,7 +513,7 @@ test_task_changelog__all_direct_child_checked_in_reported() {
   output="" exit_code=0
   output=$(run_tt task changelog --task "$task_id" --all 2>/dev/null) || exit_code=$?
   assert_success "changelog --all succeeds" "$exit_code"
-  assert_matches "reports the direct child that was checked in" "$output" "^- \`${child_id}\` - C\$"
+  assert_matches "reports the direct child that was checked in" "$output" "^- \`${child_id}\` \($(_checkin_ids "$child_id")\) - C\$"
 }
 
 test_task_changelog__all_depth_still_applies() {
