@@ -1,6 +1,6 @@
 ---
 title: "Omit summary line from `tt prompt` output"
-status: IN-PROGRESS
+status: DONE
 created: 2026-09-24T16:39:44Z
 updated: 2026-09-24T16:39:44Z
 ---
