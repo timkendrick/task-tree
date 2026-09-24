@@ -1,6 +1,6 @@
 ---
 title: "Show commit IDs for completed tasks in changelog entries"
-status: TODO
+status: IN-PROGRESS
 created: 2026-09-24T14:09:30Z
 updated: 2026-09-24T14:09:30Z
 ---
