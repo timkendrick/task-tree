@@ -14,7 +14,9 @@ test_task_prompt__basic_prompt_output() {
   output="" exit_code=0
   output=$(run_tt task prompt 2>&1) || exit_code=$?
   assert_success "prompt succeeds" "$exit_code"
-  assert_contains "starts with Implement task" "$output" "Implement task: My Task"
+  assert_eq "starts with frontmatter" "$(printf '%s\n' "$output" | head -1)" "---"
+  assert_not_contains "no summary line" "$output" "Implement task:"
+  assert_eq "ends with separator" "$(printf '%s\n' "$output" | tail -1)" "---"
   assert_contains "task ID in frontmatter" "$output" "task:"
   assert_contains "body present" "$output" "Task body text"
   assert_contains "commands section" "$output" "tt task tree --focus"
@@ -34,6 +36,7 @@ test_task_prompt__message() {
   output=$(run_tt task prompt --message "Extra instructions here" 2>&1) || exit_code=$?
   assert_success "prompt with message succeeds" "$exit_code"
   assert_contains "extra message present" "$output" "Extra instructions here"
+  assert_eq "separator before message" "$(printf '%s\n' "$output" | tail -3 | head -1)" "---"
 }
 
 
