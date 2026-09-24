@@ -1,1 +1,1 @@
-.tt/task/tt-prompt-omit-summary-line-1ba84f08/TASK.md
+.tt/task/bootstrap-cli-d35756ce/TASK.md
