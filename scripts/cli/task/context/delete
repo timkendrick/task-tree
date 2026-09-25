@@ -124,6 +124,7 @@ main() {
 
   # Precondition: the working-copy commit must not carry a bookmark
   _worktree__ensure_working_copy "$repo" || exit 1
+  _worktree__ensure_canonical_current "$repo" || exit 1
 
   # Read the task file from the task's own branch, so tasks that are not checked
   # out anywhere can still be edited.

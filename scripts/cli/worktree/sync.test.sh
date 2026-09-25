@@ -307,4 +307,83 @@ test_worktree_sync__help() {
 }
 
 
+# ---------------------------------------------------------------------------
+# Staleness screening
+# ---------------------------------------------------------------------------
+
+test_worktree_sync__refuses_a_stale_target() {
+  setup_workspace "sync-stale-target"
+  local proj_id task_id wt
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null 2>&1 || true
+  task_id=$(create_task "staletarget" "Stale target") || true
+  wt=$(create_task_worktree "$task_id")
+  advance_branch "$task_id" "notes"
+  make_worktree_stale "$wt"
+
+  local before_op
+  before_op="$(get_jj_op_bare)"
+
+  local out exit_code=0
+  out=$(run_tt worktree sync "$wt" 2>&1) || exit_code=$?
+
+  assert_failure "a stale target is refused" "$exit_code"
+  assert_contains "the refusal names the stale worktree" "$out" \
+    "Error: The workspace is stale: $wt"
+  assert_contains "the refusal names the recovery command" "$out" "tt worktree refresh"
+  assert_eq "nothing was synchronized" "$(get_jj_op_bare)" "$before_op"
+}
+
+test_worktree_sync__all_refuses_the_whole_run_when_any_target_is_stale() {
+  setup_workspace "sync-all-stale"
+  local proj_id task_ok task_bad wt_ok wt_bad
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null 2>&1 || true
+  task_ok=$(create_task "healthy" "Healthy") || true
+  wt_ok=$(create_task_worktree "$task_ok")
+  task_bad=$(create_task "stale" "Stale") || true
+  wt_bad=$(create_task_worktree "$task_bad")
+
+  # Both worktrees are behind, so both are targets; only one is stale.
+  advance_branch "$task_ok" "notes-ok"
+  advance_branch "$task_bad" "notes-bad"
+  local ok_parent_before
+  ok_parent_before="$(worktree_parent "$wt_ok")"
+  make_worktree_stale "$wt_bad"
+
+  local out exit_code=0
+  out=$(run_tt worktree sync --all 2>&1) || exit_code=$?
+
+  assert_failure "--all refuses when any target is stale" "$exit_code"
+  assert_contains "the refusal names the stale worktree" "$out" \
+    "Error: The workspace is stale: $wt_bad"
+  assert_contains "the run reports that nothing was synchronized" "$out" \
+    "nothing was synchronized"
+  assert_eq "the healthy worktree was NOT synced" \
+    "$(worktree_parent "$wt_ok")" "$ok_parent_before"
+}
+
+test_worktree_sync__all_ignores_a_stale_worktree_that_is_not_behind() {
+  setup_workspace "sync-all-stale-not-behind"
+  local proj_id task_ok task_idle wt_ok wt_idle
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null 2>&1 || true
+  task_ok=$(create_task "healthy" "Healthy") || true
+  wt_ok=$(create_task_worktree "$task_ok")
+  task_idle=$(create_task "idle" "Idle") || true
+  wt_idle=$(create_task_worktree "$task_idle")
+
+  # Only the healthy worktree is behind. The stale one never advanced, so it
+  # is not a sync target and must neither block the run nor be reported.
+  advance_branch "$task_ok" "notes-ok"
+  make_worktree_stale "$wt_idle"
+
+  local out exit_code=0
+  out=$(run_tt worktree sync --all 2>&1) || exit_code=$?
+
+  assert_success "a stale non-target does not block the run" "$exit_code"
+  assert_not_contains "the stale non-target is not reported" "$out" "$wt_idle"
+  assert_contains "the behind worktree was synced" "$out" "Synced $wt_ok"
+}
+
 run_tests "tt worktree sync"

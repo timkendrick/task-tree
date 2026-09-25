@@ -134,6 +134,13 @@ pending on-disk edits as dirt because it snapshots; `check_commit_empty` asked a
 and will call a dirty working copy empty. The facades expose the former as
 `_worktree__check_clean`, so callers ask the question rather than assembling it.
 
+`get_worktree_checkout_revision` sits in the working-copy group but is the one member that does
+**not** snapshot. It reports the commit a worktree's on-disk files were last updated to, read from
+the backend's own record of that worktree's state, so the answer is available even for a worktree
+the backend otherwise refuses to load. That exception is what lets `_worktree__check_stale` run
+ahead of every branch write: a staleness check that snapshotted would fold a user's pending edits
+into a new operation on every tt command, outside any transaction.
+
 No revset expression and no template string may appear outside `lib/vcs/jj.sh`. Every query is a
 named operation taking domain arguments, with the backend syntax held inside the backend. There is no
 raw-revset escape hatch.
@@ -257,6 +264,7 @@ These take a **worktree root** and execute with the process working directory in
 | Operation | Purpose |
 | --- | --- |
 | `check_working_copy_clean` | Whether the working copy has pending changes |
+| `get_worktree_checkout_revision` | Commit ID a worktree's on-disk files were last updated to |
 | `get_working_copy_revision` | Change ID of the working-copy commit |
 | `get_working_copy_parent` | Commit ID of its parent |
 | `set_working_copy_revision` | Point the working copy at a revision |
@@ -470,6 +478,35 @@ nearest-bookmark operation at all — so a worktree recording no task is reporte
 and the commands that need one (`tt task current`, `tt task checkpoint`, `tt task create` without
 `--parent`) fail instead of adopting whichever branch lies below.
 
+### 6.4 Stale workspaces
+
+A workspace is **stale** when the commit its on-disk files were updated to has had its tree
+rewritten since — something a bare mutation can do to any workspace, because a bare mutation
+deliberately touches no working copy. The backend then refuses every command in that workspace that
+loads its working copy. This is a different condition from being *behind* (§6.3): behind is a
+valid tree at an older position, stale is a tree that matches no commit.
+
+`_worktree__check_stale` reports the condition in three states — stale, not stale, and could not be
+determined — and the third is never folded into either boolean. Two guards consume it:
+
+- `_worktree__ensure_worktree_current` guards a worktree a command is about to load. No exemptions:
+  it is asked about a target that is going to be touched.
+- `_worktree__ensure_canonical_current` guards the canonical workspace ahead of a branch write. That
+  workspace is what `_history__rollback_transaction` restores from (§8.2), and a repository driven
+  from task worktrees leaves nobody standing in it, so it can sit stale until a rollback needs it.
+
+The canonical guard skips two cases, both load-bearing. **Inside a transaction** it stands aside,
+because a parent command's own writes can make the canonical workspace stale partway through; a
+nested refusal would trigger exactly the rollback that staleness breaks, converting a survivable
+failure into a locked repository. **When the canonical workspace is the invoking worktree** it also
+stands aside, leaving that worktree to fail on its own terms — the transaction's begin-time snapshot
+refuses immediately and rolls back cleanly, which is the better failure. The guard therefore runs
+only where it is load-bearing.
+
+Recovery is `tt worktree refresh`, which is destructive by nature: the backend cannot snapshot a
+stale working copy, so uncommitted work there is replaced by the recorded tree. That is why no
+command recovers a workspace implicitly.
+
 ## 7. Working-copy-bound commands
 
 Three commands legitimately require a working copy, and only they may reach the restricted
@@ -553,6 +590,13 @@ afterwards — but only when the restore lands on the same working-copy commit, 
 that deliberately moved the working copy has no business putting the old files back. Preservation is
 best-effort throughout: each step degrades to a plain restore, which is still recoverable from the
 operation log.
+
+A restore that **fails** keeps the in-progress entry instead of deleting it, and reports an error naming the
+operation to restore and both recovery commands. The entry is then a lock, which is the only thing that makes a
+half-written repository visible to the next command; the transaction state is still cleared so the process does
+not roll back twice. The preserved working-copy files are discarded unapplied, because the re-apply is gated on
+a working-copy comparison that is meaningless once the restore did not happen. `_worktree__ensure_canonical_current`
+(§6.4) exists to stop the common cause of this — a stale canonical workspace — from being reached at all.
 
 Restoring an operation *creates* an operation, so after a rollback the repository's current operation
 is not the one recorded as the previous transaction's after-op. Tests therefore assert that no

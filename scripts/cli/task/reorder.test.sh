@@ -575,4 +575,12 @@ test_task_reorder__help() {
 }
 
 
+test_task_reorder__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "reorder-stale-canonical"
+  setup_stale_canonical "reordered"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task reorder "$STALE_TASK_ID"
+}
+
 run_tests "tt task reorder"

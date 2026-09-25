@@ -119,6 +119,11 @@ main() {
   # worktree the command runs in.
   previous_task_id="$(_task__resolve_current_branch "$outgoing_worktree" "$task_prefix" "$project_prefix")" || true
 
+  # The outgoing worktree is a foreign working copy: HEAD may point somewhere
+  # other than where this command was invoked from. Guard it before the
+  # cleanliness test, which loads it.
+  _worktree__ensure_worktree_current "$repo" "$outgoing_worktree" || exit 1
+
   # Dirty check on outgoing worktree
   if ! _worktree__check_clean "$outgoing_worktree"; then
     if [[ "$force" != true ]]; then

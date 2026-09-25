@@ -125,6 +125,66 @@ _create_secondary_worktree() {
 }
 
 # ---------------------------------------------------------------------------
+# _worktree__check_stale
+# ---------------------------------------------------------------------------
+
+test__worktree__check_stale__healthy_worktree_is_not_stale() {
+  setup_workspace "wt-stale-healthy"
+
+  local status=0
+  _worktree__check_stale "$REPO" "$REPO" || status=$?
+  assert_eq "a healthy worktree reports not stale" "$status" "1"
+}
+
+test__worktree__check_stale__worktree_behind_its_branch_is_not_stale() {
+  setup_workspace "wt-stale-behind"
+  local proj_id task_id wt
+  proj_id="$(create_project "proj" "Project")"
+  checkout_task "$proj_id"
+  task_id="$(create_task "behind" "Behind")"
+  wt="$(create_task_worktree "$task_id")"
+
+  # Advance the branch past the worktree without rewriting its @: the worktree
+  # is left behind, which is a different condition from being stale.
+  local tip
+  tip="$(get_full_commit_id "$task_id")"
+  jj -R "$REPO" --ignore-working-copy new --no-edit -m "ahead" "$tip" >/dev/null 2>&1
+  jj -R "$REPO" --ignore-working-copy bookmark set "$task_id" \
+    -r "description(substring:'ahead')" >/dev/null 2>&1
+
+  local behind=0
+  _worktree__check_behind "$REPO" "$wt" || behind=$?
+  assert_success "the worktree really is behind its branch" "$behind"
+
+  local status=0
+  _worktree__check_stale "$REPO" "$wt" || status=$?
+  assert_eq "a worktree that is merely behind is not stale" "$status" "1"
+}
+
+test__worktree__check_stale__rewritten_working_copy_is_stale() {
+  setup_workspace "wt-stale-rewritten"
+  local proj_id task_id wt
+  proj_id="$(create_project "proj" "Project")"
+  checkout_task "$proj_id"
+  task_id="$(create_task "rewritten" "Rewritten")"
+  wt="$(create_task_worktree "$task_id")"
+
+  make_worktree_stale "$wt"
+
+  local status=0
+  _worktree__check_stale "$REPO" "$wt" || status=$?
+  assert_eq "a rewritten working copy reports stale" "$status" "0"
+}
+
+test__worktree__check_stale__unreadable_state_is_undetermined() {
+  setup_workspace "wt-stale-unreadable"
+
+  local status=0
+  _worktree__check_stale "$REPO" "$_TEST_ROOT" 2>/dev/null || status=$?
+  assert_eq "an unreadable workspace is undetermined, not healthy" "$status" "2"
+}
+
+# ---------------------------------------------------------------------------
 # _worktree__ensure_working_copy
 # ---------------------------------------------------------------------------
 
@@ -166,6 +226,111 @@ test__worktree__ensure_working_copy__accepts_wc_above_bookmark() {
   local exit_code=0
   _worktree__ensure_working_copy "$REPO" || exit_code=$?
   assert_success "normal state (@ child of a bookmarked commit) accepted" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# _worktree__ensure_worktree_current
+# ---------------------------------------------------------------------------
+
+test__worktree__ensure_worktree_current__accepts_a_healthy_worktree() {
+  setup_workspace "wt-current-healthy"
+
+  local exit_code=0
+  _worktree__ensure_worktree_current "$REPO" "$REPO" || exit_code=$?
+  assert_success "a healthy worktree is accepted" "$exit_code"
+}
+
+test__worktree__ensure_worktree_current__refuses_a_stale_worktree() {
+  setup_workspace "wt-current-stale"
+  local proj_id task_id wt
+  proj_id="$(create_project "proj" "Project")"
+  checkout_task "$proj_id"
+  task_id="$(create_task "stale" "Stale")"
+  wt="$(create_task_worktree "$task_id")"
+  make_worktree_stale "$wt"
+
+  local out exit_code=0
+  out="$(_worktree__ensure_worktree_current "$REPO" "$wt" 2>&1)" || exit_code=$?
+  assert_failure "a stale worktree is refused" "$exit_code"
+  assert_eq "first line names the stale workspace" \
+    "$(printf '%s' "$out" | sed -n '1p')" \
+    "Error: The workspace is stale: $wt"
+  assert_contains "the refusal names the recovery command" "$out" \
+    "tt worktree refresh $wt --force"
+  assert_contains "the refusal states the consequence" "$out" \
+    "Uncommitted changes in that workspace will be lost."
+}
+
+test__worktree__ensure_worktree_current__refuses_an_undetermined_worktree() {
+  setup_workspace "wt-current-undetermined"
+
+  local out exit_code=0
+  out="$(_worktree__ensure_worktree_current "$REPO" "$_TEST_ROOT" 2>&1)" || exit_code=$?
+  assert_failure "an unreadable workspace is refused, not passed" "$exit_code"
+  assert_contains "the refusal names the workspace" "$out" \
+    "Error: Could not determine the state of the workspace: $_TEST_ROOT"
+}
+
+# ---------------------------------------------------------------------------
+# _worktree__ensure_canonical_current
+# ---------------------------------------------------------------------------
+
+test__worktree__ensure_canonical_current__accepts_a_healthy_canonical_workspace() {
+  setup_workspace "wt-canonical-healthy"
+  local proj_id task_id wt
+  proj_id="$(create_project "proj" "Project")"
+  checkout_task "$proj_id"
+  task_id="$(create_task "healthy" "Healthy")"
+  wt="$(create_task_worktree "$task_id")"
+
+  local exit_code=0
+  ( cd "$wt" && _worktree__ensure_canonical_current "$wt" ) || exit_code=$?
+  assert_success "a healthy canonical workspace is accepted" "$exit_code"
+}
+
+test__worktree__ensure_canonical_current__refuses_a_stale_canonical_workspace() {
+  setup_workspace "wt-canonical-stale"
+  local proj_id task_id wt
+  proj_id="$(create_project "proj" "Project")"
+  checkout_task "$proj_id"
+  task_id="$(create_task "guarded" "Guarded")"
+  wt="$(create_task_worktree "$task_id")"
+  make_worktree_stale "$REPO"
+
+  local out exit_code=0
+  out="$( cd "$wt" && _worktree__ensure_canonical_current "$wt" 2>&1 )" || exit_code=$?
+  assert_failure "a stale canonical workspace is refused" "$exit_code"
+  assert_contains "the refusal names the canonical workspace" "$out" \
+    "Error: The workspace is stale: $REPO"
+  assert_contains "the refusal names the recovery command" "$out" "tt worktree refresh"
+}
+
+test__worktree__ensure_canonical_current__skips_when_canonical_is_the_invoking_worktree() {
+  setup_workspace "wt-canonical-is-invoking"
+  make_worktree_stale "$REPO"
+
+  # The invoking worktree is left to fail on its own terms, so the guard must
+  # stand aside even though the canonical workspace is stale.
+  local exit_code=0
+  _worktree__ensure_canonical_current "$REPO" >/dev/null 2>&1 || exit_code=$?
+  assert_success "the guard skips the workspace the command runs in" "$exit_code"
+}
+
+test__worktree__ensure_canonical_current__skips_inside_a_transaction() {
+  setup_workspace "wt-canonical-nested"
+  local proj_id task_id wt
+  proj_id="$(create_project "proj" "Project")"
+  checkout_task "$proj_id"
+  task_id="$(create_task "nested" "Nested")"
+  wt="$(create_task_worktree "$task_id")"
+  make_worktree_stale "$REPO"
+
+  # A nested guard would refuse mid-transaction, and the rollback that refusal
+  # triggers is the one staleness breaks.
+  local exit_code=0
+  ( cd "$wt" && TT_TRANSACTION_ID=someop _worktree__ensure_canonical_current "$wt" ) \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_success "the guard skips inside an open transaction" "$exit_code"
 }
 
 # ---------------------------------------------------------------------------

@@ -319,4 +319,77 @@ test__history__transaction__nested_failure_rolls_the_parent_back_once() {
     "$(grep -c 'Rolling back transaction' "$err_file" || true)" "1"
 }
 
+# ---------------------------------------------------------------------------
+# A rollback whose restore fails
+# ---------------------------------------------------------------------------
+
+# Body fragment: make the invoking workspace stale from inside a command, by
+# snapshotting a marker file and then bare-rewriting it back out of the
+# working-copy commit. A bare rewrite leaves the files on disk untouched, so
+# they no longer match the commit and every command that loads the working
+# copy is refused -- `op restore` among them.
+_GO_STALE='
+  printf x > "$1/.tt-stale-marker"
+  jj -R "$1" log -r @ --no-graph -T "" >/dev/null 2>&1
+  jj -R "$1" --ignore-working-copy restore --from "root()" --into "@" \
+    .tt-stale-marker >/dev/null 2>&1
+'
+
+test__history__transaction__failed_restore_keeps_the_entry() {
+  setup_workspace "history-restore-fails"
+
+  local output exit_code=0
+  output="$(run_command "$REPO" '
+    _history__begin_transaction "$1"
+    '"$_RECORD_COMMIT"' "history txn unrestorable" >/dev/null 2>&1
+    '"$_GO_STALE"'
+    exit 3
+  ' 2>&1)" || exit_code=$?
+
+  assert_eq "the command's own exit status is unaffected" "$exit_code" "3"
+
+  # The entry survives as a lock, rather than being deleted as it is when the
+  # restore succeeds.
+  assert_history_count "the in-progress entry is kept" 1
+  get_history_lines
+  assert_eq "the kept entry is still in progress (no after-op)" \
+    "$(history_after_op "${HISTORY_LINES[0]}")" ""
+
+  assert_contains "the failure is reported as an error, not a warning" "$output" \
+    "Error: Could not restore the VCS operation state."
+  assert_contains "the report says the repository was left mid-transaction" "$output" \
+    "left mid-transaction at operation"
+  assert_contains "the report carries the full operation ID" "$output" \
+    "$(history_before_op "${HISTORY_LINES[0]}")"
+  assert_contains "the report says the transaction is still recorded" "$output" \
+    "the next tt command will refuse"
+  assert_contains "the report offers the retry route" "$output" \
+    "tt history undo --force"
+  assert_contains "the report offers the manual-recovery route" "$output" \
+    "tt history unlock --force"
+}
+
+test__history__transaction__failed_restore_locks_the_next_command() {
+  setup_workspace "history-restore-lock"
+
+  run_command "$REPO" '
+    _history__begin_transaction "$1"
+    '"$_RECORD_COMMIT"' "history txn unrestorable" >/dev/null 2>&1
+    '"$_GO_STALE"'
+    exit 3
+  ' >/dev/null 2>&1 || true
+
+  assert_history_count "the lock is in place" 1
+
+  # Recover the workspace so the next command fails on the lock rather than on
+  # the staleness that caused it.
+  run_tt worktree refresh --root --force >/dev/null 2>&1
+
+  local output exit_code=0
+  output="$(run_tt task create --project --slug "blocked" --title "Blocked" <<< "" 2>&1)" || exit_code=$?
+  assert_failure "the next command refuses" "$exit_code"
+  assert_contains "it refuses because of the kept entry" "$output" \
+    "Another tt command is in progress"
+}
+
 run_tests "tt lib/history (unit)"

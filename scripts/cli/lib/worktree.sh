@@ -12,6 +12,7 @@
 #   _worktree__resolve_repository_root — canonical primary workspace root
 #   _worktree__resolve_repository_path — canonical primary workspace root, symlink-resolved
 #   _worktree__check_clean      — whether a worktree has no uncommitted changes
+#   _worktree__check_stale      — whether a worktree's files match the commit it records
 #   _worktree__check_exists     — whether a worktree already lives at a path
 #   _worktree__create           — add a workspace at a path, started on a revision
 #   _worktree__start_working_copy — move a worktree onto a new commit on a revision
@@ -23,10 +24,15 @@
 #   _worktree__delete           — forget a workspace and remove its files from disk
 #   _worktree__switch           — hooks + HEAD symlink update for a workspace switch
 #   _worktree__ensure_working_copy — refuse branch writes while @ carries a bookmark
+#   _worktree__ensure_worktree_current — refuse to act on a stale worktree
+#   _worktree__ensure_canonical_current — refuse branch writes while canonical is stale
 #   _worktree__reattach_current — follow a branch advance with the current worktree
 #   _worktree__reattach_current_on_branch — follow a merge advance, own-branch worktree only
 #   _worktree__move_subtree     — rewrite a subtree the current working copy may sit in
 #   _worktree__refresh_current  — update the current worktree after a bare rewrite of @
+#   _worktree__refresh          — update a named worktree after a bare rewrite of its @
+#   _worktree__report_stale     — stderr refusal naming a stale worktree and its remedy
+#   _worktree__report_indeterminate — stderr refusal naming an unreadable worktree
 #   _worktree__list_holding_descendants — other worktrees positioned inside a rewrite range
 #   _worktree__resolve_branch   — the branch a worktree is sitting on
 #   _worktree__resolve_branch_at — the branch recorded by a revision's task symlink
@@ -198,6 +204,42 @@ _worktree__resolve_repository_path() {
 _worktree__check_clean() {
   local worktree="$1"
   _repo__check_working_copy_clean "$worktree"
+}
+
+# Usage: _worktree__check_stale REPO WORKTREE
+#
+# Reports whether WORKTREE is stale — its on-disk files belong to a commit the
+# repository has since rewritten, which the backend refuses to work with until
+# the worktree is refreshed (tt worktree refresh).
+#
+#   0 — WORKTREE is stale
+#   1 — WORKTREE is not stale
+#   2 — WORKTREE's state could not be determined
+#
+# Status 2 is a distinct outcome and is never folded into either boolean: a
+# workspace whose state cannot be read is not evidence that it is healthy, and
+# callers must be free to refuse rather than act on a guess. The backend's own
+# account of why the read failed reaches the user through TT_LOG.
+#
+# Reads only: nothing is snapshotted and no operation is recorded, so this is
+# safe to run ahead of every branch write and against a worktree holding
+# uncommitted work. It answers for any worktree in the repository, not only the
+# invoking one.
+#
+# Staleness is not the same condition as a worktree being *behind* its branch:
+# a bookmark advancing past a worktree leaves its files valid but old, which
+# _worktree__check_behind reports and tt worktree sync resolves.
+#
+# REPO takes the module's usual leading position so callers read alike; the
+# comparison itself is answered entirely from WORKTREE.
+_worktree__check_stale() {
+  local worktree="$2"
+  local matched current
+  matched="$(_repo__get_worktree_checkout_revision "$worktree")" || return 2
+  [[ -n "$matched" ]] || return 2
+  current="$(_repo__resolve_commit "$worktree" '@')" || return 2
+  [[ -n "$current" ]] || return 2
+  [[ "$matched" != "$current" ]]
 }
 
 # Usage: _worktree__check_exists PATH
@@ -457,6 +499,78 @@ _worktree__ensure_working_copy() {
   return 1
 }
 
+# Usage: _worktree__ensure_worktree_current REPO WORKTREE
+#
+# Guards a worktree the caller is about to touch: returns 0 when WORKTREE is
+# usable, and reports a refusal on stderr and returns 1 when it is stale or
+# its state cannot be read. Both failures name WORKTREE, and the stale one
+# names the command that recovers it along with what recovering costs.
+#
+# An unreadable worktree refuses rather than passing. A workspace whose state
+# tt could not determine is not evidence of a healthy workspace, and the
+# caller is about to load it.
+#
+# This guard has no exemptions: it is asked about a worktree the command will
+# act on, which includes the case where that worktree is the invoking one.
+_worktree__ensure_worktree_current() {
+  local repo="$1" worktree="$2"
+  local status=0
+  _worktree__check_stale "$repo" "$worktree" || status=$?
+  case "$status" in
+    1)
+      return 0
+      ;;
+    0)
+      _worktree__report_stale "$worktree" \
+        "Recover it first: tt worktree refresh $worktree --force"
+      return 1
+      ;;
+    *)
+      _worktree__report_indeterminate "$worktree"
+      return 1
+      ;;
+  esac
+}
+
+# Usage: _worktree__ensure_canonical_current REPO
+#
+# Guards the precondition every branch write depends on: the CANONICAL
+# workspace must not be stale. That workspace is where a failed command's
+# rollback restores the repository from, and it is the one workspace
+# guaranteed to exist even when the invoking worktree has just been deleted.
+# A repository driven from task worktrees rarely has anyone standing in it, so
+# it can sit stale unnoticed until a rollback needs it and cannot restore.
+# Returns 0 when the write may proceed, 1 (having reported why) otherwise.
+#
+# Two cases are skipped, and both skips are load-bearing rather than
+# optimizations:
+#
+#   Inside a transaction. A parent command's own writes can make the canonical
+#   workspace stale partway through its run. A nested guard would then refuse
+#   mid-transaction, and the rollback that refusal triggers is precisely the
+#   one staleness breaks — turning a survivable situation into a locked
+#   repository. The check belongs once, before anything has been written.
+#
+#   Canonical is the invoking worktree. A stale invoking worktree is left to
+#   fail on its own terms: the transaction's begin-time snapshot refuses
+#   immediately and rolls back cleanly, which is a better failure than this
+#   one. The guard therefore runs only where it is load-bearing — a canonical
+#   workspace nobody is standing in.
+#
+# The two paths are compared with -ef, as filesystem entries rather than as
+# strings: the canonical resolver may return its argument unchanged while the
+# worktree resolver canonicalizes symlinks, so a string comparison would treat
+# two names for one directory as different workspaces.
+_worktree__ensure_canonical_current() {
+  local repo="$1"
+  [[ -z "${TT_TRANSACTION_ID:-}" ]] || return 0
+  local canonical worktree
+  canonical="$(_worktree__resolve_repository_root "$repo")" || return 1
+  worktree="$(_repo__resolve_worktree_root "$repo")" || return 1
+  [[ "$canonical" -ef "$worktree" ]] && return 0
+  _worktree__ensure_worktree_current "$repo" "$canonical"
+}
+
 # Usage: _worktree__reattach_current REPO OLD_TIP NEW_REV
 #
 # After a write advances a branch from OLD_TIP to NEW_REV, moves the current
@@ -556,6 +670,48 @@ _worktree__refresh_current() {
   local worktree
   worktree="$(_repo__resolve_worktree_root "$repo")" || return 1
   _repo__refresh_worktree "$worktree"
+}
+
+# Usage: _worktree__refresh WORKTREE
+#
+# Brings WORKTREE's on-disk files back into agreement with its working-copy
+# commit, recovering a worktree the backend is refusing to load. The named
+# counterpart of _worktree__refresh_current, for the command that recovers a
+# worktree other than the one it runs in — most often the canonical workspace,
+# which is rarely the one the user is standing in.
+#
+# Does not snapshot, and cannot: the backend will not capture a stale working
+# copy, so uncommitted work in WORKTREE is overwritten by the recovery. Callers
+# must have said so before getting here. Harmless when WORKTREE is already
+# current. Documented pass-through to _repo__refresh_worktree.
+_worktree__refresh() {
+  local worktree="$1"
+  _repo__refresh_worktree "$worktree"
+}
+
+# Usage: _worktree__report_stale WORKTREE REMEDY
+#
+# Reports WORKTREE as stale on stderr, with REMEDY as the indented line naming
+# the way out. Every refusal on staleness — the guards below and tt worktree
+# refresh itself — reports through this, so the user meets one wording for one
+# condition regardless of which check caught it, and the consequence of
+# recovering is always stated. Always returns 0.
+_worktree__report_stale() {
+  local worktree="$1" remedy="$2"
+  _ui__log "Error: The workspace is stale: $worktree"
+  _ui__log "  $remedy"
+  _ui__log "  Uncommitted changes in that workspace will be lost."
+  return 0
+}
+
+# Usage: _worktree__report_indeterminate WORKTREE
+#
+# Reports on stderr that WORKTREE's state could not be read. The backend's own
+# account of why reaches the user through TT_LOG. Always returns 0.
+_worktree__report_indeterminate() {
+  local worktree="$1"
+  _ui__log "Error: Could not determine the state of the workspace: $worktree"
+  return 0
 }
 
 # Usage: _worktree__list_holding_descendants REPO BASE_REV
