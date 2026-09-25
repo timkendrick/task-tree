@@ -148,7 +148,7 @@ subtask: [ ] task/tt-task-status-beb8a9e2
 subtask: [ ] task/propagate-hooks-b39b48fb
 subtask: [ ] task/tt-task-create-hooks-8c853c34
 subtask: [ ] task/publish-propagate-noop-70c5246e
-subtask: [ ] task/stale-workspace-precondition-842a32f4
+subtask: [x] task/stale-workspace-precondition-842a32f4
 subtask: [x] task/unify-worktree-task-resolution-363c8a36
 subtask: [ ] task/inline-child-task-completed-checkin-e8b06da2
 subtask: [ ] task/tt-task-reorder-propagate-c60ed18c

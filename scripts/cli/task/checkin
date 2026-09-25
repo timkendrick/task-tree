@@ -268,6 +268,11 @@ main() {
     local child_worktree snapshot_op
     while IFS= read -r child_worktree; do
       [[ -z "$child_worktree" ]] && continue
+      # Both branches below load the child worktree's working copy "@" to test
+      # it or to snapshot it before the deletion, and neither can do that
+      # against a stale worktree. --force does not exempt it: recording the
+      # working copy is exactly what a stale worktree refuses.
+      _worktree__ensure_worktree_current "$repo" "$child_worktree" || exit 1
       if [[ "$force" != true ]]; then
         if ! _task__check_bookmark_current "$child_worktree" "$child_bookmark"; then
           _ui__log "Error: Worktree '$child_worktree' has commits after the task bookmark '$child_bookmark'."
@@ -350,6 +355,7 @@ main() {
 
   # Precondition: the working-copy commit must not carry a bookmark
   _worktree__ensure_working_copy "$repo" || exit 1
+  _worktree__ensure_canonical_current "$repo" || exit 1
 
   # Begin transaction early so that --complete and --propagate sub-commands
   # are nested within this transaction (their _history__begin_transaction calls

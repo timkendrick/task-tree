@@ -97,6 +97,7 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} init         →  tt workspace init
   ${SCRIPT_NAME} switch       →  tt worktree switch
   ${SCRIPT_NAME} sync         →  tt worktree sync
+  ${SCRIPT_NAME} refresh      →  tt worktree refresh
   ${SCRIPT_NAME} active       →  tt worktree active
   ${SCRIPT_NAME} repo         →  tt workspace repo
   ${SCRIPT_NAME} root         →  tt workspace root
@@ -120,6 +121,7 @@ main() {
     init)        set -- workspace init        "${@:2}" ;;
     switch)      set -- worktree switch      "${@:2}" ;;
     sync)        set -- worktree sync        "${@:2}" ;;
+    refresh)     set -- worktree refresh     "${@:2}" ;;
     current)     set -- task     current      "${@:2}" ;;
     edit)        set -- task     edit         "${@:2}" ;;
     create)      set -- task     create       "${@:2}" ;;

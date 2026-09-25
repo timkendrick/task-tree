@@ -74,6 +74,7 @@
 #     _jj__sort_commits_by_ancestry  — order commit IDs oldest first within a region
 #   Working copy (restricted):
 #     _jj__check_working_copy_clean  — whether the working copy has pending changes
+#     _jj__get_worktree_checkout_revision — commit a worktree's files were updated to
 #     _jj__get_working_copy_revision — change ID of @
 #     _jj__get_working_copy_parent   — commit ID of @-
 #     _jj__set_working_copy_revision — point the working copy at a revision
@@ -799,6 +800,39 @@ _jj__snapshot_worktree() {
 _jj__reattach_worktree() {
   local worktree="$1" from_rev="$2" dest_rev="$3"
   __jj__write "$worktree" rebase -s "$from_rev" -d "$dest_rev"
+}
+
+# Usage: _jj__get_worktree_checkout_revision WORKTREE
+# Prints the commit ID that WORKTREE's on-disk files were last updated to.
+# That is the commit the files actually hold, which may differ from the commit
+# the repository currently records for that workspace: a bare mutation rewrites
+# the graph without touching any working copy, so the two diverge until the
+# worktree is refreshed. Comparing this against the recorded @ is what tells a
+# caller whether the worktree is stale.
+#
+# A pure read: it records no operation, updates no files, and succeeds against
+# a worktree that is already stale. Returns non-zero (printing nothing) when
+# the workspace state cannot be read.
+#
+# The low-level state query is deliberate. Every user-facing way of asking this
+# question — `debug local-working-copy`, `workspace update-stale`, or any
+# ordinary command that loads the working copy — snapshots the working copy and
+# records an operation for it. A check that runs ahead of every branch-writing
+# command must not do that: it would fold a user's pending edits into a new
+# operation outside any transaction, on every tt invocation.
+#
+# `debug working-copy` reports the operation the workspace's files belong to;
+# resolving @ as of that operation yields the commit they were updated to.
+_jj__get_worktree_checkout_revision() {
+  local worktree="$1"
+  local state
+  state="$(__jj__read "$worktree" debug working-copy)" || return 1
+  local operation
+  operation="$(printf '%s\n' "$state" \
+    | sed -n 's/^Current operation: OperationId("\([0-9a-f]*\)").*$/\1/p')"
+  [[ -n "$operation" ]] || return 1
+  __jj__read "$worktree" --at-operation "$operation" --ignore-working-copy \
+    log -r '@' --no-graph -T 'commit_id'
 }
 
 # Usage: _jj__refresh_worktree WORKTREE

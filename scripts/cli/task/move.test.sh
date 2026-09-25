@@ -246,4 +246,16 @@ test_task_move__help() {
 }
 
 
+test_task_move__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "move-stale-canonical"
+  # A move to the parent the task already has is rejected before any
+  # precondition runs, so the task needs somewhere else to go.
+  local other_proj
+  other_proj="$(create_project "other-moved" "Other project")"
+  setup_stale_canonical "moved"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task move --task "$STALE_TASK_ID" --parent "$other_proj"
+}
+
 run_tests "tt task move"

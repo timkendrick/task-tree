@@ -525,6 +525,142 @@ is_diff_empty() {
   [[ -z "$diff_output" ]]
 }
 
+# Read the repository's current operation ID without loading any working copy.
+# Unlike get_jj_op this records nothing, and it still answers when the
+# canonical workspace is stale — which is exactly when a test needs to prove
+# that a command wrote nothing.
+# Usage: get_jj_op_bare [REPO]
+get_jj_op_bare() {
+  local repo="${1:-$REPO}"
+  jj -R "$repo" --ignore-working-copy op log --no-graph -T id -n 1 2>/dev/null
+}
+
+# Print the workspace name the repository records for a worktree path.
+# Usage: get_workspace_name WORKTREE
+get_workspace_name() {
+  local worktree="$1"
+  local resolved
+  resolved="$(cd "$worktree" && pwd -P)" || return 1
+  local line name path
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    name="${line%%: *}"
+    path="${line#*: }"
+    [[ "$path" == "$resolved" ]] || continue
+    printf '%s\n' "$name"
+    return 0
+  done < <(jj -R "$REPO" --ignore-working-copy workspace list --no-pager \
+    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)
+  return 1
+}
+
+# Leave WORKTREE's on-disk files behind the commit they belong to, the way a
+# bare rewrite performed from another workspace does, so that the backend
+# refuses every command there until the worktree is refreshed.
+#
+# The rewrite addresses the target by workspace name from the canonical repo,
+# so it cannot be attributed to the target workspace and cannot update its
+# files. The resulting refusal is asserted rather than assumed: a backend that
+# stopped producing this state would otherwise silently disarm every test that
+# depends on it.
+#
+# Sets STALE_PRE_REWRITE_COMMIT to the commit the worktree's files are left
+# holding — the one the rewrite moved the graph off. Callers cannot capture it
+# themselves, since the marker snapshot below advances the working-copy commit.
+#
+# Only one marker path is rewritten, never the whole tree. A worktree's branch
+# is read from the task symlink recorded in its working-copy commit, so wiping
+# the tree would leave it on no branch at all / a different condition, and one
+# that quietly removes the worktree from the target list of commands like
+# tt worktree sync.
+# Usage: make_worktree_stale WORKTREE
+make_worktree_stale() {
+  local worktree="$1"
+  local name
+  name="$(get_workspace_name "$worktree")" || {
+    _log_fail "make_worktree_stale: '$worktree' is not a workspace of $REPO"
+    _record_fail "make_worktree_stale: unknown workspace $worktree"
+    return 1
+  }
+
+  # Give the working-copy commit a file of its own, snapshotting it so the
+  # workspace's recorded state is current: the staleness that follows is then
+  # caused by the rewrite below and nothing else.
+  local marker='.tt-stale-marker'
+  printf 'marker\n' > "$worktree/$marker"
+  jj -R "$worktree" log -r '@' --no-graph -T '' >/dev/null 2>&1 || true
+
+  STALE_PRE_REWRITE_COMMIT="$(jj -R "$worktree" --ignore-working-copy \
+    log -r '@' --no-graph -T 'commit_id' 2>/dev/null)"
+
+  # Bare rewrite of just that path out of the target's working-copy commit:
+  # the tree changes in the graph while the files on disk stay where they
+  # were, which is what the backend calls stale.
+  jj -R "$REPO" --ignore-working-copy restore --from 'root()' --into "${name}@" \
+    "$marker" >/dev/null 2>&1 || {
+    _log_fail "make_worktree_stale: could not rewrite the working-copy commit of $worktree"
+    _record_fail "make_worktree_stale: rewrite failed for $worktree"
+    return 1
+  }
+
+  if jj -R "$worktree" status >/dev/null 2>&1; then
+    _log_fail "make_worktree_stale: $worktree is still usable after the rewrite"
+    _record_fail "make_worktree_stale: $worktree did not become stale"
+    return 1
+  fi
+  return 0
+}
+
+# Build the state a canonical-guard refusal test acts on: a project, a task
+# beneath it, and that task checked out into its own dedicated worktree.
+# Sets STALE_PROJ_ID, STALE_TASK_ID and STALE_WORKTREE. Makes nothing stale,
+# so a test needing further setup can do it before calling
+# make_worktree_stale "$REPO" itself.
+# Usage: setup_guard_fixture [SLUG]
+setup_guard_fixture() {
+  local slug="${1:-guarded}"
+  STALE_PROJ_ID="$(create_project "proj-$slug" "Project")"
+  checkout_task "$STALE_PROJ_ID"
+  STALE_TASK_ID="$(create_task "$slug" "Task $slug")"
+  STALE_WORKTREE="$(create_task_worktree "$STALE_TASK_ID")"
+}
+
+# setup_guard_fixture followed by making the canonical workspace stale — the
+# starting state of a canonical-guard refusal test that needs no extra setup.
+# Usage: setup_stale_canonical [SLUG]
+setup_stale_canonical() {
+  setup_guard_fixture "$@"
+  make_worktree_stale "$REPO"
+}
+
+# Run a branch-writing command from WORKTREE with the canonical workspace
+# stale, and assert the standard refusal: non-zero exit, a message naming the
+# stale workspace and the command that recovers it, no history entry created,
+# and no operation recorded.
+#
+# The operation check is what proves the command wrote nothing at all, and it
+# is read bare — an ordinary read would be refused by the stale workspace it
+# is asking about.
+# Usage: assert_refuses_stale_canonical WORKTREE COMMAND...
+assert_refuses_stale_canonical() {
+  local worktree="$1"; shift
+  get_history_lines
+  local history_before="${#HISTORY_LINES[@]}"
+  local op_before
+  op_before="$(get_jj_op_bare)"
+
+  local output exit_code=0
+  output="$(run_tt_in_worktree "$worktree" "$@" </dev/null 2>&1)" || exit_code=$?
+
+  assert_failure "refused while the canonical workspace is stale" "$exit_code"
+  assert_contains "the refusal names the stale workspace" "$output" \
+    "Error: The workspace is stale: $REPO"
+  assert_contains "the refusal names the recovery command" "$output" \
+    "tt worktree refresh"
+  assert_history_count "no transaction was opened" "$history_before"
+  assert_eq "the repository was not written to" "$(get_jj_op_bare)" "$op_before"
+}
+
 # Create a plain jj commit in the current repo (does not advance any bookmarks).
 # Usage: jj_commit MESSAGE [REPO]
 jj_commit() {

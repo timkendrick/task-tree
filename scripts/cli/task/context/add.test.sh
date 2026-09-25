@@ -210,4 +210,12 @@ test_context_add__context_inserted_before_subtask() {
   assert_frontmatter_order "valid order after context add on task with subtask" "$content"
 }
 
+test_task_context_add__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "ctx-add-stale-canonical"
+  setup_stale_canonical "ctxadded"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task context add --title "Notes" --slug "notes"
+}
+
 run_tests "tt task context add"
