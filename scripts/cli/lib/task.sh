@@ -36,6 +36,7 @@
 #   _task__get_full_range_records    — every commit component attributable to a task
 #   _task__resolve_current           — task-file/bookmark of the task checked out here
 #   _task__resolve_current_branch    — bookmark name of the task checked out here
+#   _task__find_for_revision         — task/project branch recorded by a revision
 #   _task__collect_descendant_dirs   — task dirs for all descendants of a task
 #   _task__write_stub                — minimal task file stub for a new task
 #   _task__commit_on_branch          — staged bare write committed onto a bookmark
@@ -1450,6 +1451,21 @@ _task__resolve_current_branch() {
   local _file line=''
   { read -r _file; read -r line; } <<< "$resolve_output" || true
   printf '%s' "$line"
+}
+
+# Usage: _task__find_for_revision REPO REV
+#
+# Prints the task or project branch that REV belongs to: the task named by the
+# task symlink recorded in REV (_worktree__resolve_branch_at), the same record
+# that makes a task current in a worktree. Returns 1 (nothing printed) when REV
+# does not resolve to exactly one commit, records no task symlink, or records a
+# task whose branch no longer exists.
+_task__find_for_revision() {
+  local repo="$1" rev="$2"
+  local commit
+  commit="$(_repo__resolve_single_commit "$repo" "$rev")" || return 1
+  [[ -n "$commit" ]] || return 1
+  _worktree__resolve_branch_at "$repo" "$commit"
 }
 
 # ---------------------------------------------------------------------------
