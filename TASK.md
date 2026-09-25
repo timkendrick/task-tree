@@ -1,1 +1,1 @@
-.tt/task/stale-workspace-precondition-842a32f4/TASK.md
+.tt/task/bootstrap-cli-d35756ce/TASK.md
