@@ -310,7 +310,7 @@ test__jj__check_backend_supported__accepts_git_rejects_others() {
 }
 
 # ---------------------------------------------------------------------------
-# _jj__resolve_commit / _jj__resolve_change
+# _jj__resolve_commit / _jj__resolve_single_commit / _jj__resolve_change
 # ---------------------------------------------------------------------------
 
 test__jj__resolve_commit__prints_commit_id() {
@@ -322,6 +322,27 @@ test__jj__resolve_commit__prints_commit_id() {
     "$(_jj__resolve_commit "$REPO" feature)" '^[0-9a-f]{40}$'
   local exit_code=0
   _jj__resolve_commit "$REPO" no-such-bookmark >/dev/null || exit_code=$?
+  assert_failure "absent revision rejected" "$exit_code"
+}
+
+test__jj__resolve_single_commit__requires_exactly_one_commit() {
+  setup_workspace
+  _fixture_linear_history
+  assert_eq "commit ID of a single revision" \
+    "$(_jj__resolve_single_commit "$REPO" feature)" "$SECOND_COMMIT"
+
+  local output='' exit_code=0
+  output="$(_jj__resolve_single_commit "$REPO" 'feature | feature-')" || exit_code=$?
+  assert_failure "several commits rejected" "$exit_code"
+  assert_eq "nothing printed for several commits" "$output" ''
+
+  exit_code=0
+  output="$(_jj__resolve_single_commit "$REPO" 'none()')" || exit_code=$?
+  assert_failure "no commits rejected" "$exit_code"
+  assert_eq "nothing printed for no commits" "$output" ''
+
+  exit_code=0
+  _jj__resolve_single_commit "$REPO" no-such-bookmark >/dev/null || exit_code=$?
   assert_failure "absent revision rejected" "$exit_code"
 }
 
