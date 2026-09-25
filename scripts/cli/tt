@@ -81,6 +81,7 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} publish      →  tt task publish
   ${SCRIPT_NAME} show         →  tt task show
   ${SCRIPT_NAME} parent       →  tt task parent
+  ${SCRIPT_NAME} find         →  tt task find
   ${SCRIPT_NAME} propagate    →  tt task propagate
   ${SCRIPT_NAME} checkpoint   →  tt task checkpoint
   ${SCRIPT_NAME} complete     →  tt task complete
@@ -130,6 +131,7 @@ main() {
     publish)     set -- task     publish      "${@:2}" ;;
     show)        set -- task     show         "${@:2}" ;;
     parent)      set -- task     parent       "${@:2}" ;;
+    find)        set -- task     find         "${@:2}" ;;
     propagate)   set -- task     propagate    "${@:2}" ;;
     checkpoint)  set -- task     checkpoint   "${@:2}" ;;
     complete)    set -- task     complete     "${@:2}" ;;
