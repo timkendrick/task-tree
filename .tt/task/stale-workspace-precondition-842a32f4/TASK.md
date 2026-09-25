@@ -2,10 +2,11 @@
 title: "Check for a stale canonical workspace before acting"
 status: IN-PROGRESS
 created: 2026-09-17T17:13:34Z
-updated: 2026-09-22T11:11:44Z
+updated: 2026-09-25T09:48:50Z
 context: context/requirements-b48713a3
 context: context/architecture-05b98878
 context: context/plan-77c521c4
+context: context/implementation-summary-14135b60
 ---
 A transaction rollback failed to restore anything, and the command reported it only as a warning:
 
