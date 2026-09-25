@@ -1,6 +1,6 @@
 ---
 title: "Add `tt task find` CLI command"
-status: IN-PROGRESS
+status: DONE
 created: 2026-09-24T14:57:48Z
 updated: 2026-09-24T14:57:48Z
 ---
