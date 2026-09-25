@@ -1,6 +1,6 @@
 ---
 title: "Check for a stale canonical workspace before acting"
-status: IN-PROGRESS
+status: DONE
 created: 2026-09-17T17:13:34Z
 updated: 2026-09-25T09:48:50Z
 context: context/requirements-b48713a3
