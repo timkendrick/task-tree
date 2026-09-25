@@ -48,6 +48,7 @@
 #   Revisions:
 #     _jj__get_commit_description    — full description of a revision
 #     _jj__resolve_commit            — immutable commit ID of a revision
+#     _jj__resolve_single_commit     — immutable commit ID of a revision naming exactly one commit
 #     _jj__resolve_change            — stable change ID of a revision
 #     _jj__get_commit_timestamp      — committer timestamp of a revision (ISO 8601 UTC)
 #     _jj__check_revision_exists     — whether a revision resolves
@@ -368,6 +369,15 @@ _jj__get_commit_description() {
 _jj__resolve_commit() {
   local repo="$1" rev="$2"
   __jj__read "$repo" --ignore-working-copy log -r "$rev" --no-graph -T 'commit_id'
+}
+
+# Usage: _jj__resolve_single_commit REPO REV
+# Prints the immutable commit ID of REV when it resolves to exactly one commit.
+# Returns non-zero (nothing printed) when REV cannot be resolved, or when it
+# names no commits or more than one.
+_jj__resolve_single_commit() {
+  local repo="$1" rev="$2"
+  __jj__read "$repo" --ignore-working-copy log -r "exactly(${rev}, 1)" --no-graph -T 'commit_id'
 }
 
 # Usage: _jj__resolve_change REPO REV

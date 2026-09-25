@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task find — Print the task or project a revision belongs to.
+#
+# Usage: find --revision <revision> [--repo PATH] [-h|--help]
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} --revision <revision> [--repo PATH]
+
+Print the task or project branch that a revision belongs to: the task whose
+TASK.md symlink the revision records. Exits non-zero if the revision does not
+resolve to exactly one commit, or if that commit records no existing task.
+
+Options:
+  --revision REV  Revision to locate, in any form the version-control system accepts.
+  --repo PATH     Repository root (overrides TT_REPO; default: find .jj).
+  -h, --help      Show this help.
+
+EOF
+}
+
+main() {
+  local revision=''
+  local has_revision=false
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --revision)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        revision="$2"; has_revision=true; shift 2 ;;
+      --repo)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage >&2; exit 1 ;;
+      *)  usage >&2; exit 1 ;;
+    esac
+  done
+
+  if ! "$has_revision"; then
+    usage >&2
+    exit 1
+  fi
+
+  repo="$(_workspace__resolve_repo "$repo")"
+
+  local task_id
+  if ! task_id="$(_task__find_for_revision "$repo" "$revision")"; then
+    _ui__log "Error: Unable to locate task for revision $revision"
+    exit 1
+  fi
+
+  printf '%s\n' "$task_id"
+}
+
+main "$@"

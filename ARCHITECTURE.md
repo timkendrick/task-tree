@@ -174,6 +174,7 @@ Signatures, argument conventions and return values are documented on the backend
 | --- | --- |
 | `get_commit_description` | Full description of a revision |
 | `resolve_commit` | Immutable commit ID of a revision |
+| `resolve_single_commit` | Immutable commit ID of a revision that names exactly one commit |
 | `resolve_change` | Stable change ID of a revision |
 | `get_commit_timestamp` | Committer timestamp, ISO 8601 UTC |
 | `check_revision_exists` | Whether a revision resolves |

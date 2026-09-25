@@ -30,6 +30,7 @@ _repo__restore_operation()         { _jj__restore_operation "$@"; }
 # --- Revisions ---
 _repo__get_commit_description()    { _jj__get_commit_description "$@"; }
 _repo__resolve_commit()            { _jj__resolve_commit "$@"; }
+_repo__resolve_single_commit()     { _jj__resolve_single_commit "$@"; }
 _repo__resolve_change()            { _jj__resolve_change "$@"; }
 _repo__get_commit_timestamp()      { _jj__get_commit_timestamp "$@"; }
 _repo__check_is_canonical_commit_id() { _jj__check_is_canonical_commit_id "$@"; }

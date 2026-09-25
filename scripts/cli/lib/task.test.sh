@@ -570,4 +570,43 @@ test__task__resolve_current__reports_no_task_when_none_is_recorded() {
     "$(_resolve_current_record)" $'\t'
 }
 
+# ---------------------------------------------------------------------------
+# _task__find_for_revision
+# ---------------------------------------------------------------------------
+
+test__task__find_for_revision__reports_the_recorded_task() {
+  setup_workspace "find-for-revision-recorded"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  checkpoint_task "work" >/dev/null || true
+
+  local output='' exit_code=0
+  output="$(_task__find_for_revision "$REPO" "$task_id")" || exit_code=$?
+  assert_success "a task branch commit resolves" "$exit_code"
+  assert_eq "the task recorded by the commit is reported" "$output" "$task_id"
+
+  exit_code=0
+  output="$(_task__find_for_revision "$REPO" "$proj_id")" || exit_code=$?
+  assert_success "a project branch commit resolves" "$exit_code"
+  assert_eq "the project recorded by the commit is reported" "$output" "$proj_id"
+}
+
+test__task__find_for_revision__fails_without_a_single_recorded_task() {
+  setup_workspace "find-for-revision-none"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  local output='' exit_code=0
+  output="$(_task__find_for_revision "$REPO" 'root()')" || exit_code=$?
+  assert_failure "a commit recording no task is rejected" "$exit_code"
+  assert_eq "nothing printed for a commit recording no task" "$output" ''
+
+  exit_code=0
+  output="$(_task__find_for_revision "$REPO" '@ | @-')" || exit_code=$?
+  assert_failure "a revision naming several commits is rejected" "$exit_code"
+  assert_eq "nothing printed for several commits" "$output" ''
+}
+
 run_tests "tt lib/task (unit)"

@@ -153,6 +153,12 @@ tt task parent [<task-id>] [--project]
 ```
 Print the parent task ID. `--project` walks up to find the nearest ancestor project.
 
+#### `tt task find`  (alias: `tt find`)
+```
+tt task find --revision <revision> [--repo PATH]
+```
+Print the task or project ID a revision belongs to. `<revision>` is any revision expression the version-control system accepts, and must resolve to exactly one commit.
+
 #### `tt task revset`  (alias: `tt revset`)
 ```
 tt task revset [--task <task-id>] [--all] [--git] [--repo PATH]
