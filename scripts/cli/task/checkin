@@ -23,8 +23,8 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #   --rebase                Rebase child onto parent before checkin.
 #   --merge                 Merge parent into child before checkin.
 #   --force                 Proceed even if conflicts occur, and with --delete, remove
-#                           the task's worktree even if it has uncommitted changes or
-#                           commits after the bookmark.
+#                           the task's worktree even if it has uncommitted changes,
+#                           commits after the bookmark, or files in use.
 #   --delete                Remove child task file and subtask entry (requires DONE),
 #                           along with the task's dedicated worktree if it has one.
 #   --retain-worktree       With --delete, keep the task's dedicated worktree.
@@ -81,8 +81,8 @@ Options:
   --rebase                  Rebase child onto parent before checkin.
   --merge                   Merge parent into child before checkin.
   --force                   Proceed despite conflicts, and with --delete, remove the
-                            task's worktree even if it has uncommitted changes or
-                            commits after the bookmark.
+                            task's worktree even if it has uncommitted changes,
+                            commits after the bookmark, or files in use.
   --delete                  Remove child task file (requires DONE status), along
                             with the task's dedicated worktree if it has one.
   --switch                  Point the HEAD symlink at the parent worktree after checkin.
@@ -284,6 +284,8 @@ main() {
           _ui__log "  Commit or discard changes first, pass --retain-worktree to keep the worktree, or use --force."
           exit 1
         fi
+        _worktree__ensure_not_in_use "$child_worktree" \
+          "pass --retain-worktree to keep the worktree, or use --force" || exit 1
       else
         if ! snapshot_op="$(_worktree__record_working_copy "$child_worktree")"; then
           _ui__log "Error: Could not record uncommitted changes in worktree '$child_worktree'."
