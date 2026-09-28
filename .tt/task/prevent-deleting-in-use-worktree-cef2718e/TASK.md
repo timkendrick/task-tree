@@ -1,6 +1,6 @@
 ---
 title: "Prevent deleting worktree if its files are in use"
-status: TODO
+status: IN-PROGRESS
 created: 2026-09-28T14:21:46Z
 updated: 2026-09-28T14:21:46Z
 ---
