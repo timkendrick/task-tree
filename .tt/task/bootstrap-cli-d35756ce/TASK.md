@@ -158,7 +158,7 @@ subtask: [x] task/tt-task-find-506a2320
 subtask: [ ] task/move-task-md-into-tt-directory-1c1a89f7
 subtask: [x] task/tt-prompt-omit-summary-line-1ba84f08
 subtask: [ ] task/tt-task-list-b2d8f237
-subtask: [ ] task/prevent-deleting-in-use-worktree-cef2718e
+subtask: [x] task/prevent-deleting-in-use-worktree-cef2718e
 ---
 Implement shell script implementations of all `tt` CLI commands
 
