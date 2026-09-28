@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #
 # Options:
 #   <worktree-path>        Required. Path to the worktree to delete.
-#   --force                Skip safety checks (dirty WC, commits after bookmark).
+#   --force                Skip safety checks (dirty WC, commits after bookmark, files in use).
 #   --repo PATH            Repository root.
 #   -h, --help             Show this help.
 
@@ -32,7 +32,7 @@ Arguments:
   <worktree-path>      Path to the worktree to delete (required)
 
 Options:
-  --force                Skip safety checks (dirty WC, commits after bookmark).
+  --force                Skip safety checks (dirty WC, commits after bookmark, files in use).
   --repo PATH            Repository root (overrides TT_REPO; default: find .jj).
   -h, --help             Show this help.
 
@@ -151,6 +151,9 @@ main() {
       _ui__log "  Commit or discard changes first, or use --force."
       exit 1
     fi
+
+    # No other process may be using the worktree's files
+    _worktree__ensure_not_in_use "$canonical_worktree_path" "or use --force" || exit 1
   fi
 
   # Capture HEAD symlink target BEFORE deletion, since the worktree path
