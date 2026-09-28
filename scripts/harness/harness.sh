@@ -262,6 +262,98 @@ last_line() {
 }
 
 # ---------------------------------------------------------------------------
+# Process Helpers
+#
+# Dummy processes stand in for a long-running process (e.g. a web server)
+# that uses a worktree's files. Each runs `tail -f /dev/null`, which does
+# nothing until killed, so it holds the path until the test releases it with
+# abort_dummy_process. It is not a child of the tt commands the test runs, nor
+# an ancestor of them, so tt does not mistake it for part of its own process
+# lineage.
+#
+# A dummy process has no timeout, so a test that spawns one also registers an
+# EXIT trap that aborts it, in case the test stops before its explicit abort:
+#
+#   pid=$(spawn_dummy_process_in_dir "$dir")
+#   trap "abort_dummy_process $pid" EXIT
+#   ...assertions...
+#   abort_dummy_process "$pid"
+# ---------------------------------------------------------------------------
+
+# Start a dummy process whose current directory is DIR. Prints its PID once
+# lsof reports it in DIR.
+# Usage: pid=$(spawn_dummy_process_in_dir DIR)
+spawn_dummy_process_in_dir() {
+  local dir="$1"
+  (cd "$dir" && exec tail -f /dev/null) </dev/null >/dev/null 2>&1 &
+  __harness_await_dummy_process "$!" "$(cd "$dir" && pwd -P)"
+}
+
+# Start a dummy process that holds FILE open, with its current directory
+# elsewhere. Prints its PID once lsof reports it holding FILE.
+# Usage: pid=$(spawn_dummy_process_holding_file FILE)
+spawn_dummy_process_holding_file() {
+  local file="$1"
+  (cd / && exec tail -f /dev/null 3<"$file") </dev/null >/dev/null 2>&1 &
+  __harness_await_dummy_process "$!" "$(cd "${file%/*}" && pwd -P)/${file##*/}"
+}
+
+# Stop a dummy process and wait until it has exited. Does nothing if it has
+# already exited, so the EXIT trap backstop can call it after the test has.
+# Usage: abort_dummy_process PID
+abort_dummy_process() {
+  local pid="$1" waited=0
+  kill "$pid" 2>/dev/null || return 0
+  while kill -0 "$pid" 2>/dev/null && [[ $waited -lt 50 ]]; do
+    sleep 0.1
+    waited=$(( waited + 1 ))
+  done
+}
+
+# Waits until lsof reports PID using the canonical path CANONICAL_PATH, so the
+# test never races the dummy process's startup, then prints PID. Aborts the
+# process and returns 1 if that never happens.
+# Usage: __harness_await_dummy_process PID CANONICAL_PATH
+__harness_await_dummy_process() {
+  local pid="$1" canonical_path="$2" waited=0
+  while [[ $waited -lt 50 ]]; do
+    if lsof -a -p "$pid" -F n 2>/dev/null | grep -qxF "n$canonical_path"; then
+      printf '%s' "$pid"
+      return 0
+    fi
+    sleep 0.1
+    waited=$(( waited + 1 ))
+  done
+  abort_dummy_process "$pid"
+  printf 'Error: dummy process %s never started using %s\n' "$pid" "$canonical_path" >&2
+  return 1
+}
+
+# Prints the current PATH with the executable NAME made unfindable: each entry
+# that holds NAME is replaced by a directory of links to that entry's other
+# contents.
+# Usage: PATH="$(path_without_command NAME)" run_tt ...
+path_without_command() {
+  local name="$1"
+  local -a entries=()
+  IFS=':' read -ra entries <<< "$PATH"
+  local result='' entry shadow target i=0
+  for entry in "${entries[@]}"; do
+    if [[ -x "$entry/$name" ]]; then
+      shadow="$_TEST_ROOT/path-without-$name-$i"
+      mkdir -p "$shadow"
+      for target in "$entry"/*; do
+        [[ "${target##*/}" == "$name" ]] || ln -sf "$target" "$shadow/"
+      done
+      entry="$shadow"
+    fi
+    result+="${result:+:}$entry"
+    i=$(( i + 1 ))
+  done
+  printf '%s' "$result"
+}
+
+# ---------------------------------------------------------------------------
 # Command cache
 #
 # Every tt command a test runs through run_tt costs dozens of processes, and

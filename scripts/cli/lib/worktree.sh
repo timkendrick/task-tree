@@ -22,6 +22,7 @@
 #   _worktree__record_working_copy — capture uncommitted work and name the operation holding it
 #   _worktree__find_for_branch  — workspace roots whose current branch is a bookmark
 #   _worktree__delete           — forget a workspace and remove its files from disk
+#   _worktree__ensure_not_in_use — refuse to remove a worktree that other processes are using
 #   _worktree__switch           — hooks + HEAD symlink update for a workspace switch
 #   _worktree__ensure_working_copy — refuse branch writes while @ carries a bookmark
 #   _worktree__ensure_worktree_current — refuse to act on a stale worktree
@@ -442,6 +443,101 @@ _worktree__delete() {
   if [[ -n "$worktree_path" && -d "$worktree_path" ]]; then
     rm -rf "$worktree_path"
   fi
+}
+
+# Usage: _worktree__ensure_not_in_use WORKTREE ALTERNATIVES
+#
+# Guards a worktree the caller is about to remove from disk: returns 0 when no
+# process has its current directory or an open file inside WORKTREE, and
+# reports a refusal on stderr and returns 1 otherwise. A process using the
+# files can make their removal fail partway (a server writing into the tree
+# recreates what was just removed), leaving a deregistered workspace whose
+# files are still partly on disk. The refusal lists each process by PID and
+# command name, and ends with ALTERNATIVES: the clause that follows the
+# remedy, such as "or use --force" in "Stop these processes first, or use
+# --force."
+#
+# The command's own process, its ancestors (such as the shell it was launched
+# from) and its descendants are not counted, so a command run from inside
+# WORKTREE does not block itself.
+#
+# The check relies on lsof. When lsof is not installed or fails, the guard
+# refuses: the worktree cannot be shown to be unused.
+_worktree__ensure_not_in_use() {
+  local worktree="$1" alternatives="$2"
+  local canonical_worktree
+  canonical_worktree="$(_path__resolve_symlinks "$worktree" 2>/dev/null)" || canonical_worktree="$worktree"
+  local processes status=0
+  processes="$(__worktree__list_processes_using "$canonical_worktree")" || status=$?
+  case "$status" in
+    0)
+      ;;
+    2)
+      _ui__log "Error: Cannot check whether worktree '$worktree' is in use: lsof is not installed."
+      _ui__log "  Install lsof, $alternatives."
+      return 1
+      ;;
+    *)
+      _ui__log "Error: Cannot check whether worktree '$worktree' is in use: lsof failed."
+      _ui__log "  Resolve the lsof failure, $alternatives."
+      return 1
+      ;;
+  esac
+  if [[ -z "$processes" ]]; then
+    return 0
+  fi
+  _ui__log "Error: Worktree '$worktree' is in use by the following processes:"
+  local process
+  while IFS= read -r process; do
+    _ui__log "  $process"
+  done <<< "$processes"
+  _ui__log "  Stop these processes first, $alternatives."
+  return 1
+}
+
+# Usage: __worktree__list_processes_using DIR
+#
+# Prints "PID COMMAND" for each process whose current directory or any open
+# file lies at or under DIR, one line per process, ordered by PID. DIR must be
+# absolute and symlink-resolved, since lsof reports resolved paths. Excludes
+# this command's own process ($$), its ancestors and its descendants. Returns
+# 2 when lsof is not installed and 3 when it fails.
+#
+# One lsof listing supplies both the open files and each process's parent
+# (the R field), so the process tree is read from the same snapshot as the
+# files. The listing is captured before it is filtered: the filtering
+# processes are then absent from it, and lsof itself, which is present, is a
+# descendant of this command.
+__worktree__list_processes_using() {
+  local dir="$1"
+  command -v lsof >/dev/null 2>&1 || return 2
+  local listing
+  listing="$(lsof +c 0 -n -P -F pRcn 2>/dev/null)" || return 3
+  printf '%s\n' "$listing" | awk -v dir="$dir" -v self="$$" '
+    /^p/ { pid = substr($0, 2); next }
+    /^R/ { parent[pid] = substr($0, 2); next }
+    /^c/ { command[pid] = substr($0, 2); next }
+    /^n/ {
+      name = substr($0, 2)
+      if (name == dir || index(name, dir "/") == 1) using[pid] = 1
+      next
+    }
+    function parent_of(p) { return (p in parent) ? parent[p] : "" }
+    function is_related(p,    steps) {
+      if (p in lineage) return 1
+      for (steps = 0; p != "" && steps < 1000; steps++) {
+        if (p == self) return 1
+        p = parent_of(p)
+      }
+      return 0
+    }
+    END {
+      for (p = self; p != "" && !(p in lineage); p = parent_of(p)) lineage[p] = 1
+      for (pid in using) {
+        if (!is_related(pid)) printf "%s %s\n", pid, command[pid]
+      }
+    }
+  ' | sort -n
 }
 
 # Usage: _worktree__switch REPO WORKSPACE_DIR TASK_ID TARGET_WORKTREE OUTGOING_WORKTREE PREVIOUS_TASK_ID
