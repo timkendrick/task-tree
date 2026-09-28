@@ -469,6 +469,80 @@ test_task_checkin__retain_worktree_flag() {
 }
 
 
+test_task_checkin__delete_worktree_in_use_rejected() {
+  # --delete refuses to remove a worktree that another process is using, before
+  # making any change to the repository.
+  setup_workspace "ci-wt-in-use"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  local pid
+  pid=$(spawn_dummy_process_in_dir "$worktree_path")
+  trap "abort_dummy_process $pid" EXIT
+  local parent_before
+  parent_before="$(get_bookmark_commit "$proj_id")"
+
+  local exit_code=0
+  output=$(run_tt task checkin --complete --delete "$task_id" 2>&1) || exit_code=$?
+  abort_dummy_process "$pid"
+  assert_failure "checkin --delete refused" "$exit_code"
+  assert_contains "mentions in use" "$output" "is in use by the following processes"
+  assert_contains "lists the dummy process" "$output" "$pid tail"
+  assert_contains "suggests --retain-worktree or --force" "$output" \
+    "Stop these processes first, pass --retain-worktree to keep the worktree, or use --force."
+  assert_file_exists "worktree kept" "$worktree_path"
+  assert_eq "parent branch unchanged" "$(get_bookmark_commit "$proj_id")" "$parent_before"
+}
+
+
+test_task_checkin__delete_worktree_in_use_force() {
+  # --force skips the in-use check.
+  setup_workspace "ci-wt-in-use-force"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  local pid
+  pid=$(spawn_dummy_process_in_dir "$worktree_path")
+  trap "abort_dummy_process $pid" EXIT
+
+  local exit_code=0
+  output=$(run_tt task checkin --complete --delete --force "$task_id" 2>&1) || exit_code=$?
+  abort_dummy_process "$pid"
+  assert_success "checkin --delete --force succeeds" "$exit_code"
+  assert_file_not_exists "worktree deleted" "$worktree_path"
+}
+
+
+test_task_checkin__delete_worktree_in_use_retain_worktree() {
+  # --retain-worktree removes nothing, so an in-use worktree does not block it.
+  setup_workspace "ci-wt-in-use-retain"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
+  local worktree_path="$VIRTUAL/$task_id"
+  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  local pid
+  pid=$(spawn_dummy_process_in_dir "$worktree_path")
+  trap "abort_dummy_process $pid" EXIT
+
+  local exit_code=0
+  output=$(run_tt task checkin --complete --delete --retain-worktree "$task_id" 2>&1) || exit_code=$?
+  abort_dummy_process "$pid"
+  assert_success "checkin --delete --retain-worktree succeeds" "$exit_code"
+  assert_file_exists "worktree retained" "$worktree_path"
+}
+
+
 test_task_checkin__worktree_not_deleted_after_partial_checkin() {
   # A partial (IN-PROGRESS) checkin should NOT delete the worktree.
   setup_workspace "ci-partial-wt"
