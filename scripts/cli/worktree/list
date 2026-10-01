@@ -6,13 +6,14 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$SCRIPT_DIR/../lib/common.sh"
 
 # tt worktree list — List all worktrees and their corresponding tt task IDs.
+# The canonical repository is not a worktree and is not listed.
 #
 # Usage:
 #   list [--task <task-id>] [--quiet] [--repo PATH]
 #
 # Options:
-#   --task <task-id>  Filter to workspaces matching the given task or project ID.
-#   --quiet           Machine-readable: print workspace names only, one per line.
+#   --task <task-id>  Filter to worktrees matching the given task or project ID.
+#   --quiet           Machine-readable: print worktree names only, one per line.
 #   --repo PATH       Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   -h, --help        Show this help.
 
@@ -23,17 +24,18 @@ usage() {
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--quiet] [--repo PATH]
 
 List all worktrees of the current repository and their corresponding
-tt task or project IDs.
+tt task or project IDs. The canonical repository is not a worktree and is
+not listed.
 
 Output columns:
-  (marker)  *  marks the current workspace
-  NAME      workspace name
-  TASK ID   tt task or project ID (nearest ancestor bookmark), or (none)
-  PATH      filesystem path to the workspace root (~-abbreviated), or (none)
+  (marker)  *  marks the current worktree
+  NAME      worktree name
+  TASK ID   tt task or project ID checked out in the worktree, or (none)
+  PATH      filesystem path to the worktree root (~-abbreviated), or (none)
 
 Options:
-  --task <task-id>  Filter to only workspaces whose TASK ID matches <task-id>
-  --quiet           Print workspace names only (one per line); no header or table
+  --task <task-id>  Filter to only worktrees whose TASK ID matches <task-id>
+  --quiet           Print worktree names only (one per line); no header or table
   --repo PATH       Repository root (overrides TT_REPO; default: walk up from CWD to find .jj)
   -h, --help        Show this help
 
@@ -85,7 +87,7 @@ main() {
     fi
   fi
 
-  # Determine current workspace root (to mark with *)
+  # Determine current worktree root (to mark with *)
   local current_ws_root
   current_ws_root="$(_worktree__resolve_current "$repo")" || current_ws_root=""
 
@@ -122,7 +124,7 @@ main() {
       display_path="${ws_path/#$HOME/~}"
     fi
 
-    # Is this the current workspace?
+    # Is this the current worktree?
     local is_current=false
     if [[ -n "$current_ws_root" && "$ws_path" == "$current_ws_root" ]]; then
       is_current=true
@@ -134,7 +136,7 @@ main() {
     ws_is_current+=("$is_current")
   done <<< "$ws_data"
 
-  # --quiet mode: print workspace names only, one per line
+  # --quiet mode: print worktree names only, one per line
   if [[ "$quiet" == true ]]; then
     for (( i=0; i<${#ws_names[@]}; i++ )); do
       printf '%s\n' "${ws_names[$i]}"
