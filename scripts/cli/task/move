@@ -233,16 +233,9 @@ main() {
     _frontmatter__remove_subtask "$root/$old_parent_task_file" "$task_id"
   }
 
-  # --reattach-on-branch: a move names three branches that are routinely in an
-  # ancestor relationship with one another, so plain descent from the written
-  # branch's tip is not enough to identify the invoking worktree's own branch.
-  # A worktree sitting on the task being moved must stay with the task and be
-  # carried by the rebase in Step 3, not be pulled onto whichever parent is
-  # written first.
   _ui__log "Updating old parent: $old_parent"
   _task__commit_on_branch "$repo" "$old_parent" \
     "$(_commit__format_message "task" "remove" "$task_id" "$task_title")" \
-    --reattach-on-branch \
     --modify "$old_parent_task_file" \
     --delete-prefix "$task_dir" \
     -- move_old_parent_writer >/dev/null
@@ -274,7 +267,6 @@ main() {
   _ui__log "Updating new parent: $new_parent_id"
   _task__commit_on_branch "$repo" "$new_parent_id" \
     "$(_commit__format_message "task" "move" "$task_id" "$task_title")" \
-    --reattach-on-branch \
     --modify "$new_parent_task_file" \
     -- move_new_parent_writer >/dev/null
 

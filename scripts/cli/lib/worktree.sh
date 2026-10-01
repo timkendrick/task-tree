@@ -27,8 +27,7 @@
 #   _worktree__ensure_working_copy — refuse branch writes while @ carries a bookmark
 #   _worktree__ensure_worktree_current — refuse to act on a stale worktree
 #   _worktree__ensure_canonical_current — refuse branch writes while canonical is stale
-#   _worktree__reattach_current — follow a branch advance with the current worktree
-#   _worktree__reattach_current_on_branch — follow a merge advance, own-branch worktree only
+#   _worktree__reattach_current — follow a branch advance with a current worktree on it
 #   _worktree__move_subtree     — rewrite a subtree the current working copy may sit in
 #   _worktree__refresh_current  — update the current worktree after a bare rewrite of @
 #   _worktree__refresh          — update a named worktree after a bare rewrite of its @
@@ -709,46 +708,27 @@ _worktree__ensure_canonical_current() {
   _worktree__ensure_worktree_current "$repo" "$canonical"
 }
 
-# Usage: _worktree__reattach_current REPO OLD_TIP NEW_REV
+# Usage: _worktree__reattach_current REPO BRANCH OLD_TIP NEW_REV
 #
-# After a write advances a branch from OLD_TIP to NEW_REV, moves the current
-# worktree's working-copy commit onto NEW_REV — but only when that commit
-# descended from OLD_TIP, i.e. the current worktree was checked out on the
-# line that moved. Any other position is left alone (status 0): the worktree
-# sits elsewhere and the write does not concern it.
+# After a write advances BRANCH from OLD_TIP to NEW_REV, moves the current
+# worktree's working-copy commit onto NEW_REV — but only when the worktree is
+# checked out ON BRANCH and its working-copy commit descends from OLD_TIP. Any
+# other position is left alone (status 0): the write does not concern it.
+#
+# Descent from OLD_TIP alone cannot identify the worktree's branch. Every task
+# branch forks from its parent's tip, and every commit on a merged-in branch
+# descends from the receiving branch's old tip, so ancestry would also match
+# a worktree on a child task or on the branch being merged in, and drag it
+# onto BRANCH. The worktree's own branch is therefore read from its task
+# symlink first (_worktree__resolve_branch_at). A worktree on BRANCH that does
+# not descend from OLD_TIP was already behind before the write, and is left
+# for `tt worktree sync` to bring forward.
 #
 # The working-copy commit is addressed by its change ID, which survives
 # rebases, so the reattach targets the right commit even after the graph has
 # been rewritten. The rebase runs inside the worktree, so the on-disk working
 # copy is updated to the reattached commit in the same step.
 _worktree__reattach_current() {
-  local repo="$1" old_tip="$2" new_rev="$3"
-  local worktree
-  worktree="$(_repo__resolve_worktree_root "$repo")" || return 1
-  local wc_change
-  wc_change="$(_repo__resolve_change "$worktree" '@')" || return 1
-  _repo__check_is_ancestor "$repo" "$old_tip" "$wc_change" || return 0
-  _repo__reattach_worktree "$worktree" "$wc_change" "$new_rev"
-}
-
-# Usage: _worktree__reattach_current_on_branch REPO BRANCH OLD_TIP NEW_REV
-#
-# Variant of _worktree__reattach_current for advances that land a MERGE on
-# BRANCH (check-in and publish): moves the current worktree's working-copy
-# commit onto NEW_REV only when the worktree actually sits ON BRANCH.
-#
-# Plain descent from OLD_TIP — the _worktree__reattach_current condition — is
-# the wrong test here: every commit on the merged-in source branch also
-# descends from the receiving branch's old tip (the source forked from it),
-# so ancestry alone would drag a worktree checked out on the source branch —
-# typically the very worktree the command is invoked from — onto the merge
-# commit. A check-in must affect the target branch, never relocate the
-# invoking worktree, so the worktree's own branch is resolved first
-# (_worktree__resolve_branch_at) and anything not on BRANCH is left alone
-# (status 0). The descent check from OLD_TIP is still applied after that, so a
-# worktree already left behind on an older tip of BRANCH is reported by
-# _worktree__report_unsynced rather than silently rewritten.
-_worktree__reattach_current_on_branch() {
   local repo="$1" branch="$2" old_tip="$3" new_rev="$4"
   local worktree
   worktree="$(_repo__resolve_worktree_root "$repo")" || return 1

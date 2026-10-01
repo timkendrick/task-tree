@@ -771,23 +771,17 @@ _task__find_branch() {
   return 1
 }
 
-# Usage: _task__commit_on_branch REPO BRANCH MESSAGE [--reattach-on-branch]
+# Usage: _task__commit_on_branch REPO BRANCH MESSAGE
 #          [--modify PATH]... [--delete PATH]... [--delete-prefix PREFIX]...
 #          -- WRITER_FN [ARGS...]
 #
 # Commits a staged set of file writes and deletions onto BRANCH without
 # touching any working copy: builds the change as a bare commit on top of the
 # branch tip (_repo__commit_changeset), reattaches the current worktree when it
-# sat on the old tip (_worktree__reattach_current), advances the BRANCH
-# bookmark to it, and prints the new commit ID.
-#
-# --reattach-on-branch narrows that reattachment to a worktree that actually
-# sits ON BRANCH (_worktree__reattach_current_on_branch) instead of any
-# worktree descended from the old tip. Pass it whenever BRANCH may be an
-# ANCESTOR of the branch the invoking worktree is on — writing to a task's
-# grandparent, say, while the worktree sits on the task — because plain
-# descent cannot tell "the line that moved" from "a line that forked off it
-# further back", and would drag the worktree onto the wrong branch.
+# is checked out on BRANCH and sat on the old tip (_worktree__reattach_current),
+# advances the BRANCH bookmark to it, and prints the new commit ID. A worktree
+# on any other branch stays where it is, even when BRANCH is an ancestor of
+# its own branch.
 #
 # The three inputs are ORTHOGONAL:
 #   --modify         materializes an existing branch-tip file (repo-root-
@@ -814,12 +808,6 @@ _task__commit_on_branch() {
   local repo="$1" branch="$2" message="$3"
   shift 3
 
-  local on_branch_only=''
-  if [[ "${1:-}" == '--reattach-on-branch' ]]; then
-    on_branch_only=1
-    shift
-  fi
-
   local tip
   tip="$(_repo__resolve_commit "$repo" "$branch")" || tip=''
   if [[ -z "$tip" ]]; then
@@ -830,16 +818,7 @@ _task__commit_on_branch() {
   local new_commit
   new_commit="$(__task__commit_staged "$repo" "$tip" "$message" "$@")" || return 1
   [[ -n "$new_commit" ]] || return 1
-  # Reattach before advancing the bookmark: the on-branch variant identifies
-  # the worktree's branch by fork-point ranking, which needs BRANCH still
-  # sitting at its old tip. The plain variant tests ancestry only and is
-  # indifferent to the order.
-  if [[ -n "$on_branch_only" ]]; then
-    _worktree__reattach_current_on_branch "$repo" "$branch" "$tip" "$new_commit" \
-      || return 1
-  else
-    _worktree__reattach_current "$repo" "$tip" "$new_commit" || return 1
-  fi
+  _worktree__reattach_current "$repo" "$branch" "$tip" "$new_commit" || return 1
   _repo__set_bookmark "$repo" "$branch" "$new_commit" || return 1
   printf '%s\n' "$new_commit"
 }
@@ -1007,7 +986,7 @@ _task__merge_branch() {
 # is printed.
 #
 # The current worktree follows the advance only when it actually sits on
-# BRANCH (_worktree__reattach_current_on_branch): DEST_REV is routinely the
+# BRANCH (_worktree__reattach_current): DEST_REV is routinely the
 # PARENT branch's tip, and every worktree on the parent descends from BRANCH's
 # old tip in that situation, so plain descent would drag unrelated worktrees
 # onto the resumed branch.
@@ -1034,11 +1013,7 @@ _task__commit_resume() {
   new_commit="$(__task__commit_staged "$repo" "$dest" "" -- __task__write_nothing)" \
     || return 1
   [[ -n "$new_commit" ]] || return 1
-  # Must run while BRANCH still sits at $tip — the on-branch reattach resolves
-  # the worktree's branch by fork-point ranking, which needs the bookmark in
-  # its pre-advance position.
-  _worktree__reattach_current_on_branch "$repo" "$branch" "$tip" "$new_commit" \
-    || return 1
+  _worktree__reattach_current "$repo" "$branch" "$tip" "$new_commit" || return 1
   _repo__set_bookmark "$repo" "$branch" "$new_commit" || return 1
   printf '%s\n' "$new_commit"
 }
