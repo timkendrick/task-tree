@@ -114,11 +114,11 @@ _advance_branch_bare() {
   printf '%s\n' "$commit"
 }
 
-# Usage: _create_secondary_worktree NAME REV
-# Create a secondary workspace named NAME on REV next to $REPO and print its
+# Usage: _add_worktree NAME REV
+# Create a worktree named NAME on REV next to $REPO and print its
 # recorded path (resolved through the workspace list, so path comparisons in
 # assertions match what the worktree functions themselves see).
-_create_secondary_worktree() {
+_add_worktree() {
   local name="$1" rev="$2"
   _repo__create_worktree "$REPO" "$name" "$(dirname "$REPO")/$name" "$rev" || return 1
   _worktree__resolve_path "$REPO" "$name"
@@ -439,12 +439,12 @@ test__worktree__reattach_current_on_branch__leaves_wc_on_merged_branch() {
 test__worktree__bare_write__leaves_other_worktree_untouched() {
   setup_workspace "wt-bare-untouched"
   _fixture_feature_checkout
-  # Move the current working copy off feature so the secondary worktree is
+  # Move the current working copy off feature so the worktree is
   # the only one on the branch.
   jj -R "$REPO" new main >/dev/null 2>&1
   local wt_path
-  wt_path="$(_create_secondary_worktree wt-other "$FEATURE")"
-  assert_output_not_empty "secondary worktree created" "$wt_path"
+  wt_path="$(_add_worktree wt-other "$FEATURE")"
+  assert_output_not_empty "worktree created" "$wt_path"
 
   printf 'never-snapshotted\n' > "$wt_path/pending.txt"
   local wt_rev_before
@@ -480,8 +480,8 @@ test__worktree__list_unsynced__reports_behind_worktree() {
   # equally behind, but must be omitted from the report (callers reattach the
   # current worktree directly).
   local wt_path
-  wt_path="$(_create_secondary_worktree wt-behind "$FEATURE")"
-  assert_output_not_empty "secondary worktree created" "$wt_path"
+  wt_path="$(_add_worktree wt-behind "$FEATURE")"
+  assert_output_not_empty "worktree created" "$wt_path"
 
   local new_tip
   new_tip="$(_advance_branch_bare "$FEATURE" adv.txt "advanced")"
@@ -508,8 +508,8 @@ test__worktree__report_unsynced__silent_when_in_sync() {
   setup_workspace "wt-unsynced-silent"
   _fixture_feature_checkout
   local wt_path
-  wt_path="$(_create_secondary_worktree wt-insync "$FEATURE")"
-  assert_output_not_empty "secondary worktree created" "$wt_path"
+  wt_path="$(_add_worktree wt-insync "$FEATURE")"
+  assert_output_not_empty "worktree created" "$wt_path"
 
   assert_output_empty "no unsynced records while the branch tip is unchanged" \
     "$(_worktree__list_unsynced "$REPO" "$FEATURE")"
@@ -524,8 +524,8 @@ test__worktree__sync__brings_behind_worktree_forward() {
   _fixture_feature_checkout
   jj -R "$REPO" new main >/dev/null 2>&1
   local wt_path
-  wt_path="$(_create_secondary_worktree wt-sync "$FEATURE")"
-  assert_output_not_empty "secondary worktree created" "$wt_path"
+  wt_path="$(_add_worktree wt-sync "$FEATURE")"
+  assert_output_not_empty "worktree created" "$wt_path"
 
   # Uncommitted changes in the worktree: an edit to a tracked file plus a
   # file jj has never snapshotted.
@@ -561,8 +561,8 @@ test__worktree__record_working_copy__records_uncommitted_work() {
   _fixture_feature_checkout
   jj -R "$REPO" new main >/dev/null 2>&1
   local wt_path
-  wt_path="$(_create_secondary_worktree wt-record "$FEATURE")"
-  assert_output_not_empty "secondary worktree created" "$wt_path"
+  wt_path="$(_add_worktree wt-record "$FEATURE")"
+  assert_output_not_empty "worktree created" "$wt_path"
 
   # A file the backend has never seen: the case where the work exists only on
   # disk and the recorded operation is the sole route back to it.
@@ -587,8 +587,8 @@ test__worktree__record_working_copy__clean_worktree_returns_nothing() {
   _fixture_feature_checkout
   jj -R "$REPO" new main >/dev/null 2>&1
   local wt_path
-  wt_path="$(_create_secondary_worktree wt-record-clean "$FEATURE")"
-  assert_output_not_empty "secondary worktree created" "$wt_path"
+  wt_path="$(_add_worktree wt-record-clean "$FEATURE")"
+  assert_output_not_empty "worktree created" "$wt_path"
 
   local op exit_code=0
   op="$(_worktree__record_working_copy "$wt_path")" || exit_code=$?
@@ -669,42 +669,125 @@ test__worktree__resolve_branch__no_task_no_branch() {
   assert_output_empty "nothing printed without a branch" "$out"
 }
 
-test__worktree__find_for_branch__finds_workspace_on_branch() {
+test__worktree__find_for_branch__finds_worktree_on_branch() {
   setup_workspace "worktree-find-branch"
-  proj_id=$(create_project "proj" "Project") || true
-  checkout_task "$proj_id" >/dev/null || true
-
-  local task_prefix project_prefix
-  task_prefix="$(_workspace__get_task_prefix "$REPO")"
-  project_prefix="$(_workspace__get_project_prefix "$REPO")"
-
-  local found
-  found="$(_worktree__find_for_branch "$REPO" "$proj_id" "$task_prefix" "$project_prefix")"
-  assert_contains "repo workspace is on the project branch" "$found" "$REPO"
-
-  found="$(_worktree__find_for_branch "$REPO" "main" "$task_prefix" "$project_prefix")"
-  assert_output_empty "no workspace is on main" "$found"
-}
-
-test__worktree__find_for_branch__ranks_the_dedicated_worktree_first() {
-  setup_workspace "worktree-find-branch-order"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "t" "T") || true
   local wt
   wt=$(create_task_worktree "$task_id")
-  # Park the repo workspace above the task's tip as well, so two worktrees sit
-  # on the branch: its own, and the one that happens to be based on it.
-  jj -R "$REPO" new "$task_id" >/dev/null 2>&1
-
-  local task_prefix project_prefix
-  task_prefix="$(_workspace__get_task_prefix "$REPO")"
-  project_prefix="$(_workspace__get_project_prefix "$REPO")"
 
   local found
-  found="$(_worktree__find_for_branch "$REPO" "$task_id" "$task_prefix" "$project_prefix")"
-  assert_contains "the repo workspace is on the branch too" "$found" "$REPO"
-  assert_eq "the task's own worktree comes first" "$(_string__first_line "$found")" "$wt"
+  found="$(_worktree__find_for_branch "$REPO" "$task_id")"
+  assert_eq "the task's worktree is found" "$found" "$wt"
+
+  found="$(_worktree__find_for_branch "$REPO" "main")"
+  assert_output_empty "no worktree is on main" "$found"
+}
+
+test__worktree__find_for_branch__excludes_the_canonical_repository() {
+  setup_workspace "worktree-find-branch-canonical"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  local found
+  found="$(_worktree__find_for_branch "$REPO" "$proj_id")"
+  assert_output_empty "a branch checked out only in the canonical repository has no worktree" \
+    "$found"
+
+  task_id=$(create_task "t" "T") || true
+  local wt
+  wt=$(create_task_worktree "$task_id")
+  # Park the canonical repository above the task's tip as well, so its working
+  # copy records the task too.
+  jj -R "$REPO" new "$task_id" >/dev/null 2>&1
+  assert_eq "the canonical repository is on the task" \
+    "$(_worktree__resolve_branch "$REPO" "$REPO")" "$task_id"
+
+  found="$(_worktree__find_for_branch "$REPO" "$task_id")"
+  assert_eq "only the worktree is found" "$found" "$wt"
+
+  found="$(_worktree__find_for_branch "$wt" "$task_id")"
+  assert_eq "the same result from inside the worktree" "$found" "$wt"
+}
+
+test__worktree__find_for_branch__lists_worktrees_in_listing_order() {
+  setup_workspace "worktree-find-branch-order"
+  _fixture_feature_checkout
+  jj -R "$REPO" new main >/dev/null 2>&1
+  local wt_a wt_b
+  wt_a="$(_add_worktree wt-a "$FEATURE")"
+  wt_b="$(_add_worktree wt-b "$FEATURE")"
+
+  local found
+  found="$(_worktree__find_for_branch "$REPO" "$FEATURE")"
+  assert_eq "both worktrees in workspace-listing order" "$found" \
+    "$(printf '%s\n%s' "$wt_a" "$wt_b")"
+}
+
+# ---------------------------------------------------------------------------
+# The canonical repository in worktree listings
+# ---------------------------------------------------------------------------
+
+test__worktree__list__omits_the_canonical_repository() {
+  setup_workspace "worktree-list-no-canonical"
+  _fixture_feature_checkout
+  local wt_path
+  wt_path="$(_add_worktree wt-listed "$FEATURE")"
+
+  local records
+  records="$(_worktree__list "$REPO")"
+  assert_eq "only the worktree is listed" "$records" \
+    "$(printf 'wt-listed\t%s\t%s' "$wt_path" "$FEATURE")"
+
+  records="$(_worktree__list "$wt_path")"
+  assert_eq "the same listing from inside the worktree" "$records" \
+    "$(printf 'wt-listed\t%s\t%s' "$wt_path" "$FEATURE")"
+}
+
+test__worktree__list_all_unsynced__skips_the_canonical_repository_from_a_worktree() {
+  setup_workspace "wt-all-unsynced-from-worktree"
+  _fixture_feature_checkout
+  # The canonical repository stays on feature, so the bare write leaves it
+  # behind just like the worktree.
+  local wt_path
+  wt_path="$(_add_worktree wt-behind "$FEATURE")"
+  _advance_branch_bare "$FEATURE" adv.txt "advanced" >/dev/null
+
+  local records
+  records="$(_worktree__list_all_unsynced "$wt_path")"
+  assert_eq "only the worktree is reported" "$records" \
+    "$(printf '%s\t%s' "$wt_path" "$FEATURE")"
+}
+
+test__worktree__list_all_unsynced__includes_the_canonical_repository_from_it() {
+  setup_workspace "wt-all-unsynced-from-canonical"
+  _fixture_feature_checkout
+  local wt_path
+  wt_path="$(_add_worktree wt-behind "$FEATURE")"
+  _advance_branch_bare "$FEATURE" adv.txt "advanced" >/dev/null
+
+  local records
+  records="$(_worktree__list_all_unsynced "$REPO")"
+  assert_line_count "the canonical repository and the worktree are reported" "$records" 2
+  assert_contains "the canonical repository is reported" "$records" \
+    "$(printf '%s\t%s' "$REPO" "$FEATURE")"
+  assert_contains "the worktree is reported" "$records" \
+    "$(printf '%s\t%s' "$wt_path" "$FEATURE")"
+}
+
+test__worktree__list_unsynced__never_reports_the_canonical_repository() {
+  setup_workspace "wt-unsynced-no-canonical"
+  _fixture_feature_checkout
+  local wt_a wt_b
+  wt_a="$(_add_worktree wt-a "$FEATURE")"
+  wt_b="$(_add_worktree wt-b "$FEATURE")"
+  _advance_branch_bare "$FEATURE" adv.txt "advanced" >/dev/null
+
+  local records
+  records="$(_worktree__list_unsynced "$wt_a" "$FEATURE")"
+  assert_eq "only the other worktree is reported" "$records" \
+    "$(printf '%s\t%s' "$wt_b" "$FEATURE")"
 }
 
 run_tests "tt lib/worktree (unit)"

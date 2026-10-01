@@ -40,31 +40,6 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 
 readonly SCRIPT_NAME="${0##*/}"
 
-# Usage: deletable_child_worktrees REPO WORKTREE_PATHS
-#
-# Reads newline-separated worktree roots on stdin-substituted WORKTREE_PATHS and
-# emits the subset that a --delete checkin will actually remove: every one of
-# them except the canonical repository root, which is never deleted.
-#
-# Both sides of the comparison are canonicalized, so a symlinked repository root
-# does not defeat the test. Filtering here rather than at deletion time keeps the
-# set that is validated identical to the set that is removed.
-deletable_child_worktrees() {
-  local repo="$1" worktree_paths="$2"
-  [[ -z "$worktree_paths" ]] && return 0
-
-  local canonical_repo
-  canonical_repo="$(_path__resolve_symlinks "$(_worktree__resolve_repository_root "$repo")")"
-
-  local worktree canonical_worktree
-  while IFS= read -r worktree; do
-    [[ -z "$worktree" ]] && continue
-    canonical_worktree="$(realpath "$worktree" 2>/dev/null)" || canonical_worktree="$worktree"
-    [[ "$canonical_worktree" == "$canonical_repo" ]] && continue
-    printf '%s\n' "$worktree"
-  done <<< "$worktree_paths"
-}
-
 usage() {
   cat <<EOF
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [options...]
@@ -244,11 +219,11 @@ main() {
   # the delegated delete removes the child bookmark), a worktree left behind
   # on an older child tip can no longer be attributed to the child branch
   # reliably. The list is only consumed by the post-delete cleanup at the end.
+  # It holds worktrees only: the canonical repository is never removed, even
+  # when its working copy is on the child branch.
   local child_worktrees=''
   if [[ "$delete" == true ]] && [[ "$retain_worktree" != true ]]; then
-    child_worktrees="$(deletable_child_worktrees "$repo" \
-      "$(_worktree__find_for_branch "$repo" "$child_bookmark" \
-        "$task_prefix" "$project_prefix")")"
+    child_worktrees="$(_worktree__find_for_branch "$repo" "$child_bookmark")"
 
     # --delete removes these worktrees from disk, so they are held to the same
     # standard as `tt worktree delete` holds its target. Work that is only on
@@ -465,11 +440,13 @@ main() {
   # the parent branch, fall back to the canonical repository root rather than
   # $repo: when checkin runs from inside the child's own worktree, $repo
   # resolves to that worktree, which a complete checkin deletes further below.
-  # Several parent worktrees are only a problem for --switch, which needs a
+  # The canonical repository is reached only through this fallback, never as a
+  # match of its own, so a canonical repository that also sits on the parent
+  # branch does not compete with the parent's worktree. Several parent worktrees are only a problem for --switch, which needs a
   # single HEAD target; hooks then also get the canonical root.
   local receive_ws
   local worktrees
-  worktrees="$(_worktree__find_for_branch "$repo" "$parent_bookmark" "$task_prefix" "$project_prefix")"
+  worktrees="$(_worktree__find_for_branch "$repo" "$parent_bookmark")"
   local wt_count
   wt_count="$(printf '%s' "$worktrees" | grep -c . 2>/dev/null || true)"
 
@@ -662,10 +639,9 @@ main() {
   # dedicated worktrees (resolved and validated above, before the delete
   # removed the branch) are forgotten from the repository model and deleted
   # from disk. Suppressed by --retain-worktree. A checkin without --delete
-  # never removes a worktree; use `tt worktree delete` for that. The list has
-  # already had the canonical repository root filtered out, so a checkin run
-  # from the primary workspace with its working copy on the child branch
-  # cleans up nothing here.
+  # never removes a worktree; use `tt worktree delete` for that. The list holds
+  # worktrees only, so a checkin run from the canonical repository with its
+  # working copy on the child branch cleans up nothing here.
   # IMPORTANT: This MUST be the last thing main() does. After _worktree__delete,
   # the script's own files may have been deleted from disk (if the checkin
   # was run from within the child worktree), so no further commands should run.

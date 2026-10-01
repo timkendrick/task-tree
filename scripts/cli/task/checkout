@@ -24,7 +24,8 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #
 # Options:
 #   <task-id>            Task or project ID (required)
-#   --worktree[=<path>]  Use or create a dedicated workspace for this task.
+#   --worktree[=<path>]  Use or create a worktree for this task (never the canonical
+#                        repository).
 #                        Without =<path>, derives path from <workspace-dir>/<task-id>.
 #   --switch             (only with --worktree) Also update the HEAD symlink to the new
 #                        worktree. Without this flag, HEAD is not updated when --worktree
@@ -46,7 +47,8 @@ Arguments:
   <task-id>  Task or project ID (e.g. task/foo-abc12345, project/bar-deadbeef)
 
 Options:
-  --worktree[=<path>]  Use or create a dedicated workspace for this task.
+  --worktree[=<path>]  Use or create a worktree for this task (never the canonical
+                        repository).
                         If no path given, defaults to <workspace-dir>/<task-id>
                         (resolved from the .tt/workspace symlink).
   --switch              (only with --worktree) Also update the HEAD symlink to the
@@ -193,9 +195,10 @@ main() {
   if [[ "$worktree_flag" == true ]]; then
     # --worktree: determine workspace path
     if [[ -z "$worktree_path" ]]; then
-      # Use _worktree__find_for_branch to locate any existing workspace for this task
+      # Reuse a worktree already holding this task. The canonical repository is
+      # never reused, even when it is on the task: --worktree asks for a worktree.
       local existing_worktrees worktree_count
-      existing_worktrees="$(_worktree__find_for_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")"
+      existing_worktrees="$(_worktree__find_for_branch "$repo" "$task_id")"
       worktree_count="$(printf '%s' "$existing_worktrees" | grep -c . 2>/dev/null || true)"
       if [[ "$worktree_count" -gt 1 ]]; then
         _ui__log "Error: Multiple workspaces found for '$task_id'; specify --worktree=<path>:"
@@ -216,10 +219,10 @@ main() {
     fi
 
     # When --worktree=<path> was explicitly given, verify it doesn't
-    # conflict with an existing workspace at a different path.
+    # conflict with an existing worktree at a different path.
     if [[ "$explicit_path" == true ]]; then
       local existing_wts
-      existing_wts="$(_worktree__find_for_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")"
+      existing_wts="$(_worktree__find_for_branch "$repo" "$task_id")"
       if [[ -n "$existing_wts" ]]; then
         local normalized_worktree match_found=false
         normalized_worktree="$(realpath "$worktree_path" 2>/dev/null || echo "$worktree_path")"

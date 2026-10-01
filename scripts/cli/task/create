@@ -30,7 +30,7 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #   --merge                (with --propagate) Merge parent tip into descendants
 #   --shallow              (with --propagate) Propagate to direct children only
 #   --checkout             After creation, run checkout on the newly created task
-#   --worktree[=<path>]    (with --checkout) Use or create a dedicated workspace for the task
+#   --worktree[=<path>]    (with --checkout) Use or create a worktree for the task
 #   --switch              (with --checkout --worktree) Also update the HEAD symlink to the new worktree
 #
 
@@ -58,7 +58,7 @@ Options:
   --merge               (with --propagate) Merge parent tip into descendants
   --shallow             (with --propagate) Propagate to direct children only
   --checkout            After creation, run checkout on the newly created task
-  --worktree[=<path>]   (with --checkout) Use or create a dedicated workspace for the task
+  --worktree[=<path>]   (with --checkout) Use or create a worktree for the task
   --switch              (with --checkout --worktree) Also update the HEAD symlink to the new worktree
 
 Body is read from stdin (via pipe or redirect) if stdin is not a terminal;

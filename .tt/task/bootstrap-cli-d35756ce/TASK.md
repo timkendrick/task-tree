@@ -139,7 +139,7 @@ subtask: [x] task/tt-task-changelog-5c0ad75c
 subtask: [x] task/tt-revset-entire-task-range-893a9451
 subtask: [x] task/tt-worktree-show-by-name-6ffcd37e
 subtask: [x] task/redirect-hooks-to-stderr-5296bc55
-subtask: [ ] task/omit-repo-from-worktree-location-ec2fd112
+subtask: [x] task/omit-repo-from-worktree-location-ec2fd112
 subtask: [ ] task/tt-worktree-show-current-fe2cec34
 subtask: [ ] task/tt-worktree-current-c11e5908
 subtask: [ ] task/retain-editor-contents-ad700a0b
