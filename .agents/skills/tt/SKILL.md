@@ -104,7 +104,7 @@ Switch to the given task branch. `--worktree` uses/creates a dedicated jj worksp
 ```
 tt task checkpoint [-m <message>] [--squash]
 ```
-Record the current state of work. `--squash` collapses all commits since the last bookmark into a single checkpoint commit.
+Record the current state of work. `--squash` collapses all commits since the last bookmark into a single checkpoint commit. Always pass `-m` when running non-interactively: without it the command opens an editor, and when stdin is not a terminal it exits with an error instead. An empty message cancels the checkpoint.
 
 #### `tt task complete`
 ```
@@ -212,7 +212,7 @@ Rebase or merge descendant task branches onto the parent's current tip. Defaults
 tt task publish [<project-id>] --target <branch> [-m <message>]
                 [--changelog [--changelog-depth <n>]] [--force]
 ```
-Merge a project branch into an external target branch (e.g. `main`). Removes task scaffolding files from the delivery branch. Use for projects, not tasks. The publish commit message comes from `-m`, or from an editor when it is omitted; an empty message cancels the publish. `--changelog` prefills the message with a summary of the work since the target branch, bounded by `--changelog-depth`.
+Merge a project branch into an external target branch (e.g. `main`). Removes task scaffolding files from the delivery branch. Use for projects, not tasks. The publish commit message comes from `-m`, or from an editor when it is omitted; an empty message cancels the publish. Always pass `-m` when running non-interactively: when stdin is not a terminal, omitting it is an error. `--changelog` prefills the message with a summary of the work since the target branch, bounded by `--changelog-depth`.
 
 #### `tt task prompt`
 ```

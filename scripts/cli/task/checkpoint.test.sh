@@ -151,6 +151,70 @@ test_task_checkpoint__refuses_bookmark_on_working_copy() {
 }
 
 
+test_task_checkpoint__omitted_message_without_terminal_fails() {
+  setup_workspace "cp-no-tty"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  bm_before=$(get_bookmark_commit "$task_id")
+  wc_parent_before=$(get_full_commit_id "@-")
+
+  output="" exit_code=0
+  output=$(run_tt task checkpoint </dev/null 2>&1) || exit_code=$?
+  assert_failure "checkpoint without --message fails" "$exit_code"
+  assert_contains "error explains --message is required" "$output" \
+    "cannot open an editor for the checkpoint message: stdin is not a terminal. Pass --message <msg>."
+  assert_eq "bookmark unchanged" "$(get_bookmark_commit "$task_id")" "$bm_before"
+  assert_eq "no commit recorded" "$(get_full_commit_id "@-")" "$wc_parent_before"
+  assert_no_pending_transaction "no transaction opened"
+}
+
+
+test_task_checkpoint__omitted_message_without_terminal_ignores_single_commit_description() {
+  setup_workspace "cp-no-tty-single"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  bm_before=$(get_bookmark_commit "$task_id")
+
+  # A single commit since the bookmark would prefill the editor with its
+  # description; without a terminal it must not be used as the message.
+  edit_file "one.txt" "one"
+  jj_commit "raw one"
+  wc_parent_before=$(get_full_commit_id "@-")
+
+  output="" exit_code=0
+  output=$(run_tt task checkpoint </dev/null 2>&1) || exit_code=$?
+  assert_failure "checkpoint without --message fails" "$exit_code"
+  assert_contains "error explains --message is required" "$output" "Pass --message <msg>."
+  assert_eq "bookmark unchanged" "$(get_bookmark_commit "$task_id")" "$bm_before"
+  assert_eq "no commit recorded" "$(get_full_commit_id "@-")" "$wc_parent_before"
+  assert_commit_message_first_line "single commit untouched" "@-" "raw one"
+}
+
+
+test_task_checkpoint__empty_message_cancels() {
+  setup_workspace "cp-empty-message"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  bm_before=$(get_bookmark_commit "$task_id")
+  wc_parent_before=$(get_full_commit_id "@-")
+
+  output="" exit_code=0
+  output=$(run_tt task checkpoint -m "" </dev/null 2>&1) || exit_code=$?
+  assert_failure "empty message rejected" "$exit_code"
+  assert_contains "reports the cancellation" "$output" "Checkpoint canceled: no message provided."
+  assert_not_contains "does not ask for --message" "$output" "stdin is not a terminal"
+  assert_eq "bookmark unchanged" "$(get_bookmark_commit "$task_id")" "$bm_before"
+  assert_eq "no commit recorded" "$(get_full_commit_id "@-")" "$wc_parent_before"
+  assert_no_pending_transaction "no transaction opened"
+}
+
+
 test_task_checkpoint__help() {
   setup_workspace "checkpoint-help"
   output="" exit_code=0
