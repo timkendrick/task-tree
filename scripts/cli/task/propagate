@@ -179,8 +179,8 @@ propagate_one_merge() {
   # Follow the advance with the invoking worktree only when it sits on the
   # child branch; every commit on the incoming parent's line also descends
   # from the child's fork point, so plain descent would relocate worktrees
-  # that have nothing to do with this child. Must run before the bookmark moves.
-  _worktree__reattach_current_on_branch "$repo" "$child" "$child_tip" "$merge_commit"
+  # that have nothing to do with this child.
+  _worktree__reattach_current "$repo" "$child" "$child_tip" "$merge_commit"
   _task__advance_branch "$repo" "$child" "$merge_commit"
 
   if [[ "$force" != true ]] && _task__check_conflicts "$repo" "$child"; then

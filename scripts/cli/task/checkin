@@ -573,8 +573,8 @@ main() {
   # Follow the advance with the current worktree only when it sits on the
   # PARENT branch (a worktree on the child branch — typically the one this
   # command runs from — stays put: checkin affects the target branch, not the
-  # invoking worktree). Must run before the bookmark moves off old_parent_tip.
-  _worktree__reattach_current_on_branch "$repo" "$parent_bookmark" \
+  # invoking worktree).
+  _worktree__reattach_current "$repo" "$parent_bookmark" \
     "$old_parent_tip" "$merge_commit"
 
   _task__advance_branch "$repo" "$parent_bookmark" "$merge_commit"
