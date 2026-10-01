@@ -583,4 +583,67 @@ test_task_reorder__refuses_when_the_canonical_workspace_is_stale() {
     task reorder "$STALE_TASK_ID"
 }
 
+test_task_reorder__ancestor_write_leaves_the_worktree_on_its_task() {
+  setup_workspace "reorder-ancestor-worktree"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_b=$(create_task "tb" "Task B") || true
+  task_a=$(create_task "ta" "Task A") || true
+  local task_wt
+  task_wt=$(create_task_worktree "$task_a")
+
+  local fork_status=0
+  is_vcs_ancestor "$proj_id" "$task_a" || fork_status=$?
+  assert_success "the project tip is an ancestor of the task worktree" "$fork_status"
+  local wt_parent_before proj_before
+  wt_parent_before="$(jj -R "$task_wt" --ignore-working-copy log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)"
+  proj_before="$(get_bookmark_commit "$proj_id")"
+
+  local exit_code=0
+  run_tt_in_worktree "$task_wt" task reorder "$task_a" --up >/dev/null 2>&1 || exit_code=$?
+  assert_success "reorder succeeds" "$exit_code"
+  assert_eq "a moved up" "$(subtask_order "$proj_id")" "$task_a $task_b"
+  assert_neq "the project branch advanced" "$(get_bookmark_commit "$proj_id")" "$proj_before"
+  assert_eq "the worktree is still on its task" \
+    "$(run_tt_in_worktree "$task_wt" task current 2>/dev/null)" "$task_a"
+  assert_eq "the worktree has not moved" \
+    "$(jj -R "$task_wt" --ignore-working-copy log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)" \
+    "$wt_parent_before"
+}
+
+
+test_task_reorder__tidy_ancestor_write_leaves_the_worktree_on_its_task() {
+  setup_workspace "reorder-tidy-ancestor-worktree"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  # A checked-in DONE task_b followed by a new TODO task_a leaves the project's
+  # subtask list out of canonical order, so the tidy has something to write.
+  task_b=$(create_task "tb" "Task B") || true
+  checkout_task "$task_b" >/dev/null || true
+  run_tt task complete "$task_b" >/dev/null 2>&1 || true
+  run_tt task checkin "$task_b" >/dev/null 2>&1 || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "ta" "Task A") || true
+  local task_wt
+  task_wt=$(create_task_worktree "$task_a")
+
+  local fork_status=0
+  is_vcs_ancestor "$proj_id" "$task_a" || fork_status=$?
+  assert_success "the project tip is an ancestor of the task worktree" "$fork_status"
+  local wt_parent_before proj_before
+  wt_parent_before="$(jj -R "$task_wt" --ignore-working-copy log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)"
+  proj_before="$(get_bookmark_commit "$proj_id")"
+
+  local exit_code=0
+  run_tt_in_worktree "$task_wt" task reorder "$proj_id" >/dev/null 2>&1 || exit_code=$?
+  assert_success "tidy succeeds" "$exit_code"
+  assert_eq "subtasks sorted by status" "$(subtask_order "$proj_id")" "$task_a $task_b"
+  assert_neq "the project branch advanced" "$(get_bookmark_commit "$proj_id")" "$proj_before"
+  assert_eq "the worktree is still on its task" \
+    "$(run_tt_in_worktree "$task_wt" task current 2>/dev/null)" "$task_a"
+  assert_eq "the worktree has not moved" \
+    "$(jj -R "$task_wt" --ignore-working-copy log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)" \
+    "$wt_parent_before"
+}
+
 run_tests "tt task reorder"
