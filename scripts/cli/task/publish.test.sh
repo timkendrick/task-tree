@@ -311,8 +311,28 @@ test_task_publish__empty_message_rejected() {
   output="" exit_code=0
   output=$(run_tt task publish "$proj_id" --target "main" -m "" 2>&1) || exit_code=$?
   assert_failure "empty message rejected" "$exit_code"
-  assert_contains "reports the cancellation" "$output" "Publish cancelled."
+  assert_contains "reports the cancellation" "$output" "Publish canceled: no message provided."
   assert_eq "main did not advance" "$(get_bookmark_commit "main")" "$main_before"
+}
+
+
+test_task_publish__omitted_message_without_terminal_fails() {
+  setup_workspace "pub-no-tty"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+
+  main_before=$(get_bookmark_commit "main")
+  project_before=$(get_bookmark_commit "$proj_id")
+
+  output="" exit_code=0
+  output=$(run_tt task publish "$proj_id" --target "main" </dev/null 2>&1) || exit_code=$?
+  assert_failure "publish without --message fails" "$exit_code"
+  assert_contains "error explains --message is required" "$output" \
+    "cannot open an editor for the publish message: stdin is not a terminal. Pass --message <msg>."
+  assert_eq "main did not advance" "$(get_bookmark_commit "main")" "$main_before"
+  assert_eq "project branch unchanged" "$(get_bookmark_commit "$proj_id")" "$project_before"
+  assert_no_pending_transaction "no transaction opened"
 }
 
 
