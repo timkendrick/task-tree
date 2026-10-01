@@ -29,6 +29,17 @@ tt task --help           # List available task subcommands
 tt --help                # General usage
 ```
 
+## Worktrees and the canonical repository
+
+The **canonical repository** is the original repository directory (`tt workspace repo` prints it). A **worktree** is any other jj workspace of the same repository, usually created for one task by `tt task checkout --worktree`.
+
+`tt` acts on the canonical repository only when a command runs from it, or when a command names it explicitly. Run from a worktree, `tt` leaves the canonical repository wherever the user left it:
+
+- `tt task checkout --worktree` never reuses the canonical repository.
+- `tt worktree sync --all` skips the canonical repository.
+- Out-of-sync warnings never name the canonical repository.
+- `tt worktree list` never lists the canonical repository.
+
 ## Working copy rules
 
 Two rules govern how `tt` treats the working copy. Both are worth knowing before running anything, because they explain the most common failure and the most common surprise.
@@ -98,7 +109,7 @@ Creates a task under the task this worktree has checked out (or `--parent`); fai
 ```
 tt task checkout <task-id> [--worktree[=<path>]] [--switch] [--force]
 ```
-Switch to the given task branch. `--worktree` uses/creates a dedicated jj workspace; `--switch` also updates HEAD to the new worktree. Returns the worktree path to stdout for piping into other commands.
+Switch to the given task branch. `--worktree` uses/creates a worktree for the task (never the canonical repository); `--switch` also updates HEAD to the new worktree. Returns the worktree path to stdout for piping into other commands.
 
 #### `tt task checkpoint`
 ```
@@ -265,7 +276,7 @@ Redirect the virtual project's HEAD symlink to an existing worktree. The worktre
 ```
 tt worktree sync [<worktree-path>] [--all]
 ```
-Bring a worktree forward onto the head of the branch it is checked out on, updating its files to match. Use it when a command reports that worktrees are out of sync: a branch write advances the bookmark without moving any working copy but the invoking one. Uncommitted changes in the target worktree are preserved. Defaults to the worktree containing the current directory; `--all` synchronizes every out-of-sync worktree in the repository. Reports the files added, modified and removed. Fires no hooks — the checked-out task does not change.
+Bring a worktree forward onto the head of the branch it is checked out on, updating its files to match. Use it when a command reports that worktrees are out of sync: a branch write advances the bookmark without moving any working copy but the invoking one. Uncommitted changes in the target worktree are preserved. Defaults to the worktree containing the current directory; `--all` synchronizes every out-of-sync worktree in the repository, plus the canonical repository when run from it. Reports the files added, modified and removed. Fires no hooks — the checked-out task does not change.
 
 #### `tt worktree refresh`  (alias: `tt refresh`)
 ```
@@ -277,7 +288,7 @@ Recover a stale workspace — one whose files belong to a rewritten commit, whic
 ```
 tt worktree list [--task <task-id>] [--quiet]
 ```
-List all jj workspaces and their corresponding tt task/project IDs. `--quiet` prints names only.
+List all worktrees and their corresponding tt task/project IDs. The canonical repository is not listed. `--quiet` prints names only.
 
 #### `tt worktree show`
 ```
@@ -297,9 +308,9 @@ Delete the given worktree directory and remove its jj workspace. The task still 
 
 All tasks should follow the general `tt` workflow:
 
-1. **Create a task** — `tt task create --title "<title>" [--slug <slug>] [--parent <parent-task-id>] [--label <label>...] [--propagate] [--checkout [--worktree[=<path>]]]`. Creates a new task under the parent (default: current branch), adds `subtask: [ ] <task-id>` to the parent, and forks the child branch. With `--propagate`, updates sibling branches. With `--checkout`, runs checkout on the newly created task; `--worktree` optionally uses or creates a dedicated jj workspace. Run `tt task create --help` for options.
+1. **Create a task** — `tt task create --title "<title>" [--slug <slug>] [--parent <parent-task-id>] [--label <label>...] [--propagate] [--checkout [--worktree[=<path>]]]`. Creates a new task under the parent (default: current branch), adds `subtask: [ ] <task-id>` to the parent, and forks the child branch. With `--propagate`, updates sibling branches. With `--checkout`, runs checkout on the newly created task; `--worktree` optionally uses or creates a worktree. Run `tt task create --help` for options.
 
-2. **Begin a task** — `tt task checkout <task-id> [--worktree[=<path>]] [--switch] [--force]`. Switches to the task branch, updates status to IN-PROGRESS if TODO, creates TASK.md symlink on first checkout. With `--worktree`, uses or creates a dedicated jj workspace; `--switch` also updates the HEAD symlink to the new worktree. Run `tt task checkout --help` for options.
+2. **Begin a task** — `tt task checkout <task-id> [--worktree[=<path>]] [--switch] [--force]`. Switches to the task branch, updates status to IN-PROGRESS if TODO, creates TASK.md symlink on first checkout. With `--worktree`, uses or creates a worktree; `--switch` also updates the HEAD symlink to the new worktree. Run `tt task checkout --help` for options.
 
 3. **Work on the task** — Make commits on the branch and accumulate context in `./TASK.md`.
    - **Add context** — Run `tt task context add [--title TITLE] [--slug SLUG]` to create a standalone context file for the task (reads body from stdin if piped, otherwise opens editor). Run `tt task context add --help` for options.

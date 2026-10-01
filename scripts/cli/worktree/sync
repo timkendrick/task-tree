@@ -23,6 +23,7 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # Options:
 #   <worktree-path>      Worktree to synchronize (default: the one containing the CWD)
 #   --all                Synchronize every out-of-sync worktree in the repository
+#                        (plus the canonical repository when run from it)
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD).
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -42,6 +43,7 @@ Arguments:
 
 Options:
   --all                 Synchronize every out-of-sync worktree in the repository,
+                        plus the canonical repository when run from it,
                         continuing past failures and exiting non-zero if any
                         worktree could not be synchronized. Cannot be combined
                         with <worktree-path>.
