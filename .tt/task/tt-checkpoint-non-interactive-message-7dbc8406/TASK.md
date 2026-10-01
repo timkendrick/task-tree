@@ -1,6 +1,6 @@
 ---
 title: "Prevent checkpoint message editor when invoked via non-interactive script"
-status: TODO
+status: IN-PROGRESS
 created: 2026-10-01T09:15:10Z
 updated: 2026-10-01T09:15:10Z
 ---
