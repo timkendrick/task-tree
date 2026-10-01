@@ -230,9 +230,10 @@ _worktree__find_current() {
 # Usage: _worktree__resolve_repository_root REPO
 # Prints the canonical repository root for REPO, which may itself be a
 # worktree. Documented pass-through to _repo__resolve_repository_root so
-# commands can name the canonical repository (e.g. as a fallback when a branch is not checked out anywhere) without
-# reaching into the VCS layer. Canonicalize the result with
-# _path__resolve_symlinks before comparing it against other resolved paths.
+# commands can name the canonical repository (e.g. as a fallback when a branch
+# is not checked out in any worktree) without reaching into the VCS layer.
+# Canonicalize the result with _path__resolve_symlinks before comparing it
+# against other resolved paths.
 _worktree__resolve_repository_root() {
   local repo="$1"
   _repo__resolve_repository_root "$repo"
