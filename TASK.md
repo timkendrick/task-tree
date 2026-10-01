@@ -1,1 +1,1 @@
-.tt/task/ancestor-branch-write-moves-worktree-fb5b1ff6/TASK.md
+.tt/task/bootstrap-cli-d35756ce/TASK.md
