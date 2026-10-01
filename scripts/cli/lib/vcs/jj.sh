@@ -237,14 +237,14 @@ _jj__find_repository_root() {
 
 # Usage: _jj__resolve_repository_root REPO
 # Returns the canonical repo root for the repository.
-# If REPO is a secondary jj workspace (.jj/repo is a pointer file),
+# If REPO is a worktree (.jj/repo is a pointer file),
 # follows the pointer to find the canonical repo root.
 # If REPO is already the canonical repo (.jj/repo is a directory), returns REPO.
 _jj__resolve_repository_root() {
   local repo="$1"
   local repo_entry="$repo/.jj/repo"
   if [[ -f "$repo_entry" ]]; then
-    # Secondary workspace: .jj/repo is a file containing a relative path to
+    # Worktree: .jj/repo is a file containing a relative path to
     # the canonical repo's .jj/repo directory (e.g. "../../../../repo/.jj/repo").
     local pointer target
     pointer="$(<"$repo_entry")"
@@ -1020,7 +1020,7 @@ _jj__commit_changeset() {
     # last-seen git ref state still contains the temporary ref, and the next
     # auto-importing jj invocation would mint a surprise "import git refs"
     # operation outside any tt transaction. Forgetting the bookmark does not
-    # clear that record when the operation runs from a secondary workspace.
+    # clear that record when the operation runs from a worktree.
     __jj__write_internal "$repo" --ignore-working-copy git import || exit 1
     printf '%s\n' "$commit"
   )

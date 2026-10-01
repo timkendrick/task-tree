@@ -10,7 +10,7 @@
 #
 # History location: the history file always lives in the **canonical** repo
 # root (the repo whose .jj/repo entry is a directory, not a pointer file).
-# Secondary workspaces have a .jj/repo *file* containing a relative path
+# Worktrees have a .jj/repo *file* containing a relative path
 # back to the canonical repo's .jj/repo directory. _repo__resolve_repository_root
 # follows that pointer so all workspaces share a single history file.
 #
@@ -88,7 +88,7 @@ _history__init() {
 
 # Usage: _history__resolve_file REPO
 # Returns the path to the .tt/history file for REPO.
-# Follows .jj/repo pointer files so secondary workspaces resolve to the
+# Follows .jj/repo pointer files so worktrees resolve to the
 # canonical repo's history file rather than a per-worktree copy.
 # Canonical repos return <repo>/.tt/history directly.
 _history__resolve_file() {
