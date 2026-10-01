@@ -28,6 +28,22 @@ _setup_two_level_tree() {
 }
 
 
+# Build a project branch and a target branch (main) that both change README.md
+# since the project forked, so merging one into the other conflicts.
+# Sets proj_id.
+_setup_conflicting_target() {
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  edit_file "README.md" "project"
+  checkpoint_task "Project edit" >/dev/null || true
+
+  jj -R "$REPO" new main >/dev/null 2>&1
+  edit_file "README.md" "target"
+  jj_commit "Target edit"
+  jj -R "$REPO" bookmark set main -r @- >/dev/null 2>&1
+}
+
+
 test_task_publish__basic_publish_to_target() {
   setup_workspace "pub-basic"
   proj_id=$(create_project "proj" "Project") || true
@@ -131,6 +147,40 @@ test_task_publish__refuses_bookmark_on_working_copy() {
   assert_failure "unrelated bookmark on @ refused" "$exit_code"
   assert_contains "error names the unrelated bookmark" "$output" "unrelated"
   assert_eq "main still did not advance" "$(get_bookmark_commit "main")" "$main_before"
+}
+
+
+test_task_publish__conflict_refused() {
+  setup_workspace "pub-conflict-refused"
+  _setup_conflicting_target
+  main_before=$(get_bookmark_commit "main")
+
+  output="" exit_code=0
+  output=$(run_tt task publish "$proj_id" --target "main" -m "Ship it" 2>&1) || exit_code=$?
+  assert_failure "conflicting publish refused" "$exit_code"
+  assert_contains "reports the conflict" "$output" "Merge conflicts detected"
+  assert_eq "main did not advance" "$(get_bookmark_commit "main")" "$main_before"
+  assert_no_conflicts "repository left conflict-free"
+}
+
+
+test_task_publish__conflict_forced() {
+  setup_workspace "pub-conflict-forced"
+  _setup_conflicting_target
+  main_before=$(get_bookmark_commit "main")
+
+  output="" exit_code=0
+  output=$(run_tt task publish "$proj_id" --target "main" -m "Ship it" --force 2>&1) || exit_code=$?
+  assert_success "--force publishes despite the conflict" "$exit_code"
+  assert_neq "main advanced" "$(get_bookmark_commit "main")" "$main_before"
+
+  exit_code=0
+  has_conflicts "main" || exit_code=$?
+  assert_success "published merge carries the conflict" "$exit_code"
+
+  first_parent=$(jj -R "$REPO" log -r 'main' --no-graph \
+    -T 'parents.map(|c| c.commit_id().short(8)).join(" ")' 2>/dev/null)
+  assert_eq "first parent is the old target tip" "${first_parent%% *}" "$main_before"
 }
 
 
