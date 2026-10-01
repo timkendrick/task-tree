@@ -1,6 +1,6 @@
 ---
 title: "Omit main repository from `find_worktrees_for_branch` output"
-status: IN-PROGRESS
+status: DONE
 created: 2026-09-02T07:50:49Z
 updated: 2026-10-01T14:14:12Z
 context: context/implementation-summary-85e3e098
