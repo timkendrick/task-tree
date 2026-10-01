@@ -346,7 +346,7 @@ Any other value — including `INFO` or `VERBOSE` — leaves narration off.
 
 - **`tt task checkout <task-id> [--worktree [=<path>] [--switch]] [--rebase | --merge] [--force]`** — Switch to the given task branch. With `--worktree`, uses or creates a dedicated jj workspace for that task; otherwise uses the closest ancestor task workspace or the current workspace. With `--rebase` or `--merge` (mutually exclusive), first pulls any changes from the parent task into this task by running `tt task propagate --from <parent> --to <task-id>` with the chosen strategy, before switching the working copy; only valid for task branches, since project branches have no parent. Refuses if the target workspace has local changes unless `--force`, and refuses if the invoking worktree's working-copy commit carries a bookmark. Updates task status to `IN-PROGRESS` if the task is `TODO` (first checkout) or `DONE` (reopening a completed task), creating a `[tt:task:<task-id>:checkout] <title>` commit on the task branch and advancing the task bookmark; runs `setup` hook when creating a new worktree. Without `--worktree`, always updates the virtual project's `HEAD` symlink; with `--worktree`, only updates `HEAD` if `--switch` is also provided (`--switch` is only valid with `--worktree`). On success, prints the worktree path to stdout (all other output is on stderr). See §6.2.
 
-- **`tt task checkpoint [--message <msg>] [--squash]`** — Record the current state and advance the task bookmark. Always records the working copy as a new commit described by `--message` (or by an interactively composed message), even when the working copy is empty, and advances the bookmark to it, leaving the worktree on a clean open working copy above it. With `--squash`, squashes all commits between the last bookmark and the current working copy into a single checkpoint commit (see §6.3.2). Refuses if the working-copy commit carries a bookmark, since a checkpoint records the working copy as a new commit above the branch tip rather than amending it. Prints a short confirmation on success. See §6.3. Hooks: **pre-checkpoint**, **post-checkpoint**.
+- **`tt task checkpoint [--message <msg>] [--squash]`** — Record the current state and advance the task bookmark. Always records the working copy as a new commit described by `--message` (or by an interactively composed message; `--message` is required when stdin is not a terminal, and an empty message cancels the checkpoint), even when the working copy is empty, and advances the bookmark to it, leaving the worktree on a clean open working copy above it. With `--squash`, squashes all commits between the last bookmark and the current working copy into a single checkpoint commit (see §6.3.2). Refuses if the working-copy commit carries a bookmark, since a checkpoint records the working copy as a new commit above the branch tip rather than amending it. Prints a short confirmation on success. See §6.3. Hooks: **pre-checkpoint**, **post-checkpoint**.
 
 - **`tt task complete [<task-id>] [--force]`** — Mark the current task (or a given task) as done. Creates a `[tt:task:<task-id>:complete] <title>` commit directly on the task branch that sets `status` to `DONE` in the task file, and advances the task bookmark to this commit. Refuses if the working-copy commit carries a bookmark; the working copy may otherwise hold uncommitted changes, which are never absorbed. Requires all child tasks to be done (every `subtask:` entry marked `[x]`) unless `--force` is specified. See §6.4. Hooks: **pre-complete** (blocking), **post-complete** (optional).
 
@@ -578,7 +578,7 @@ If the target workspace's working copy is an ancestor task's workspace (not the 
 
 `tt task checkpoint` records the current state of work and advances the task bookmark. It always creates a new commit, even if the working copy is empty.
 
-**Commit message:** `[tt:task:<task-id>:checkpoint] <message>`. The `<message>` part comes from `--message` if provided; otherwise the user is prompted to enter it in an editor (see §6.3.1 below).
+**Commit message:** `[tt:task:<task-id>:checkpoint] <message>`. The `<message>` part comes from `--message` if provided; otherwise the user is prompted to enter it in an editor (see §6.3.1 below). If `--message` is omitted and stdin is not a terminal (e.g. the command is run from a script), no editor is opened: the command prints `Error: cannot open an editor for the checkpoint message: stdin is not a terminal. Pass --message <msg>.` to stderr and exits 1, before resolving the repository or performing any VCS operation. An empty message, whether passed as `--message ''` or left by the editor, prints `Checkpoint canceled: no message provided.` to stderr and exits 1 without performing any VCS operation.
 
 **Commit flow:** The working copy is always recorded as a commit described by the full message, regardless of whether it has pending changes, and the worktree is left on a clean open working copy on top of it. The bookmark is then advanced to the recorded commit.
 
@@ -586,7 +586,7 @@ If the target workspace's working copy is an ancestor task's workspace (not the 
 
 #### 6.3.1 Interactive message editing
 
-When `--message` is not provided, `tt task checkpoint` opens an editor for the user to enter the `<message>` portion of the commit message. This mirrors `git commit` behaviour, using an ephemeral temporary file to store the in-progress prompt.
+When `--message` is not provided and stdin is a terminal, `tt task checkpoint` opens an editor for the user to enter the `<message>` portion of the commit message. This mirrors `git commit` behaviour, using an ephemeral temporary file to store the in-progress prompt.
 
 **Editor selection:** `$TT_EDITOR` → `$GIT_EDITOR` → `$VISUAL` → `$EDITOR` → `"vi"` (first non-empty value wins). The editor executable receives the temporary file path as its only argument.
 
@@ -599,12 +599,12 @@ When `--message` is not provided, `tt task checkpoint` opens an editor for the u
 # An empty message cancels the checkpoint.
 ```
 
-**Prefilled message:** normally the task title. However, when the commit range since the task bookmark contains exactly one commit, the template is prefilled with the first line of that commit's description instead, so a single-commit checkpoint reuses the message the user already wrote. If that commit has no description, the task title is used. This applies regardless of the `--squash` flag, and does not affect `--message` (which skips the editor entirely).
+**Prefilled message:** normally the task title. However, when the commit range since the task bookmark contains exactly one commit, the template is prefilled with the first line of that commit's description instead, so a single-commit checkpoint reuses the message the user already wrote. If that commit has no description, the task title is used. This applies regardless of the `--squash` flag, and does not affect `--message` (which skips the editor entirely). It is never used as the message without the editor: when stdin is not a terminal, `--message` is required.
 
 The file is opened in the resolved editor. Once the editor exits:
 
 - **Editor exits non-zero:** Print an error to stderr and exit 1. No VCS operation is performed.
-- **Editor exits zero:** Strip all lines beginning with `#`, then trim trailing whitespace from each line along with any leading and trailing blank lines. Indentation within a line is preserved, so a template that prefills indented content (see §6.5) survives the round trip. If nothing remains, print `Checkpoint cancelled.` to stderr and exit 1. Otherwise use the stripped text as `<message>`.
+- **Editor exits zero:** Strip all lines beginning with `#`, then trim trailing whitespace from each line along with any leading and trailing blank lines. Indentation within a line is preserved, so a template that prefills indented content (see §6.5) survives the round trip. If nothing remains, print `Checkpoint canceled: no message provided.` to stderr and exit 1. Otherwise use the stripped text as `<message>`.
 
 **Preconditions** (all checked before any VCS operation; any failure aborts the command):
 
@@ -1144,7 +1144,7 @@ Every hook receives at least:
 | **post-checkout** | After successful `tt task checkout` or `tt worktree switch` | Checked-out task worktree | Optional | TT_TASK_ID, TT_TASK_BRANCH (newly-checked-out), TT_PREVIOUS_TASK_ID, TT_PREVIOUS_TASK_BRANCH (outgoing) |
 | **pre-create** | Before creating task in `tt task create` | Parent task worktree | Yes | TT_PARENT_TASK_ID, TT_PARENT_BRANCH, TT_TITLE, TT_SLUG, TT_DESCRIPTION, TT_LABELS (space-separated; labels with spaces/special chars quoted) |
 | **post-create** | After task created in `tt task create` | New task worktree if created, else worktree we end up in | Optional | TT_TASK_ID (new), TT_TASK_BRANCH (new), TT_PARENT_TASK_ID, TT_PARENT_BRANCH; TT_WORKTREE_DIR = that same worktree |
-| **pre-checkpoint** | Before `tt task checkpoint` performs any VCS operation | Current task worktree | Yes | TT_TASK_ID, TT_TASK_BRANCH, TT_MESSAGE (value of `--message`; empty if not provided) |
+| **pre-checkpoint** | Before `tt task checkpoint` performs any VCS operation | Current task worktree | Yes | TT_TASK_ID, TT_TASK_BRANCH, TT_MESSAGE (the checkpoint message, from `--message` or the editor) |
 | **post-checkpoint** | After `tt task checkpoint` succeeds | Same | Optional | TT_TASK_ID, TT_TASK_BRANCH, TT_COMMIT (the commit the bookmark was moved to), TT_MESSAGE |
 | **pre-complete** | Before `tt task complete` performs any VCS operation | Current task worktree | Yes | TT_TASK_ID, TT_TASK_BRANCH |
 | **post-complete** | After `tt task complete` succeeds | Same | Optional | TT_TASK_ID, TT_TASK_BRANCH, TT_COMMIT (the commit the bookmark was moved to) |

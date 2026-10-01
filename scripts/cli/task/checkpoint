@@ -17,7 +17,8 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #   checkpoint [--message <message>] [--squash] [--repo PATH]
 #
 # Options:
-#   -m, --message <msg>  Commit message (skips editor prompt).
+#   -m, --message <msg>  Commit message (skips editor prompt; required when stdin is not a
+#                        terminal). An empty message cancels the checkpoint.
 #   --squash             Squash all commits since the last bookmark into a single checkpoint commit.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
@@ -28,6 +29,9 @@ usage() {
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--message <message>] [--squash] [--repo PATH]
 
 Record the current state of work by creating a named commit and advancing the task bookmark.
+
+Prompts for the commit message in an editor unless --message is given. When stdin
+is not a terminal, --message is required. An empty message cancels the checkpoint.
 
 Options:
   -m, --message <msg>   Commit message (skips editor prompt).
@@ -45,6 +49,7 @@ EOF
 
 main() {
   local message=''
+  local message_provided=false
   local squash=false
   local repo=''
 
@@ -53,10 +58,12 @@ main() {
       -m|--message)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         message="$2"
+        message_provided=true
         shift 2
         ;;
       --message=*)
         message="${1#--message=}"
+        message_provided=true
         shift
         ;;
       --repo)
@@ -80,6 +87,11 @@ main() {
         ;;
     esac
   done
+
+  if [[ "$message_provided" == false && ! -t 0 ]]; then
+    _ui__log "Error: cannot open an editor for the checkpoint message: stdin is not a terminal. Pass --message <msg>."
+    exit 1
+  fi
 
   repo="$(_workspace__resolve_repo "$repo")"
 
@@ -128,7 +140,7 @@ main() {
   intermediate_count="$(printf '%s\n' "$intermediates" | grep -c . || true)"
 
   # Get message from editor if not provided
-  if [[ -z "$message" ]]; then
+  if [[ "$message_provided" == false ]]; then
     # When the range since the bookmark holds exactly one commit, prefill the
     # editor with the first line of that commit's description instead of the
     # task title.
@@ -145,10 +157,11 @@ main() {
     template="$(printf '%s\n\n# Task: %s\n# An empty message cancels the checkpoint.' \
       "$default_message" "$task_id")"
     message="$(_ui__prompt <<< "$template")" || exit 1
-    if [[ -z "$message" ]]; then
-      _ui__log "Checkpoint cancelled."
-      exit 1
-    fi
+  fi
+
+  if [[ -z "$message" ]]; then
+    _ui__log "Checkpoint canceled: no message provided."
+    exit 1
   fi
 
   # Build full commit message
