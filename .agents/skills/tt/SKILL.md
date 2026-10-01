@@ -35,7 +35,7 @@ Two rules govern how `tt` treats the working copy. Both are worth knowing before
 
 **Commands that write to a branch do not move the working copy.** They build the commit on the branch directly, leaving `@` exactly where it was and never absorbing uncommitted changes into what they commit. Only `tt task checkout`, `tt task checkpoint`, `tt workspace init`, `tt worktree sync` and `tt history undo` move a working copy at all. (`tt worktree switch` moves no working copy either — it only redirects the `HEAD` symlink.)
 
-A dirty working copy is therefore fine for most commands, including `tt task edit`, `tt task create`, `tt task complete`, `tt task delete`, `tt task reorder`, `tt task publish`, `tt task propagate` and the context commands. These still require a clean one:
+A dirty working copy is therefore fine for most commands, including `tt task edit`, `tt task create`, `tt task complete`, `tt task delete`, `tt task reorder`, `tt task publish`, `tt task propagate`, `tt worktree switch` and the context commands. These still require a clean one:
 
 | Command | Condition |
 |---|---|
@@ -43,7 +43,6 @@ A dirty working copy is therefore fine for most commands, including `tt task edi
 | `tt task move`, `tt task rename` | Always |
 | `tt task checkout` | Unless `--force`, or when creating a new worktree |
 | `tt worktree delete`, `tt history undo` | Unless `--force` |
-| `tt worktree switch` | Unless `--force`; applies to the worktree `HEAD` points at |
 | `tt workspace init` | Always |
 
 The corollary: a worktree sitting on a branch that some other command advanced is left on the old tip. It is usable, just **behind**. Commands report this by name after a write:
@@ -258,7 +257,7 @@ Delete a context file and remove its `context:` entry from the task frontmatter.
 
 #### `tt worktree switch`  (alias: `tt switch`)
 ```
-tt worktree switch [<worktree-path>] [--force]
+tt worktree switch [<worktree-path>]
 ```
 Redirect the virtual project's HEAD symlink to an existing worktree. The worktree must already exist (run `tt task checkout --worktree` first).
 
