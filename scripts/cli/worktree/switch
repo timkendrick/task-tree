@@ -8,18 +8,17 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # tt worktree switch — redirect the virtual project's HEAD symlink to an existing task worktree.
 #
 # Usage:
-#   switch [<worktree-path>] [--force] [--repo PATH]
+#   switch [<worktree-path>] [--repo PATH]
 #
 # Options:
 #   <worktree-path>      Path to the worktree to switch to (optional; defaults to current worktree)
-#   --force              Proceed even if the outgoing workspace has local changes.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<worktree-path>] [--force] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<worktree-path>] [--repo PATH]
 
 Redirect the virtual project's HEAD symlink to an existing task worktree.
 The worktree must already exist (run \`tt task checkout --worktree\` first).
@@ -30,27 +29,20 @@ Arguments:
                    containing the current working directory)
 
 Options:
-  --force               Proceed even if the outgoing workspace has local changes.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
   ${COMMAND_NAME:-$SCRIPT_NAME} /path/to/worktree
-  ${COMMAND_NAME:-$SCRIPT_NAME} /path/to/worktree --force
 
 EOF
 }
 
 main() {
   local worktree_path=''
-  local force=false
   local repo=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --force)
-        force=true
-        shift
-        ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
@@ -118,21 +110,6 @@ main() {
   # at, which is what the switch moves away from and is not necessarily the
   # worktree the command runs in.
   previous_task_id="$(_task__resolve_current_branch "$outgoing_worktree" "$task_prefix" "$project_prefix")" || true
-
-  # The outgoing worktree is a foreign working copy: HEAD may point somewhere
-  # other than where this command was invoked from. Guard it before the
-  # cleanliness test, which loads it.
-  _worktree__ensure_worktree_current "$repo" "$outgoing_worktree" || exit 1
-
-  # Dirty check on outgoing worktree
-  if ! _worktree__check_clean "$outgoing_worktree"; then
-    if [[ "$force" != true ]]; then
-      _ui__log "Error: Outgoing workspace '$outgoing_worktree' has uncommitted changes."
-      _ui__log "  Commit or discard changes first, or use --force to proceed anyway."
-      exit 1
-    fi
-    _ui__log "Warning: Outgoing workspace has uncommitted changes (proceeding due to --force)."
-  fi
 
   _worktree__switch "$repo" "${workspace_dir:-}" "${task_id:-}" \
     "$canonical_worktree_path" "$outgoing_worktree" "$previous_task_id"
