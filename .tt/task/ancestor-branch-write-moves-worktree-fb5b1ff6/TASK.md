@@ -1,6 +1,6 @@
 ---
 title: "Writes to an ancestor branch move the invoking worktree onto it"
-status: IN-PROGRESS
+status: DONE
 created: 2026-10-01T14:13:44Z
 updated: 2026-10-01T14:13:44Z
 ---
