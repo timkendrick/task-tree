@@ -15,7 +15,8 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # Options:
 #   <project-id>            Project branch to publish (default: current branch).
 #   --target <branch>       Target branch to publish into (required).
-#   -m, --message <msg>     Publish commit message (skips editor prompt).
+#   -m, --message <msg>     Publish commit message (skips editor prompt; required when stdin is
+#                           not a terminal). An empty message cancels the publish.
 #   --changelog             Append a change summary to the commit message.
 #   --changelog-depth <n>   Levels of subtask to summarize (requires --changelog).
 #   --force                 Proceed even if conflicts occur.
@@ -39,7 +40,8 @@ Removes task scaffolding files (.tt/task/) from the delivery branch.
 Stays on the project branch after publishing (no workspace switch).
 
 Prompts for the publish commit message in an editor unless --message is given.
-An empty message cancels the publish.
+When stdin is not a terminal, --message is required. An empty message cancels
+the publish.
 
 Options:
   <project-id>              Project branch to publish (default: current branch).
@@ -147,6 +149,11 @@ main() {
     usage >&2; exit 1
   fi
 
+  if [[ "$message_provided" == false && ! -t 0 ]]; then
+    _ui__log "Error: cannot open an editor for the publish message: stdin is not a terminal. Pass --message <msg>."
+    exit 1
+  fi
+
   repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
@@ -228,7 +235,7 @@ main() {
   fi
 
   if [[ -z "$message" ]]; then
-    _ui__log "Publish cancelled."
+    _ui__log "Publish canceled: no message provided."
     exit 1
   fi
 
