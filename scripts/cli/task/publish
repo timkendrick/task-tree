@@ -293,8 +293,8 @@ main() {
   # Follow the advance with the current worktree only when it sits on the
   # TARGET branch (a worktree on the project branch — typically the one this
   # command runs from — stays put: publish affects the target branch, not the
-  # invoking worktree). Must run before the bookmark moves off old_target_tip.
-  _worktree__reattach_current_on_branch "$repo" "$target" \
+  # invoking worktree).
+  _worktree__reattach_current "$repo" "$target" \
     "$old_target_tip" "$merge_commit"
 
   _task__advance_branch "$repo" "$target" "$merge_commit"
