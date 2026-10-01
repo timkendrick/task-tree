@@ -218,4 +218,31 @@ test_task_context_add__refuses_when_the_canonical_workspace_is_stale() {
     task context add --title "Notes" --slug "notes"
 }
 
+test_task_context_add__ancestor_write_leaves_the_worktree_on_its_task() {
+  setup_workspace "ctx-add-ancestor-worktree"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  local task_wt
+  task_wt=$(create_task_worktree "$task_id")
+
+  local fork_status=0
+  is_vcs_ancestor "$proj_id" "$task_id" || fork_status=$?
+  assert_success "the project tip is an ancestor of the task worktree" "$fork_status"
+  local wt_parent_before proj_before
+  wt_parent_before="$(jj -R "$task_wt" --ignore-working-copy log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)"
+  proj_before="$(get_bookmark_commit "$proj_id")"
+
+  local exit_code=0
+  run_tt_in_worktree "$task_wt" task context add "$proj_id" --title "Notes" --slug "notes" \
+    <<< "body" >/dev/null 2>&1 || exit_code=$?
+  assert_success "context add succeeds" "$exit_code"
+  assert_neq "the project branch advanced" "$(get_bookmark_commit "$proj_id")" "$proj_before"
+  assert_eq "the worktree is still on its task" \
+    "$(run_tt_in_worktree "$task_wt" task current 2>/dev/null)" "$task_id"
+  assert_eq "the worktree has not moved" \
+    "$(jj -R "$task_wt" --ignore-working-copy log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)" \
+    "$wt_parent_before"
+}
+
 run_tests "tt task context add"

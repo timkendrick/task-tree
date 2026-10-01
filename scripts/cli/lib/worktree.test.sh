@@ -346,7 +346,7 @@ test__worktree__reattach_current__follows_branch_advance() {
   assert_output_not_empty "bare advance produced a commit" "$new_tip"
 
   local exit_code=0
-  _worktree__reattach_current "$REPO" "$FEATURE_TIP" "$new_tip" || exit_code=$?
+  _worktree__reattach_current "$REPO" "$FEATURE" "$FEATURE_TIP" "$new_tip" || exit_code=$?
   assert_success "reattach succeeds" "$exit_code"
   assert_eq "working-copy parent is the new tip" \
     "$(get_full_commit_id '@-')" "$new_tip"
@@ -371,17 +371,39 @@ test__worktree__reattach_current__ignores_wc_on_unrelated_branch() {
   local parent_before
   parent_before="$(get_full_commit_id '@-')"
   local exit_code=0
-  _worktree__reattach_current "$REPO" "$side_tip" "$new_tip" || exit_code=$?
+  _worktree__reattach_current "$REPO" side "$side_tip" "$new_tip" || exit_code=$?
   assert_success "reattach is a no-op (status 0)" "$exit_code"
   assert_eq "working copy did not move" "$(get_full_commit_id '@-')" "$parent_before"
   assert_file_not_exists "side branch files not materialized" "$REPO/more.txt"
 }
 
-# ---------------------------------------------------------------------------
-# _worktree__reattach_current_on_branch
-# ---------------------------------------------------------------------------
+test__worktree__reattach_current__leaves_wc_on_child_branch() {
+  setup_workspace "wt-reattach-child"
+  # The task forks from the project's tip, so @ on the task descends from that
+  # tip. A plain advance of the project must still leave @ on the task.
+  local proj_id task_id
+  proj_id="$(create_project "proj" "Project")"
+  checkout_task "$proj_id" >/dev/null 2>&1
+  task_id="$(create_task "child" "Child")"
+  checkout_task "$task_id" >/dev/null 2>&1
+  local proj_tip
+  proj_tip="$(get_full_commit_id "$proj_id")"
+  local fork_status=0
+  is_vcs_ancestor "$proj_tip" '@' || fork_status=$?
+  assert_success "the project tip is an ancestor of the working copy" "$fork_status"
+  local new_tip
+  new_tip="$(_advance_branch_bare "$proj_id" adv.txt "advanced")"
 
-test__worktree__reattach_current_on_branch__follows_merge_on_own_branch() {
+  local parent_before
+  parent_before="$(get_full_commit_id '@-')"
+  local exit_code=0
+  _worktree__reattach_current "$REPO" "$proj_id" "$proj_tip" "$new_tip" || exit_code=$?
+  assert_success "reattach is a no-op (status 0)" "$exit_code"
+  assert_eq "working copy did not move" "$(get_full_commit_id '@-')" "$parent_before"
+  assert_file_not_exists "project advance not materialized" "$REPO/adv.txt"
+}
+
+test__worktree__reattach_current__follows_merge_on_own_branch() {
   setup_workspace "wt-reattach-merge-own"
   _fixture_feature_checkout
   # Build a side line forked off the feature tip by bare writes, then merge
@@ -397,20 +419,19 @@ test__worktree__reattach_current_on_branch__follows_merge_on_own_branch() {
   merge="$(_repo__create_merge_commit "$REPO" "land child" "$FEATURE_TIP" "$child_tip")"
 
   local exit_code=0
-  _worktree__reattach_current_on_branch "$REPO" "$FEATURE" "$FEATURE_TIP" "$merge" \
-    || exit_code=$?
+  _worktree__reattach_current "$REPO" "$FEATURE" "$FEATURE_TIP" "$merge" || exit_code=$?
   assert_success "reattach succeeds" "$exit_code"
   assert_eq "working-copy parent is the merge" "$(get_full_commit_id '@-')" "$merge"
   assert_file_exists "merged file materialized on disk" "$REPO/child.txt"
 }
 
-test__worktree__reattach_current_on_branch__leaves_wc_on_merged_branch() {
+test__worktree__reattach_current__leaves_wc_on_merged_branch() {
   setup_workspace "wt-reattach-merge-child"
   _fixture_feature_checkout
   # main is the receiving branch here and feature the merged-in line: @ sits
   # on feature, and every feature commit descends from main's tip, so a plain
-  # descent check would drag @ onto the merge. The branch-aware reattach must
-  # leave it alone.
+  # descent check would drag @ onto the merge. The reattach must leave it
+  # alone.
   local main_tip
   main_tip="$(get_full_commit_id main)"
   local stage="$_TEST_ROOT/stage-merge-child"
@@ -424,8 +445,7 @@ test__worktree__reattach_current_on_branch__leaves_wc_on_merged_branch() {
   local parent_before
   parent_before="$(get_full_commit_id '@-')"
   local exit_code=0
-  _worktree__reattach_current_on_branch "$REPO" main "$main_tip" "$merge" \
-    || exit_code=$?
+  _worktree__reattach_current "$REPO" main "$main_tip" "$merge" || exit_code=$?
   assert_success "reattach is a no-op (status 0)" "$exit_code"
   assert_eq "working copy did not move" "$(get_full_commit_id '@-')" "$parent_before"
   assert_eq "working copy still on the feature tip" "$parent_before" "$FEATURE_TIP"

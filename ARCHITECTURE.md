@@ -355,11 +355,10 @@ caller's writer function against the staging directory, commits, reattaches the 
 and only then advances the bookmark.
 
 That order matters, because the bookmark advance is what makes the write visible: everything before
-it can still be abandoned. The caller may also ask for the branch-aware reattachment variant, which
-is what a command passes when the branch it is writing may be an *ancestor* of the branch the
-invoking worktree is on: plain descent cannot tell the line that moved from a line that forked off it
-further back, and would drag the worktree onto the wrong branch. That variant asks which branch the
-worktree is on (§6.3) before applying the descent test; the plain variant tests ancestry alone.
+it can still be abandoned. The reattachment asks which branch the worktree is on (§6.3) before
+testing descent from the old tip. Descent alone cannot tell the line that moved from a line that
+forked off it further back: a worktree on a child task descends from its parent's tip, so a write to
+the parent would drag that worktree onto the parent branch.
 
 ### 5.1 Merge parent order
 
@@ -403,8 +402,10 @@ For a **branch write** the rule holds by construction, because no working copy i
 - The command snapshots **its own** worktree at the start of its transaction, so pending changes are
   captured before anything is rewritten.
 - The bare write proceeds with no working copy involved.
-- Afterwards, the command reattaches its own worktree if the working-copy commit descended from the
-  branch's previous tip, and leaves it alone otherwise.
+- Afterwards, the command reattaches its own worktree if that worktree is on the written branch and
+  its working-copy commit descended from the branch's previous tip, and leaves it alone otherwise.
+  A worktree on a descendant task stays on its own branch, even though it descends from the
+  written branch's tip.
 - Worktrees other than the invoking one are neither written to nor rewritten. They are left behind
   and reported (§6.3).
 
