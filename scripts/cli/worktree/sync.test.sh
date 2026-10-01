@@ -176,18 +176,6 @@ test_worktree_sync__all_synchronizes_every_behind_worktree() {
 }
 
 
-# Usage: advance_branch_bare BRANCH
-# Advances BRANCH by one empty commit without touching any working copy, so
-# every workspace on BRANCH is left behind, whichever workspace it is.
-advance_branch_bare() {
-  local branch="$1"
-  jj -R "$REPO" --ignore-working-copy new --no-edit "$branch" -m "advance $branch" \
-    >/dev/null 2>&1
-  jj -R "$REPO" --ignore-working-copy bookmark set "$branch" \
-    -r "children(\"$branch\") & description(substring:\"advance $branch\")" \
-    >/dev/null 2>&1
-}
-
 # Usage: setup_canonical_behind
 # Leaves the canonical repository and a task worktree both behind their
 # branches: the canonical repository on the project branch, the worktree on the
@@ -198,7 +186,8 @@ setup_canonical_behind() {
   checkout_task "$PROJ_ID" >/dev/null 2>&1 || true
   TASK_ID=$(create_task "my-task" "My Task") || true
   TASK_WT=$(create_task_worktree "$TASK_ID")
-  advance_branch_bare "$PROJ_ID"
+  run_tt_in_worktree "$TASK_WT" task context add "$PROJ_ID" --title "proj-notes" \
+    --slug "proj-notes" <<< "context body" >/dev/null 2>&1 || true
   advance_branch "$TASK_ID" "notes"
   CANONICAL_PARENT="$(worktree_parent "$REPO")"
   assert_neq "the canonical repository is behind the project branch" \
