@@ -163,6 +163,7 @@ subtask: [x] task/tt-switch-skip-dirty-check-ad6b460c
 subtask: [ ] task/tt-show-subtask-performance-e02e7594
 subtask: [x] task/tt-checkpoint-non-interactive-message-7dbc8406
 subtask: [ ] task/ancestor-branch-write-moves-worktree-fb5b1ff6
+subtask: [ ] task/propagate-resume-commit-task-symlink-cbfb7b79
 ---
 Implement shell script implementations of all `tt` CLI commands
 
