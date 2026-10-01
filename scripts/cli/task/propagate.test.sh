@@ -347,9 +347,11 @@ test_task_propagate__parent_worktree_keeps_its_branch() {
   edit_file "sibling-work.txt" "work"
   checkpoint_task "Sibling work" >/dev/null || true
 
-  # The default workspace stays on the project branch, parked above its tip:
-  # this is the worktree the check-in below leaves behind.
+  # The project's worktree is parked above the project tip: this is the
+  # worktree the check-in below leaves behind. The canonical repository is
+  # parked there too, and is left behind without being reported.
   checkout_task "$proj_id" >/dev/null 2>&1 || true
+  proj_wt=$(create_task_worktree "$proj_id")
 
   wt=$(create_task_worktree "$incoming")
   printf 'work\n' > "$wt/incoming-work.txt"
@@ -362,11 +364,12 @@ test_task_propagate__parent_worktree_keeps_its_branch() {
     "$proj_id" "$sibling"
 
   assert_contains "the project worktree is reported behind its own branch" \
-    "$output" "$REPO ($proj_id)"
+    "$output" "$proj_wt ($proj_id)"
   assert_not_contains "the project worktree is not attributed to the sibling" \
-    "$output" "$REPO ($sibling)"
+    "$output" "$proj_wt ($sibling)"
   assert_not_contains "the project worktree is not attributed to the checked-in task" \
-    "$output" "$REPO ($incoming)"
+    "$output" "$proj_wt ($incoming)"
+  assert_not_contains "the canonical repository is not reported" "$output" "$REPO ("
 }
 
 
