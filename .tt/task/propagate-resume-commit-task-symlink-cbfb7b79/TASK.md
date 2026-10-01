@@ -1,6 +1,6 @@
 ---
 title: "Resume commit for partially checked-in tasks does not re-point TASK.md"
-status: TODO
+status: IN-PROGRESS
 created: 2026-10-01T17:48:00Z
 updated: 2026-10-01T17:48:00Z
 ---
