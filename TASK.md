@@ -1,1 +1,1 @@
-.tt/task/bootstrap-cli-d35756ce/TASK.md
+.tt/task/propagate-resume-commit-task-symlink-cbfb7b79/TASK.md
