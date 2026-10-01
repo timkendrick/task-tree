@@ -24,7 +24,8 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #
 # Options:
 #   <task-id>            Task or project ID (required)
-#   --worktree[=<path>]  Use or create a dedicated workspace for this task.
+#   --worktree[=<path>]  Use or create a worktree for this task (never the canonical
+#                        repository).
 #                        Without =<path>, derives path from <workspace-dir>/<task-id>.
 #   --switch             (only with --worktree) Also update the HEAD symlink to the new
 #                        worktree. Without this flag, HEAD is not updated when --worktree
@@ -46,7 +47,8 @@ Arguments:
   <task-id>  Task or project ID (e.g. task/foo-abc12345, project/bar-deadbeef)
 
 Options:
-  --worktree[=<path>]  Use or create a dedicated workspace for this task.
+  --worktree[=<path>]  Use or create a worktree for this task (never the canonical
+                        repository).
                         If no path given, defaults to <workspace-dir>/<task-id>
                         (resolved from the .tt/workspace symlink).
   --switch              (only with --worktree) Also update the HEAD symlink to the
