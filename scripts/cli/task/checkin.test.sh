@@ -371,6 +371,51 @@ test_task_checkin__switch_targets_repo_root_when_parent_has_no_worktree() {
 }
 
 
+test_task_checkin__switch_prefers_the_parent_worktree_over_the_canonical_repository() {
+  # The canonical repository and a dedicated worktree are both on the parent.
+  # Only the worktree counts as the parent's worktree, so --switch is not
+  # ambiguous and moves HEAD to it.
+  setup_workspace "ci-switch-parent-wt-not-canonical"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  local proj_wt
+  proj_wt=$(create_task_worktree "$proj_id")
+  task_id=$(create_task "t" "T") || true
+  local task_wt
+  task_wt=$(create_task_worktree "$task_id")
+  run_tt_in_worktree "$task_wt" task checkpoint -m "work" >/dev/null 2>&1 || true
+  assert_current_task "the canonical repository is on the parent" "$proj_id"
+
+  local exit_code=0
+  output=$(run_tt_in_worktree "$task_wt" task checkin --complete --switch 2>&1) || exit_code=$?
+  assert_success "checkin --switch succeeds" "$exit_code"
+  assert_not_contains "the parent is not reported as ambiguous" "$output" "Multiple parent workspaces"
+  assert_eq "HEAD points at the parent's worktree" "$(readlink "$VIRTUAL/HEAD")" "$proj_wt"
+}
+
+
+test_task_checkin__delete_leaves_the_canonical_repository_in_place() {
+  # The canonical repository and a dedicated worktree are both on the child.
+  # --delete removes the worktree, never the canonical repository.
+  setup_workspace "ci-delete-keeps-canonical"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  local task_wt
+  task_wt=$(create_task_worktree "$task_id")
+  assert_current_task "the canonical repository is on the child" "$task_id"
+
+  local exit_code=0
+  output=$(run_tt task checkin --complete --delete "$task_id" 2>&1) || exit_code=$?
+  assert_success "checkin --complete --delete succeeds" "$exit_code"
+  assert_file_not_exists "the child's worktree is deleted" "$task_wt"
+  assert_file_exists "the canonical repository is still on disk" "$REPO/.jj"
+  assert_eq "the canonical repository is still registered" \
+    "$(get_workspace_name "$REPO")" "default"
+}
+
+
 test_task_checkin__head_not_switched_without_switch_flag() {
   # Without --switch, checkin must leave the HEAD symlink exactly as it was,
   # even when HEAD points at the task being checked in.
