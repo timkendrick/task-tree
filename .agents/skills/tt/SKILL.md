@@ -104,7 +104,7 @@ Switch to the given task branch. `--worktree` uses/creates a dedicated jj worksp
 ```
 tt task checkpoint [-m <message>] [--squash]
 ```
-Record the current state of work. `--squash` collapses all commits since the last bookmark into a single checkpoint commit.
+Record the current state of work. `--squash` collapses all commits since the last bookmark into a single checkpoint commit. Always pass `-m` when running non-interactively: without it the command opens an editor, and when stdin is not a terminal it exits with an error instead. An empty message cancels the checkpoint.
 
 #### `tt task complete`
 ```
