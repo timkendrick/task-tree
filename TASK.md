@@ -1,1 +1,1 @@
-.tt/task/bootstrap-cli-d35756ce/TASK.md
+.tt/task/omit-repo-from-worktree-location-ec2fd112/TASK.md
