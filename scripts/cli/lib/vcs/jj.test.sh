@@ -1428,7 +1428,7 @@ test__jj__commit_changeset__invalid_inputs_fail_cleanly() {
     "$(git --git-dir="$REPO/.git" for-each-ref)" "tt-tmp-"
 }
 
-test__jj__commit_changeset__secondary_workspace_repo() {
+test__jj__commit_changeset__worktree_repo() {
   setup_workspace
   _fixture_linear_history
   local wt_path
@@ -1436,7 +1436,7 @@ test__jj__commit_changeset__secondary_workspace_repo() {
   local exit_code=0
   _jj__create_worktree "$REPO" wt-bare "$wt_path" feature || exit_code=$?
   assert_success "worktree created" "$exit_code"
-  assert_file_exists "secondary workspace has a repo pointer file" \
+  assert_file_exists "worktree has a repo pointer file" \
     "$wt_path/.jj/repo"
 
   local stage="$_TEST_ROOT/stage-ws"
@@ -1446,7 +1446,7 @@ test__jj__commit_changeset__secondary_workspace_repo() {
   exit_code=0
   commit="$(_jj__commit_changeset "$wt_path" feature "from workspace" "$stage")" \
     || exit_code=$?
-  assert_success "changeset committed via secondary workspace root" "$exit_code"
+  assert_success "changeset committed via worktree root" "$exit_code"
   assert_eq "file content readable via the canonical repo" \
     "$(_jj__read_file_at_revision "$REPO" "$commit" ws.txt)" "ws"
 }

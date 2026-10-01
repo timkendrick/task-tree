@@ -3,14 +3,14 @@
 #
 # Public surface:
 #   _worktree__parse_list_line  — parse one backend worktree-listing line into name/path
-#   _worktree__list_entries     — one "name<TAB>path" record per worktree
+#   _worktree__list_entries     — one "name<TAB>path" record per workspace, canonical included
 #   _worktree__list             — one "name<TAB>path<TAB>task_id" record per worktree
 #   _worktree__resolve_name     — workspace name for a worktree path
 #   _worktree__resolve_path     — recorded filesystem path for a workspace name
 #   _worktree__resolve_current  — root of the worktree the command runs in
 #   _worktree__find_current     — root of the worktree containing the CWD, or none
-#   _worktree__resolve_repository_root — canonical primary workspace root
-#   _worktree__resolve_repository_path — canonical primary workspace root, symlink-resolved
+#   _worktree__resolve_repository_root — canonical repository root
+#   _worktree__resolve_repository_path — canonical repository root, symlink-resolved
 #   _worktree__check_clean      — whether a worktree has no uncommitted changes
 #   _worktree__check_stale      — whether a worktree's files match the commit it records
 #   _worktree__check_exists     — whether a worktree already lives at a path
@@ -20,7 +20,7 @@
 #   _worktree__resolve_working_copy_parent — commit a worktree's working copy sits on
 #   _worktree__squash_into_working_copy — fold commits into a worktree's working copy
 #   _worktree__record_working_copy — capture uncommitted work and name the operation holding it
-#   _worktree__find_for_branch  — workspace roots whose current branch is a bookmark
+#   _worktree__find_for_branch  — worktree roots whose current branch is a bookmark
 #   _worktree__delete           — forget a workspace and remove its files from disk
 #   _worktree__ensure_not_in_use — refuse to remove a worktree that other processes are using
 #   _worktree__switch           — hooks + HEAD symlink update for a workspace switch
@@ -66,9 +66,16 @@ _worktree__parse_list_line() {
 }
 
 # Usage: _worktree__list_entries REPO
-# Prints one tab-separated "name<TAB>path" record per worktree in REPO.
-# path is the empty string when the workspace has no resolvable path.
-# Returns 1 if the workspace list cannot be read.
+# Prints one tab-separated "name<TAB>path" record per workspace in REPO: every
+# worktree, and the canonical repository too. path is the empty string when the
+# workspace has no resolvable path. Returns 1 if the workspace list cannot be
+# read.
+#
+# This is the inventory of everything the backend knows about, which is what a
+# caller needs to validate a workspace the user named explicitly (the canonical
+# repository included). A caller that picks workspaces to act on by itself
+# wants __worktree__list_worktree_entries or __worktree__list_in_scope_entries
+# instead.
 _worktree__list_entries() {
   local repo="$1"
   local ws_raw
@@ -84,8 +91,57 @@ _worktree__list_entries() {
   done <<< "$ws_raw"
 }
 
+# Usage: __worktree__list_worktree_entries REPO
+# Prints one tab-separated "name<TAB>path" record per worktree in REPO, in the
+# order of the workspace listing. The canonical repository is not a worktree and
+# is left out; it is recognized by comparing symlink-resolved paths, so a
+# symlinked root cannot slip through. path is the empty string when the worktree
+# has no resolvable path. Returns 1 if the workspace list or the canonical
+# repository root cannot be read.
+__worktree__list_worktree_entries() {
+  local repo="$1"
+  local entries canonical
+  entries="$(_worktree__list_entries "$repo")" || return 1
+  canonical="$(_worktree__resolve_repository_path "$repo")" || return 1
+  local ws_name ws_path resolved
+  while IFS=$'\t' read -r ws_name ws_path; do
+    [[ -z "$ws_name" ]] && continue
+    if [[ -n "$ws_path" ]]; then
+      resolved="$(_path__resolve_symlinks "$ws_path" 2>/dev/null)" || resolved="$ws_path"
+      [[ "$resolved" == "$canonical" ]] && continue
+    fi
+    printf '%s\t%s\n' "$ws_name" "$ws_path"
+  done <<< "$entries"
+}
+
+# Usage: __worktree__list_in_scope_entries REPO
+#
+# Prints one tab-separated "name<TAB>path" record per workspace in scope for
+# the current command, in the order of the workspace listing. A workspace is in
+# scope when it is a worktree, or when it is the current workspace (the one the
+# command runs in, per _repo__resolve_worktree_root). path is the empty string
+# when the workspace has no resolvable path. Returns 1 if the workspace list or
+# the canonical repository root cannot be read.
+#
+# The distinction only matters for the canonical repository, which is in scope
+# exactly when the command runs from it. The canonical repository is where the
+# user works when they do not use worktrees, so a command run from there may act
+# on it; when the user works in worktrees, it stays wherever they left it.
+__worktree__list_in_scope_entries() {
+  local repo="$1"
+  local canonical current
+  canonical="$(_worktree__resolve_repository_path "$repo")" || return 1
+  current="$(_repo__resolve_worktree_root "$repo")" || return 1
+  if [[ "$current" == "$canonical" ]]; then
+    _worktree__list_entries "$repo"
+  else
+    __worktree__list_worktree_entries "$repo"
+  fi
+}
+
 # Usage: _worktree__list REPO
-# Prints tab-separated workspace data, one line per workspace:
+# Prints tab-separated worktree data, one line per worktree (the canonical
+# repository is not listed):
 #   name\tpath\ttask_id
 # path is empty string if unavailable; task_id is empty string if the worktree
 # holds no task — each worktree's task is the one its own working copy records
@@ -94,7 +150,7 @@ _worktree__list_entries() {
 _worktree__list() {
   local repo="$1"
   local entries
-  entries="$(_worktree__list_entries "$repo")" || return 0
+  entries="$(__worktree__list_worktree_entries "$repo")" || return 0
   local ws_name ws_path task_id
   while IFS=$'\t' read -r ws_name ws_path; do
     [[ -z "$ws_name" ]] && continue
@@ -172,12 +228,12 @@ _worktree__find_current() {
 }
 
 # Usage: _worktree__resolve_repository_root REPO
-# Prints the canonical repository root — the primary workspace — for REPO,
-# which may itself be a secondary worktree. Documented pass-through to
-# _repo__resolve_repository_root so commands can name the primary workspace
-# (e.g. as a fallback when a branch is not checked out anywhere) without
-# reaching into the VCS layer. Canonicalize the result with
-# _path__resolve_symlinks before comparing it against other resolved paths.
+# Prints the canonical repository root for REPO, which may itself be a
+# worktree. Documented pass-through to _repo__resolve_repository_root so
+# commands can name the canonical repository (e.g. as a fallback when a branch
+# is not checked out in any worktree) without reaching into the VCS layer.
+# Canonicalize the result with _path__resolve_symlinks before comparing it
+# against other resolved paths.
 _worktree__resolve_repository_root() {
   local repo="$1"
   _repo__resolve_repository_root "$repo"
@@ -389,48 +445,34 @@ _worktree__record_working_copy() {
   return 0
 }
 
-# Usage: _worktree__find_for_branch REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
+# Usage: _worktree__find_for_branch REPO BOOKMARK
 # Outputs one worktree root path per line for each worktree whose working-copy
 # commit records BOOKMARK as its checked-out task
 # (_worktree__resolve_branch_at), so a worktree a branch write has left behind
-# is still attributed to the branch it is on.
+# is still attributed to the branch it is on. Worktrees are listed in the order
+# of the workspace listing.
 #
-# More than one worktree can legitimately sit on a branch — a task checked out
-# in a worktree of its own is also, for as long as nothing else is checked out
-# there, under whatever workspace was parked above its tip. The result is
-# therefore ordered by how well each worktree answers "where is this task
-# checked out", so that a caller wanting one of them takes the first line:
+# The canonical repository is never part of the result, even when its working
+# copy records BOOKMARK: it is not a worktree, and the user may have left it on
+# any branch. Callers that need somewhere to act when no worktree holds the
+# branch fall back to it explicitly (_worktree__resolve_repository_root).
 #
-#   1. the task's own dedicated worktree, whose workspace is named for the
-#      branch (that is the name `tt task checkout --worktree` gives it);
-#   2. any other dedicated worktree sitting on the branch;
-#   3. the primary workspace — the canonical repository itself — last, since a
-#      task is checked out there by default rather than by choice.
-#
-# Worktrees keep the order of the workspace listing within each group.
+# The result is written in one go, so a caller reading only part of it cannot
+# kill the search mid-write.
 _worktree__find_for_branch() {
-  local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
+  local repo="$1" bookmark="$2"
   local entries
-  entries="$(_worktree__list_entries "$repo")" || return 0
-  local primary_path
-  primary_path="$(_worktree__resolve_repository_path "$repo")" || primary_path=''
-  local ws_name ws_root ws_path wc_commit ws_bookmark
-  local named='' other='' primary=''
-  while IFS=$'\t' read -r ws_name ws_root; do
+  entries="$(__worktree__list_worktree_entries "$repo")" || return 0
+  local ws_root wc_commit ws_bookmark
+  local found=''
+  while IFS=$'\t' read -r _ ws_root; do
     [[ -z "$ws_root" || ! -d "$ws_root" ]] && continue
     wc_commit="$(_repo__resolve_commit "$ws_root" '@' 2>/dev/null)" || continue
     ws_bookmark="$(_worktree__resolve_branch_at "$repo" "$wc_commit" 2>/dev/null)" || continue
     [[ "$ws_bookmark" == "$bookmark" ]] || continue
-    ws_path="$(_path__resolve_symlinks "$ws_root" 2>/dev/null)" || ws_path="$ws_root"
-    if [[ "$ws_name" == "$bookmark" ]]; then
-      named="${named}${ws_root}"$'\n'
-    elif [[ -n "$primary_path" && "$ws_path" == "$primary_path" ]]; then
-      primary="${primary}${ws_root}"$'\n'
-    else
-      other="${other}${ws_root}"$'\n'
-    fi
+    found="${found}${ws_root}"$'\n'
   done <<< "$entries"
-  printf '%s' "${named}${other}${primary}"
+  printf '%s' "$found"
   return 0
 }
 
@@ -929,15 +971,16 @@ _worktree__check_behind() {
 #
 # Shared engine behind _worktree__list_unsynced and _worktree__list_all_unsynced,
 # which differ only in how much of the repository they look at. Prints one
-# tab-separated "<worktree-path>\t<task-id>" record per worktree whose
-# working-copy commit no longer has, as an ancestor, the tip of the branch the
-# worktree sits on.
+# tab-separated "<worktree-path>\t<task-id>" record per workspace in scope
+# (__worktree__list_in_scope_entries) whose working-copy commit no longer has,
+# as an ancestor, the tip of the branch the workspace sits on. The canonical
+# repository is therefore considered only when the command runs from it.
 #
-# BRANCH restricts the result to worktrees sitting on that branch; passing an
-# empty string considers every branch, each worktree judged against its own.
-# SKIP_CURRENT is "true" to leave out the worktree the command is running in.
+# BRANCH restricts the result to workspaces sitting on that branch; passing an
+# empty string considers every branch, each workspace judged against its own.
+# SKIP_CURRENT is "true" to leave out the workspace the command is running in.
 #
-# Worktrees with no resolvable path, no directory on disk, no readable
+# Workspaces with no resolvable path, no directory on disk, no readable
 # working-copy commit, or no branch at all are skipped: none of them is
 # something a caller could report on or act on. Reading a worktree's position
 # never snapshots it, so the walk leaves every worktree exactly as it was.
@@ -949,7 +992,7 @@ __worktree__list_behind() {
     current_worktree="$(_repo__resolve_worktree_root "$repo")" || current_worktree="$repo"
   fi
   local entries
-  entries="$(_worktree__list_entries "$repo")" || return 0
+  entries="$(__worktree__list_in_scope_entries "$repo")" || return 0
   local ws_name ws_path wc_commit wt_branch
   while IFS=$'\t' read -r ws_name ws_path; do
     [[ -z "$ws_path" || ! -d "$ws_path" ]] && continue
@@ -973,8 +1016,10 @@ __worktree__list_behind() {
 # is excluded because callers reattach it directly
 # (_worktree__reattach_current); the other worktrees stay untouched and are
 # only reported, since rewriting a working copy nobody asked to touch would
-# be surprising. The task-id column is the branch the worktree sits on
-# (branch names are task IDs in the tt model). Always returns 0.
+# be surprising. The canonical repository is never reported: it is in scope
+# only when it is the current workspace, which is excluded here. The task-id
+# column is the branch the worktree sits on (branch names are task IDs in the
+# tt model). Always returns 0.
 #
 # For a repository-wide answer covering every branch and the current worktree
 # too, use _worktree__list_all_unsynced.
@@ -992,10 +1037,12 @@ _worktree__list_unsynced() {
 # Drops both of _worktree__list_unsynced's restrictions, because it answers a
 # different question. That function answers "which worktrees did this write to
 # BRANCH leave behind?", so it looks at one branch and skips the current
-# worktree (whose caller reattaches it directly). This answers "what in this
-# repository is behind?": every worktree is considered, the current one
-# included, and each is judged against the branch it is itself checked out on.
-# It is what a repository-wide sync iterates over. See __worktree__list_behind
+# workspace (whose caller reattaches it directly). This answers "what in this
+# repository is behind?": every workspace in scope is considered, the current
+# one included, and each is judged against the branch it is itself checked out
+# on. It is what a repository-wide sync iterates over, so the canonical
+# repository is brought forward only by a sync run from it, and otherwise stays
+# wherever the user left it. See __worktree__list_behind
 # for which worktrees are skipped as unactionable. The task-id column is the
 # branch the worktree sits on (branch names are task IDs in the tt model).
 # Always returns 0.

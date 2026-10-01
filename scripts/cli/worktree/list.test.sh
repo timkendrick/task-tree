@@ -14,12 +14,44 @@ test_worktree_list__basic_output_has_header() {
   assert_contains "output has PATH header" "$output" "PATH"
 }
 
-test_worktree_list__default_workspace_has_none_task() {
-  setup_workspace "list-none-task"
+test_worktree_list__omits_the_canonical_repository() {
+  setup_workspace "list-no-canonical"
   output="" exit_code=0
   output=$(run_tt worktree list 2>&1) || exit_code=$?
-  assert_success "list succeeds" "$exit_code"
-  assert_contains "default row shows (none) for task" "$output" "(none)"
+  assert_success "list succeeds without any worktree" "$exit_code"
+  assert_line_count "only the header is printed" "$output" 1
+  assert_not_contains "the canonical repository is not listed" "$output" "default"
+
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "my-task" "My Task") || true
+  task_wt=$(create_task_worktree "$task_id")
+
+  output="" exit_code=0
+  output=$(run_tt worktree list 2>&1) || exit_code=$?
+  assert_success "list succeeds with a worktree" "$exit_code"
+  assert_line_count "the header and the worktree are printed" "$output" 2
+  assert_contains "the worktree is listed" "$output" "$task_id"
+  assert_not_contains "the canonical repository's task is not listed" "$output" "$proj_id"
+  assert_not_contains "the canonical repository is still not listed" "$output" "default"
+}
+
+test_worktree_list__marks_the_current_worktree() {
+  setup_workspace "list-current-marker"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "my-task" "My Task") || true
+  task_wt=$(create_task_worktree "$task_id")
+
+  output="" exit_code=0
+  output=$(run_tt_in_worktree "$task_wt" worktree list 2>&1) || exit_code=$?
+  assert_success "list from the worktree succeeds" "$exit_code"
+  assert_matches "the worktree is marked as current" "$output" "^\* $task_id "
+
+  output="" exit_code=0
+  output=$(run_tt worktree list 2>&1) || exit_code=$?
+  assert_success "list from the canonical repository succeeds" "$exit_code"
+  assert_not_contains "no worktree is marked as current" "$output" "* "
 }
 
 test_worktree_list__shows_task_id_for_task_workspace() {
@@ -78,7 +110,7 @@ test_worktree_list__task_survives_a_sibling_branch_advance() {
   assert_not_ancestor "the dedicated worktree is left behind its branch" \
     "$second_id" "$(_worktree_wc_commit "$second_wt")"
   assert_task_symlink "the dedicated worktree records its own task" "$second_id" "$second_wt"
-  assert_task_symlink "the default worktree records the task it checked out" "$first_id"
+  assert_task_symlink "the canonical repository records the task it checked out" "$first_id"
 
   output="" exit_code=0
   output=$(run_tt worktree list --quiet --task "$second_id" 2>&1) || exit_code=$?
@@ -88,7 +120,7 @@ test_worktree_list__task_survives_a_sibling_branch_advance() {
   output="" exit_code=0
   output=$(run_tt worktree list --quiet --task "$first_id" 2>&1) || exit_code=$?
   assert_success "list --task on the other branch succeeds" "$exit_code"
-  assert_eq "the default worktree holds the task it checked out" "$output" "default"
+  assert_output_empty "the canonical repository is not listed for the task it holds" "$output"
 
   output="" exit_code=0
   output=$(run_tt worktree list --quiet --task "$proj_id" 2>&1) || exit_code=$?
@@ -122,15 +154,15 @@ test_worktree_list__task_filter() {
   output=$(run_tt worktree list --task "$task_id" 2>&1) || exit_code=$?
   assert_success "list --task succeeds" "$exit_code"
   assert_contains "filtered output contains task ID" "$output" "$task_id"
-  assert_not_contains "filtered output omits other workspaces" "$output" "default"
+  assert_not_contains "filtered output omits the canonical repository" "$output" "default"
 }
 
 test_worktree_list__task_filter_no_match() {
   setup_workspace "list-filter-nomatch"
   proj_id=$(create_project "proj" "Project") || true
 
-  # proj_id exists as a bookmark but has no worktree checked out with that task
-  # (only the repo's default workspace exists; it won't have proj_id as resolved task)
+  # proj_id exists as a bookmark but no worktree has it checked out (there are
+  # no worktrees at all)
   output="" exit_code=0
   output=$(run_tt worktree list --task "$proj_id" 2>&1) || exit_code=$?
   assert_success "list with no-match task filter still succeeds" "$exit_code"
@@ -149,10 +181,18 @@ test_worktree_list__quiet_mode() {
   setup_workspace "list-quiet"
   output="" exit_code=0
   output=$(run_tt worktree list --quiet 2>&1) || exit_code=$?
+  assert_success "list --quiet succeeds without any worktree" "$exit_code"
+  assert_output_empty "nothing is printed without any worktree" "$output"
+
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "my-task" "My Task") || true
+  create_task_worktree "$task_id" >/dev/null
+
+  output="" exit_code=0
+  output=$(run_tt worktree list --quiet 2>&1) || exit_code=$?
   assert_success "list --quiet succeeds" "$exit_code"
-  assert_not_contains "quiet output has no NAME header" "$output" "NAME"
-  assert_not_contains "quiet output has no TASK ID header" "$output" "TASK ID"
-  assert_contains "quiet output lists a workspace name" "$output" "default"
+  assert_eq "quiet output lists the worktree name only" "$output" "$task_id"
 }
 
 test_worktree_list__quiet_with_task_filter() {
@@ -166,7 +206,7 @@ test_worktree_list__quiet_with_task_filter() {
   output=$(run_tt worktree list --quiet --task "$task_id" 2>&1) || exit_code=$?
   assert_success "list --quiet --task succeeds" "$exit_code"
   assert_contains "quiet output contains workspace name" "$output" "$task_id"
-  assert_not_contains "quiet output omits other workspaces" "$output" "default"
+  assert_not_contains "quiet output omits the canonical repository" "$output" "default"
   assert_not_contains "quiet output has no header" "$output" "NAME"
 }
 
