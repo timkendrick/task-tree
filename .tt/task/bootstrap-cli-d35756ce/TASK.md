@@ -160,6 +160,7 @@ subtask: [x] task/tt-prompt-omit-summary-line-1ba84f08
 subtask: [ ] task/tt-task-list-b2d8f237
 subtask: [x] task/prevent-deleting-in-use-worktree-cef2718e
 subtask: [x] task/tt-switch-skip-dirty-check-ad6b460c
+subtask: [ ] task/tt-show-subtask-performance-e02e7594
 ---
 Implement shell script implementations of all `tt` CLI commands
 
