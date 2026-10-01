@@ -193,6 +193,46 @@ test_task_checkout__worktree_same_path_succeeds() {
 }
 
 
+test_task_checkout__worktree_does_not_reuse_the_canonical_repository() {
+  setup_workspace "co-worktree-not-canonical"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+  checkout_task "$task_id" >/dev/null || true
+  assert_current_task "the canonical repository holds the task" "$task_id"
+
+  local stdout_output exit_code=0
+  stdout_output=$(run_tt task checkout "$task_id" --worktree 2>/dev/null) || exit_code=$?
+  assert_success "checkout --worktree succeeds" "$exit_code"
+  assert_neq "the canonical repository is not reused" "$stdout_output" "$REPO"
+  local expected_path
+  expected_path="$(realpath "$VIRTUAL/$task_id" 2>/dev/null)" || expected_path="$VIRTUAL/$task_id"
+  assert_eq "a worktree is created at the conventional path" \
+    "$stdout_output" "$expected_path"
+  assert_eq "the worktree is registered under the task's name" \
+    "$(get_workspace_name "$expected_path")" "$task_id"
+}
+
+
+test_task_checkout__explicit_worktree_path_ignores_the_canonical_repository() {
+  setup_workspace "co-worktree-path-not-canonical"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+  checkout_task "$task_id" >/dev/null || true
+  assert_current_task "the canonical repository holds the task" "$task_id"
+
+  local worktree_path="$VIRTUAL/custom-worktree"
+  local stdout_output exit_code=0
+  stdout_output=$(run_tt task checkout "$task_id" --worktree="$worktree_path" 2>/dev/null) \
+    || exit_code=$?
+  assert_success "checkout into an explicit path is not refused" "$exit_code"
+  assert_eq "the task is checked out at the explicit path" \
+    "$(realpath "$stdout_output")" "$(realpath "$worktree_path")"
+  assert_current_task "the explicit path holds the task" "$task_id" "$worktree_path"
+}
+
+
 test_task_checkout__prints_worktree_path_to_stdout() {
   setup_workspace "checkout-stdout-path"
   proj_id=$(create_project "proj" "Project") || true

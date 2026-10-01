@@ -176,6 +176,65 @@ test_worktree_sync__all_synchronizes_every_behind_worktree() {
 }
 
 
+# Usage: advance_branch_bare BRANCH
+# Advances BRANCH by one empty commit without touching any working copy, so
+# every workspace on BRANCH is left behind, whichever workspace it is.
+advance_branch_bare() {
+  local branch="$1"
+  jj -R "$REPO" --ignore-working-copy new --no-edit "$branch" -m "advance $branch" \
+    >/dev/null 2>&1
+  jj -R "$REPO" --ignore-working-copy bookmark set "$branch" \
+    -r "children(\"$branch\") & description(substring:\"advance $branch\")" \
+    >/dev/null 2>&1
+}
+
+# Usage: setup_canonical_behind
+# Leaves the canonical repository and a task worktree both behind their
+# branches: the canonical repository on the project branch, the worktree on the
+# task branch. Sets PROJ_ID, TASK_ID, TASK_WT and CANONICAL_PARENT (the commit
+# the canonical repository sits on before any sync).
+setup_canonical_behind() {
+  PROJ_ID=$(create_project "proj" "Project") || true
+  checkout_task "$PROJ_ID" >/dev/null 2>&1 || true
+  TASK_ID=$(create_task "my-task" "My Task") || true
+  TASK_WT=$(create_task_worktree "$TASK_ID")
+  advance_branch_bare "$PROJ_ID"
+  advance_branch "$TASK_ID" "notes"
+  CANONICAL_PARENT="$(worktree_parent "$REPO")"
+  assert_neq "the canonical repository is behind the project branch" \
+    "$CANONICAL_PARENT" "$(get_full_commit_id "$PROJ_ID")"
+}
+
+
+test_worktree_sync__all_from_a_worktree_leaves_the_canonical_repository_in_place() {
+  setup_workspace "sync-all-skips-canonical"
+  setup_canonical_behind
+
+  local out exit_code=0
+  out=$(run_tt_in_worktree "$TASK_WT" worktree sync --all 2>&1) || exit_code=$?
+  assert_success "--all succeeds" "$exit_code"
+  assert_eq "the worktree is on its branch head" \
+    "$(worktree_parent "$TASK_WT")" "$(get_full_commit_id "$TASK_ID")"
+  assert_eq "the canonical repository stays where it was" \
+    "$(worktree_parent "$REPO")" "$CANONICAL_PARENT"
+  assert_not_contains "the project branch is not synced" "$out" "$PROJ_ID"
+}
+
+
+test_worktree_sync__all_from_the_canonical_repository_syncs_it() {
+  setup_workspace "sync-all-includes-canonical"
+  setup_canonical_behind
+
+  local out exit_code=0
+  out=$(run_tt worktree sync --all 2>&1) || exit_code=$?
+  assert_success "--all succeeds" "$exit_code"
+  assert_eq "the worktree is on its branch head" \
+    "$(worktree_parent "$TASK_WT")" "$(get_full_commit_id "$TASK_ID")"
+  assert_eq "the canonical repository is on the project head" \
+    "$(worktree_parent "$REPO")" "$(get_full_commit_id "$PROJ_ID")"
+}
+
+
 test_worktree_sync__all_continues_past_a_failure() {
   setup_workspace "sync-all-fail"
   local proj_id wt_a wt_b wt_c task_a task_b task_c
