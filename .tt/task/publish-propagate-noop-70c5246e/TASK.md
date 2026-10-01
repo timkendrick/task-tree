@@ -1,6 +1,6 @@
 ---
 title: "tt task publish --rebase/--merge does nothing"
-status: IN-PROGRESS
+status: DONE
 created: 2026-09-17T14:21:35Z
 updated: 2026-09-17T14:21:35Z
 ---
