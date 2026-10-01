@@ -1,6 +1,6 @@
 ---
 title: "Skip outgoing branch dirty check in `tt switch`"
-status: TODO
+status: IN-PROGRESS
 created: 2026-10-01T08:22:08Z
 updated: 2026-10-01T08:22:08Z
 ---
