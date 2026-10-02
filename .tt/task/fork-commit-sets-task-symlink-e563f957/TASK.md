@@ -1,6 +1,6 @@
 ---
 title: "Set TASK.md symlink at task creation via fork commit"
-status: IN-PROGRESS
+status: DONE
 created: 2026-10-02T09:07:18Z
 updated: 2026-10-02T13:14:44Z
 context: context/implementation-summary-e46ebcd3
