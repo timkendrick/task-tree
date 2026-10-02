@@ -242,7 +242,10 @@ propagate_one_rebase() {
     destination="$(build_fork_commit "$repo" "$child" "$from" "$task_file")"
   fi
 
-  _task__move_unmerged_range "$repo" "$from" "$child" "$destination"
+  _task__move_unmerged_range "$repo" "$from" "$child" "$destination" || {
+    _ui__log "Error: Could not rebase $child onto $from."
+    exit 1
+  }
 
   # The rebase replays every commit of the range, so a conflict may surface on
   # any of them, not just the branch tip: a later commit can cancel a conflict
