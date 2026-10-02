@@ -1,3 +1,7 @@
+## Agent guidelines
+
+Design decisions often require understanding convoluted edge case scenarios. Explain complex graph topology scenarios via worked examples described in bullet points and illustrated with `jj log` style graph diagrams.
+
 ## Coding guidelines
 
 **IMPORTANT:** Make sure you read and thoroughly understand all coding guidelines from `@.agents/rules/` before making *any* code changes
