@@ -166,6 +166,7 @@ subtask: [ ] task/propagate-resume-commit-task-symlink-cbfb7b79
 subtask: [ ] task/propagate-rebase-stale-merge-parent-d2bd7ef2
 subtask: [ ] task/filesystem-based-subtask-context-relations-1123316e
 subtask: [ ] task/task-attachments-references-77e7a81d
+subtask: [ ] task/tt-sync-broken-pipe-2c829c37
 ---
 Implement shell script implementations of all `tt` CLI commands
 
