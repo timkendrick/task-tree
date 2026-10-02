@@ -1,1 +1,1 @@
-.tt/task/bootstrap-cli-d35756ce/TASK.md
+.tt/task/tt-task-prune-9a1ce601/TASK.md
