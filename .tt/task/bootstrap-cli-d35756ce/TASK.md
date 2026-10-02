@@ -161,7 +161,7 @@ subtask: [x] task/tt-switch-skip-dirty-check-ad6b460c
 subtask: [ ] task/tt-show-subtask-performance-e02e7594
 subtask: [x] task/tt-checkpoint-non-interactive-message-7dbc8406
 subtask: [x] task/ancestor-branch-write-moves-worktree-fb5b1ff6
-subtask: [ ] task/propagate-resume-commit-task-symlink-cbfb7b79
+subtask: [x] task/propagate-resume-commit-task-symlink-cbfb7b79
 subtask: [ ] task/propagate-rebase-stale-merge-parent-d2bd7ef2
 subtask: [ ] task/filesystem-based-subtask-context-relations-1123316e
 subtask: [ ] task/task-attachments-references-77e7a81d

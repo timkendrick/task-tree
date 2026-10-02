@@ -16,8 +16,11 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #
 # Checking out a task whose status is TODO (never checked out) or DONE (completed)
 # creates a [tt:task:<task-id>:checkout] commit setting status to IN-PROGRESS and
-# advances the task bookmark. Reopening a DONE task appends this commit to the task's
-# existing branch; no parent changes are pulled in unless --rebase/--merge is given.
+# advances the task bookmark. The commit changes the status only: the TASK.md symlink
+# already points at the task, set by the branch's fork commit. The commit is built
+# bare on the task branch before any working copy moves, so uncommitted changes never
+# end up in it. Reopening a DONE task appends this commit to the task's existing
+# branch; no parent changes are pulled in unless --rebase/--merge is given.
 #
 # Usage:
 #   checkout <task-id> [--worktree[=<path>] [--switch]] [--rebase | --merge] [--force] [--repo PATH]
@@ -324,8 +327,7 @@ main() {
   task_status="$(_frontmatter__parse_field "$task_file_content" "status")"
 
   # Determine if a status-updating checkout commit is needed.
-  # Status TODO means the task hasn't been initialized via checkout yet.
-  # (TASK.md may exist on the branch via ancestor inheritance but point to a different task.)
+  # Status TODO means the task has never been checked out.
   # Status DONE means the task was completed and is now being reopened: the commit returns
   # the task to IN-PROGRESS on its existing branch. Nothing is pulled from the parent branch
   # (use --rebase/--merge for that).
@@ -338,7 +340,26 @@ main() {
     reopening=true
   fi
 
-  # Perform the checkout
+  # Create the checkout commit (first checkout, or reopening a completed task)
+  if [[ "$needs_begin" == true ]]; then
+    if [[ "$reopening" == true ]]; then
+      _ui__log "Reopening completed task: $task_id"
+    else
+      _ui__log "Initializing task: $task_id"
+    fi
+
+    # Writer invoked by _task__commit_on_branch with the staging root: sets the
+    # staged task file's status field to IN-PROGRESS.
+    checkout_writer() {
+      local root="$1"
+      _frontmatter__set_status "$root/$task_file" "IN-PROGRESS"
+    }
+    _task__commit_on_branch "$repo" "$task_id" \
+      "$(_commit__format_message "task" "checkout" "$task_id" "$task_title")" \
+      --modify "$task_file" -- checkout_writer >/dev/null
+  fi
+
+  # Perform the checkout onto the task bookmark's (possibly new) tip
   if [[ "$new_worktree" == true ]]; then
     _ui__log "Creating workspace: $target_worktree"
     _worktree__create "$repo" "$task_id" "$target_worktree" "$task_id"
@@ -353,40 +374,6 @@ main() {
     # one this command runs in: move its working copy to a new commit on top
     # of the task bookmark.
     _worktree__start_working_copy "$target_worktree" "$task_id"
-  fi
-
-  # Create the checkout commit (first checkout, or reopening a completed task)
-  if [[ "$needs_begin" == true ]]; then
-    if [[ "$reopening" == true ]]; then
-      _ui__log "Reopening completed task: $task_id"
-    else
-      _ui__log "Initializing task: $task_id"
-    fi
-
-    # Create TASK.md symlink in the worktree root (idempotent when reopening)
-    local task_file_rel
-    task_file_rel="$(_path__task_file "$task_slug")"
-    ln -sf "$task_file_rel" "$target_worktree/$TT_TASK_SYMLINK_FILENAME"
-    _ui__log "Created $TT_TASK_SYMLINK_FILENAME -> $task_file_rel"
-
-    # Update status to IN-PROGRESS in the task file
-    local tmpfile
-    tmpfile="$(mktemp)"
-    awk '
-      /^---$/ { n++; print; next }
-      n == 1 && /^status:/ { print "status: IN-PROGRESS"; next }
-      { print }
-    ' "$target_worktree/$task_file" > "$tmpfile"
-    mv "$tmpfile" "$target_worktree/$task_file"
-
-    # Record the status change as the checkout commit — which leaves a clean
-    # working copy on top of it — then advance the bookmark onto that commit,
-    # named by the ID it resolved to rather than by the working copy's position.
-    _worktree__commit_working_copy "$target_worktree" \
-      "$(_commit__format_message "task" "checkout" "$task_id" "$task_title")"
-    local checkout_commit
-    checkout_commit="$(_worktree__resolve_working_copy_parent "$target_worktree")"
-    _task__advance_branch "$repo" "$task_id" "$checkout_commit"
   fi
 
   # Update HEAD symlink and fire post-checkout hook.

@@ -547,6 +547,25 @@ test__jj__list_range_root_commits__prints_range_roots() {
 }
 
 # ---------------------------------------------------------------------------
+# _jj__list_range_root_parent_commits
+# ---------------------------------------------------------------------------
+
+test__jj__list_range_root_parent_commits__prints_root_parents() {
+  setup_workspace
+  _fixture_linear_history
+  assert_eq "the range hangs off its base" \
+    "$(_jj__list_range_root_parent_commits "$REPO" "$BASE_COMMIT" feature)" "$BASE_COMMIT"
+  assert_eq "a range measured from inside the line hangs off that commit" \
+    "$(_jj__list_range_root_parent_commits "$REPO" "$FIRST_COMMIT" feature)" "$FIRST_COMMIT"
+  assert_eq "an empty range has no root parents" \
+    "$(_jj__list_range_root_parent_commits "$REPO" feature feature)" ""
+  local exit_code=0
+  _jj__list_range_root_parent_commits "$REPO" "$BASE_COMMIT" no-such-bookmark >/dev/null \
+    || exit_code=$?
+  assert_failure "absent revision rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
 # _jj__check_range_covered
 # ---------------------------------------------------------------------------
 
@@ -1689,6 +1708,55 @@ test__jj__restore_tree__wholesale_tree_and_descendant_content() {
   exit_code=0
   _jj__restore_tree "$REPO" no-such-bookmark tgt || exit_code=$?
   assert_failure "absent source rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__restore_path
+# ---------------------------------------------------------------------------
+
+test__jj__restore_path__restores_one_path_and_descendants_inherit() {
+  setup_workspace
+  edit_file a.txt "base"
+  ln -s target-base "$REPO/link"
+  jj -R "$REPO" commit -m "base files" >/dev/null 2>&1
+  local base
+  base="$(get_full_commit_id '@-')"
+  ln -snf target-tgt "$REPO/link"
+  edit_file a.txt "target version"
+  jj -R "$REPO" commit -m "target" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set tgt -r '@-' >/dev/null 2>&1
+  edit_file c.txt "child file"
+  jj -R "$REPO" commit -m "child" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set kid -r '@-' >/dev/null 2>&1
+  jj -R "$REPO" new "$base" >/dev/null 2>&1
+  ln -snf target-src "$REPO/link"
+  jj -R "$REPO" commit -m "source" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set src -r '@-' >/dev/null 2>&1
+
+  local tgt_change
+  tgt_change="$(_jj__resolve_change "$REPO" tgt)"
+  local exit_code=0
+  _jj__restore_path "$REPO" src tgt link || exit_code=$?
+  assert_success "path restored" "$exit_code"
+  assert_eq "target change ID unchanged" \
+    "$(_jj__resolve_change "$REPO" tgt)" "$tgt_change"
+  assert_eq "target description unchanged" \
+    "$(_jj__get_commit_description "$REPO" tgt)" "target"
+  assert_eq "restored symlink takes the source target" \
+    "$(_jj__read_symlink_at_revision "$REPO" tgt link)" "target-src"
+  assert_eq "other paths in the target untouched" \
+    "$(_jj__read_file_at_revision "$REPO" tgt a.txt)" "target version"
+  assert_eq "descendant inherits the restored symlink" \
+    "$(_jj__read_symlink_at_revision "$REPO" kid link)" "target-src"
+  assert_eq "descendant's own file intact" \
+    "$(_jj__read_file_at_revision "$REPO" kid c.txt)" "child file"
+
+  local tgt_commit
+  tgt_commit="$(get_full_commit_id tgt)"
+  exit_code=0
+  _jj__restore_path "$REPO" src tgt link || exit_code=$?
+  assert_success "restoring a matching path succeeds" "$exit_code"
+  assert_eq "a matching path rewrites nothing" "$(get_full_commit_id tgt)" "$tgt_commit"
 }
 
 # ---------------------------------------------------------------------------

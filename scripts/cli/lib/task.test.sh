@@ -156,11 +156,7 @@ test__task__get_full_range_records__multiple_discontiguous_historical_components
   checkpoint_task "w2" >/dev/null || true
   w2_commit=$(_repo__resolve_commit "$REPO" "$task_id")
   # --force accepts the parent-side subtask-checkbox conflict a second,
-  # unrebased checkin produces here. --rebase is deliberately avoided: it
-  # pre-merges the parent's tree (including its TASK.md target) into the
-  # child, so the second handoff's symlink already points at the parent with
-  # no transition left to detect -- an ambiguous case this discovery
-  # intentionally ignores (see DESIGN.md).
+  # unrebased checkin produces here.
   run_tt task checkin "$task_id" --complete --force >/dev/null 2>&1 || true   # completing checkin #2
 
   local records
@@ -177,6 +173,81 @@ test__task__get_full_range_records__multiple_discontiguous_historical_components
   IFS=$'\t' read -r second_base second_tip _ _ _ <<< "$second_line"
   assert_contains "w2 is included in the second historical component" \
     "$(_repo__list_commits_in_range "$REPO" "$second_base" "$second_tip")" "$w2_commit"
+}
+
+# A repeat checkin with --rebase first propagates the parent into the task.
+# The task's new work hangs off its own partially checked-in line, so the
+# rebase puts a fork commit underneath it: the second handoff still points
+# TASK.md from the task back at the parent, and is classified.
+test__task__get_full_range_records__repeat_checkin_after_rebase_propagation() {
+  setup_workspace "full-range-rebase-repeat"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo w1 > "$REPO/w1.txt"
+  checkpoint_task "w1" >/dev/null || true
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true   # partial checkin #1
+
+  checkout_task "$task_id" >/dev/null || true
+  echo w2 > "$REPO/w2.txt"
+  checkpoint_task "w2" >/dev/null || true
+  local exit_code=0
+  run_tt task checkin "$task_id" --complete --rebase >/dev/null 2>&1 || exit_code=$?
+  assert_success "rebased checkin #2 succeeds" "$exit_code"
+  w2_commit=$(_repo__resolve_commit "$REPO" "description(substring:'${task_id}:checkpoint] w2')")
+
+  local records
+  records="$(_full_range_records_for "$task_id")"
+  assert_line_count "two historical components, no current component" "$records" 2
+  assert_eq "both components are historical" \
+    "$(printf '%s\n' "$records" | cut -f3 | sort -u)" "historical"
+
+  local second_line second_base second_tip
+  second_line="$(printf '%s\n' "$records" | sed -n '2p')"
+  IFS=$'\t' read -r second_base second_tip _ _ _ <<< "$second_line"
+  assert_contains "w2 is included in the second historical component" \
+    "$(_repo__list_commits_in_range "$REPO" "$second_base" "$second_tip")" "$w2_commit"
+}
+
+# A propagate merge joins the parent's tip into the task. Its second parent is
+# the parent's tip, which is never a handoff, so the merge is neither a
+# historical nor a child component. Only the real partial checkin is.
+test__task__get_full_range_records__propagate_merge_not_classified() {
+  setup_workspace "full-range-propagate-merge"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo w1 > "$REPO/w1.txt"
+  checkpoint_task "w1" >/dev/null || true
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true   # partial checkin
+  checkin_commit=$(_repo__resolve_commit "$REPO" "description(substring:'${task_id}:checkin]')")
+
+  checkout_task "$task_id" >/dev/null || true
+  echo w2 > "$REPO/w2.txt"
+  checkpoint_task "w2" >/dev/null || true
+  checkout_task "$proj_id" >/dev/null || true
+  echo p1 > "$REPO/p1.txt"
+  checkpoint_task "parent work" >/dev/null || true
+  run_tt task propagate --from "$proj_id" --merge >/dev/null 2>&1 || true
+  propagate_commit=$(_repo__resolve_commit "$REPO" "$task_id")
+  assert_commit_message_first_line "the task tip is the propagate merge" "$task_id" \
+    "[tt:task:$proj_id:propagate] Project"
+
+  local records
+  records="$(_full_range_records_for "$task_id")"
+  local kinds
+  kinds="$(printf '%s\n' "$records" | cut -f3)"
+  assert_eq "one historical component" "$(printf '%s\n' "$kinds" | grep -c '^historical$')" "1"
+  assert_eq "no child component" "$(printf '%s\n' "$kinds" | grep -c '^child$' || true)" "0"
+
+  local historical_order
+  historical_order="$(printf '%s\n' "$records" | awk -F'\t' '$3 == "historical" { print $4 }')"
+  assert_eq "the historical component is the partial checkin" \
+    "$historical_order" "$checkin_commit"
+  assert_neq "the propagate merge is not a component" \
+    "$historical_order" "$propagate_commit"
 }
 
 test__task__get_full_range_records__unrelated_project_work_excluded() {
@@ -419,6 +490,115 @@ test__task__commit_on_branch__leaves_no_temp_residue() {
 }
 
 # ---------------------------------------------------------------------------
+# _task__write_symlink, _task__commit_fork, _task__start_branch
+# ---------------------------------------------------------------------------
+
+test__task__write_symlink__points_at_the_task_file() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+
+  _task__write_symlink "$dir" "foo-abc12345"
+  assert_symlink "symlink targets the task file" "$dir/TASK.md" ".tt/task/foo-abc12345/TASK.md"
+
+  _task__write_symlink "$dir" "bar-abc12345"
+  assert_symlink "an existing symlink is replaced" "$dir/TASK.md" ".tt/task/bar-abc12345/TASK.md"
+}
+
+test__task__commit_fork__builds_a_detached_fork_commit() {
+  setup_workspace "commit-fork-basic"
+  _fixture_side_branch
+  local wc_before
+  wc_before="$(_repo__resolve_commit "$REPO" '@')"
+
+  local commit exit_code=0
+  commit="$(_task__commit_fork "$REPO" "task/foo-abc12345" side "Foo title" \
+    -- _writer_stage_new_file "staged")" || exit_code=$?
+  assert_success "fork commit created" "$exit_code"
+  assert_matches "full-length commit ID printed" "$commit" '^[0-9a-f]{40}$'
+  assert_eq "fork commit sits on the base revision" \
+    "$(_repo__resolve_commit "$REPO" "${commit}-")" "$SIDE_TIP"
+  assert_eq "fork commit message names the task and title" \
+    "$(get_commit_message_first_line "$commit")" "[tt:task:task/foo-abc12345:fork] Foo title"
+  assert_eq "TASK.md points at the task file" \
+    "$(_repo__read_symlink_at_revision "$REPO" "$commit" TASK.md)" \
+    ".tt/task/foo-abc12345/TASK.md"
+  assert_eq "writer output lands in the fork commit" \
+    "$(_repo__read_file_at_revision "$REPO" "$commit" new.txt)" "staged"
+  assert_eq "base bookmark unmoved" "$(_repo__resolve_commit "$REPO" side)" "$SIDE_TIP"
+  assert_eq "no bookmark created" "$(get_bookmarks_at "$commit")" ""
+  assert_eq "@ did not move" "$(_repo__resolve_commit "$REPO" '@')" "$wc_before"
+}
+
+test__task__commit_fork__writes_only_the_symlink_without_a_writer() {
+  setup_workspace "commit-fork-no-writer"
+  _fixture_side_branch
+
+  local commit exit_code=0
+  commit="$(_task__commit_fork "$REPO" "project/bar-abc12345" side "Bar")" || exit_code=$?
+  assert_success "fork commit created for a project ID" "$exit_code"
+  assert_eq "TASK.md points at the project task file" \
+    "$(_repo__read_symlink_at_revision "$REPO" "$commit" TASK.md)" \
+    ".tt/task/bar-abc12345/TASK.md"
+  assert_eq "only TASK.md changes" "$(get_modified_files "$commit")" "TASK.md"
+}
+
+test__task__commit_fork__invalid_arguments_rejected() {
+  setup_workspace "commit-fork-args"
+  _fixture_side_branch
+
+  local exit_code=0
+  _task__commit_fork "$REPO" "not-a-task" side "T" >/dev/null 2>&1 || exit_code=$?
+  assert_failure "unrecognized task ID rejected" "$exit_code"
+
+  exit_code=0
+  _task__commit_fork "$REPO" "task/foo-abc12345" side "T" _writer_noop \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_failure "writer without -- rejected" "$exit_code"
+
+  exit_code=0
+  _task__commit_fork "$REPO" "task/foo-abc12345" side "T" -- \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_failure "-- without WRITER_FN rejected" "$exit_code"
+
+  exit_code=0
+  _task__commit_fork "$REPO" "task/foo-abc12345" no-such-rev "T" \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_failure "unresolvable base rejected" "$exit_code"
+
+  exit_code=0
+  _task__commit_fork "$REPO" "task/foo-abc12345" side "T" -- _writer_fail \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_failure "failing writer aborts" "$exit_code"
+}
+
+test__task__start_branch__creates_and_forces_bookmarks() {
+  setup_workspace "start-branch"
+  _fixture_side_branch
+  local main_tip
+  main_tip="$(_repo__resolve_commit "$REPO" main)"
+
+  local exit_code=0
+  _task__start_branch "$REPO" fresh "$SIDE_TIP" || exit_code=$?
+  assert_success "new bookmark created" "$exit_code"
+  assert_eq "new bookmark on the revision" "$(_repo__resolve_commit "$REPO" fresh)" "$SIDE_TIP"
+
+  exit_code=0
+  _task__start_branch "$REPO" fresh "$main_tip" >/dev/null 2>&1 || exit_code=$?
+  assert_failure "backwards move refused without --allow-backwards" "$exit_code"
+  assert_eq "bookmark unmoved after refusal" "$(_repo__resolve_commit "$REPO" fresh)" "$SIDE_TIP"
+
+  exit_code=0
+  _task__start_branch "$REPO" fresh "$main_tip" --allow-backwards || exit_code=$?
+  assert_success "backwards move allowed with --allow-backwards" "$exit_code"
+  assert_eq "bookmark moved backwards" "$(_repo__resolve_commit "$REPO" fresh)" "$main_tip"
+
+  exit_code=0
+  _task__start_branch "$REPO" fresh "$SIDE_TIP" --bogus >/dev/null 2>&1 || exit_code=$?
+  assert_failure "unknown flag rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
 # _task__commit_handoff, _task__merge_branch, _task__check_conflicts,
 # _task__advance_branch
 # ---------------------------------------------------------------------------
@@ -485,7 +665,7 @@ test__task__merge_branch__merges_handoff_and_advances() {
 
 test__task__list_unmerged_changes__reports_range_paths() {
   setup_workspace "unmerged-changes"
-  # Two commits off main: the first is the range's root (a branch's creation
+  # Two commits off main: the first is the range's root (a branch's fork
   # commit in the real topology) and is excluded from the diff; the second
   # carries the files the listing must report.
   jj -R "$REPO" new main >/dev/null 2>&1
@@ -510,6 +690,37 @@ test__task__list_unmerged_changes__reports_range_paths() {
   assert_contains "prefix/a.txt reported" "$filtered" "prefix/a.txt"
   assert_contains "prefix/b.txt reported" "$filtered" "prefix/b.txt"
   assert_not_contains "base.txt excluded by prefix" "$filtered" "base.txt"
+}
+
+# ---------------------------------------------------------------------------
+# _task__list_unmerged_root_parents
+# ---------------------------------------------------------------------------
+
+# After a partial checkin, the task's new work hangs off the commit the
+# checkin brought into the parent: a commit of the task's own line.
+test__task__list_unmerged_root_parents__reports_the_partially_checked_in_tip() {
+  setup_workspace "unmerged-root-parents"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo w1 > "$REPO/w1.txt"
+  checkpoint_task "w1" >/dev/null || true
+  w1_commit=$(get_full_commit_id "$task_id")
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true   # partial checkin
+
+  checkout_task "$task_id" >/dev/null || true
+  echo w2 > "$REPO/w2.txt"
+  checkpoint_task "w2" >/dev/null || true
+
+  local root_parents
+  root_parents="$(_task__list_unmerged_root_parents "$REPO" "$proj_id" "$task_id")"
+  assert_eq "the range hangs off the checked-in tip" "$root_parents" "$w1_commit"
+  assert_is_ancestor "that commit is already in the parent" "$w1_commit" "$proj_id"
+  assert_task_symlink_at_rev "that commit points TASK.md at the task" "$w1_commit" "$task_id"
+
+  assert_eq "an up-to-date range has no root parents" \
+    "$(_task__list_unmerged_root_parents "$REPO" "$task_id" "$task_id")" ""
 }
 
 # ---------------------------------------------------------------------------
@@ -558,6 +769,20 @@ test__task__resolve_current__unaffected_by_a_branch_advance() {
   assert_not_ancestor "the fixture leaves the worktree behind its branch" "$task_id" '@'
 
   assert_eq "a worktree left behind still reports its own task" \
+    "$(_resolve_current_record)" \
+    "$(_path__task_file "${task_id#task/}")"$'\t'"$task_id"
+}
+
+test__task__resolve_current__reports_a_task_never_checked_out() {
+  setup_workspace "resolve-current-never-checked-out"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  # Park the working copy on the TODO task's branch without checking it out:
+  # the fork commit already records the task.
+  jj -R "$REPO" new "$task_id" >/dev/null 2>&1
+  assert_eq "a worktree on a never-checked-out task reports that task" \
     "$(_resolve_current_record)" \
     "$(_path__task_file "${task_id#task/}")"$'\t'"$task_id"
 }

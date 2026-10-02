@@ -220,6 +220,41 @@ test_task_changelog__partial_checkin_flagged_in_progress() {
 }
 
 
+# A propagate merge records the child's own tip as its first parent, so the
+# parent's work arrives through the second parent and is not the child's.
+test_task_changelog__propagate_merge_excludes_parent_work() {
+  setup_workspace "changelog-propagate-merge"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  sibling_id=$(create_task "s" "S") || true
+
+  checkout_task "$task_id" >/dev/null || true
+  echo "work" > "$TT_REPO/work.txt"
+  checkpoint_task "t work" >/dev/null || true
+
+  checkout_task "$sibling_id" >/dev/null || true
+  echo "sibling" > "$TT_REPO/sibling.txt"
+  checkpoint_task "s work" >/dev/null || true
+  run_tt task checkin "$sibling_id" --complete >/dev/null 2>&1 || true
+
+  checkout_task "$proj_id" >/dev/null || true
+  echo "p" > "$TT_REPO/p.txt"
+  checkpoint_task "project work" >/dev/null || true
+  run_tt task propagate --from "$proj_id" --to "$task_id" --merge >/dev/null 2>&1 || true
+  assert_commit_message_first_line "the task tip is the propagate merge" "$task_id" \
+    "[tt:task:$proj_id:propagate] Project"
+
+  output="" exit_code=0
+  output=$(run_tt task changelog --task "$task_id" 2>/dev/null) || exit_code=$?
+  assert_success "changelog succeeds" "$exit_code"
+  assert_matches "the task's own checkpoint is listed" "$output" '^- `[0-9a-f]{8}` - t work$'
+  assert_line_count "only the task's own checkpoint" "$output" 1
+  assert_not_contains "the checked-in sibling is not listed" "$output" "$sibling_id"
+  assert_not_contains "the parent's checkpoint is not listed" "$output" "project work"
+}
+
+
 test_task_changelog__repeat_checkin_deduplicated() {
   setup_workspace "changelog-dedupe"
   proj_id=$(create_project "proj" "Project") || true
