@@ -585,8 +585,11 @@ test__worktree__list_sync_changes__classifies_paths_in_a_large_listing() {
   for ((i = 0; i < 1000; i++)); do
     filler+="$(printf 'unrelated/%090d.txt' "$i")"$'\n'
   done
+  # shellcheck disable=SC2329
   _repo__list_commits_in_range() { printf 'range-commit\n'; }
+  # shellcheck disable=SC2329
   _repo__list_changed_files() { printf 'added.txt\nmodified.txt\nremoved.txt\n'; }
+  # shellcheck disable=SC2329
   _repo__list_files_at_revision() {
     case "$2" in
       old-rev) printf 'modified.txt\nremoved.txt\n%s' "$filler" ;;

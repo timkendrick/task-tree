@@ -1104,11 +1104,13 @@ _worktree__sync() {
 #
 # The path set is the union of the paths each commit brought in between the two
 # revisions (_repo__list_commits_in_range feeding _repo__list_changed_files), and
-# the status of each is decided by testing that path against the file listing
-# at either end (_repo__list_files_at_revision). Both are line-oriented listings
-# of repository-relative paths, matched whole-line, so a path containing spaces
-# or shell metacharacters is handled exactly like any other — which a rendered
-# diff, where the two sides of a header run together, could not promise.
+# the status of each is decided by looking that path up in the file listing at
+# either end (_repo__list_files_at_revision). Both are line-oriented listings of
+# repository-relative paths, matched whole-line, so a path containing spaces or
+# shell metacharacters is handled exactly like any other — which a rendered
+# diff, where the two sides of a header run together, could not promise. Each
+# listing covers the whole repository, so both are loaded once and every path is
+# classified in a single pass.
 #
 # The result is a summary of what the move touched rather than a minimal diff:
 # a path a commit in the range changed and a later one changed back is still
@@ -1136,19 +1138,17 @@ _worktree__list_sync_changes() {
   old_files="$(_repo__list_files_at_revision "$repo" "$old_rev")" || return 1
   new_files="$(_repo__list_files_at_revision "$repo" "$new_rev")" || return 1
 
-  local path status
-  while IFS= read -r path; do
-    [[ -z "$path" ]] && continue
-    if printf '%s\n' "$new_files" | grep -qFx -e "$path"; then
-      if printf '%s\n' "$old_files" | grep -qFx -e "$path"; then
-        status='modified'
-      else
-        status='added'
-      fi
-    else
-      status='removed'
-    fi
-    printf '%s\t%s\n' "$status" "$path"
-  done <<< "$(printf '%s' "$all_paths" | sort -u)"
-  return 0
+  awk '
+    FILENAME == ARGV[1] { new_files[$0] = 1; next }
+    FILENAME == ARGV[2] { old_files[$0] = 1; next }
+    $0 == "" { next }
+    {
+      if (!($0 in new_files)) status = "removed"
+      else if ($0 in old_files) status = "modified"
+      else status = "added"
+      printf "%s\t%s\n", status, $0
+    }
+  ' <(printf '%s\n' "$new_files") \
+    <(printf '%s\n' "$old_files") \
+    <(printf '%s' "$all_paths" | sort -u)
 }
