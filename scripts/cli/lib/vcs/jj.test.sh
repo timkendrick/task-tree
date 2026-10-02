@@ -547,6 +547,25 @@ test__jj__list_range_root_commits__prints_range_roots() {
 }
 
 # ---------------------------------------------------------------------------
+# _jj__list_range_root_parent_commits
+# ---------------------------------------------------------------------------
+
+test__jj__list_range_root_parent_commits__prints_root_parents() {
+  setup_workspace
+  _fixture_linear_history
+  assert_eq "the range hangs off its base" \
+    "$(_jj__list_range_root_parent_commits "$REPO" "$BASE_COMMIT" feature)" "$BASE_COMMIT"
+  assert_eq "a range measured from inside the line hangs off that commit" \
+    "$(_jj__list_range_root_parent_commits "$REPO" "$FIRST_COMMIT" feature)" "$FIRST_COMMIT"
+  assert_eq "an empty range has no root parents" \
+    "$(_jj__list_range_root_parent_commits "$REPO" feature feature)" ""
+  local exit_code=0
+  _jj__list_range_root_parent_commits "$REPO" "$BASE_COMMIT" no-such-bookmark >/dev/null \
+    || exit_code=$?
+  assert_failure "absent revision rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
 # _jj__check_range_covered
 # ---------------------------------------------------------------------------
 

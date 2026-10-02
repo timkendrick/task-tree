@@ -649,7 +649,7 @@ test_task_checkin__help() {
 # After an INCOMPLETE checkin the task bookmark should still point to the last
 # commit on the task branch (e.g. the checkpoint commit).  That commit is
 # already in the parent's ancestry via the handoff/merge, so propagate will
-# later create a resume commit on the parent tip when the parent advances.
+# later create a fork commit for the task on the parent tip.
 test_task_checkin__incomplete_bookmark_stays_at_last_commit() {
   setup_workspace "ci-bm-incomplete"
   proj_id=$(create_project "proj" "Project") || true
@@ -698,7 +698,7 @@ test_task_checkin__complete_bookmark_stays_at_complete_commit() {
 
 
 # When --propagate is added to a complete checkin the task bookmark must still
-# end up at the "Complete task:" commit — propagate must not create a resume
+# end up at the "Complete task:" commit — propagate must not create a fork
 # commit for a DONE task and must not rebase it.
 test_task_checkin__complete_with_propagate_bookmark_unchanged() {
   setup_workspace "ci-bm-prop"
