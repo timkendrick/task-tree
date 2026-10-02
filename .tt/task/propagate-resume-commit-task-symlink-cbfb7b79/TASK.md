@@ -1,6 +1,6 @@
 ---
 title: "Resume commit for partially checked-in tasks does not re-point TASK.md"
-status: IN-PROGRESS
+status: DONE
 created: 2026-10-01T17:48:00Z
 updated: 2026-10-01T17:48:00Z
 subtask: [x] task/fork-commit-sets-task-symlink-e563f957
