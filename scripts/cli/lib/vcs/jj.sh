@@ -91,6 +91,7 @@
 #     _jj__move_commits              — rebase revisions and their descendants onto a destination
 #     _jj__squash_commit             — fold a revision's changes into another revision
 #     _jj__restore_tree              — set a revision's tree wholesale from another revision
+#     _jj__restore_path              — set one path in a revision from another revision
 #     _jj__abandon_commit            — abandon a revision, rebasing descendants onto its parents
 #   Bookmarks:
 #     _jj__set_bookmark              — move a bookmark to an explicit revision
@@ -1184,6 +1185,20 @@ _jj__restore_tree() {
   local repo="$1" source_rev="$2" target_rev="$3"
   __jj__write "$repo" --ignore-working-copy restore \
     --from "$source_rev" --into "$target_rev" --restore-descendants
+}
+
+# Usage: _jj__restore_path REPO SOURCE_REV TARGET_REV PATH
+# Sets the repo-root-relative PATH in TARGET_REV to its state in SOURCE_REV
+# (content, mode, or absence), leaving the rest of TARGET's tree, its change
+# ID, description and author untouched. A conflict on PATH in TARGET is
+# replaced by SOURCE's state. Descendants of TARGET are rebased with their
+# diffs replayed, so a descendant that does not change PATH inherits the
+# restored state. Nothing is rewritten when PATH already matches. Bare graph
+# mutation: no working copy is touched. Status only; never logs, never exits.
+_jj__restore_path() {
+  local repo="$1" source_rev="$2" target_rev="$3" path="$4"
+  __jj__write "$repo" --ignore-working-copy restore \
+    --from "$source_rev" --into "$target_rev" -- "root-file:\"${path}\""
 }
 
 # Usage: _jj__abandon_commit REPO REV

@@ -54,6 +54,7 @@
 #   _task__list_unmerged_changes     — paths changed by a branch's unmerged range
 #   _task__list_unmerged_roots       — attachment points of a task's unmerged range
 #   _task__move_unmerged_range       — reparent a task's unmerged range
+#   _task__restore_symlink           — set a commit's task symlink from another commit
 #   _task__check_up_to_date          — whether a task already sits on a base revision
 #   _task__find_directory_introduction — commit that first added a task directory
 #   _task__list_rewrite_range        — change IDs of a commit and its descendants
@@ -1239,6 +1240,25 @@ _task__move_unmerged_range() {
     _worktree__move_subtree "$repo" "$root" "$dest_rev" || return 1
   done
   return 0
+}
+
+# Usage: _task__restore_symlink REPO SOURCE_REV TARGET_REV
+#
+# Sets the repo-root task symlink in TARGET_REV to its state in SOURCE_REV,
+# keeping the rest of TARGET_REV's tree and its identity. A conflict on the
+# symlink in TARGET_REV is replaced by SOURCE_REV's state, and descendants
+# that do not change the symlink inherit it. Nothing is rewritten when the
+# symlink already matches.
+#
+# Used after a task's unmerged range moves onto a different base: the moved
+# commits must keep pointing the symlink at their own task, rather than at
+# whichever task the new base records. Rewrites TARGET_REV, so its commit ID
+# changes; callers hold it by change ID. Touches no working copy, so a
+# worktree sitting above TARGET_REV must be refreshed afterwards
+# (_worktree__refresh_current). Documented pass-through to _repo__restore_path.
+_task__restore_symlink() {
+  local repo="$1" source_rev="$2" target_rev="$3"
+  _repo__restore_path "$repo" "$source_rev" "$target_rev" "$TT_TASK_SYMLINK_FILENAME"
 }
 
 # Usage: _task__check_up_to_date REPO BASE_REV TASK_REV
