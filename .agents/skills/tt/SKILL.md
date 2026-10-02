@@ -308,9 +308,9 @@ Delete the given worktree directory and remove its jj workspace. The task still 
 
 All tasks should follow the general `tt` workflow:
 
-1. **Create a task** — `tt task create --title "<title>" [--slug <slug>] [--parent <parent-task-id>] [--label <label>...] [--propagate] [--checkout [--worktree[=<path>]]]`. Creates a new task under the parent (default: current branch), adds `subtask: [ ] <task-id>` to the parent, and forks the child branch. With `--propagate`, updates sibling branches. With `--checkout`, runs checkout on the newly created task; `--worktree` optionally uses or creates a worktree. Run `tt task create --help` for options.
+1. **Create a task** — `tt task create --title "<title>" [--slug <slug>] [--parent <parent-task-id>] [--label <label>...] [--propagate] [--checkout [--worktree[=<path>]]]`. Creates a new task under the parent (default: current branch), adds `subtask: [ ] <task-id>` to the parent, and forks the child branch. The child branch's first commit points `./TASK.md` at the new task, so a worktree on the branch reports the task as current even before checkout. With `--propagate`, updates sibling branches. With `--checkout`, runs checkout on the newly created task; `--worktree` optionally uses or creates a worktree. Run `tt task create --help` for options.
 
-2. **Begin a task** — `tt task checkout <task-id> [--worktree[=<path>]] [--switch] [--force]`. Switches to the task branch, updates status to IN-PROGRESS if TODO, creates TASK.md symlink on first checkout. With `--worktree`, uses or creates a worktree; `--switch` also updates the HEAD symlink to the new worktree. Run `tt task checkout --help` for options.
+2. **Begin a task** — `tt task checkout <task-id> [--worktree[=<path>]] [--switch] [--force]`. Switches to the task branch and updates status to IN-PROGRESS if TODO or DONE. Checkout does not change `./TASK.md`. With `--worktree`, uses or creates a worktree; `--switch` also updates the HEAD symlink to the new worktree. Run `tt task checkout --help` for options.
 
 3. **Work on the task** — Make commits on the branch and accumulate context in `./TASK.md`.
    - **Add context** — Run `tt task context add [--title TITLE] [--slug SLUG]` to create a standalone context file for the task (reads body from stdin if piped, otherwise opens editor). Run `tt task context add --help` for options.

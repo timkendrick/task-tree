@@ -411,11 +411,8 @@ main() {
     parent_rev="$(_task__resolve_revision "$repo" "$parent_bookmark")"
   fi
 
-  local create_message
-  create_message="$(_commit__format_message "task" "create" "$task_id" "$title")"
-
   # One timestamp for every copy of the stub written by this invocation, so
-  # the child branch's first commit carries a byte-identical stub to the copy
+  # the child branch's fork commit carries a byte-identical stub to the copy
   # committed on the parent branch.
   local stub_ts
   stub_ts="$(_string__generate_timestamp)"
@@ -426,13 +423,33 @@ main() {
     _task__write_stub "$root" "$task_suffix" "$stub_ts"
   }
 
-  # Pass --allow-backwards to the branch creation when overwriting an
-  # existing bookmark (--force): its current position need not be an
-  # ancestor of the re-created branch tip.
-  local -a new_branch_flags=()
+  # Writer invoked with a staging root: stages the stub file and points the
+  # task symlink at it, for a branch with no parent task file to fork from.
+  new_branch_writer() {
+    local root="$1"
+    _task__write_stub "$root" "$task_suffix" "$stub_ts"
+    _task__write_symlink "$root" "$task_suffix"
+  }
+
+  # Pass --allow-backwards to the branch start when overwriting an existing
+  # bookmark (--force): its current position need not be an ancestor of the
+  # re-created branch tip.
+  local -a start_branch_flags=()
   if [[ "$bookmark_existed" == true ]]; then
-    new_branch_flags=(--allow-backwards)
+    start_branch_flags=(--allow-backwards)
   fi
+
+  # Parentless branch: the branch's first commit creates the stub task file
+  # and points the task symlink at it, on top of the fork revision.
+  start_parentless_branch() {
+    local first_commit
+    first_commit="$(_task__commit_detached "$repo" "$parent_rev" \
+      "$(_commit__format_message "task" "new" "$task_id" "$title")" \
+      -- new_branch_writer)"
+    _task__start_branch "$repo" "$task_id" "$first_commit" \
+      "${start_branch_flags[@]+"${start_branch_flags[@]}"}"
+    _ui__log "Created task file: $task_file"
+  }
 
   # Metadata commit on the new branch: the commit `tt task edit` records for
   # the title, labels and body, made here in the same process. The stub the
@@ -452,39 +469,36 @@ main() {
   }
 
   if [[ "$is_project" == true ]]; then
-    # Project task: the branch's first commit creates the stub task file on
-    # top of the fork revision; the metadata commit follows on the
-    # new branch and advances its bookmark.
-    _task__commit_new_branch "$repo" "$task_id" "$parent_rev" "$create_message" \
-      "${new_branch_flags[@]+"${new_branch_flags[@]}"}" -- create_stub_writer >/dev/null
-    _ui__log "Created task file: $task_file"
+    start_parentless_branch
     commit_metadata
   elif [[ -n "$parent_task_file" ]]; then
     # Child task: one commit on the parent branch creates the stub and
-    # registers the subtask entry; the child branch then forks from that
-    # commit with its own first commit (the same stub content), and the
-    # metadata commit follows on the child branch.
+    # registers the subtask entry. The child branch then starts on its fork
+    # commit (the same stub content, plus the task symlink pointing at the
+    # child), and the metadata commit follows on the child branch.
     create_parent_writer() {
       local root="$1"
       _task__write_stub "$root" "$task_suffix" "$stub_ts"
       _frontmatter__append_subtask "$root/$parent_task_file" "$task_id"
     }
     local parent_tip
-    parent_tip="$(_task__commit_on_branch "$repo" "$parent_bookmark" "$create_message" \
+    parent_tip="$(_task__commit_on_branch "$repo" "$parent_bookmark" \
+      "$(_commit__format_message "task" "create" "$task_id" "$title")" \
       --modify "$parent_task_file" -- create_parent_writer)"
     _ui__log "Created task file: $task_file"
     _ui__log "Added subtask to parent: $parent_task_file"
-    _task__commit_new_branch "$repo" "$task_id" "$parent_tip" "$create_message" \
-      "${new_branch_flags[@]+"${new_branch_flags[@]}"}" -- create_stub_writer >/dev/null
+    local fork_commit
+    fork_commit="$(_task__commit_fork "$repo" "$task_id" "$parent_tip" "$title" \
+      -- create_stub_writer)"
+    _task__start_branch "$repo" "$task_id" "$fork_commit" \
+      "${start_branch_flags[@]+"${start_branch_flags[@]}"}"
     _worktree__report_unsynced "$repo" "$parent_bookmark"
     commit_metadata
   else
     # Child task with no identifiable parent task file (e.g. branching from a
-    # non-task bookmark). Create the stub commit and bookmark without
-    # modifying any parent; edit sets metadata.
-    _task__commit_new_branch "$repo" "$task_id" "$parent_rev" "$create_message" \
-      "${new_branch_flags[@]+"${new_branch_flags[@]}"}" -- create_stub_writer >/dev/null
-    _ui__log "Created task file: $task_file"
+    # non-task bookmark): the branch starts like a project's, without
+    # modifying any parent.
+    start_parentless_branch
     commit_metadata
   fi
 

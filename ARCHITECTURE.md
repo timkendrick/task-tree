@@ -245,6 +245,7 @@ No working copy is involved in any of these; each rewrites the commit graph dire
 | `move_commits` | Rebase revisions and their descendants onto a destination |
 | `squash_commit` | Fold one revision's changes into another |
 | `restore_tree` | Set a revision's tree wholesale from another, preserving its identity |
+| `restore_path` | Set one path in a revision from another revision, replaying descendants |
 | `abandon_commit` | Abandon a revision, rebasing descendants onto its parents |
 
 #### Worktrees
@@ -349,7 +350,13 @@ temporary ref's deletion is part of the operation rather than a follow-up: leavi
 makes the *next* command mint a surprise import operation outside any tt transaction, which would
 break undo integrity.
 
-The facade wrapper is `_task__commit_on_branch`, which resolves the branch tip, materialises any
+The task model builds every branch write on this primitive. A branch's first commit is built bare
+and placed separately: `_task__commit_fork` builds a fork commit that points the task symlink at a
+task, `_task__commit_detached` builds any other parked commit, and `_task__start_branch` then points
+the new bookmark at it. Neither builder moves a bookmark, so the same fork commit serves a new
+branch and a branch that resumes above its parent's tip.
+
+The facade wrapper for writes onto an existing branch is `_task__commit_on_branch`, which resolves the branch tip, materialises any
 files the caller wants to read-modify-write, expands delete-prefixes into exact paths, runs the
 caller's writer function against the staging directory, commits, reattaches the current worktree,
 and only then advances the bookmark.
@@ -456,8 +463,8 @@ Reporting a behind worktree, and later syncing it, both need the branch it is **
 bookmarks no longer say: the write moved the bookmark to a sibling of the worktree's working-copy
 commit, so the nearest bookmarked ancestor degrades to some outer branch.
 
-The answer is **read, not inferred**. A worktree's working copy carries the task symlink
-`tt task checkout` plants in it — `TASK.md -> .tt/task/<suffix>/TASK.md` — and branch names *are*
+The answer is **read, not inferred**. The first commit of a task branch plants a task symlink that
+every later commit on the task's own line inherits, so a worktree's working copy carries it — `TASK.md -> .tt/task/<suffix>/TASK.md` — and branch names *are*
 task IDs, so the symlink recorded in the working-copy commit names the branch outright.
 `_worktree__resolve_branch_at` reads it and maps the suffix to whichever of the task or project
 bookmarks exists. A working copy recording no such symlink, or naming a task with no bookmark, is on
