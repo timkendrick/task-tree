@@ -39,8 +39,10 @@
 #   _task__find_for_revision         — task/project branch recorded by a revision
 #   _task__collect_descendant_dirs   — task dirs for all descendants of a task
 #   _task__write_stub                — minimal task file stub for a new task
+#   _task__write_symlink             — repo-root task symlink pointing at a task file
 #   _task__commit_on_branch          — staged bare write committed onto a bookmark
-#   _task__commit_new_branch         — staged bare write starting a new bookmark
+#   _task__commit_fork               — fork commit pointing the task symlink at a task
+#   _task__start_branch              — point a new (or re-created) bookmark at a commit
 #   _task__commit_handoff            — staged bare write on a branch tip, bookmark unmoved
 #   _task__commit_detached           — staged bare write reachable only by its own ID
 #   _task__merge_branch              — check-in merge commit (branch tip + handoff)
@@ -52,6 +54,7 @@
 #   _task__list_unmerged_changes     — paths changed by a branch's unmerged range
 #   _task__list_unmerged_roots       — attachment points of a task's unmerged range
 #   _task__move_unmerged_range       — reparent a task's unmerged range
+#   _task__restore_symlink           — set a commit's task symlink from another commit
 #   _task__check_up_to_date          — whether a task already sits on a base revision
 #   _task__find_directory_introduction — commit that first added a task directory
 #   _task__list_rewrite_range        — change IDs of a commit and its descendants
@@ -59,10 +62,11 @@
 #   _task__discard_commit            — abandon a commit built as scratch state
 #
 # The _task__full_range_* helpers are internal to _task__get_full_range_records,
-# __task__commit_staged is the private staging engine shared by
-# _task__commit_on_branch, _task__commit_new_branch, _task__commit_handoff and
-# _task__commit_resume, and __task__write_nothing is the empty writer those
-# staged commits use when they carry no file changes.
+# __task__commit_staged is the private staging engine shared by the staged
+# commit builders (_task__commit_on_branch, _task__commit_fork,
+# _task__commit_handoff, _task__commit_detached and _task__commit_resume),
+# and __task__write_nothing is the empty writer those staged commits use when
+# they carry no file changes.
 
 # Return true if bookmark name matches task ID pattern (<prefix><slug>-<hex>).
 _task__check_is_task_branch() {
@@ -823,57 +827,121 @@ _task__commit_on_branch() {
   printf '%s\n' "$new_commit"
 }
 
-# Usage: _task__commit_new_branch REPO NEW_BRANCH PARENT_REV MESSAGE
-#          [--allow-backwards] -- WRITER_FN [ARGS...]
+# Usage: _task__commit_fork REPO TASK_ID BASE_REV TITLE [-- WRITER_FN [ARGS...]]
 #
-# Starts a branch: builds a bare commit on top of PARENT_REV from the writes
-# WRITER_FN leaves in a fresh staging directory (the same staging contract as
-# _task__commit_on_branch, without the modify/delete flags), points the
-# NEW_BRANCH bookmark at the new commit, and prints the commit ID. No working
-# copy is touched, no worktree is reattached, and no out-of-sync report is
-# produced: a branch that did not exist before the call has no worktrees
-# sitting on it.
+# Builds the fork commit of TASK_ID: a bare commit on top of BASE_REV that
+# points the repo-root task symlink at TASK_ID's task file
+# (_task__write_symlink), described as `[tt:task:<task-id>:fork] <title>`.
+# Prints the new commit ID.
 #
-# --allow-backwards is passed through to the bookmark update so an existing
-# NEW_BRANCH bookmark may be moved even when the new commit is not a
-# descendant of its current position (forced branch re-creation).
+# The fork commit is where a task's own line begins: every commit above it on
+# that line records the task as the one it belongs to, until a check-in
+# handoff points the symlink back at the parent. Callers decide where the
+# commit lands, so nothing else happens here: no bookmark is created or moved
+# and no worktree is reattached. A new task branch starts on it
+# (_task__start_branch); a branch resuming above its parent's tip advances
+# onto it.
 #
-# A non-zero WRITER_FN status aborts the call: nothing is committed and no
-# bookmark is created or moved.
+# TITLE is passed in rather than read from the task file, because a task's
+# title is not always recorded at BASE_REV yet: at creation, the stub there
+# still carries a placeholder title.
+#
+# The optional WRITER_FN stages further files into the same commit (the
+# staging contract of _task__commit_on_branch, without the modify/delete
+# flags). The symlink is staged after WRITER_FN runs. A non-zero WRITER_FN
+# status aborts the call and nothing is committed.
 #
 # Exit 0: commit created (ID printed to stdout).
-# Exit non-zero: bad arguments, unresolvable PARENT_REV, writer failure, or a
-# failed VCS step (error printed to stderr).
-_task__commit_new_branch() {
-  local repo="$1" new_branch="$2" parent_rev="$3" message="$4"
+# Exit non-zero: TASK_ID is neither a task nor a project ID, unresolvable
+# BASE_REV, writer failure, or a failed VCS step (error printed to stderr).
+_task__commit_fork() {
+  local repo="$1" task_id="$2" base_rev="$3" title="$4"
   shift 4
 
+  local -a writer=()
+  if [[ $# -gt 0 ]]; then
+    if [[ "$1" != '--' || $# -lt 2 ]]; then
+      _ui__log "Error: A fork commit takes an optional '-- WRITER_FN [ARGS...]'."
+      return 1
+    fi
+    shift
+    writer=("$@")
+  fi
+
+  local task_prefix project_prefix suffix
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
+  if _task__check_is_task_branch "$task_id" "$task_prefix"; then
+    suffix="${task_id#"$task_prefix"}"
+  elif _task__check_is_project_branch "$task_id" "$project_prefix"; then
+    suffix="${task_id#"$project_prefix"}"
+  else
+    _ui__log "Error: '$task_id' is not a recognized task or project ID."
+    return 1
+  fi
+
+  # A full commit ID is already resolved; the bare commit verifies it names a
+  # commit in the store.
+  local base_commit
+  if _repo__check_is_canonical_commit_id "$base_rev"; then
+    base_commit="$base_rev"
+  else
+    base_commit="$(_repo__resolve_commit "$repo" "$base_rev")" || base_commit=''
+  fi
+  if [[ -z "$base_commit" ]]; then
+    _ui__log "Error: Could not resolve revision '$base_rev'."
+    return 1
+  fi
+
+  local new_commit
+  new_commit="$(__task__commit_staged "$repo" "$base_commit" \
+    "$(_commit__format_message "task" "fork" "$task_id" "$title")" \
+    -- __task__write_fork "$suffix" "${writer[@]+"${writer[@]}"}")" || return 1
+  [[ -n "$new_commit" ]] || return 1
+  printf '%s\n' "$new_commit"
+}
+
+# Usage: __task__write_fork ROOT TASK_SUFFIX [WRITER_FN [ARGS...]]
+# Staged-commit writer for _task__commit_fork: runs the caller's WRITER_FN
+# (if any) with ROOT, then stages the task symlink for TASK_SUFFIX.
+__task__write_fork() {
+  local root="$1" suffix="$2"
+  shift 2
+  if [[ $# -gt 0 ]]; then
+    local writer_fn="$1"
+    shift
+    "$writer_fn" "$root" "$@" || return 1
+  fi
+  _task__write_symlink "$root" "$suffix"
+}
+
+# Usage: _task__start_branch REPO BRANCH REV [--allow-backwards]
+#
+# Points the BRANCH bookmark at REV, creating the bookmark when it does not
+# exist. This is the second half of starting a task branch: the caller first
+# builds the branch's first commit as a bare commit (_task__commit_fork,
+# _task__commit_detached), then starts the branch on it. No working copy is
+# touched, no worktree is reattached, and no out-of-sync report is produced:
+# a branch that did not exist before the call has no worktrees sitting on it.
+#
+# --allow-backwards lets an existing BRANCH bookmark move even when REV is
+# not a descendant of its current position (forced branch re-creation).
+#
+# Exit 0: bookmark set. Exit non-zero: the bookmark update failed.
+_task__start_branch() {
+  local repo="$1" branch="$2" rev="$3"
+  shift 3
   local -a bookmark_flags=()
   if [[ "${1:-}" == '--allow-backwards' ]]; then
     bookmark_flags=(--allow-backwards)
     shift
   fi
-
-  # A full commit ID is already resolved; the bare commit verifies it names a
-  # commit in the store.
-  local parent_commit
-  if _repo__check_is_canonical_commit_id "$parent_rev"; then
-    parent_commit="$parent_rev"
-  else
-    parent_commit="$(_repo__resolve_commit "$repo" "$parent_rev")" || parent_commit=''
-  fi
-  if [[ -z "$parent_commit" ]]; then
-    _ui__log "Error: Could not resolve revision '$parent_rev'."
+  if [[ $# -gt 0 ]]; then
+    _ui__log "Error: Unknown start-branch flag: $1"
     return 1
   fi
-
-  local new_commit
-  new_commit="$(__task__commit_staged "$repo" "$parent_commit" "$message" "$@")" \
-    || return 1
-  [[ -n "$new_commit" ]] || return 1
-  _repo__set_bookmark "$repo" "$new_branch" "$new_commit" \
-    "${bookmark_flags[@]+"${bookmark_flags[@]}"}" || return 1
-  printf '%s\n' "$new_commit"
+  _repo__set_bookmark "$repo" "$branch" "$rev" \
+    "${bookmark_flags[@]+"${bookmark_flags[@]}"}"
 }
 
 # Usage: _task__commit_handoff REPO BRANCH MESSAGE
@@ -1079,8 +1147,8 @@ _task__advance_branch() {
 #
 # The range is diffed as one unit, so content the child merely inherited from
 # the parent at its fork point is never reported, and the range's own roots
-# are excluded: the first unmerged commit is the branch's creation commit
-# (its task file stub), which is never what a caller needs to inspect. This
+# are excluded: the first unmerged commit is the branch's fork commit (its
+# task symlink and stub), which is never what a caller needs to inspect. This
 # is deliberately a path listing rather than a content diff: its consumer
 # (checkin's stray-task-file validation) needs to know WHICH task files the
 # range touches, not what changed inside them.
@@ -1172,6 +1240,25 @@ _task__move_unmerged_range() {
     _worktree__move_subtree "$repo" "$root" "$dest_rev" || return 1
   done
   return 0
+}
+
+# Usage: _task__restore_symlink REPO SOURCE_REV TARGET_REV
+#
+# Sets the repo-root task symlink in TARGET_REV to its state in SOURCE_REV,
+# keeping the rest of TARGET_REV's tree and its identity. A conflict on the
+# symlink in TARGET_REV is replaced by SOURCE_REV's state, and descendants
+# that do not change the symlink inherit it. Nothing is rewritten when the
+# symlink already matches.
+#
+# Used after a task's unmerged range moves onto a different base: the moved
+# commits must keep pointing the symlink at their own task, rather than at
+# whichever task the new base records. Rewrites TARGET_REV, so its commit ID
+# changes; callers hold it by change ID. Touches no working copy, so a
+# worktree sitting above TARGET_REV must be refreshed afterwards
+# (_worktree__refresh_current). Documented pass-through to _repo__restore_path.
+_task__restore_symlink() {
+  local repo="$1" source_rev="$2" target_rev="$3"
+  _repo__restore_path "$repo" "$source_rev" "$target_rev" "$TT_TASK_SYMLINK_FILENAME"
 }
 
 # Usage: _task__check_up_to_date REPO BASE_REV TASK_REV
@@ -1281,8 +1368,7 @@ _task__discard_commit() {
 #          [--modify PATH]... [--delete PATH]... [--delete-prefix PREFIX]...
 #          -- WRITER_FN [ARGS...]
 #
-# Private staging engine shared by _task__commit_on_branch and
-# _task__commit_new_branch: materializes each --modify path from TIP into a
+# Private staging engine shared by the staged commit builders: materializes each --modify path from TIP into a
 # fresh staging directory, expands --delete/--delete-prefix against TIP's
 # tree, runs WRITER_FN with the staging root (followed by ARGS), commits the
 # staged tree as a bare child of TIP (_repo__commit_changeset), and prints the
@@ -1386,7 +1472,7 @@ __task__commit_staged() {
 # Usage: _task__resolve_current REPO TASK_PREFIX PROJECT_PREFIX
 #
 # Resolve the task REPO has checked out — the branch its working copy records,
-# read from the task symlink `tt task checkout` planted there
+# read from the task symlink the branch's fork commit planted there
 # (_worktree__resolve_branch_at). REPO is whichever worktree the command is
 # operating on, so each worktree answers for itself.
 #
@@ -1553,4 +1639,15 @@ _task__write_stub() {
   mkdir -p "$root/$dir"
   local REWRITE_LABELS=() REWRITE_CONTEXTS=() REWRITE_SUBTASKS=()
   _frontmatter__write_task_file "$root/$file" "" "TODO" "" "$ts" "$ts"
+}
+
+# _task__write_symlink ROOT TASK_SUFFIX
+#
+# Writes the repo-root task symlink at ROOT/TASK.md, pointing at the task file
+# of TASK_SUFFIX (.tt/task/<suffix>/TASK.md, relative to the repository root).
+# ROOT is any directory tree, typically a staging directory for a bare branch
+# write; an existing entry at ROOT/TASK.md is replaced.
+_task__write_symlink() {
+  local root="$1" suffix="$2"
+  ln -snf "$(_path__task_file "$suffix")" "$root/$TT_TASK_SYMLINK_FILENAME"
 }

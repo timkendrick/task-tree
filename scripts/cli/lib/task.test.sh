@@ -419,6 +419,115 @@ test__task__commit_on_branch__leaves_no_temp_residue() {
 }
 
 # ---------------------------------------------------------------------------
+# _task__write_symlink, _task__commit_fork, _task__start_branch
+# ---------------------------------------------------------------------------
+
+test__task__write_symlink__points_at_the_task_file() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+
+  _task__write_symlink "$dir" "foo-abc12345"
+  assert_symlink "symlink targets the task file" "$dir/TASK.md" ".tt/task/foo-abc12345/TASK.md"
+
+  _task__write_symlink "$dir" "bar-abc12345"
+  assert_symlink "an existing symlink is replaced" "$dir/TASK.md" ".tt/task/bar-abc12345/TASK.md"
+}
+
+test__task__commit_fork__builds_a_detached_fork_commit() {
+  setup_workspace "commit-fork-basic"
+  _fixture_side_branch
+  local wc_before
+  wc_before="$(_repo__resolve_commit "$REPO" '@')"
+
+  local commit exit_code=0
+  commit="$(_task__commit_fork "$REPO" "task/foo-abc12345" side "Foo title" \
+    -- _writer_stage_new_file "staged")" || exit_code=$?
+  assert_success "fork commit created" "$exit_code"
+  assert_matches "full-length commit ID printed" "$commit" '^[0-9a-f]{40}$'
+  assert_eq "fork commit sits on the base revision" \
+    "$(_repo__resolve_commit "$REPO" "${commit}-")" "$SIDE_TIP"
+  assert_eq "fork commit message names the task and title" \
+    "$(get_commit_message_first_line "$commit")" "[tt:task:task/foo-abc12345:fork] Foo title"
+  assert_eq "TASK.md points at the task file" \
+    "$(_repo__read_symlink_at_revision "$REPO" "$commit" TASK.md)" \
+    ".tt/task/foo-abc12345/TASK.md"
+  assert_eq "writer output lands in the fork commit" \
+    "$(_repo__read_file_at_revision "$REPO" "$commit" new.txt)" "staged"
+  assert_eq "base bookmark unmoved" "$(_repo__resolve_commit "$REPO" side)" "$SIDE_TIP"
+  assert_eq "no bookmark created" "$(get_bookmarks_at "$commit")" ""
+  assert_eq "@ did not move" "$(_repo__resolve_commit "$REPO" '@')" "$wc_before"
+}
+
+test__task__commit_fork__writes_only_the_symlink_without_a_writer() {
+  setup_workspace "commit-fork-no-writer"
+  _fixture_side_branch
+
+  local commit exit_code=0
+  commit="$(_task__commit_fork "$REPO" "project/bar-abc12345" side "Bar")" || exit_code=$?
+  assert_success "fork commit created for a project ID" "$exit_code"
+  assert_eq "TASK.md points at the project task file" \
+    "$(_repo__read_symlink_at_revision "$REPO" "$commit" TASK.md)" \
+    ".tt/task/bar-abc12345/TASK.md"
+  assert_eq "only TASK.md changes" "$(get_modified_files "$commit")" "TASK.md"
+}
+
+test__task__commit_fork__invalid_arguments_rejected() {
+  setup_workspace "commit-fork-args"
+  _fixture_side_branch
+
+  local exit_code=0
+  _task__commit_fork "$REPO" "not-a-task" side "T" >/dev/null 2>&1 || exit_code=$?
+  assert_failure "unrecognized task ID rejected" "$exit_code"
+
+  exit_code=0
+  _task__commit_fork "$REPO" "task/foo-abc12345" side "T" _writer_noop \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_failure "writer without -- rejected" "$exit_code"
+
+  exit_code=0
+  _task__commit_fork "$REPO" "task/foo-abc12345" side "T" -- \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_failure "-- without WRITER_FN rejected" "$exit_code"
+
+  exit_code=0
+  _task__commit_fork "$REPO" "task/foo-abc12345" no-such-rev "T" \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_failure "unresolvable base rejected" "$exit_code"
+
+  exit_code=0
+  _task__commit_fork "$REPO" "task/foo-abc12345" side "T" -- _writer_fail \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_failure "failing writer aborts" "$exit_code"
+}
+
+test__task__start_branch__creates_and_forces_bookmarks() {
+  setup_workspace "start-branch"
+  _fixture_side_branch
+  local main_tip
+  main_tip="$(_repo__resolve_commit "$REPO" main)"
+
+  local exit_code=0
+  _task__start_branch "$REPO" fresh "$SIDE_TIP" || exit_code=$?
+  assert_success "new bookmark created" "$exit_code"
+  assert_eq "new bookmark on the revision" "$(_repo__resolve_commit "$REPO" fresh)" "$SIDE_TIP"
+
+  exit_code=0
+  _task__start_branch "$REPO" fresh "$main_tip" >/dev/null 2>&1 || exit_code=$?
+  assert_failure "backwards move refused without --allow-backwards" "$exit_code"
+  assert_eq "bookmark unmoved after refusal" "$(_repo__resolve_commit "$REPO" fresh)" "$SIDE_TIP"
+
+  exit_code=0
+  _task__start_branch "$REPO" fresh "$main_tip" --allow-backwards || exit_code=$?
+  assert_success "backwards move allowed with --allow-backwards" "$exit_code"
+  assert_eq "bookmark moved backwards" "$(_repo__resolve_commit "$REPO" fresh)" "$main_tip"
+
+  exit_code=0
+  _task__start_branch "$REPO" fresh "$SIDE_TIP" --bogus >/dev/null 2>&1 || exit_code=$?
+  assert_failure "unknown flag rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
 # _task__commit_handoff, _task__merge_branch, _task__check_conflicts,
 # _task__advance_branch
 # ---------------------------------------------------------------------------
@@ -485,7 +594,7 @@ test__task__merge_branch__merges_handoff_and_advances() {
 
 test__task__list_unmerged_changes__reports_range_paths() {
   setup_workspace "unmerged-changes"
-  # Two commits off main: the first is the range's root (a branch's creation
+  # Two commits off main: the first is the range's root (a branch's fork
   # commit in the real topology) and is excluded from the diff; the second
   # carries the files the listing must report.
   jj -R "$REPO" new main >/dev/null 2>&1
@@ -558,6 +667,20 @@ test__task__resolve_current__unaffected_by_a_branch_advance() {
   assert_not_ancestor "the fixture leaves the worktree behind its branch" "$task_id" '@'
 
   assert_eq "a worktree left behind still reports its own task" \
+    "$(_resolve_current_record)" \
+    "$(_path__task_file "${task_id#task/}")"$'\t'"$task_id"
+}
+
+test__task__resolve_current__reports_a_task_never_checked_out() {
+  setup_workspace "resolve-current-never-checked-out"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+
+  # Park the working copy on the TODO task's branch without checking it out:
+  # the fork commit already records the task.
+  jj -R "$REPO" new "$task_id" >/dev/null 2>&1
+  assert_eq "a worktree on a never-checked-out task reports that task" \
     "$(_resolve_current_record)" \
     "$(_path__task_file "${task_id#task/}")"$'\t'"$task_id"
 }

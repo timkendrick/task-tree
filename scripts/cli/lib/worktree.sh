@@ -878,8 +878,8 @@ _worktree__list_holding_descendants() {
 # it names has no branch.
 #
 # The branch is read rather than inferred. A worktree's working copy carries the
-# symlink `tt task checkout` planted in it, naming the task directory of the
-# task checked out there, and branch names *are* task IDs: the symlink is the
+# symlink the branch's fork commit planted in it, naming the task directory of
+# the task checked out there, and branch names *are* task IDs: the symlink is the
 # repository's own record of the answer, written for exactly this purpose.
 #
 # The commit graph cannot answer the question. tt parks a working copy as an
