@@ -3,7 +3,7 @@ title: "Resume commit for partially checked-in tasks does not re-point TASK.md"
 status: IN-PROGRESS
 created: 2026-10-01T17:48:00Z
 updated: 2026-10-01T17:48:00Z
-subtask: [ ] task/fork-commit-sets-task-symlink-e563f957
+subtask: [x] task/fork-commit-sets-task-symlink-e563f957
 subtask: [ ] task/propagate-restores-task-symlink-79bbf51e
 ---
 Currently, if a task is partially checked-in and changes are propagated from the parent branch, a resume commit is created for the task such that the task's new bookmark commit is a direct child of the parent commit.
