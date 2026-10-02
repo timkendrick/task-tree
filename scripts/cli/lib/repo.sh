@@ -46,6 +46,7 @@ _repo__list_commits_in_range()     { _jj__list_commits_in_range "$@"; }
 _repo__list_commits_in_dag_range() { _jj__list_commits_in_dag_range "$@"; }
 _repo__count_commits_in_range()    { _jj__count_commits_in_range "$@"; }
 _repo__list_range_root_commits()   { _jj__list_range_root_commits "$@"; }
+_repo__list_range_root_parent_commits() { _jj__list_range_root_parent_commits "$@"; }
 _repo__check_range_covered()       { _jj__check_range_covered "$@"; }
 _repo__format_revision_range()     { _jj__format_revision_range "$@"; }
 _repo__list_mainline_commits()     { _jj__list_mainline_commits "$@"; }
