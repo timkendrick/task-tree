@@ -334,7 +334,7 @@ _task__find_parent_branch() {
     path="$(_path__task_file "$suffix")"
     local content
     content="$(_repo__read_file_at_revision "$repo" "$branch" "$path")" || continue
-    if printf '%s' "$content" | grep -qE "^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]+${task_id}([[:space:]]|$)"; then
+    if grep -qE "^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]+${task_id}([[:space:]]|$)" <<< "$content"; then
       if [[ -n "$found" ]]; then
         _ui__log "Error: Multiple parent branches found for '$task_id': '$found' and '$branch'."
         return 2
@@ -756,7 +756,7 @@ _task__find_branch() {
     path="$(_path__task_file "$suffix")"
     local c
     c="$(_repo__read_file_at_revision "$repo" "$branch" "$path")" || continue
-    if printf '%s' "$c" | grep -qE "^subtask:[[:space:]]*\[x\][[:space:]]+${task_id}([[:space:]]|$)"; then
+    if grep -qE "^subtask:[[:space:]]*\[x\][[:space:]]+${task_id}([[:space:]]|$)" <<< "$c"; then
       printf '%s' "$branch"
       return 0
     fi
