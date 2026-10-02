@@ -1,1 +1,1 @@
-.tt/task/propagate-resume-commit-task-symlink-cbfb7b79/TASK.md
+.tt/task/propagate-restores-task-symlink-79bbf51e/TASK.md
