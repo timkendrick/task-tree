@@ -1,1 +1,1 @@
-.tt/task/bootstrap-cli-d35756ce/TASK.md
+.tt/task/custom-merge-conflict-resolver-06dbf6a0/TASK.md
