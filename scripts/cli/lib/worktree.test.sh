@@ -576,6 +576,38 @@ test__worktree__sync__brings_behind_worktree_forward() {
     "$(printf 'up-to-date\t%s' "$FEATURE")"
 }
 
+# A repository's full file listing easily outgrows a pipe buffer (64 KiB), so
+# each changed path must be classified correctly however far from the end of
+# the listing it sits. The backend is stubbed with a synthetic listing whose
+# changed paths all come before 100 KiB of unrelated files.
+test__worktree__list_sync_changes__classifies_paths_in_a_large_listing() {
+  local filler='' i
+  for ((i = 0; i < 1000; i++)); do
+    filler+="$(printf 'unrelated/%090d.txt' "$i")"$'\n'
+  done
+  # shellcheck disable=SC2329
+  _repo__list_commits_in_range() { printf 'range-commit\n'; }
+  # shellcheck disable=SC2329
+  _repo__list_changed_files() { printf 'added.txt\nmodified.txt\nremoved.txt\n'; }
+  # shellcheck disable=SC2329
+  _repo__list_files_at_revision() {
+    case "$2" in
+      old-rev) printf 'modified.txt\nremoved.txt\n%s' "$filler" ;;
+      new-rev) printf 'added.txt\nmodified.txt\n%s' "$filler" ;;
+      *) return 1 ;;
+    esac
+  }
+
+  local out err_file exit_code=0
+  err_file="$(mktemp)"
+  out="$(_worktree__list_sync_changes repo old-rev new-rev 2>"$err_file")" || exit_code=$?
+  assert_success "listing succeeds" "$exit_code"
+  assert_eq "each path is classified from both listings" "$out" \
+    "$(printf 'added\tadded.txt\nmodified\tmodified.txt\nremoved\tremoved.txt')"
+  assert_output_empty "nothing is written to stderr" "$(cat "$err_file")"
+  rm -f "$err_file"
+}
+
 test__worktree__record_working_copy__records_uncommitted_work() {
   setup_workspace "wt-record-wc"
   _fixture_feature_checkout
