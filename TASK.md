@@ -1,1 +1,1 @@
-.tt/task/bootstrap-cli-d35756ce/TASK.md
+.tt/task/prompt-editor-line-stripping-af3fc142/TASK.md
