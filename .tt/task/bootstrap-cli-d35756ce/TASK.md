@@ -22,7 +22,6 @@ subtask: [ ] task/tt-task-checkin-reorder-766c71b4
 subtask: [ ] task/custom-merge-conflict-resolver-06dbf6a0
 subtask: [ ] task/tt-task-context-edit-550ce515
 subtask: [x] task/tt-task-publish-commit-message-4062975b
-subtask: [ ] task/tt-propagate-parent-child-task-symlink-conflict-3bef09e2
 subtask: [ ] task/tt-task-checkpoint-empty-c6eaa3da
 subtask: [ ] task/teardown-hook-3123762c
 subtask: [ ] task/switch-hooks-061a0a5e
