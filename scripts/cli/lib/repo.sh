@@ -76,6 +76,7 @@ _repo__set_description()           { _jj__set_description "$@"; }
 _repo__move_commits()              { _jj__move_commits "$@"; }
 _repo__squash_commit()             { _jj__squash_commit "$@"; }
 _repo__restore_tree()              { _jj__restore_tree "$@"; }
+_repo__restore_path()              { _jj__restore_path "$@"; }
 _repo__abandon_commit()            { _jj__abandon_commit "$@"; }
 
 # --- Bookmarks ---

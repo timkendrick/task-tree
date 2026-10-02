@@ -189,6 +189,56 @@ test_task_move__graph_shape() {
 }
 
 
+test_task_move__moved_line_keeps_the_task_symlink() {
+  setup_workspace "move-task-symlink"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "a" "A") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_b=$(create_task "b" "B") || true
+  checkout_task "$task_b" >/dev/null || true
+  edit_file "$REPO/b-work.txt" "work"
+  checkpoint_task "B work" >/dev/null || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  run_tt task move --task "$task_b" --parent "$task_a" >/dev/null 2>&1 || true
+
+  local fork="roots(${task_a}..${task_b})"
+  assert_commit_message_first_line "fork commit is still the root of the moved range" \
+    "$fork" "[tt:task:${task_b}:fork] B"
+  assert_task_symlink_at_rev "TASK.md points at the moved task on its fork commit" "$fork" "$task_b"
+  assert_task_symlink_at_rev "TASK.md points at the moved task at its tip" "$task_b" "$task_b"
+  assert_task_symlink_at_rev "new parent keeps its own TASK.md" "$task_a" "$task_a"
+  assert_no_conflicts "no conflicts after the move"
+}
+
+
+test_task_move__partially_checked_in_task_keeps_the_task_symlink() {
+  setup_workspace "move-partial-symlink"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "a" "A") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_b=$(create_task "b" "B") || true
+  checkout_task "$task_b" >/dev/null || true
+  edit_file "$REPO/b-early.txt" "early"
+  checkpoint_task "B early work" >/dev/null || true
+  checkin_task --context "" >/dev/null || true
+  assert_subtask_entry "partial check-in recorded on the parent" "$proj_id" "$task_b" "[-]"
+  edit_file "$REPO/b-late.txt" "late"
+  checkpoint_task "B late work" >/dev/null || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  # The unmerged range now starts above the partial check-in, so its root
+  # inherits TASK.md rather than setting it.
+  run_tt task move --task "$task_b" --parent "$task_a" >/dev/null 2>&1 || true
+
+  assert_is_ancestor "moved task descends from new parent" "$task_a" "$task_b"
+  assert_task_symlink_at_rev "TASK.md points at the moved task at its tip" "$task_b" "$task_b"
+  assert_no_conflicts "no conflicts after the move"
+}
+
+
 test_task_move__wc_on_old_parent_stays_on_old_parent() {
   setup_workspace "move-wc-old"
   proj_id=$(create_project "proj" "Project") || true
