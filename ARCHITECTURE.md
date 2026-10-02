@@ -190,6 +190,7 @@ Signatures, argument conventions and return values are documented on the backend
 | `list_commits_in_dag_range` | Commits descended from a base, up to a tip |
 | `count_commits_in_range` | Size of a range |
 | `list_range_root_commits` | The roots of a range |
+| `list_range_root_parent_commits` | The parents of a range's roots |
 | `check_range_covered` | Whether a range lies inside a union of ranges |
 | `format_revision_range` | Render a range in a named format (`native` or `git`) |
 | `list_mainline_commits` | First-parent mainline commit records |

@@ -194,7 +194,7 @@ P line:  ... -- [C:create] (stub + subtask; TASK.md -> P) ------------- [C:check
          C line:     [C:fork] (TASK.md -> C) -- [C:edit] -- work -- [C:handoff] (TASK.md -> P)
 ```
 
-Checkout never changes the symlink. A branch therefore records its own task from its first commit, whether or not it was ever checked out.
+Checkout never changes the symlink. A branch therefore records its own task from its first commit, whether or not it was ever checked out. Propagate preserves the invariant when it moves a child onto its parent's tip (§6.8).
 
 ### 4.4 Context files
 
@@ -464,7 +464,7 @@ Each task and project branch follows a structured lifecycle of named commits. Th
 | `[tt:task:<id>:new] <title>` | `tt task create --project` (and a child task without a parent task file) | First commit of a parentless branch: creates the stub task file and points `TASK.md` at it; the branch bookmark starts here |
 | `[tt:task:<task-id>:checkout] <title>` | `tt task checkout` | Sets status → `IN-PROGRESS` on first checkout of a `TODO` task, or when reopening a `DONE` task; changes nothing else; advances task bookmark |
 | `[tt:task:<task-id>:create] <title>` | `tt task create` | On the parent branch: creates child task file and registers `subtask: [ ] <task-id>` in the parent file; parent bookmark advances |
-| `[tt:task:<task-id>:fork] <title>` | `tt task create` | First commit of the child branch: points `TASK.md` at the child task file (the stub it also writes is identical to the parent's copy); the child bookmark starts here |
+| `[tt:task:<task-id>:fork] <title>` | `tt task create`, `tt task propagate` | First commit of the child branch: points `TASK.md` at the child task file (the stub it also writes is identical to the parent's copy); the child bookmark starts here. Propagate also creates one on the parent's tip when a partially checked-in child continues there (§6.8) |
 | `[tt:task:<task-id>:edit] <title>` | `tt task edit` (also invoked by `tt task create`) | Sets title, description, and labels in the task file frontmatter; task bookmark advances |
 | `[tt:task:<task-id>:context:add] <context-title>` | `tt task context add` | Adds a context file and its `context:` frontmatter entry; task bookmark advances |
 | `[tt:task:<task-id>:context:delete] <context-title>` | `tt task context delete` | Removes a context file and its `context:` entry; task bookmark advances |
@@ -476,6 +476,7 @@ Each task and project branch follows a structured lifecycle of named commits. Th
 | `[tt:task:<task-id>:handoff] <title>` | `tt task checkin` | Off-mainline merge-source commit; child bookmark does **not** advance to this commit |
 | `[tt:task:<project-id>:handoff] <title>` | `tt task publish` | Off-mainline merge-source commit for project branches; project bookmark does **not** advance to this commit |
 | `[tt:task:<task-id>:checkin] <title>` | `tt task checkin` | Empty merge commit on the parent branch; parent bookmark advances |
+| `[tt:task:<parent-id>:propagate] <parent-title>` | `tt task propagate --merge` | Merge commit on the child branch: the child's old tip is the first parent and the parent's tip the second; `TASK.md` keeps the child's target; child bookmark advances |
 | `[tt:task:<project-id>:publish] <message>` | `tt task publish` | Empty merge commit on the target branch; target bookmark advances |
 | `[tt:task:<task-id>:delete] <title>` | `tt task delete` | On the parent branch: removes child task file and `subtask:` entry from parent frontmatter; parent bookmark advances |
 
@@ -847,10 +848,54 @@ Instead, propagate identifies only the **unmerged range** of the child branch �
 
 Concretely, for a child branch `C` and parent branch `P`:
 
-- **Unmerged range:** `::C ~ ::P` — ancestors of C not yet in P's ancestry.
-- **Rebase roots:** `roots(::C ~ ::P)` — the root commits of that range (those whose parents are already in P's ancestry). These are the commits that need to be rebased directly onto P.
-- If the unmerged range is empty (the child has no new commits beyond what is already in the parent), the child is considered up to date and is skipped.
-- Otherwise, the rebase roots and all their descendants (within the unmerged range) are rebased onto P: `jj rebase -s "roots(::C ~ ::P)" -d P`.
+- **Moved commits:** `P..C`, the commits in `C`'s history that are not in `P`'s history.
+- **Rebase roots:** `roots(P..C)`, the moved commits whose parents are all in `P`'s history.
+- **Attachment commits:** `parents(roots(P..C))`, the commits the moved commits hang off. They are always in `P`'s history.
+- `C` is **up to date** when it has no moved commits, or when every rebase root already sits directly on `P`'s tip.
+- Otherwise, the rebase roots and all their descendants are rebased onto `P`'s tip (or onto a fork commit there, see below): `jj rebase -s "roots(P..C)" -d <destination>`.
+
+**Keeping `TASK.md` on the child.** Every commit on `C`'s own line points `TASK.md` at `C` (§4.3), and propagate preserves this. A partial check-in breaks the plain rebase and merge: the handoff points `TASK.md` back at `P`, and `C`'s later commits do not touch it. Propagate therefore adds commits in three cases. It never creates an empty commit.
+
+- **Up to date, behind:** `C` is a strict ancestor of `P` and its status is not `DONE`. This is the shape a partial check-in leaves once `P` moves on. `C` advances onto a new fork commit, `[tt:task:<C-id>:fork] <C title>`, on `P`'s tip. The fork commit points `TASK.md` at `C` and changes nothing else. This applies under both strategies, so the result is linear under `--merge` too. A `DONE` child is left where it is.
+- **Rebase, attached to the child's own line:** some attachment commit points `TASK.md` at `C`. Such a commit is a `C` commit that an earlier check-in brought into `P`. The moved commits do not include `C`'s fork commit, so on `P`'s tip they would inherit `TASK.md -> P`. Propagate first builds a fork commit on `P`'s tip, then rebases the moved commits onto it. The status does not matter: a `DONE` child gets the fork commit too.
+- **Merge:** the merge commit lists `C`'s old tip first and `P`'s tip second (§6.14), and is described as `[tt:task:<P-id>:propagate] <P title>`. jj resolves `TASK.md` in the merge from the merge base. After a partial check-in, the base points at `C` and `P`'s side changed it to `P`, so the merge points at `P`. When both sides changed it, the merge is conflicted. Propagate always restores `TASK.md` in the merge from `C`'s old tip. This rewrites nothing when `TASK.md` already matches, and it clears a conflict confined to `TASK.md`. The conflict check runs after the restore.
+
+When the attachment commits point at `P`, the moved commits include `C`'s own fork commit, and a plain rebase keeps `TASK.md -> C`.
+
+Never checked in. The attachment commit points at `P`, so no fork commit is needed:
+
+```
+o  W1                  <- C    TASK.md -> C
+o  F1 [C:fork]                 TASK.md -> C
+| o  Pwork             <- P    TASK.md -> P
+|/
+o  P1 [C:create]               TASK.md -> P   (attachment commit)
+```
+
+Result: `Pwork -- F1 -- W1`, a plain rebase.
+
+Partially checked in, then more work. The attachment commit points at `C`, so a fork commit goes underneath:
+
+```
+o  W2                  <- C    TASK.md -> C
+| o  Pwork             <- P    TASK.md -> P
+| o    Pci1 [C:checkin]        TASK.md -> P
+| |\
+| | o  Hc1 [C:handoff]         TASK.md -> P
+|/ /
+o |  W1                        TASK.md -> C   (attachment commit, already in P)
+o |  F1 [C:fork]               TASK.md -> C
+|/
+o  P0
+```
+
+Result: `Pwork -- F2 [C:fork] -- W2`.
+
+Nested. A grandchild `G` was checked into `C` after `C`'s partial check-in. The attachment commit is `W1`, which points at `C`, so a fork commit goes underneath. Without it, `G`'s fork commit would conflict on `TASK.md` once moved onto `Pwork`, because it changes `TASK.md` from `C` to `G` on a base that points at `P`.
+
+Repeated propagation. Once `F2` exists, `P` can advance again without a new check-in. The only rebase root is then `F2`, and its attachment commit is `P`'s old tip, which points at `P`. No second fork commit is created.
+
+**Conflicts.** The rebase replays every moved commit, and a later commit can cancel a conflict an earlier one introduced. Without `--force`, propagate therefore refuses when any moved commit, or any commit above `C`'s tip, carries a conflict. For `--merge`, it refuses when the merge commit carries a conflict.
 
 ### 6.10 Task rename (`tt task rename`)
 
@@ -1080,6 +1125,8 @@ Commits on that walk are classified by their description:
 - `[tt:task:<task-id>:checkpoint] <message>` — where `<task-id>` is the branch being reported on — becomes a checkpoint entry.
 - `[tt:task:<subtask-id>:checkin] <title>` becomes a task entry.
 
+Other commits are not reported. This includes fork commits and propagate merges (`[tt:task:<parent-id>:propagate]`), which propagate adds to a child branch (§6.8).
+
 **Recursion.** A checkin merge brings in everything its task had accumulated. For a checkin with mainline parent `m` and handoff parent `h`, the work it merged is the mainline of `h` excluding everything already reachable from `m`; walking that range the same way yields the tasks checked into that subtask, which are rendered as its children, and so on recursively. Excluding `m`'s ancestors is what keeps an earlier partial checkin from being reported twice.
 
 **Depth limiting.** `--depth <n>` caps how many levels of the tree are reported: `0` suppresses the tree entirely, leaving only the checkpoint section; `1` reports the tasks checked into the branch but not what was checked into them; each further level adds one more generation. Omitting `--depth` reports every level. Suppressed levels are simply absent from the output — nothing marks the truncation — and the levels that are omitted are never queried, so a shallow report costs proportionally fewer VCS operations.
@@ -1124,7 +1171,9 @@ Within the ancestry bounded by the creation boundary and the task/parent bookmar
 - **path** — a single commit, other than the creation boundary, that changes the task's own task file directly without being part of a check-in merge: a task-management operation (edit, context add/remove/edit, checkpoint, reorder, rename) or a direct child's creation or deletion, whichever branch currently carries the task's retained files.
 - **current** — the task's ordinary unmerged range, computed exactly as it is without `--all` (its parent bookmark to its upper bound), always last.
 
-A handoff whose root `TASK.md` transition does not unambiguously match one of these two shapes — including one whose symlink is unchanged, which can happen when `--rebase` has already merged the parent's tree into the child before a repeat check-in — is not classified, and the underlying work is only picked up by whatever narrower `path` or `current` components happen to cover it. Complete-range discovery never falls back to a commit's structured description to resolve this ambiguity.
+A handoff whose root `TASK.md` transition does not unambiguously match one of these two shapes, including one whose symlink is unchanged, is not classified, and the underlying work is only picked up by whatever narrower `path` or `current` components happen to cover it. Complete-range discovery never falls back to a commit's structured description to resolve this ambiguity.
+
+A propagate merge (`[tt:task:<parent-id>:propagate]`) is a two-parent merge, but its second parent is the parent's bookmark tip, which is never a handoff. It is therefore never classified as `historical` or `child`.
 
 Fork commits change root `TASK.md` but are never classified. A fork commit is a single-parent commit, so it is never a merge candidate. It does not change the task file (its stub copy is identical to the parent's), so it is never a `path` component either. A task's own fork commit belongs to its `current` component, or to a `historical` component once checked in.
 

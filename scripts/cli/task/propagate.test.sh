@@ -286,6 +286,7 @@ test_task_propagate__rebase_graph_shape() {
     "$(get_full_commit_id "roots(${proj_id}..${child})-")" "$parent_tip_before"
   assert_file_on_branch "child kept its own work" "$child" "child-work.txt"
   assert_file_on_branch "child received the parent's change" "$child" "parent-file.txt"
+  assert_task_symlink_at_rev "the child still points TASK.md at itself" "$child" "$child"
   assert_no_conflicts "no conflicts after rebase propagation"
 }
 
@@ -322,6 +323,9 @@ test_task_propagate__merge_graph_shape() {
     "${merge_parents%% *}" "$child_tip_before"
   assert_eq "the incoming parent tip is the second parent" \
     "${merge_parents##* }" "$parent_tip_before"
+  assert_commit_message_first_line "the merge is labelled as a propagate of the parent" \
+    "$child" "[tt:task:$proj_id:propagate] Project"
+  assert_task_symlink_at_rev "the merge points TASK.md at the child" "$child" "$child"
   assert_is_ancestor "parent tip is an ancestor of the child" "$proj_id" "$child"
   assert_eq "parent tip did not move" "$(get_full_commit_id "$proj_id")" "$parent_tip_before"
   assert_file_on_branch "child kept its own work" "$child" "child-work.txt"
@@ -370,6 +374,319 @@ test_task_propagate__parent_worktree_keeps_its_branch() {
   assert_not_contains "the project worktree is not attributed to the checked-in task" \
     "$output" "$proj_wt ($incoming)"
   assert_not_contains "the canonical repository is not reported" "$output" "$REPO ("
+}
+
+
+# ---------------------------------------------------------------------------
+# TASK.md on the child's line
+# ---------------------------------------------------------------------------
+
+# Project PROJ with child CHILD. The child records one checkpoint
+# ("Child work"), and is then checked in while still IN-PROGRESS, so its whole
+# history is in the project's. The working copy is left on the project.
+_setup_partial_checkin() {
+  PROJ=$(create_project "proj" "Project") || true
+  checkout_task "$PROJ" >/dev/null || true
+  CHILD=$(create_task "c" "Child") || true
+  checkout_task "$CHILD" >/dev/null || true
+  edit_file "$REPO/child-work.txt" "work"
+  checkpoint_task "Child work" >/dev/null || true
+  run_tt task checkin "$CHILD" >/dev/null 2>&1 || true
+  checkout_task "$PROJ" >/dev/null || true
+}
+
+# Adds a checkpoint to the current task, writing FILE.
+# Usage: _add_work FILE MESSAGE
+_add_work() {
+  edit_file "$REPO/$1" "$2"
+  checkpoint_task "$2" >/dev/null || true
+}
+
+# Asserts that every commit in REVSET points TASK.md at TASK_ID.
+# Usage: _assert_range_symlink LABEL REVSET TASK_ID
+_assert_range_symlink() {
+  local label="$1" revset="$2" task_id="$3"
+  local commits commit wrong=''
+  commits="$(jj -R "$REPO" log -r "$revset" --no-graph -T 'commit_id ++ "\n"' 2>/dev/null)"
+  while IFS= read -r commit; do
+    [[ -n "$commit" ]] || continue
+    [[ "$(get_symlink_target_at_rev "$commit" TASK.md)" == ".tt/task/${task_id#*/}/TASK.md" ]] \
+      || wrong+="${commit:0:8} "
+  done <<< "$commits"
+  assert_output_not_empty "$label (range is not empty)" "$commits"
+  assert_eq "$label" "$wrong" ""
+}
+
+# Asserts that CHILD's tip is a fork commit of CHILD sitting directly on
+# PARENT's tip, and points TASK.md at CHILD.
+# Usage: _assert_forked_onto LABEL CHILD PARENT TITLE
+_assert_forked_onto() {
+  local label="$1" child="$2" parent="$3" title="$4"
+  assert_commit_message_first_line "$label: the child tip is a fork commit" \
+    "$child" "[tt:task:$child:fork] $title"
+  assert_eq "$label: the fork commit sits on the parent tip" \
+    "$(get_full_commit_id "${child}-")" "$(get_full_commit_id "$parent")"
+  assert_task_symlink_at_rev "$label: TASK.md points at the child" "$child" "$child"
+}
+
+test_task_propagate__up_to_date_in_progress_child_forks_rebase() {
+  setup_workspace "prop-fork-rebase"
+  _setup_partial_checkin
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
+  assert_success "propagate succeeds" "$exit_code"
+  assert_contains "the fork commit is announced" "$output" "creating fork commit"
+  _assert_forked_onto "rebase" "$CHILD" "$PROJ" "Child"
+  assert_task_status "the status does not change" "$CHILD" "IN-PROGRESS"
+}
+
+test_task_propagate__up_to_date_in_progress_child_forks_merge() {
+  setup_workspace "prop-fork-merge"
+  _setup_partial_checkin
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" --merge 2>&1) || exit_code=$?
+  assert_success "propagate succeeds" "$exit_code"
+  _assert_forked_onto "merge" "$CHILD" "$PROJ" "Child"
+  assert_eq "the fork commit is not a merge" "$(parent_count "$CHILD")" "1"
+  assert_task_status "the status does not change" "$CHILD" "IN-PROGRESS"
+}
+
+test_task_propagate__up_to_date_done_child_untouched() {
+  setup_workspace "prop-fork-done"
+  PROJ=$(create_project "proj" "Project") || true
+  checkout_task "$PROJ" >/dev/null || true
+  CHILD=$(create_task "c" "Child") || true
+  checkout_task "$CHILD" >/dev/null || true
+  _add_work "child-work.txt" "Child work"
+  run_tt task checkin "$CHILD" --complete >/dev/null 2>&1 || true
+  checkout_task "$PROJ" >/dev/null || true
+
+  bm_before=$(get_bookmark_commit "$CHILD")
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
+  assert_success "propagate succeeds" "$exit_code"
+  assert_contains "the child is reported up to date" "$output" "$CHILD: already up to date"
+  assert_eq "the child bookmark does not move" "$(get_bookmark_commit "$CHILD")" "$bm_before"
+}
+
+test_task_propagate__checkin_propagate_forks_the_checked_in_child() {
+  setup_workspace "prop-fork-checkin"
+  PROJ=$(create_project "proj" "Project") || true
+  checkout_task "$PROJ" >/dev/null || true
+  CHILD=$(create_task "c" "Child") || true
+  checkout_task "$CHILD" >/dev/null || true
+  _add_work "child-work.txt" "Child work"
+
+  output="" exit_code=0
+  output=$(run_tt task checkin "$CHILD" --propagate 2>&1) || exit_code=$?
+  assert_success "partial checkin with propagation succeeds" "$exit_code"
+  _assert_forked_onto "checkin --propagate" "$CHILD" "$PROJ" "Child"
+  assert_task_status "the child is still in progress" "$CHILD" "IN-PROGRESS"
+}
+
+test_task_propagate__rebase_after_partial_checkin_forks_underneath() {
+  setup_workspace "prop-fork-rebase-more-work"
+  _setup_partial_checkin
+  checkout_task "$CHILD" >/dev/null || true
+  _add_work "more-work.txt" "More work"
+  checkout_task "$PROJ" >/dev/null || true
+  _add_work "parent-file.txt" "Parent update"
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
+  assert_success "propagate succeeds" "$exit_code"
+  assert_commit_message_first_line "the fork commit is the root of the range" \
+    "roots(${PROJ}..${CHILD})" "[tt:task:$CHILD:fork] Child"
+  assert_eq "the fork commit sits on the parent tip" \
+    "$(get_full_commit_id "roots(${PROJ}..${CHILD})-")" "$(get_full_commit_id "$PROJ")"
+  assert_revset_count "the range is the fork commit and the new work" "${PROJ}..${CHILD}" "2"
+  _assert_range_symlink "every commit on the child's line points at the child" \
+    "${PROJ}..${CHILD}" "$CHILD"
+  assert_file_on_branch "the child received the parent's change" "$CHILD" "parent-file.txt"
+  assert_no_conflicts "no conflicts" "${PROJ}..${CHILD}"
+
+  # A second propagation without a new checkin hangs the range off the
+  # parent's old tip, which points at the parent: no second fork commit.
+  _add_work "parent-file-2.txt" "Parent update 2"
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
+  assert_success "second propagate succeeds" "$exit_code"
+  assert_revset_count "no second fork commit" "${PROJ}..${CHILD}" "2"
+  assert_commit_message_first_line "the existing fork commit is still the root" \
+    "roots(${PROJ}..${CHILD})" "[tt:task:$CHILD:fork] Child"
+  _assert_range_symlink "the child's line still points at the child" \
+    "${PROJ}..${CHILD}" "$CHILD"
+}
+
+test_task_propagate__rebase_done_child_after_partial_checkin_forks() {
+  setup_workspace "prop-fork-rebase-done"
+  _setup_partial_checkin
+  checkout_task "$CHILD" >/dev/null || true
+  _add_work "more-work.txt" "More work"
+  complete_task >/dev/null || true
+  checkout_task "$PROJ" >/dev/null || true
+  _add_work "parent-file.txt" "Parent update"
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
+  assert_success "propagate succeeds" "$exit_code"
+  assert_commit_message_first_line "the fork commit is the root of the range" \
+    "roots(${PROJ}..${CHILD})" "[tt:task:$CHILD:fork] Child"
+  assert_revset_count "fork commit, new work and completion" "${PROJ}..${CHILD}" "3"
+  _assert_range_symlink "every commit on the child's line points at the child" \
+    "${PROJ}..${CHILD}" "$CHILD"
+  assert_task_status "the child stays DONE" "$CHILD" "DONE"
+}
+
+# The grandchild was checked into the child after the child's own partial
+# checkin. Without a fork commit underneath, the grandchild's fork commit
+# would conflict on TASK.md once moved onto the project's tip.
+test_task_propagate__rebase_nested_grandchild_has_no_conflicts() {
+  setup_workspace "prop-fork-nested"
+  _setup_partial_checkin
+  GRANDCHILD=$(create_task_under "$CHILD" "g" "Grandchild") || true
+  checkout_task "$GRANDCHILD" >/dev/null || true
+  _add_work "grandchild-work.txt" "Grandchild work"
+  run_tt task checkin "$GRANDCHILD" --complete >/dev/null 2>&1 || true
+  checkout_task "$PROJ" >/dev/null || true
+  _add_work "parent-file.txt" "Parent update"
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
+  assert_success "propagate succeeds" "$exit_code"
+  assert_no_conflicts "no conflicts on the child's line" "${PROJ}..${CHILD}"
+  assert_commit_message_first_line "the fork commit is the root of the range" \
+    "roots(${PROJ}..${CHILD})" "[tt:task:$CHILD:fork] Child"
+  _assert_range_symlink "the child's own line points at the child" \
+    "first_ancestors(${CHILD}) ~ ::${PROJ}" "$CHILD"
+  _assert_range_symlink "the grandchild's commits point at the grandchild" \
+    "(${PROJ}..${GRANDCHILD}) ~ first_ancestors(${CHILD})" "$GRANDCHILD"
+  assert_task_symlink_at_rev "the grandchild tip points at the grandchild" \
+    "$GRANDCHILD" "$GRANDCHILD"
+}
+
+test_task_propagate__merge_after_partial_checkin_keeps_child_symlink() {
+  setup_workspace "prop-merge-partial"
+  _setup_partial_checkin
+  checkout_task "$CHILD" >/dev/null || true
+  _add_work "more-work.txt" "More work"
+  checkout_task "$PROJ" >/dev/null || true
+  _add_work "parent-file.txt" "Parent update"
+
+  child_tip_before=$(get_full_commit_id "$CHILD")
+  parent_tip_before=$(get_full_commit_id "$PROJ")
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" --merge 2>&1) || exit_code=$?
+  assert_success "merge propagate succeeds" "$exit_code"
+
+  # The merge base points TASK.md at the child, and the project's side points
+  # it back at the project in the partial checkin's handoff.
+  assert_eq "the child tip is a merge" "$(parent_count "$CHILD")" "2"
+  merge_parents=$(jj -R "$REPO" log -r "$CHILD" --no-graph \
+    -T 'parents.map(|c| c.commit_id()).join(" ")' 2>/dev/null)
+  assert_eq "the child's old tip is the first parent" "${merge_parents%% *}" "$child_tip_before"
+  assert_eq "the parent tip is the second parent" "${merge_parents##* }" "$parent_tip_before"
+  assert_commit_message_first_line "the merge is labelled as a propagate of the parent" \
+    "$CHILD" "[tt:task:$PROJ:propagate] Project"
+  assert_task_symlink_at_rev "the merge points TASK.md at the child" "$CHILD" "$CHILD"
+  assert_revset_count "the new work and the merge, no extra commit" "${PROJ}..${CHILD}" "2"
+  assert_no_conflicts "no conflicts" "$CHILD"
+}
+
+test_task_propagate__dry_run_names_fork_and_merge() {
+  setup_workspace "prop-dry-run-names"
+  _setup_partial_checkin
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" --dry-run 2>&1) || exit_code=$?
+  assert_success "dry-run succeeds" "$exit_code"
+  assert_contains "the up-to-date fork is named" "$output" "[dry-run] fork $CHILD onto $PROJ"
+
+  checkout_task "$CHILD" >/dev/null || true
+  _add_work "more-work.txt" "More work"
+  checkout_task "$PROJ" >/dev/null || true
+  bm_before=$(get_bookmark_commit "$CHILD")
+
+  output=$(run_tt task propagate --from "$PROJ" --dry-run 2>&1) || true
+  assert_contains "the rebase fork is named" "$output" \
+    "[dry-run] fork $CHILD onto $PROJ, then rebase $CHILD onto the fork commit"
+  output=$(run_tt task propagate --from "$PROJ" --merge --dry-run 2>&1) || true
+  assert_contains "the merge label is named" "$output" \
+    "[dry-run] merge $PROJ into $CHILD as [tt:task:$PROJ:propagate]"
+  assert_eq "the child bookmark does not move" "$(get_bookmark_commit "$CHILD")" "$bm_before"
+}
+
+# A worktree on the child, behind after a partial checkin, reports the child
+# as its current task once it is synced onto the propagated branch.
+test_task_propagate__synced_child_worktree_reports_the_child() {
+  setup_workspace "prop-fork-worktree"
+  PROJ=$(create_project "proj" "Project") || true
+  checkout_task "$PROJ" >/dev/null || true
+  CHILD=$(create_task "c" "Child") || true
+  wt=$(create_task_worktree "$CHILD")
+  printf 'work\n' > "$wt/child-work.txt"
+  run_tt_in_worktree "$wt" task checkpoint -m "Child work" >/dev/null 2>&1 || true
+  run_tt_in_worktree "$wt" task checkin >/dev/null 2>&1 || true
+
+  checkout_task "$PROJ" >/dev/null || true
+  _add_work "parent-file.txt" "Parent update"
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
+  assert_success "propagate succeeds" "$exit_code"
+  assert_contains "the child worktree is reported behind" "$output" "$wt ($CHILD)"
+
+  exit_code=0
+  run_tt_in_worktree "$wt" worktree sync >/dev/null 2>&1 || exit_code=$?
+  assert_success "sync succeeds" "$exit_code"
+  current=$(run_tt_in_worktree "$wt" task current 2>/dev/null) || true
+  assert_eq "the child worktree reports the child" "$current" "$CHILD"
+  assert_file_exists "the worktree received the parent's change" "$wt/parent-file.txt"
+}
+
+# Project PROJ with child CHILD, set up so that rebasing CHILD onto PROJ
+# conflicts on f.txt in a commit below CHILD's tip, while the tip itself is
+# clean: the child's second commit reverts its first, which cancels the
+# conflict. The conflict check covers the whole moved range.
+_setup_conflict_below_tip() {
+  PROJ=$(create_project "proj" "Project") || true
+  checkout_task "$PROJ" >/dev/null || true
+  _add_work "f.txt" "a"
+  CHILD=$(create_task "c" "Child") || true
+  checkout_task "$CHILD" >/dev/null || true
+  _add_work "f.txt" "b"
+  _add_work "f.txt" "a"
+  checkout_task "$PROJ" >/dev/null || true
+  _add_work "f.txt" "p"
+}
+
+test_task_propagate__rebase_refuses_conflict_below_the_tip() {
+  setup_workspace "prop-conflict-below-tip"
+  _setup_conflict_below_tip
+
+  bm_before=$(get_bookmark_commit "$CHILD")
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
+  assert_failure "propagate refuses" "$exit_code"
+  assert_contains "the conflict is reported" "$output" "Conflicts detected in $CHILD"
+  assert_eq "the child bookmark does not move" "$(get_bookmark_commit "$CHILD")" "$bm_before"
+}
+
+test_task_propagate__rebase_force_accepts_conflict_below_the_tip() {
+  setup_workspace "prop-conflict-below-tip-force"
+  _setup_conflict_below_tip
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" --force 2>&1) || exit_code=$?
+  assert_success "--force proceeds" "$exit_code"
+  assert_is_ancestor "the child was rebased" "$PROJ" "$CHILD"
+  assert_eq "the conflict is below the tip" \
+    "$(has_conflicts "$CHILD" && echo tip || echo clean)" "clean"
+  assert_eq "the moved range carries the conflict" \
+    "$(has_conflicts "${PROJ}..${CHILD}" && echo conflicted || echo clean)" "conflicted"
 }
 
 

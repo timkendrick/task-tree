@@ -64,6 +64,7 @@
 #     _jj__list_commits_in_dag_range — commit IDs descended from BASE up to TIP
 #     _jj__count_commits_in_range    — number of commits in FROM..TO
 #     _jj__list_range_root_commits   — commit IDs of the roots of FROM..TO
+#     _jj__list_range_root_parent_commits — commit IDs of the parents of the roots of FROM..TO
 #     _jj__check_range_covered       — whether a range is inside a union of ranges
 #     _jj__format_revision_range     — render a FROM/TO range in a named format
 #     _jj__list_mainline_commits     — first-parent mainline commit records
@@ -548,6 +549,17 @@ _jj__count_commits_in_range() {
 _jj__list_range_root_commits() {
   local repo="$1" from="$2" to="$3"
   __jj__read "$repo" --ignore-working-copy log -r "roots(${from}..${to})" \
+    --no-graph -T 'commit_id ++ "\n"'
+}
+
+# Usage: _jj__list_range_root_parent_commits REPO FROM TO
+# Prints the commit IDs of the parents of the roots of the FROM..TO range, one
+# per line. These commits are outside the range: they are where the range
+# hangs off the rest of history. Prints nothing when the range is empty.
+# Returns jj's exit code.
+_jj__list_range_root_parent_commits() {
+  local repo="$1" from="$2" to="$3"
+  __jj__read "$repo" --ignore-working-copy log -r "parents(roots(${from}..${to}))" \
     --no-graph -T 'commit_id ++ "\n"'
 }
 
