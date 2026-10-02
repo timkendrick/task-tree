@@ -135,14 +135,7 @@ main() {
   # staged task file's status field to DONE.
   complete_writer() {
     local root="$1"
-    local tmpfile
-    tmpfile="$(mktemp)"
-    awk '
-      /^---$/ { n++; print; next }
-      n == 1 && /^status:/ { print "status: DONE"; next }
-      { print }
-    ' "$root/$task_file" > "$tmpfile"
-    mv "$tmpfile" "$root/$task_file"
+    _frontmatter__set_status "$root/$task_file" "DONE"
   }
 
   # Begin transaction (records before-op for undo)

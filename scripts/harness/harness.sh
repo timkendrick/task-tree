@@ -839,6 +839,19 @@ get_symlink_target() {
   readlink "$1" 2>/dev/null
 }
 
+# Print the target of the symlink recorded at the repo-root-relative PATH at
+# REV. Prints nothing and returns 1 when PATH is absent or not a symlink there.
+# Usage: get_symlink_target_at_rev REV PATH
+get_symlink_target_at_rev() {
+  local rev="$1" path="$2"
+  jj -R "$REPO" --ignore-working-copy diff --git --from 'root()' --to "$rev" \
+    -- "root-file:\"${path}\"" 2>/dev/null | awk '
+      /^new file mode 120000$/ { symlink = 1 }
+      symlink && !found && /^\+[^+]/ { found = 1; print substr($0, 2) }
+      END { exit(found ? 0 : 1) }
+    '
+}
+
 # ---------------------------------------------------------------------------
 # Log Helpers
 # ---------------------------------------------------------------------------
@@ -1598,11 +1611,19 @@ assert_wc_on_branch_matches() {
 }
 
 # The task WORKTREE (default: $REPO) has checked out, as recorded by the root
-# TASK.md symlink `tt task checkout` plants there.
+# TASK.md symlink the task branch's fork commit plants there.
 # Usage: assert_task_symlink LABEL TASK_ID [WORKTREE]
 assert_task_symlink() {
   local label="$1" task_id="$2" worktree="${3:-$REPO}"
   assert_symlink "$label" "$worktree/TASK.md" ".tt/task/${task_id#*/}/TASK.md"
+}
+
+# The root TASK.md symlink recorded at REV points at TASK_ID's task file.
+# Usage: assert_task_symlink_at_rev LABEL REV TASK_ID
+assert_task_symlink_at_rev() {
+  local label="$1" rev="$2" task_id="$3"
+  assert_eq "$label" "$(get_symlink_target_at_rev "$rev" TASK.md)" \
+    ".tt/task/${task_id#*/}/TASK.md"
 }
 
 # Both halves of a checkout: WORKTREE records TASK_ID as the task it holds, and

@@ -34,6 +34,49 @@ test_task_create__create_task_under_project() {
 }
 
 
+test_task_create__child_branch_starts_on_fork_commit() {
+  setup_workspace "create-fork-commit"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  task_id=$(create_task "child" "Child Task") || true
+  local fork="${task_id}-"
+  assert_commit_message_first_line "child's first commit is the fork commit" \
+    "$fork" "[tt:task:${task_id}:fork] Child Task"
+  assert_commit_message_first_line "parent tip is the create commit" \
+    "$proj_id" "[tt:task:${task_id}:create] Child Task"
+  assert_eq "fork commit's parent is the parent's create commit" \
+    "$(get_full_commit_id "${fork}-")" "$(get_full_commit_id "$proj_id")"
+  assert_eq "fork commit changes only TASK.md" "$(get_modified_files "$fork")" "TASK.md"
+  assert_task_symlink_at_rev "TASK.md points at the child on the fork commit" "$fork" "$task_id"
+  assert_task_symlink_at_rev "TASK.md points at the child at the child bookmark" "$task_id" "$task_id"
+  assert_task_symlink_at_rev "parent's create commit leaves TASK.md on the parent" "$proj_id" "$proj_id"
+}
+
+
+test_task_create__project_starts_on_new_commit() {
+  setup_workspace "create-project-new-commit"
+  proj_id=$(create_project "proj" "Project") || true
+  local first="${proj_id}-"
+  assert_commit_message_first_line "project's first commit is the new commit" \
+    "$first" "[tt:task:${proj_id}:new] Project"
+  assert_task_symlink_at_rev "TASK.md points at the project on the new commit" "$first" "$proj_id"
+  assert_file_on_branch "new commit writes the stub" "$first" ".tt/task/${proj_id#*/}/TASK.md"
+  assert_commit_message_first_line "edit commit follows" \
+    "$proj_id" "[tt:task:${proj_id}:edit] Project"
+}
+
+
+test_task_create__child_of_non_task_branch_starts_on_new_commit() {
+  setup_workspace "create-non-task-parent"
+  task_id=$(create_task_under "main" "loose" "Loose Task") || true
+  assert_matches "task created under a non-task bookmark" "$task_id" "task/%loose%"
+  assert_commit_message_first_line "first commit is the new commit" \
+    "${task_id}-" "[tt:task:${task_id}:new] Loose Task"
+  assert_task_symlink_at_rev "TASK.md points at the task" "$task_id" "$task_id"
+}
+
+
 test_task_create__create_with_checkout() {
   setup_workspace "create-checkout"
   proj_id=$(create_project "proj" "Project") || true

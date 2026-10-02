@@ -174,6 +174,33 @@ test__frontmatter__update_timestamp__updates_in_place() {
 }
 
 # ---------------------------------------------------------------------------
+# _frontmatter__set_status
+# ---------------------------------------------------------------------------
+
+test__frontmatter__set_status__rewrites_frontmatter_field_only() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z"
+  printf 'status: body line\n' >> "$file"
+
+  _frontmatter__set_status "$file" "IN-PROGRESS"
+
+  local content
+  content="$(cat "$file")"
+  assert_contains "status changed" "$content" "status: IN-PROGRESS"
+  assert_not_contains "old status gone" "$content" "status: TODO"
+  assert_contains "body line untouched" "$content" "status: body line"
+  assert_contains "updated timestamp untouched" "$content" "updated: 2025-01-01T00:00:00Z"
+}
+
+# ---------------------------------------------------------------------------
 # _frontmatter__write_task_file
 # ---------------------------------------------------------------------------
 

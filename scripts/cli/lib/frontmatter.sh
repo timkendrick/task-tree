@@ -17,6 +17,7 @@
 #   _frontmatter__remove_subtask       — remove a 'subtask:' entry by task ID
 #   _frontmatter__rename_subtask       — repoint a 'subtask:' entry at a new task ID
 #   _frontmatter__update_timestamp     — rewrite the 'updated:' field
+#   _frontmatter__set_status           — rewrite the 'status:' field
 #
 # Global-variable conventions (bash 3.2 functions cannot return structured
 # data, so these globals are part of the public surface):
@@ -403,6 +404,27 @@ _frontmatter__update_timestamp() {
       sep=$(( sep + 1 ))
     elif [[ $sep -eq 1 && "$current" == updated:* ]]; then
       current="updated: $ts"
+    fi
+    out+="$current"$'\n'
+  done < "$file"
+  printf '%s' "$out" > "$file"
+}
+
+# _frontmatter__set_status FILE STATUS
+#
+# Updates the 'status:' field in the frontmatter of FILE to STATUS. Only lines
+# inside the frontmatter block are considered: a body line starting with
+# 'status:' is left untouched. Does not update the 'updated:' timestamp.
+# Rewritten in place, in bash: the file is a staged copy nothing else reads.
+_frontmatter__set_status() {
+  local file="$1"
+  local status="$2"
+  local current sep=0 out=''
+  while IFS= read -r current || [[ -n "$current" ]]; do
+    if [[ "$current" == '---' ]]; then
+      sep=$(( sep + 1 ))
+    elif [[ $sep -eq 1 && "$current" == status:* ]]; then
+      current="status: $status"
     fi
     out+="$current"$'\n'
   done < "$file"

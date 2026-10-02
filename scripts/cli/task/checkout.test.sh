@@ -12,11 +12,32 @@ test_task_checkout__basic_checkout_of_todo_task() {
   assert_task_status "TODO before checkout" "$task_id" "TODO"
 
   output="" exit_code=0
-  output=$(checkout_task "$task_id") || exit_code=$?
+  output=$(run_tt task checkout "$task_id" 2>&1) || exit_code=$?
   assert_success "checkout succeeds" "$exit_code"
   assert_task_status "IN-PROGRESS after checkout" "$task_id" "IN-PROGRESS"
   assert_current_task "WC on task branch" "$task_id"
   assert_wc_clean "WC clean after checkout"
+  assert_commit_message_first_line "checkout commit message" "$task_id" \
+    "[tt:task:${task_id}:checkout] My Task"
+  assert_eq "checkout commit changes only the task file" \
+    "$(get_modified_files "$task_id")" ".tt/task/${task_id#*/}/TASK.md"
+  assert_not_contains "checkout does not report a symlink write" "$output" "Created TASK.md"
+}
+
+
+test_task_checkout__first_checkout_changes_only_the_status() {
+  setup_workspace "checkout-status-only"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task" "Body text") || true
+  local task_file=".tt/task/${task_id#*/}/TASK.md"
+  local before
+  before="$(read_file_at_rev "$task_id" "$task_file")"
+
+  checkout_task "$task_id" >/dev/null || true
+  assert_eq "task file differs only in its status" \
+    "$(read_file_at_rev "$task_id" "$task_file")" \
+    "${before/status: TODO/status: IN-PROGRESS}"
 }
 
 
@@ -64,6 +85,31 @@ test_task_checkout__dirty_wc_with_force() {
   assert_contains "warns that --force overrode the precondition" "$output" \
     "proceeding due to --force"
   assert_task_status "task checked out" "$task_id" "IN-PROGRESS"
+  assert_file_not_on_branch "dirty file kept out of the checkout commit" "$task_id" "dirty.txt"
+  assert_eq "checkout commit changes only the task file" \
+    "$(get_modified_files "$task_id")" ".tt/task/${task_id#*/}/TASK.md"
+  assert_current_task "WC on task branch" "$task_id"
+}
+
+
+test_task_checkout__dirty_wc_on_the_task_with_force() {
+  setup_workspace "checkout-dirty-on-task-force"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+
+  # Park the working copy on the never-checked-out task itself, which it
+  # already records through the fork commit, then leave edits uncommitted.
+  jj -R "$REPO" new "$task_id" >/dev/null 2>&1
+  edit_file "dirty.txt" "dirty"
+  output="" exit_code=0
+  output=$(run_tt task checkout "$task_id" --force 2>&1) || exit_code=$?
+  assert_success "checkout --force succeeds" "$exit_code"
+  assert_task_status "task checked out" "$task_id" "IN-PROGRESS"
+  assert_file_not_on_branch "dirty file kept out of the checkout commit" "$task_id" "dirty.txt"
+  assert_eq "checkout commit changes only the task file" \
+    "$(get_modified_files "$task_id")" ".tt/task/${task_id#*/}/TASK.md"
+  assert_current_task "WC on task branch" "$task_id"
 }
 
 
@@ -419,6 +465,14 @@ test_task_checkout__reopens_completed_task() {
   assert_neq "task bookmark advanced" "$(get_bookmark_commit "$task_id")" "$bm_before"
   assert_commit_message_first_line "reopen commit message" "$task_id" \
     "[tt:task:${task_id}:checkout] My Task"
+  local task_file=".tt/task/${task_id#*/}/TASK.md"
+  assert_eq "reopen commit changes only the task file" \
+    "$(get_modified_files "$task_id")" "$task_file"
+  local before
+  before="$(read_file_at_rev "$bm_before" "$task_file")"
+  assert_eq "reopen changes only the status" \
+    "$(read_file_at_rev "$task_id" "$task_file")" \
+    "${before/status: DONE/status: IN-PROGRESS}"
   assert_current_task "WC on task branch" "$task_id"
   assert_wc_clean "WC clean after reopen"
 }

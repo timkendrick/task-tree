@@ -281,8 +281,35 @@ main() {
   rebase_roots="$(_task__list_unmerged_roots "$repo" "$old_parent_tip" "$task_id")" || true
 
   if [[ -n "$rebase_roots" ]]; then
+    # Each root is held by change ID too, so it can be found again once the
+    # move has rewritten it.
+    local -a old_roots=() root_changes=()
+    local root
+    while IFS= read -r root; do
+      [[ -n "$root" ]] || continue
+      old_roots+=("$root")
+      root_changes+=("$(_task__resolve_change "$repo" "$root")")
+    done <<< "$rebase_roots"
+
     _ui__log "Rebasing $task_id onto $new_parent_id..."
     _task__move_unmerged_range "$repo" "$old_parent_tip" "$task_id" "$new_parent_id"
+
+    # The moved commits keep pointing the task symlink at the moved task. On
+    # the new base it points at the new parent, so the rebase would otherwise
+    # leave the symlink conflicted (where a root changes it, as a fork commit
+    # does) or pointing at the new parent (where a root inherits it). Each
+    # moved root takes the symlink from its own pre-move commit, and the
+    # commits above it inherit that.
+    local i moved_root
+    for i in "${!old_roots[@]}"; do
+      moved_root="$(_task__resolve_revision "$repo" "${root_changes[$i]}")"
+      _task__restore_symlink "$repo" "${old_roots[$i]}" "$moved_root"
+    done
+
+    # The restore is a bare rewrite, so a worktree carried along with the
+    # range still holds the pre-restore files. The working copy was required
+    # clean up front, so nothing uncommitted is lost.
+    _worktree__refresh_current "$repo"
   else
     _ui__log "No unmerged commits to rebase for $task_id."
   fi
