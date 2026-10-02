@@ -2,7 +2,8 @@
 title: "Propagate restores the child's TASK.md symlink"
 status: IN-PROGRESS
 created: 2026-10-02T09:07:22Z
-updated: 2026-10-02T09:07:22Z
+updated: 2026-10-02T13:11:36Z
+context: context/implementation-summary-b8ee9352
 ---
 ## Goal
 
