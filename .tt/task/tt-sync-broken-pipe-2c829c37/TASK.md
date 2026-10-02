@@ -1,6 +1,6 @@
 ---
 title: "Fix broken pipe error in `tt sync` output"
-status: TODO
+status: IN-PROGRESS
 created: 2026-10-02T11:19:28Z
 updated: 2026-10-02T11:19:28Z
 ---
