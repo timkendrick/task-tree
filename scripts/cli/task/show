@@ -190,22 +190,12 @@ main() {
       [[ -z "$line" ]] && continue
       local checkbox subtask_id subtask_status subtask_title=""
       subtask_id="${line:4}"
-      local subtask_branch subtask_file subtask_content
+      local subtask_branch
       if subtask_branch="$(_task__find_branch "$repo" "$subtask_id" "$task_prefix" "$project_prefix" 2>/dev/null)"; then
-        local subtask_id_suffix
-        if _task__check_is_task_branch "$subtask_id" "$task_prefix"; then
-          subtask_id_suffix="${subtask_id#$task_prefix}"
-        elif _task__check_is_project_branch "$subtask_id" "$project_prefix"; then
-          subtask_id_suffix="${subtask_id#$project_prefix}"
-        else
-          subtask_id_suffix=""
-        fi
-        if [[ -n "$subtask_id_suffix" ]]; then
-          subtask_file="$(_path__task_file "$subtask_id_suffix")"
-          subtask_content="$(_task__read_file "$repo" "$subtask_branch" "$subtask_file" || true)"
-          subtask_status="$(_frontmatter__parse_field "$subtask_content" "status" 2>/dev/null || true)"
-          subtask_title="$(_frontmatter__parse_quoted_field "$subtask_content" "title" 2>/dev/null || true)"
-        fi
+        local subtask_fields
+        subtask_fields="$(_task__read_fields "$repo" "$subtask_branch" "$subtask_id" \
+          "$task_prefix" "$project_prefix" status title)" || subtask_fields=''
+        { IFS= read -r subtask_status; IFS= read -r subtask_title; } <<< "$subtask_fields" || true
       fi
       [[ -z "$subtask_status" ]] && subtask_status="TODO"
       checkbox="$(_format__status_checkbox "$subtask_status")"

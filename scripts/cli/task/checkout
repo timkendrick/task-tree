@@ -321,10 +321,10 @@ main() {
 
   # Read task frontmatter from the bookmark (after any propagation, so the values
   # reflect the branch's current tip).
-  local task_file_content task_title task_status
-  task_file_content="$(_task__read_file "$repo" "$task_id" "$task_file")" || true
-  task_title="$(_frontmatter__parse_quoted_field "$task_file_content" "title")"
-  task_status="$(_frontmatter__parse_field "$task_file_content" "status")"
+  local task_fields task_title task_status
+  task_fields="$(_task__read_fields "$repo" "$task_id" "$task_id" \
+    "$task_prefix" "$project_prefix" title status)" || task_fields=''
+  { IFS= read -r task_title; IFS= read -r task_status; } <<< "$task_fields" || true
 
   # Determine if a status-updating checkout commit is needed.
   # Status TODO means the task has never been checked out.

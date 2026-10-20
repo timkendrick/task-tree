@@ -166,22 +166,15 @@ main() {
     parent_task_file="$(_path__task_file "$parent_suffix")"
   fi
 
-  local old_dir new_dir old_task_file
+  local old_dir new_dir
   old_dir="$(_path__task_dir "$suffix")"
   new_dir="$(_path__task_dir "$new_suffix")"
-  old_task_file="$(_path__task_file "$suffix")"
 
   # Get task title for commit message
-  local task_content='' task_title=''
-  task_content="$(_task__read_file "$repo" "$old_id" "$old_task_file")" || task_content=''
-  task_title="$(printf '%s\n' "$task_content" \
-    | awk '/^title:/ { for(i=2;i<=NF;i++) printf "%s ", $i; print ""; exit }')"
-
-  if [[ -z "$task_title" ]]; then
-    task_title="($old_id)"
-  else
-    task_title="${task_title% }"  # Remove trailing space
-  fi
+  local task_title
+  task_title="$(_task__read_title "$repo" "$old_id" "$old_id" "$task_prefix" "$project_prefix")" \
+    || task_title=''
+  [[ -n "$task_title" ]] || task_title="($old_id)"
 
   local rename_message
   rename_message="$(_commit__format_message "task" "rename" "$new_id" "$task_title")"

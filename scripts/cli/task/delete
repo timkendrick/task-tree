@@ -185,13 +185,13 @@ main() {
   fi
 
   # Read task content and check status
-  local task_content task_title task_status
-  task_content="$(_task__read_file "$repo" "$task_id" "$task_file")" || {
+  local task_fields task_title task_status
+  task_fields="$(_task__read_fields "$repo" "$task_id" "$task_id" \
+    "$task_prefix" "$project_prefix" title status)" || {
     _ui__log "Error: Could not read task file '$task_file' from bookmark '$task_id'."
     exit 1
   }
-  task_title="$(_frontmatter__parse_quoted_field "$task_content" "title")"
-  task_status="$(_frontmatter__parse_field "$task_content" "status")"
+  { IFS= read -r task_title; IFS= read -r task_status; } <<< "$task_fields" || true
 
   # Precondition: top-level task must be DONE (skip with --force)
   if [[ "$force" != true ]] && [[ "$task_status" != "DONE" ]]; then
