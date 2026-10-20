@@ -465,15 +465,52 @@ test__frontmatter__parse_values__first_occurrence_and_body_ignored() {
     "$(_frontmatter__parse_values "$content" title status; printf x)" $'T\n\nx'
 }
 
-test__frontmatter__parse_values__rejects_repeatable_fields() {
-  local content field output exit_code
-  content="$(printf '%s\n' '---' 'title: "T"' 'label: l' '---')"
-  for field in label context subtask; do
-    exit_code=0
-    output="$(_frontmatter__parse_values "$content" title "$field" 2>/dev/null)" || exit_code=$?
-    assert_failure "$field is rejected" "$exit_code"
-    assert_eq "nothing printed when $field is rejected" "$output" ''
-  done
+# Frontmatter with two subtasks (one with an empty value), one label and a
+# body that mimics a subtask entry.
+_content_with_lists() {
+  printf '%s\n' '---' 'title: "T"' 'subtask: [x] task/a-1 Title A' 'label: l' \
+    'subtask:' 'status: TODO' '---' 'subtask: [ ] task/body-9'
+}
+
+test__frontmatter__parse_values__list_entries_in_file_order() {
+  assert_eq "count then raw entries, empty entry kept, body ignored" \
+    "$(_frontmatter__parse_values "$(_content_with_lists)" 'subtask[]' status)" \
+    $'2\n[x] task/a-1 Title A\n\nTODO'
+}
+
+test__frontmatter__parse_values__absent_list_counts_zero() {
+  assert_eq "an absent list in the middle prints a zero count" \
+    "$(_frontmatter__parse_values "$(_content_with_lists)" title 'context[]' status)" \
+    $'T\n0\nTODO'
+  assert_eq "an absent list at the end prints a zero count" \
+    "$(_frontmatter__parse_values "$(_content_with_lists)" status 'context[]')" $'TODO\n0'
+}
+
+test__frontmatter__parse_values__two_lists_and_repeats() {
+  assert_eq "two lists in one call" \
+    "$(_frontmatter__parse_values "$(_content_with_lists)" 'label[]' 'subtask[]')" \
+    $'1\nl\n2\n[x] task/a-1 Title A'
+  assert_eq "a field requested twice is printed twice" \
+    "$(_frontmatter__parse_values "$(_content_with_lists)" 'label[]' title 'label[]' title)" \
+    $'1\nl\nT\n1\nl\nT'
+}
+
+test__frontmatter__parse_values__plain_repeatable_field_is_first_value() {
+  assert_eq "a plain repeatable field gives its first value" \
+    "$(_frontmatter__parse_values "$(_content_with_lists)" subtask)" '[x] task/a-1 Title A'
+}
+
+test__frontmatter__parse_values__documented_unpacking() {
+  local title subtask_count subtask subtasks=() i
+  { IFS= read -r title; IFS= read -r subtask_count
+    for (( i = 0; i < subtask_count; i++ )); do
+      IFS= read -r subtask; subtasks+=("$subtask")
+    done
+  } <<< "$(_frontmatter__parse_values "$(_content_with_lists)" title 'subtask[]')" || true
+  assert_eq "title unpacked" "$title" "T"
+  assert_eq "count unpacked" "$subtask_count" "2"
+  assert_eq "a trailing empty entry survives command substitution" \
+    "${#subtasks[@]}:${subtasks[0]}:${subtasks[1]}" "2:[x] task/a-1 Title A:"
 }
 
 test__frontmatter__write_task_file__quoted_title_round_trips_escapes() {

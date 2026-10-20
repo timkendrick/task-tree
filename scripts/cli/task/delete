@@ -38,12 +38,19 @@ Options:
 EOF
 }
 
-# Usage: _subtask_ids_from_content CONTENT
-# Outputs one subtask task ID per line, for all checkbox states ([ ], [-], [x]).
-# Outputs nothing when CONTENT is empty.
-_subtask_ids_from_content() {
-  [[ -z "$1" ]] && return 0
-  _frontmatter__parse_repeated_field "$1" "subtask" | awk '
+# Usage: _subtask_ids_at REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Outputs one subtask task ID per line, for all checkbox states ([ ], [-], [x]),
+# from TASK_ID's task file at REV. Outputs nothing when the file cannot be read.
+_subtask_ids_at() {
+  local fields
+  fields="$(_task__read_fields "$1" "$2" "$3" "$4" "$5" 'subtask[]')" || return 0
+  local subtask_count subtask subtasks=() i
+  { IFS= read -r subtask_count
+    for (( i = 0; i < subtask_count; i++ )); do
+      IFS= read -r subtask; subtasks+=("$subtask")
+    done
+  } <<< "$fields" || true
+  printf '%s\n' ${subtasks[@]+"${subtasks[@]}"} | awk '
     /^\[[ x\-]\]/ { sub(/^\[[ x\-]\][ \t]*/, ""); if ($1 != "") print $1 }
   '
 }
@@ -74,26 +81,12 @@ collect_subtree() {
     fi
     seen="${seen}${current}"$'\n'
 
-    # Determine this task's file path
-    local own_slug own_file
-    if _task__check_is_task_branch "$current" "$task_prefix"; then
-      own_slug="${current#$task_prefix}"
-    else
-      own_slug="${current#$project_prefix}"
-    fi
-    own_file="$(_path__task_file "$own_slug")"
-
-    # Collect subtask IDs from the task's own branch
-    local own_subs=""
-    local own_content
-    own_content="$(_task__read_file "$repo" "$current" "$own_file")" || true
-    own_subs="$(_subtask_ids_from_content "$own_content")" || true
-
-    # Collect subtask IDs from the parent branch's copy of this task's file
-    local parent_subs=""
-    local parent_content
-    parent_content="$(_task__read_file "$repo" "$parent_branch" "$own_file")" || true
-    parent_subs="$(_subtask_ids_from_content "$parent_content")" || true
+    # Collect subtask IDs from the task's own branch, and from the parent
+    # branch's copy of this task's file
+    local own_subs parent_subs
+    own_subs="$(_subtask_ids_at "$repo" "$current" "$current" "$task_prefix" "$project_prefix")"
+    parent_subs="$(_subtask_ids_at "$repo" "$parent_branch" "$current" \
+      "$task_prefix" "$project_prefix")"
 
     # Union: add all newly discovered subtask IDs to to_visit
     local all_subs
