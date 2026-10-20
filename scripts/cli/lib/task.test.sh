@@ -796,6 +796,139 @@ test__task__resolve_current__reports_no_task_when_none_is_recorded() {
 }
 
 # ---------------------------------------------------------------------------
+# _task__resolve_file
+# ---------------------------------------------------------------------------
+
+test__task__resolve_file__maps_task_and_project_ids() {
+  local output='' exit_code=0
+  output="$(_task__resolve_file "task/t-0123abcd" "task/" "project/")" || exit_code=$?
+  assert_success "a task ID resolves" "$exit_code"
+  assert_eq "a task ID maps to its task file" "$output" "$(_path__task_file "t-0123abcd")"
+
+  exit_code=0
+  output="$(_task__resolve_file "project/p-0123abcd" "task/" "project/")" || exit_code=$?
+  assert_success "a project ID resolves" "$exit_code"
+  assert_eq "a project ID maps to its task file" "$output" "$(_path__task_file "p-0123abcd")"
+}
+
+test__task__resolve_file__rejects_an_id_with_neither_prefix() {
+  local output='' exit_code=0
+  output="$(_task__resolve_file "other/t-0123abcd" "task/" "project/")" || exit_code=$?
+  assert_eq "an ID with neither prefix returns 1" "$exit_code" "1"
+  assert_eq "nothing printed for an ID with neither prefix" "$output" ''
+}
+
+# ---------------------------------------------------------------------------
+# _task__read_fields, _task__read_status, _task__read_title
+# ---------------------------------------------------------------------------
+
+# Usage: _read_fields REV TASK_ID FIELD...
+_read_fields() {
+  _task__read_fields "$REPO" "$1" "$2" \
+    "$(_workspace__get_task_prefix "$REPO")" "$(_workspace__get_project_prefix "$REPO")" "${@:3}"
+}
+
+test__task__read_fields__reads_the_branch_tip_not_the_working_copy() {
+  setup_workspace "read-fields-branch-tip"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  other_id=$(create_task "other" "Other") || true
+  other_wt=$(create_task_worktree "$other_id")
+  checkout_task "$task_id" >/dev/null || true
+
+  run_tt_in_worktree "$other_wt" task complete "$task_id" >/dev/null 2>&1 || true
+  assert_not_contains "the fixture leaves the working copy behind" \
+    "$(cat "$REPO/$(_path__task_file "${task_id#task/}")")" "status: DONE"
+
+  local output='' exit_code=0
+  output="$(_read_fields "$task_id" "$task_id" title status)" || exit_code=$?
+  assert_success "the fields are read" "$exit_code"
+  assert_eq "title and status are read from the branch tip" "$output" $'T\nDONE'
+}
+
+test__task__read_fields__reads_at_another_revision() {
+  setup_workspace "read-fields-other-rev"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "Child") || true
+  checkout_task "$task_id" >/dev/null || true
+  edit_file "$REPO/child-work.txt" "work"
+  checkpoint_task "Child work" >/dev/null || true
+  checkin_task "$task_id" --complete >/dev/null || true
+
+  local output='' exit_code=0
+  output="$(_read_fields "$proj_id" "$task_id" status title)" || exit_code=$?
+  assert_success "the fields are read at the parent branch" "$exit_code"
+  assert_eq "the child's fields are read at the parent branch" "$output" $'DONE\nChild'
+}
+
+test__task__read_fields__fails_for_unreadable_task_files() {
+  setup_workspace "read-fields-failures"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  local before_child
+  before_child=$(get_bookmark_commit "$proj_id")
+  task_id=$(create_task "t" "T") || true
+
+  local output='' exit_code=0
+  output="$(_read_fields "$task_id" "other/t-0123abcd" title)" || exit_code=$?
+  assert_eq "an ID with neither prefix returns 1" "$exit_code" "1"
+  assert_eq "nothing printed for an ID with neither prefix" "$output" ''
+
+  exit_code=0
+  output="$(_read_fields "task/missing-0123abcd" "task/missing-0123abcd" title)" || exit_code=$?
+  assert_eq "a missing revision returns 1" "$exit_code" "1"
+  assert_eq "nothing printed for a missing revision" "$output" ''
+
+  exit_code=0
+  output="$(_read_fields "$before_child" "$task_id" title)" || exit_code=$?
+  assert_eq "a task file absent at REV returns 1" "$exit_code" "1"
+  assert_eq "nothing printed for a task file absent at REV" "$output" ''
+}
+
+test__task__read_fields__reads_repeatable_fields_as_counted_lists() {
+  setup_workspace "read-fields-lists"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  a_id=$(create_task "a" "A") || true
+  b_id=$(create_task "b" "B") || true
+
+  local output='' exit_code=0
+  output="$(_read_fields "$proj_id" "$proj_id" 'subtask[]' title 'context[]')" || exit_code=$?
+  assert_success "the fields are read" "$exit_code"
+  assert_eq "subtask is a counted list; an absent context counts zero" "$output" \
+    "2"$'\n'"[ ] $a_id"$'\n'"[ ] $b_id"$'\n'"Project"$'\n'"0"
+}
+
+test__task__read_fields__rejects_fields_in_the_wrong_form() {
+  local output='' exit_code field
+  for field in subtask label context 'title[]' 'status[]'; do
+    exit_code=0
+    output="$(_task__read_fields "/nonexistent" "rev" "task/t-0123abcd" "task/" "project/" \
+      title "$field" 2>/dev/null)" || exit_code=$?
+    assert_eq "'$field' is rejected" "$exit_code" "1"
+    assert_eq "nothing printed when '$field' is rejected" "$output" ''
+  done
+}
+
+test__task__read_status_and_title__print_the_single_value() {
+  setup_workspace "read-status-title"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" 'Say "hi" \ there') || true
+
+  local task_prefix project_prefix
+  task_prefix="$(_workspace__get_task_prefix "$REPO")"
+  project_prefix="$(_workspace__get_project_prefix "$REPO")"
+  assert_eq "the status is printed" \
+    "$(_task__read_status "$REPO" "$task_id" "$task_id" "$task_prefix" "$project_prefix")" "TODO"
+  assert_eq "the decoded title is printed" \
+    "$(_task__read_title "$REPO" "$task_id" "$task_id" "$task_prefix" "$project_prefix")" \
+    'Say "hi" \ there'
+}
+
+# ---------------------------------------------------------------------------
 # _task__find_for_revision
 # ---------------------------------------------------------------------------
 

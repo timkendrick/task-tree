@@ -122,15 +122,9 @@ main() {
     # Task-based safety checks (only if a task bookmark was resolved)
     if [[ -n "$task_id" ]] && (_task__check_is_task_branch "$task_id" "$task_prefix" || _task__check_is_project_branch "$task_id" "$project_prefix"); then
       # Status check: task must be DONE
-      local task_suffix task_file task_content task_status
-      if _task__check_is_task_branch "$task_id" "$task_prefix"; then
-        task_suffix="${task_id#$task_prefix}"
-      else
-        task_suffix="${task_id#$project_prefix}"
-      fi
-      task_file="$(_path__task_file "$task_suffix")"
-      task_content="$(_task__read_file "$repo" "$task_id" "$task_file" 2>/dev/null)" || task_content=""
-      task_status="$(_frontmatter__parse_field "$task_content" "status")"
+      local task_status
+      task_status="$(_task__read_status "$repo" "$task_id" "$task_id" "$task_prefix" "$project_prefix")" \
+        || task_status=''
       if [[ "$task_status" != "DONE" ]]; then
         _ui__log "Error: Task '$task_id' status is '${task_status:-unknown}' (not DONE)."
         _ui__log "  Complete the task first, or use --force to delete the worktree anyway."

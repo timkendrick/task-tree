@@ -116,24 +116,22 @@ main() {
   # Read task file from canonical branch
   local task_file
   task_file="$(_path__task_file "$task_suffix")"
-  local task_content
-  if ! task_content="$(_task__read_file "$repo" "$read_branch" "$task_file")"; then
+  local task_fields
+  if ! task_fields="$(_task__read_fields "$repo" "$read_branch" "$branch" \
+    "$task_prefix" "$project_prefix" 'context[]')"; then
     _ui__log "Error: Could not read task file '$task_file' from '$read_branch'."
     exit 1
   fi
 
   # Parse context IDs from task frontmatter
   local -a all_ctx_ids=()
-  while IFS= read -r ctx_id; do
-    [[ -z "$ctx_id" ]] && continue
-    all_ctx_ids+=("$ctx_id")
-  done < <(printf '%s' "$task_content" | awk '
-    /^---$/ { n++; next }
-    n==1 && /^context:/ {
-      sub(/^context:[[:space:]]*/, "")
-      print
-    }
-  ')
+  local context_count ctx_id i
+  { IFS= read -r context_count
+    for (( i = 0; i < context_count; i++ )); do
+      IFS= read -r ctx_id
+      [[ -n "$ctx_id" ]] && all_ctx_ids+=("$ctx_id")
+    done
+  } <<< "$task_fields" || true
 
   if [[ ${#all_ctx_ids[@]} -eq 0 ]]; then
     _ui__log "Error: Task '$branch' has no context files."

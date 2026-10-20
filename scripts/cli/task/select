@@ -71,23 +71,9 @@ main() {
       continue
     fi
     
-    # Get task file path
-    local suffix
-    if _task__check_is_task_branch "$b" "$task_prefix"; then
-      suffix="${b#$task_prefix}"
-    else
-      suffix="${b#$project_prefix}"
-    fi
-    local tf
-    tf="$(_path__task_file "$suffix")"
-    
-    # Read task file content
-    local content
-    content="$(_task__read_file "$repo" "$b" "$tf")" || continue
-    
     # Check status - exclude DONE tasks
     local status
-    status="$(_frontmatter__parse_field "$content" "status")"
+    status="$(_task__read_status "$repo" "$b" "$b" "$task_prefix" "$project_prefix")" || continue
     [[ "$status" == "DONE" ]] && continue
     
     # Add to active items

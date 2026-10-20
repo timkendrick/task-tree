@@ -124,9 +124,9 @@ main() {
   current_worktree="$(_worktree__resolve_current "$repo")"
 
   # Read task title from task file frontmatter
-  local task_file_content task_title
-  task_file_content="$(_task__read_file "$repo" "$bookmark" "$task_file")" || true
-  task_title="$(_frontmatter__parse_quoted_field "$task_file_content" "title")"
+  local task_title
+  task_title="$(_task__read_title "$repo" "$bookmark" "$bookmark" "$task_prefix" "$project_prefix")" \
+    || task_title=''
 
   # Derive task ID (bookmark name without prefix) for display
   local task_id="$bookmark"

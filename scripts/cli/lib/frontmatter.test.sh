@@ -437,6 +437,82 @@ test__frontmatter__parse_quoted_field__no_backslash_is_stripped_only() {
     "$(_frontmatter__parse_quoted_field "$content" title)" "plain title: with colon"
 }
 
+test__frontmatter__parse_values__argument_order_and_absent_fields() {
+  local content
+  content="$(printf '%s\n' '---' 'title: "T"' 'status: TODO' 'created: C' '---')"
+  assert_eq "values follow argument order" \
+    "$(_frontmatter__parse_values "$content" created status title)" $'C\nTODO\nT'
+  assert_eq "an absent middle field prints an empty line" \
+    "$(_frontmatter__parse_values "$content" title updated status)" $'T\n\nTODO'
+  assert_eq "an absent last field prints an empty line" \
+    "$(_frontmatter__parse_values "$content" status updated; printf x)" $'TODO\n\nx'
+}
+
+test__frontmatter__parse_values__decodes_quoted_and_keeps_unquoted() {
+  local content
+  content="$(printf '%s\n' '---' 'title: "a \"q\" \\ b\nc"' 'status: IN-PROGRESS' '---')"
+  assert_eq "a quoted title with escapes is decoded" \
+    "$(_frontmatter__parse_values "$content" title)" $'a "q" \\ b\nc'
+  assert_eq "an unquoted status is printed unchanged" \
+    "$(_frontmatter__parse_values "$content" status)" "IN-PROGRESS"
+}
+
+test__frontmatter__parse_values__first_occurrence_and_body_ignored() {
+  local content
+  content="$(printf '%s\n' '---' 'status:' 'status: DONE' 'title: "T"' '---' \
+    'status: BODY' '---' 'title: body')"
+  assert_eq "the first occurrence wins, even when empty; body ignored" \
+    "$(_frontmatter__parse_values "$content" title status; printf x)" $'T\n\nx'
+}
+
+# Frontmatter with two subtasks (one with an empty value), one label and a
+# body that mimics a subtask entry.
+_content_with_lists() {
+  printf '%s\n' '---' 'title: "T"' 'subtask: [x] task/a-1 Title A' 'label: l' \
+    'subtask:' 'status: TODO' '---' 'subtask: [ ] task/body-9'
+}
+
+test__frontmatter__parse_values__list_entries_in_file_order() {
+  assert_eq "count then raw entries, empty entry kept, body ignored" \
+    "$(_frontmatter__parse_values "$(_content_with_lists)" 'subtask[]' status)" \
+    $'2\n[x] task/a-1 Title A\n\nTODO'
+}
+
+test__frontmatter__parse_values__absent_list_counts_zero() {
+  assert_eq "an absent list in the middle prints a zero count" \
+    "$(_frontmatter__parse_values "$(_content_with_lists)" title 'context[]' status)" \
+    $'T\n0\nTODO'
+  assert_eq "an absent list at the end prints a zero count" \
+    "$(_frontmatter__parse_values "$(_content_with_lists)" status 'context[]')" $'TODO\n0'
+}
+
+test__frontmatter__parse_values__two_lists_and_repeats() {
+  assert_eq "two lists in one call" \
+    "$(_frontmatter__parse_values "$(_content_with_lists)" 'label[]' 'subtask[]')" \
+    $'1\nl\n2\n[x] task/a-1 Title A'
+  assert_eq "a field requested twice is printed twice" \
+    "$(_frontmatter__parse_values "$(_content_with_lists)" 'label[]' title 'label[]' title)" \
+    $'1\nl\nT\n1\nl\nT'
+}
+
+test__frontmatter__parse_values__plain_repeatable_field_is_first_value() {
+  assert_eq "a plain repeatable field gives its first value" \
+    "$(_frontmatter__parse_values "$(_content_with_lists)" subtask)" '[x] task/a-1 Title A'
+}
+
+test__frontmatter__parse_values__documented_unpacking() {
+  local title subtask_count subtask subtasks=() i
+  { IFS= read -r title; IFS= read -r subtask_count
+    for (( i = 0; i < subtask_count; i++ )); do
+      IFS= read -r subtask; subtasks+=("$subtask")
+    done
+  } <<< "$(_frontmatter__parse_values "$(_content_with_lists)" title 'subtask[]')" || true
+  assert_eq "title unpacked" "$title" "T"
+  assert_eq "count unpacked" "$subtask_count" "2"
+  assert_eq "a trailing empty entry survives command substitution" \
+    "${#subtasks[@]}:${subtasks[0]}:${subtasks[1]}" "2:[x] task/a-1 Title A:"
+}
+
 test__frontmatter__write_task_file__quoted_title_round_trips_escapes() {
   local file="$_TEST_ROOT/escapes.md" title
   title=$'He said "hi" \\ there\tand more'

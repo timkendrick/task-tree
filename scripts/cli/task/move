@@ -194,12 +194,11 @@ main() {
   new_parent_task_file="$(_path__task_file "$new_parent_slug")"
 
   # Read task title for commit messages
-  local task_content task_title
-  task_content="$(_task__read_file "$repo" "$task_id" "$task_file")" || {
+  local task_title
+  task_title="$(_task__read_title "$repo" "$task_id" "$task_id" "$task_prefix" "$project_prefix")" || {
     _ui__log "Error: Could not read task file '$task_file' from '$task_id'."
     exit 1
   }
-  task_title="$(_frontmatter__parse_quoted_field "$task_content" "title")"
 
   local task_dir
   task_dir="$(_path__task_dir "$task_slug")"
