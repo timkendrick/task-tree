@@ -165,7 +165,7 @@ main() {
   workspace_dir="$(_workspace__get_dir "$repo")" || true
 
   # --- Resolve project branch ---
-  local child_bookmark child_slug
+  local child_bookmark
 
   if [[ -n "$project_id_arg" ]]; then
     child_bookmark="$project_id_arg"
@@ -178,7 +178,6 @@ main() {
       _ui__log "Error: Branch '$child_bookmark' not found in repository."
       exit 1
     fi
-    child_slug="${child_bookmark#"$project_prefix"}"
   else
     child_bookmark="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$child_bookmark" ]]; then
@@ -191,7 +190,6 @@ main() {
       _ui__log "  Use 'tt task checkin' to check in task branches."
       exit 1
     fi
-    child_slug="${child_bookmark#"$project_prefix"}"
   fi
 
   local task_id="$child_bookmark"
@@ -207,10 +205,9 @@ main() {
   # the invoking worktree are simply left alone.
 
   # --- Read task title from project branch ---
-  local task_file task_content task_title
-  task_file="$(_path__task_file "$child_slug")"
-  task_content="$(_task__read_file "$repo" "$child_bookmark" "$task_file")" || true
-  task_title="$(_frontmatter__parse_quoted_field "$task_content" "title" 2>/dev/null)" || task_title="$child_bookmark"
+  local task_title
+  task_title="$(_task__read_title "$repo" "$child_bookmark" "$child_bookmark" \
+    "$task_prefix" "$project_prefix")" || task_title=''
 
   # --- Resolve the publish commit message ---
   # Resolved before the transaction opens, so an empty or abandoned message

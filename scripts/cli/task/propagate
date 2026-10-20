@@ -64,27 +64,11 @@ Examples:
 EOF
 }
 
-# Usage: branch_task_file BRANCH TASK_PREFIX PROJECT_PREFIX
-# Prints the task file path owned by BRANCH, or nothing when BRANCH is
-# neither a task nor a project branch.
-branch_task_file() {
-  local branch="$1" task_prefix="$2" project_prefix="$3"
-  if _task__check_is_task_branch "$branch" "$task_prefix"; then
-    _path__task_file "${branch#"$task_prefix"}"
-  elif _task__check_is_project_branch "$branch" "$project_prefix"; then
-    _path__task_file "${branch#"$project_prefix"}"
-  fi
-}
-
-# Usage: read_title REPO BRANCH TASK_FILE
-# Prints the title recorded in TASK_FILE at BRANCH's tip, or nothing when the
+# Usage: read_title REPO BRANCH TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Prints the title of TASK_ID's task file at BRANCH's tip, or nothing when the
 # file cannot be read there.
 read_title() {
-  local repo="$1" branch="$2" task_file="$3"
-  local content
-  content="$(_task__read_file "$repo" "$branch" "$task_file")" || content=''
-  [[ -n "$content" ]] || return 0
-  _frontmatter__parse_quoted_field "$content" "title"
+  _task__read_title "$@" || true
 }
 
 # Usage: is_up_to_date REPO CHILD_BOOKMARK PARENT_BOOKMARK
@@ -113,16 +97,15 @@ is_behind() {
   [[ -n "$result" ]]
 }
 
-# Usage: is_done REPO CHILD_BOOKMARK TASK_FILE
-# Returns 0 (true) if the task file at CHILD_BOOKMARK's tip records status DONE.
-# An unreadable task file (e.g. one at a legacy path) also counts as DONE, so
-# propagate never starts new work on a task it cannot read.
+# Usage: is_done REPO CHILD_BOOKMARK TASK_PREFIX PROJECT_PREFIX
+# Returns 0 (true) if the child's task file at CHILD_BOOKMARK's tip records
+# status DONE. An unreadable task file (e.g. one at a legacy path) also counts
+# as DONE, so propagate never starts new work on a task it cannot read.
 is_done() {
-  local repo="$1" child="$2" task_file="$3"
-  local content status
-  content="$(_task__read_file "$repo" "$child" "$task_file")" || content=''
-  [[ -n "$content" ]] || return 0
-  status="$(_frontmatter__parse_field "$content" "status")"
+  local repo="$1" child="$2" task_prefix="$3" project_prefix="$4"
+  local status
+  status="$(_task__read_status "$repo" "$child" "$child" "$task_prefix" "$project_prefix")" \
+    || return 0
   [[ "$status" == "DONE" ]]
 }
 
@@ -161,14 +144,14 @@ get_subtask_ids() {
   '
 }
 
-# Usage: build_fork_commit REPO CHILD_BOOKMARK FROM_BOOKMARK TASK_FILE
+# Usage: build_fork_commit REPO CHILD_BOOKMARK FROM_BOOKMARK TASK_PREFIX PROJECT_PREFIX
 # Builds a fork commit for the child on FROM_BOOKMARK's tip and prints its
 # commit ID. The commit points the task symlink at the child's task file. No
 # bookmark moves and no worktree is reattached.
 build_fork_commit() {
-  local repo="$1" child="$2" from="$3" task_file="$4"
+  local repo="$1" child="$2" from="$3" task_prefix="$4" project_prefix="$5"
   local title fork_commit
-  title="$(read_title "$repo" "$child" "$task_file")"
+  title="$(read_title "$repo" "$child" "$child" "$task_prefix" "$project_prefix")"
   fork_commit="$(_task__commit_fork "$repo" "$child" "$from" "$title")" || {
     _ui__log "Error: Could not create a fork commit for '$child' on '$from'."
     exit 1
@@ -176,12 +159,12 @@ build_fork_commit() {
   printf '%s' "$fork_commit"
 }
 
-# Usage: propagate_one_fork REPO CHILD_BOOKMARK FROM_BOOKMARK TASK_FILE DRY_RUN
+# Usage: propagate_one_fork REPO CHILD_BOOKMARK FROM_BOOKMARK TASK_PREFIX PROJECT_PREFIX DRY_RUN
 # Advances a child whose whole history is already in FROM's history onto a new
 # fork commit on FROM's tip. The fork commit points the task symlink back at
 # the child, so work resumed there belongs to the child.
 propagate_one_fork() {
-  local repo="$1" child="$2" from="$3" task_file="$4" dry_run="$5"
+  local repo="$1" child="$2" from="$3" task_prefix="$4" project_prefix="$5" dry_run="$6"
 
   if [[ "$dry_run" == true ]]; then
     _ui__log "  [dry-run] fork $child onto $from"
@@ -195,7 +178,7 @@ propagate_one_fork() {
   }
 
   local fork_commit
-  fork_commit="$(build_fork_commit "$repo" "$child" "$from" "$task_file")"
+  fork_commit="$(build_fork_commit "$repo" "$child" "$from" "$task_prefix" "$project_prefix")"
 
   # Follow the advance with the invoking worktree only when it sits on the
   # child branch; worktrees on the parent also descend from the child's old
@@ -204,7 +187,7 @@ propagate_one_fork() {
   _task__advance_branch "$repo" "$child" "$fork_commit"
 }
 
-# Usage: propagate_one_rebase REPO CHILD_BOOKMARK FROM_BOOKMARK TASK_FILE FORCE DRY_RUN
+# Usage: propagate_one_rebase REPO CHILD_BOOKMARK FROM_BOOKMARK TASK_FILE TASK_PREFIX PROJECT_PREFIX FORCE DRY_RUN
 # Rebases the unmerged range of CHILD_BOOKMARK onto FROM_BOOKMARK.
 # If the child has been partially checked in (some commits already in FROM's ancestry
 # via a prior handoff merge), only the commits not yet in FROM's ancestry are rebased.
@@ -212,7 +195,8 @@ propagate_one_fork() {
 # tip goes underneath it, so the moved commits keep pointing the task symlink at the
 # child.
 propagate_one_rebase() {
-  local repo="$1" child="$2" from="$3" task_file="$4" force="$5" dry_run="$6"
+  local repo="$1" child="$2" from="$3" task_file="$4"
+  local task_prefix="$5" project_prefix="$6" force="$7" dry_run="$8"
 
   # The roots of the unmerged range are the commits in the child's ancestry not
   # yet in FROM's ancestry that hang off inherited history. Nothing there means
@@ -239,7 +223,7 @@ propagate_one_rebase() {
   local destination="$from"
   if [[ "$needs_fork" == true ]]; then
     _ui__log "  $child: creating fork commit"
-    destination="$(build_fork_commit "$repo" "$child" "$from" "$task_file")"
+    destination="$(build_fork_commit "$repo" "$child" "$from" "$task_prefix" "$project_prefix")"
   fi
 
   _task__move_unmerged_range "$repo" "$from" "$child" "$destination" || {
@@ -259,11 +243,12 @@ propagate_one_rebase() {
   fi
 }
 
-# Usage: propagate_one_merge REPO CHILD_BOOKMARK FROM_BOOKMARK FROM_TASK_FILE FORCE DRY_RUN
+# Usage: propagate_one_merge REPO CHILD_BOOKMARK FROM_BOOKMARK TASK_PREFIX PROJECT_PREFIX FORCE DRY_RUN
 # Creates a merge commit on CHILD_BOOKMARK combining its current tip with FROM_BOOKMARK,
 # described as a propagate of FROM_BOOKMARK. The merge keeps the child's task symlink.
 propagate_one_merge() {
-  local repo="$1" child="$2" from="$3" from_task_file="$4" force="$5" dry_run="$6"
+  local repo="$1" child="$2" from="$3" task_prefix="$4" project_prefix="$5"
+  local force="$6" dry_run="$7"
 
   if [[ "$dry_run" == true ]]; then
     local label
@@ -282,7 +267,7 @@ propagate_one_merge() {
   # second. Like a check-in merge, it is described by the incoming task.
   local message merge_commit
   message="$(_commit__format_message "task" "propagate" "$from" \
-    "$(read_title "$repo" "$from" "$from_task_file")")"
+    "$(read_title "$repo" "$from" "$from" "$task_prefix" "$project_prefix")")"
   merge_commit="$(_task__merge_branch "$repo" "$message" "$child_tip" "$from")" || {
     _ui__log "Error: Could not merge '$from' into '$child'."
     exit 1
@@ -335,7 +320,8 @@ propagate_from() {
   local depth="${9:-0}"
 
   local task_file
-  task_file="$(branch_task_file "$from_bookmark" "$task_prefix" "$project_prefix")"
+  task_file="$(_task__resolve_file "$from_bookmark" "$task_prefix" "$project_prefix")" \
+    || task_file=''
   if [[ -z "$task_file" ]]; then
     _ui__log "  Warning: $from_bookmark is not a task/project branch; cannot enumerate subtasks"
     return 0
@@ -350,8 +336,8 @@ propagate_from() {
 
     # Only process recognised task/project branches
     local child_task_file
-    child_task_file="$(branch_task_file "$child_id" "$task_prefix" "$project_prefix")"
-    [[ -n "$child_task_file" ]] || continue
+    child_task_file="$(_task__resolve_file "$child_id" "$task_prefix" "$project_prefix")" \
+      || continue
 
     # Apply --to filter at top level only
     if [[ $depth -eq 0 ]] && [[ ${#TO_FILTER[@]} -gt 0 ]]; then
@@ -370,11 +356,12 @@ propagate_from() {
 
     if is_up_to_date "$repo" "$child_id" "$from_bookmark"; then
       if is_behind "$repo" "$child_id" "$from_bookmark" && \
-         ! is_done "$repo" "$child_id" "$child_task_file"; then
+         ! is_done "$repo" "$child_id" "$task_prefix" "$project_prefix"; then
         # The child's whole history is in the parent's, but its task is not
         # finished: it continues from a fork commit on the parent's tip.
         _ui__log "  $child_id: checked in but still in progress, creating fork commit"
-        propagate_one_fork "$repo" "$child_id" "$from_bookmark" "$child_task_file" "$dry_run"
+        propagate_one_fork "$repo" "$child_id" "$from_bookmark" "$task_prefix" "$project_prefix" \
+          "$dry_run"
         if [[ "$dry_run" != true ]]; then
           _worktree__report_unsynced "$repo" "$child_id"
         fi
@@ -385,10 +372,10 @@ propagate_from() {
       _ui__log "  $child_id: $strategy onto $from_bookmark"
       if [[ "$strategy" == rebase ]]; then
         propagate_one_rebase "$repo" "$child_id" "$from_bookmark" "$child_task_file" \
-          "$force" "$dry_run"
+          "$task_prefix" "$project_prefix" "$force" "$dry_run"
       else
-        propagate_one_merge "$repo" "$child_id" "$from_bookmark" "$task_file" \
-          "$force" "$dry_run"
+        propagate_one_merge "$repo" "$child_id" "$from_bookmark" "$task_prefix" \
+          "$project_prefix" "$force" "$dry_run"
       fi
 
       # The child branch just moved; worktrees other than the invoking one

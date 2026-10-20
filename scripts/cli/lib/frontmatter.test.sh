@@ -437,6 +437,45 @@ test__frontmatter__parse_quoted_field__no_backslash_is_stripped_only() {
     "$(_frontmatter__parse_quoted_field "$content" title)" "plain title: with colon"
 }
 
+test__frontmatter__parse_values__argument_order_and_absent_fields() {
+  local content
+  content="$(printf '%s\n' '---' 'title: "T"' 'status: TODO' 'created: C' '---')"
+  assert_eq "values follow argument order" \
+    "$(_frontmatter__parse_values "$content" created status title)" $'C\nTODO\nT'
+  assert_eq "an absent middle field prints an empty line" \
+    "$(_frontmatter__parse_values "$content" title updated status)" $'T\n\nTODO'
+  assert_eq "an absent last field prints an empty line" \
+    "$(_frontmatter__parse_values "$content" status updated; printf x)" $'TODO\n\nx'
+}
+
+test__frontmatter__parse_values__decodes_quoted_and_keeps_unquoted() {
+  local content
+  content="$(printf '%s\n' '---' 'title: "a \"q\" \\ b\nc"' 'status: IN-PROGRESS' '---')"
+  assert_eq "a quoted title with escapes is decoded" \
+    "$(_frontmatter__parse_values "$content" title)" $'a "q" \\ b\nc'
+  assert_eq "an unquoted status is printed unchanged" \
+    "$(_frontmatter__parse_values "$content" status)" "IN-PROGRESS"
+}
+
+test__frontmatter__parse_values__first_occurrence_and_body_ignored() {
+  local content
+  content="$(printf '%s\n' '---' 'status:' 'status: DONE' 'title: "T"' '---' \
+    'status: BODY' '---' 'title: body')"
+  assert_eq "the first occurrence wins, even when empty; body ignored" \
+    "$(_frontmatter__parse_values "$content" title status; printf x)" $'T\n\nx'
+}
+
+test__frontmatter__parse_values__rejects_repeatable_fields() {
+  local content field output exit_code
+  content="$(printf '%s\n' '---' 'title: "T"' 'label: l' '---')"
+  for field in label context subtask; do
+    exit_code=0
+    output="$(_frontmatter__parse_values "$content" title "$field" 2>/dev/null)" || exit_code=$?
+    assert_failure "$field is rejected" "$exit_code"
+    assert_eq "nothing printed when $field is rejected" "$output" ''
+  done
+}
+
 test__frontmatter__write_task_file__quoted_title_round_trips_escapes() {
   local file="$_TEST_ROOT/escapes.md" title
   title=$'He said "hi" \\ there\tand more'

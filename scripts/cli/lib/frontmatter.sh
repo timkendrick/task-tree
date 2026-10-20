@@ -7,6 +7,7 @@
 #   _frontmatter__parse_fields         — extract requested fields in file order
 #   _frontmatter__parse_field          — raw value of a single-valued field
 #   _frontmatter__parse_quoted_field   — field value with matched quotes stripped
+#   _frontmatter__parse_values         — decoded values of several single-valued fields
 #   _frontmatter__parse_repeated_field — every value of a repeatable field
 #   _frontmatter__parse_task           — parse task content into PARSED_* globals
 #   _frontmatter__write_task_file      — write a canonical task file
@@ -98,6 +99,49 @@ _frontmatter__parse_quoted_field() {
   local value
   value="$(_frontmatter__parse_field "$1" "$2")"
   __frontmatter__unquote "$value"
+}
+
+# Usage: _frontmatter__parse_values CONTENT FIELD...
+# Prints one line per FIELD, in argument order: the field's value, decoded as
+# _frontmatter__parse_quoted_field does, or an empty line when the field is
+# absent, so each value keeps a fixed line position. The first occurrence of a
+# field wins. A newline cannot occur inside a value, because the frontmatter
+# format stores each value on one line and quoting escapes newlines.
+# Rejects the repeatable fields label, context and subtask: logs an error and
+# returns 1 before printing anything.
+_frontmatter__parse_values() {
+  local content="$1"; shift
+  local field
+  for field in "$@"; do
+    case "$field" in
+      label|context|subtask)
+        printf "Error: Repeatable frontmatter field '%s' has no single value.\n" "$field" >&2
+        return 1 ;;
+    esac
+  done
+
+  local fields=("$@") values=() found=() i
+  for (( i = 0; i < ${#fields[@]}; i++ )); do
+    values[i]=''
+    found[i]=''
+  done
+
+  local record key value
+  while IFS= read -r record; do
+    [[ -n "$record" ]] || continue
+    key="${record%%:*}"
+    value="${record#"$key":}"
+    for (( i = 0; i < ${#fields[@]}; i++ )); do
+      if [[ "${fields[i]}" == "$key" && -z "${found[i]}" ]]; then
+        values[i]="$(__frontmatter__unquote "$value")"
+        found[i]=1
+      fi
+    done
+  done < <(_frontmatter__parse_fields "$content" "$@")
+
+  for (( i = 0; i < ${#fields[@]}; i++ )); do
+    printf '%s\n' "${values[i]}"
+  done
 }
 
 # Usage: __frontmatter__quote VALUE

@@ -471,6 +471,28 @@ test_task_propagate__up_to_date_done_child_untouched() {
   assert_eq "the child bookmark does not move" "$(get_bookmark_commit "$CHILD")" "$bm_before"
 }
 
+test_task_propagate__unreadable_child_task_file_counts_as_done() {
+  setup_workspace "prop-fork-unreadable"
+  PROJ=$(create_project "proj" "Project") || true
+  checkout_task "$PROJ" >/dev/null || true
+  local before_child
+  before_child=$(get_bookmark_commit "$PROJ")
+  CHILD=$(create_task "c" "Child") || true
+
+  # Park the child on a project commit that predates its task file: its whole
+  # history is in the project's, and its task file cannot be read at its tip.
+  jj -R "$REPO" bookmark set "$CHILD" -r "$before_child" --allow-backwards >/dev/null 2>&1
+  assert_eq "the fixture leaves the child's task file unreadable" \
+    "$(jj -R "$REPO" file show -r "$CHILD" ".tt/task/${CHILD#task/}/TASK.md" 2>/dev/null)" ""
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
+  assert_success "propagate succeeds" "$exit_code"
+  assert_contains "the child is reported up to date" "$output" "$CHILD: already up to date"
+  assert_not_contains "no fork commit is created" "$output" "creating fork commit"
+  assert_eq "the child bookmark does not move" "$(get_bookmark_commit "$CHILD")" "$before_child"
+}
+
 test_task_propagate__checkin_propagate_forks_the_checked_in_child() {
   setup_workspace "prop-fork-checkin"
   PROJ=$(create_project "proj" "Project") || true
