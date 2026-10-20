@@ -275,13 +275,13 @@ main() {
   fi
 
   # --- Read current task state from bookmark ---
-  local task_content task_title task_status
-  task_content="$(_task__read_file "$repo" "$child_bookmark" "$task_file")" || {
+  local task_fields task_title task_status
+  task_fields="$(_task__read_fields "$repo" "$child_bookmark" "$child_bookmark" \
+    "$task_prefix" "$project_prefix" title status)" || {
     _ui__log "Error: Could not read task file '$task_file' from '$child_bookmark'."
     exit 1
   }
-  task_title="$(_frontmatter__parse_quoted_field "$task_content" "title")"
-  task_status="$(_frontmatter__parse_field "$task_content" "status")"
+  { IFS= read -r task_title; IFS= read -r task_status; } <<< "$task_fields" || true
 
   # Validate --delete requires DONE. With --complete the task is marked DONE later in
   # this command, so the check is deferred until after the complete step has run.
@@ -341,10 +341,9 @@ main() {
 
   # --- Optional: run complete first ---
   if [[ "$do_complete" == true ]]; then
-    local task_content_check
-    task_content_check="$(_task__read_file "$repo" "$child_bookmark" "$task_file")" || true
     local status_check
-    status_check="$(_frontmatter__parse_field "$task_content_check" "status")"
+    status_check="$(_task__read_status "$repo" "$child_bookmark" "$child_bookmark" \
+      "$task_prefix" "$project_prefix")" || status_check=''
     if [[ "$status_check" != "DONE" ]]; then
       _ui__log "Running complete for $child_bookmark..."
       local complete_args=(--repo "$repo")
@@ -356,12 +355,12 @@ main() {
     # Re-read the task file: `complete` advanced the child bookmark, and the refreshed
     # status drives the parent's subtask checkbox, the --delete precondition and the
     # final log message.
-    task_content="$(_task__read_file "$repo" "$child_bookmark" "$task_file")" || {
+    task_fields="$(_task__read_fields "$repo" "$child_bookmark" "$child_bookmark" \
+      "$task_prefix" "$project_prefix" title status)" || {
       _ui__log "Error: Could not read task file '$task_file' from '$child_bookmark'."
       exit 1
     }
-    task_title="$(_frontmatter__parse_quoted_field "$task_content" "title")"
-    task_status="$(_frontmatter__parse_field "$task_content" "status")"
+    { IFS= read -r task_title; IFS= read -r task_status; } <<< "$task_fields" || true
 
     if [[ "$delete" == true ]] && [[ "$task_status" != "DONE" ]]; then
       _ui__log "Error: --delete requires task status to be DONE (current: $task_status)."

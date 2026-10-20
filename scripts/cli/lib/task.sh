@@ -17,6 +17,10 @@
 #   _task__delete_branch             — delete a task/project bookmark
 #   _task__rename_branch             — rename a task/project bookmark
 #   _task__read_file                 — read a repo file as recorded on a branch
+#   _task__resolve_file              — repo-relative task file path of a task ID
+#   _task__read_fields               — frontmatter fields of a task at a revision
+#   _task__read_status               — status of a task at a revision
+#   _task__read_title                — decoded title of a task at a revision
 #   _task__read_commit_message       — description recorded on a commit
 #   _task__list_commits_since_branch — commits on a branch's line since its tip
 #   _task__list_mainline_commits     — first-parent commit records of a range
@@ -156,6 +160,69 @@ _task__delete_branch() {
 _task__read_file() {
   local repo="$1" rev="$2" path="$3"
   _repo__read_file_at_revision "$repo" "$rev" "$path"
+}
+
+# Usage: _task__resolve_file TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Prints the repo-relative task file path of TASK_ID, a task or project ID.
+# Returns 1 (nothing printed) when TASK_ID is neither. Performs no VCS access.
+_task__resolve_file() {
+  local task_id="$1" task_prefix="$2" project_prefix="$3"
+  if _task__check_is_task_branch "$task_id" "$task_prefix"; then
+    _path__task_file "${task_id#"$task_prefix"}"
+  elif _task__check_is_project_branch "$task_id" "$project_prefix"; then
+    _path__task_file "${task_id#"$project_prefix"}"
+  else
+    return 1
+  fi
+}
+
+# Usage: _task__read_fields REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX FIELD...
+# Prints the frontmatter FIELDs of TASK_ID's task file as recorded at REV, in
+# argument order. A repeatable field (label, context, subtask) must be
+# requested as a list, with a '[]' suffix; a single-valued field must not be:
+#   title, status, created, updated
+#       one line holding the decoded value (empty when absent).
+#   label[], context[], subtask[]
+#       a line holding the entry count, then one line per raw entry in file
+#       order.
+# See _frontmatter__parse_values for the unpacking pattern. Reads the file
+# once, whatever the number of fields.
+# Returns 1 (nothing printed) when a FIELD is requested in the wrong form (an
+# error is logged), when TASK_ID is not a task or project ID, or when the task
+# file cannot be read at REV.
+_task__read_fields() {
+  local repo="$1" rev="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
+  shift 5
+  local field
+  for field in "$@"; do
+    case "$field" in
+      label|context|subtask)
+        printf "Error: Repeatable task field '%s' must be requested as '%s[]'.\n" \
+          "$field" "$field" >&2
+        return 1 ;;
+      title\[\]|status\[\]|created\[\]|updated\[\])
+        printf "Error: Single-valued task field '%s' cannot be requested as a list.\n" \
+          "${field%\[\]}" >&2
+        return 1 ;;
+    esac
+  done
+  local task_file content
+  task_file="$(_task__resolve_file "$task_id" "$task_prefix" "$project_prefix")" || return 1
+  content="$(_task__read_file "$repo" "$rev" "$task_file" 2>/dev/null)" || return 1
+  _frontmatter__parse_values "$content" "$@"
+}
+
+# Usage: _task__read_status REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Prints the status of TASK_ID's task file at REV. Fails as _task__read_fields.
+_task__read_status() {
+  _task__read_fields "$1" "$2" "$3" "$4" "$5" status
+}
+
+# Usage: _task__read_title REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Prints the decoded title of TASK_ID's task file at REV. Fails as
+# _task__read_fields.
+_task__read_title() {
+  _task__read_fields "$1" "$2" "$3" "$4" "$5" title
 }
 
 # Usage: _task__read_commit_message REPO REV
@@ -1454,10 +1521,9 @@ _task__resolve_current() {
   local branch
   branch="$(_worktree__resolve_branch_at "$repo" '@')" || branch=''
 
-  if _task__check_is_task_branch "$branch" "$task_prefix"; then
-    printf '%s\n%s\n' "$(_path__task_file "${branch#$task_prefix}")" "$branch"
-  elif _task__check_is_project_branch "$branch" "$project_prefix"; then
-    printf '%s\n%s\n' "$(_path__task_file "${branch#$project_prefix}")" "$branch"
+  local task_file
+  if task_file="$(_task__resolve_file "$branch" "$task_prefix" "$project_prefix")"; then
+    printf '%s\n%s\n' "$task_file" "$branch"
   else
     printf '\n\n'
   fi

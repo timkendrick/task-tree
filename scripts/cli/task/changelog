@@ -63,17 +63,6 @@ index_of() {
   printf '%s' '-1'
 }
 
-# Usage: resolve_task_suffix TASK_ID TASK_PREFIX PROJECT_PREFIX
-# Prints the slug-hex portion of TASK_ID, or nothing if it carries neither prefix.
-resolve_task_suffix() {
-  local task_id="$1" task_prefix="$2" project_prefix="$3"
-  if _task__check_is_task_branch "$task_id" "$task_prefix"; then
-    printf '%s' "${task_id#"$task_prefix"}"
-  elif _task__check_is_project_branch "$task_id" "$project_prefix"; then
-    printf '%s' "${task_id#"$project_prefix"}"
-  fi
-}
-
 # Usage: render_commit_id COMMIT_ID
 # Prints the 8-character, backtick-quoted form of a Git commit ID.
 render_commit_id() {
@@ -119,17 +108,11 @@ render_checkpoint() {
 read_task_metadata() {
   local repo="$1" rev="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
 
-  local suffix
-  suffix="$(resolve_task_suffix "$task_id" "$task_prefix" "$project_prefix")"
-  [[ -z "$suffix" ]] && return 0
-
-  local content
-  content="$(_task__read_file "$repo" "$rev" "$(_path__task_file "$suffix")")" || return 0
-  [[ -z "$content" ]] && return 0
-
-  printf '%s\t%s\n' \
-    "$(_frontmatter__parse_field "$content" 'status')" \
-    "$(_frontmatter__parse_quoted_field "$content" 'title')"
+  local fields status title
+  fields="$(_task__read_fields "$repo" "$rev" "$task_id" "$task_prefix" "$project_prefix" \
+    status title)" || return 0
+  { IFS= read -r status; IFS= read -r title; } <<< "$fields" || true
+  printf '%s\t%s\n' "$status" "$title"
 }
 
 # Usage: record_operation_fields RECORD OPERATION

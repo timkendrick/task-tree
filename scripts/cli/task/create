@@ -368,20 +368,13 @@ main() {
   # before the child is created (see DESIGN.md §6.1).
   local parent_is_done=false
   if [[ -n "$parent_task_file" ]]; then
-    local parent_content
-    if ! parent_content="$(_task__read_file "$repo" "$parent_bookmark" "$parent_task_file")"; then
+    local parent_status
+    if ! parent_status="$(_task__read_status "$repo" "$parent_bookmark" "$parent_bookmark" \
+      "$task_prefix" "$project_prefix")"; then
       _ui__log "Error: Parent task file not found: $repo/$parent_task_file"
       exit 1
     fi
-    local parent_line
-    while IFS= read -r parent_line; do
-      if [[ "$parent_line" == 'status:'* ]]; then
-        parent_line="${parent_line#status:}"
-        parent_line="${parent_line#"${parent_line%%[![:space:]]*}"}"
-        [[ "${parent_line%% *}" == "DONE" ]] && parent_is_done=true
-        break
-      fi
-    done <<< "$parent_content"
+    [[ "$parent_status" == "DONE" ]] && parent_is_done=true
   fi
 
   # Check whether the target bookmark already exists; refuse unless --force
