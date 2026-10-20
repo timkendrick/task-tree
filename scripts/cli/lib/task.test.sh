@@ -887,6 +887,31 @@ test__task__read_fields__fails_for_unreadable_task_files() {
   assert_eq "nothing printed for a task file absent at REV" "$output" ''
 }
 
+test__task__read_fields__reads_repeatable_fields_as_counted_lists() {
+  setup_workspace "read-fields-lists"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  a_id=$(create_task "a" "A") || true
+  b_id=$(create_task "b" "B") || true
+
+  local output='' exit_code=0
+  output="$(_read_fields "$proj_id" "$proj_id" 'subtask[]' title 'context[]')" || exit_code=$?
+  assert_success "the fields are read" "$exit_code"
+  assert_eq "subtask is a counted list; an absent context counts zero" "$output" \
+    "2"$'\n'"[ ] $a_id"$'\n'"[ ] $b_id"$'\n'"Project"$'\n'"0"
+}
+
+test__task__read_fields__rejects_fields_in_the_wrong_form() {
+  local output='' exit_code field
+  for field in subtask label context 'title[]' 'status[]'; do
+    exit_code=0
+    output="$(_task__read_fields "/nonexistent" "rev" "task/t-0123abcd" "task/" "project/" \
+      title "$field" 2>/dev/null)" || exit_code=$?
+    assert_eq "'$field' is rejected" "$exit_code" "1"
+    assert_eq "nothing printed when '$field' is rejected" "$output" ''
+  done
+}
+
 test__task__read_status_and_title__print_the_single_value() {
   setup_workspace "read-status-title"
   proj_id=$(create_project "proj" "Project") || true

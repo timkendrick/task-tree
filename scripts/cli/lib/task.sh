@@ -18,7 +18,7 @@
 #   _task__rename_branch             — rename a task/project bookmark
 #   _task__read_file                 — read a repo file as recorded on a branch
 #   _task__resolve_file              — repo-relative task file path of a task ID
-#   _task__read_fields               — decoded frontmatter fields of a task at a revision
+#   _task__read_fields               — frontmatter fields of a task at a revision
 #   _task__read_status               — status of a task at a revision
 #   _task__read_title                — decoded title of a task at a revision
 #   _task__read_commit_message       — description recorded on a commit
@@ -177,14 +177,35 @@ _task__resolve_file() {
 }
 
 # Usage: _task__read_fields REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX FIELD...
-# Prints the values of the single-valued frontmatter FIELDs of TASK_ID's task
-# file as recorded at REV, one line per field in argument order
-# (_frontmatter__parse_values). Reads the file once, whatever the number of
-# fields. Returns 1 (nothing printed) when TASK_ID is not a task or project ID
-# or the task file cannot be read at REV, and 1 when a FIELD is repeatable.
+# Prints the frontmatter FIELDs of TASK_ID's task file as recorded at REV, in
+# argument order. A repeatable field (label, context, subtask) must be
+# requested as a list, with a '[]' suffix; a single-valued field must not be:
+#   title, status, created, updated
+#       one line holding the decoded value (empty when absent).
+#   label[], context[], subtask[]
+#       a line holding the entry count, then one line per raw entry in file
+#       order.
+# See _frontmatter__parse_values for the unpacking pattern. Reads the file
+# once, whatever the number of fields.
+# Returns 1 (nothing printed) when a FIELD is requested in the wrong form (an
+# error is logged), when TASK_ID is not a task or project ID, or when the task
+# file cannot be read at REV.
 _task__read_fields() {
   local repo="$1" rev="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
   shift 5
+  local field
+  for field in "$@"; do
+    case "$field" in
+      label|context|subtask)
+        printf "Error: Repeatable task field '%s' must be requested as '%s[]'.\n" \
+          "$field" "$field" >&2
+        return 1 ;;
+      title\[\]|status\[\]|created\[\]|updated\[\])
+        printf "Error: Single-valued task field '%s' cannot be requested as a list.\n" \
+          "${field%\[\]}" >&2
+        return 1 ;;
+    esac
+  done
   local task_file content
   task_file="$(_task__resolve_file "$task_id" "$task_prefix" "$project_prefix")" || return 1
   content="$(_task__read_file "$repo" "$rev" "$task_file" 2>/dev/null)" || return 1

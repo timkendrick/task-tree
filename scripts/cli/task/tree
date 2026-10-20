@@ -63,37 +63,22 @@ branch_suffix() {
   fi
 }
 
-# Usage: get_metadata_from_content CONTENT
-# Get checkbox and title from a task file's content string.
-# When CONTENT is empty (the task file could not be read at any revision), the
-# status is unknown and the checkbox renders as [?].
-get_metadata_from_content() {
-  local content="$1"
-
-  local title='' status='' line
-  while IFS= read -r line; do
-    case "$line" in
-      title:*) [[ -z "$title" ]] && title="${line#title:}" ;;
-      status:*) [[ -z "$status" ]] && status="${line#status:}" ;;
-    esac
-  done < <(_frontmatter__parse_fields "$content" title status)
-
-  # Strip a matched pair of surrounding double quotes from the title.
-  if [[ "$title" == \"*\" ]]; then
-    title="${title#\"}"
-    title="${title%\"}"
-  fi
+# Usage: format_metadata TITLE STATUS
+# Prints "CHECKBOX|TITLE" for a task's decoded title and status. An empty status
+# (e.g. the task file could not be read at any revision) renders as [?].
+format_metadata() {
+  local title="$1" status="$2"
   title="${title#"${title%%[![:space:]]*}"}"
   title="${title%"${title##*[![:space:]]}"}"
   [[ -z "$title" ]] && title='(no title)'
   printf '%s|%s' "$(_format__status_checkbox "$status")" "$title"
 }
 
-# Usage: get_subtask_entries CONTENT
-# Outputs one line per subtask: CHECKBOX|TASK_ID|TITLE
-get_subtask_entries() {
-  local content="$1"
-  _frontmatter__parse_repeated_field "$content" "subtask" | awk '
+# Usage: format_subtask_entries < ENTRIES
+# Reads raw subtask entries, one per line, and outputs one line per
+# well-formed entry: CHECKBOX|TASK_ID|TITLE
+format_subtask_entries() {
+  awk '
     /^\[[ x\-]\]/ {
       cb = substr($0, 1, 3)
       rest = substr($0, 4)
@@ -106,6 +91,21 @@ get_subtask_entries() {
       print cb "|" id "|" title
     }
   '
+}
+
+# Usage: read_subtask_entries REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Outputs one CHECKBOX|TASK_ID|TITLE line per subtask entry of TASK_ID's task
+# file at REV. Returns 1 (nothing printed) when the file cannot be read.
+read_subtask_entries() {
+  local fields
+  fields="$(_task__read_fields "$1" "$2" "$3" "$4" "$5" 'subtask[]')" || return 1
+  local subtask_count subtask subtasks=() i
+  { IFS= read -r subtask_count
+    for (( i = 0; i < subtask_count; i++ )); do
+      IFS= read -r subtask; subtasks+=("$subtask")
+    done
+  } <<< "$fields" || true
+  printf '%s\n' ${subtasks[@]+"${subtasks[@]}"} | format_subtask_entries
 }
 
 # Emit a single task line. INDENT is spaces (e.g. "" or "   ").
@@ -145,11 +145,6 @@ emit_tree() {
   local focus_chain="${9:-}"
   local focus_index="${10:-0}"
 
-  local suffix
-  suffix="$(branch_suffix "$task_id" "$task_prefix" "$project_prefix")" || suffix="$task_id"
-  local path
-  path="$(_path__task_file "$suffix")"
-
   local source_branch="$branch"
   local merged_line
   merged_line="$(_string__first_line "$(printf '%s' "$merged_map" | grep -E "^${task_id}:" || true)")"
@@ -157,12 +152,17 @@ emit_tree() {
     source_branch="${merged_line#*:}"
   fi
 
-  local content
-  content="$(_task__read_file "$repo" "$source_branch" "$path")" || true
+  local fields title='' status='' subtask_count=0 subtask subtasks=() i
+  fields="$(_task__read_fields "$repo" "$source_branch" "$task_id" \
+    "$task_prefix" "$project_prefix" title status 'subtask[]')" || fields=''
+  { IFS= read -r title; IFS= read -r status; IFS= read -r subtask_count
+    for (( i = 0; i < subtask_count; i++ )); do
+      IFS= read -r subtask; subtasks+=("$subtask")
+    done
+  } <<< "$fields" || true
 
-  local checkbox title
-  local meta
-  meta="$(get_metadata_from_content "$content")"
+  local checkbox meta
+  meta="$(format_metadata "$title" "$status")"
   checkbox="${meta%%|*}"
   title="${meta#*|}"
 
@@ -170,7 +170,7 @@ emit_tree() {
 
   local child_indent="${indent}   "
   local subs_output
-  subs_output="$(get_subtask_entries "$content")" || true
+  subs_output="$(printf '%s\n' ${subtasks[@]+"${subtasks[@]}"} | format_subtask_entries)"
 
   local next_in_chain=''
   local chain_count=0
@@ -202,17 +202,15 @@ emit_tree() {
 #   CHILD_ID<TAB>CHECKBOX<TAB>OWNER_BRANCH
 build_subtask_index() {
   local repo="$1" branches="$2" task_prefix="$3" project_prefix="$4"
-  local branch suffix path content
+  local branch entries
   for branch in $branches; do
     [[ -z "$branch" ]] && continue
-    suffix="$(branch_suffix "$branch" "$task_prefix" "$project_prefix")" || continue
-    path="$(_path__task_file "$suffix")"
-    content="$(_task__read_file "$repo" "$branch" "$path")" || continue
-    [[ -z "$content" ]] && continue
+    entries="$(read_subtask_entries "$repo" "$branch" "$branch" \
+      "$task_prefix" "$project_prefix")" || continue
     while IFS='|' read -r cb id _title; do
       [[ -z "$id" ]] && continue
       printf '%s\t%s\t%s\n' "$id" "$cb" "$branch"
-    done < <(get_subtask_entries "$content")
+    done <<< "$entries"
   done
 }
 
@@ -255,14 +253,11 @@ collect_task_ids() {
     merged_line="$(_string__first_line "$(printf '%s' "$merged_map" | grep -E "^${current}:" || true)")"
     [[ -n "$merged_line" ]] && source_branch="${merged_line#*:}"
 
-    local suffix
-    suffix="$(branch_suffix "$current" "$task_prefix" "$project_prefix")" || continue
-    local path
-    path="$(_path__task_file "$suffix")"
-    local content
-    content="$(_task__read_file "$repo" "$source_branch" "$path")" || true
-    local subs
-    subs="$(get_subtask_entries "$content" | cut -d'|' -f2)"
+    _task__resolve_file "$current" "$task_prefix" "$project_prefix" >/dev/null || continue
+    local entries subs
+    entries="$(read_subtask_entries "$repo" "$source_branch" "$current" \
+      "$task_prefix" "$project_prefix")" || entries=''
+    subs="$(printf '%s\n' "$entries" | cut -d'|' -f2)"
     for sub in $subs; do
       [[ -z "$sub" ]] && continue
       to_visit="${to_visit}${sub}"$'\n'

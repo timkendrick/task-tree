@@ -7,7 +7,7 @@
 #   _frontmatter__parse_fields         — extract requested fields in file order
 #   _frontmatter__parse_field          — raw value of a single-valued field
 #   _frontmatter__parse_quoted_field   — field value with matched quotes stripped
-#   _frontmatter__parse_values         — decoded values of several single-valued fields
+#   _frontmatter__parse_values         — values of several fields, lists count-prefixed
 #   _frontmatter__parse_repeated_field — every value of a repeatable field
 #   _frontmatter__parse_task           — parse task content into PARSED_* globals
 #   _frontmatter__write_task_file      — write a canonical task file
@@ -102,28 +102,36 @@ _frontmatter__parse_quoted_field() {
 }
 
 # Usage: _frontmatter__parse_values CONTENT FIELD...
-# Prints one line per FIELD, in argument order: the field's value, decoded as
-# _frontmatter__parse_quoted_field does, or an empty line when the field is
-# absent, so each value keeps a fixed line position. The first occurrence of a
-# field wins. A newline cannot occur inside a value, because the frontmatter
-# format stores each value on one line and quoting escapes newlines.
-# Rejects the repeatable fields label, context and subtask: logs an error and
-# returns 1 before printing anything.
+# Prints the requested frontmatter fields in a single pass, in argument order.
+# Each FIELD is either a plain name or a name with a '[]' suffix:
+#   NAME    one line: the first occurrence's value, decoded as
+#           _frontmatter__parse_quoted_field does, or an empty line when the
+#           field is absent.
+#   NAME[]  one line holding the number of occurrences N (0 when absent),
+#           followed by N lines holding each raw value in file order. An
+#           occurrence with an empty value gives an empty line.
+# A field requested more than once is printed once per request.
+#
+# A newline cannot occur inside a value: the frontmatter format stores each
+# value on one line, and quoting escapes newlines. A caller reads exactly one
+# line per NAME, then one count line and exactly that many entry lines per
+# NAME[]. Command substitution strips trailing empty lines, so a read past the
+# end of the captured output stands for an empty value:
+#
+#   { IFS= read -r title; IFS= read -r subtask_count
+#     subtasks=()
+#     for (( i = 0; i < subtask_count; i++ )); do
+#       IFS= read -r subtask; subtasks+=("$subtask")
+#     done
+#   } <<< "$(_frontmatter__parse_values "$content" title 'subtask[]')" || true
 _frontmatter__parse_values() {
   local content="$1"; shift
-  local field
-  for field in "$@"; do
-    case "$field" in
-      label|context|subtask)
-        printf "Error: Repeatable frontmatter field '%s' has no single value.\n" "$field" >&2
-        return 1 ;;
-    esac
-  done
-
-  local fields=("$@") values=() found=() i
-  for (( i = 0; i < ${#fields[@]}; i++ )); do
+  local requests=("$@") names=() values=() found=() counts=() i
+  for (( i = 0; i < ${#requests[@]}; i++ )); do
+    names[i]="${requests[i]%\[\]}"
     values[i]=''
     found[i]=''
+    counts[i]=0
   done
 
   local record key value
@@ -131,16 +139,24 @@ _frontmatter__parse_values() {
     [[ -n "$record" ]] || continue
     key="${record%%:*}"
     value="${record#"$key":}"
-    for (( i = 0; i < ${#fields[@]}; i++ )); do
-      if [[ "${fields[i]}" == "$key" && -z "${found[i]}" ]]; then
+    for (( i = 0; i < ${#requests[@]}; i++ )); do
+      [[ "${names[i]}" == "$key" ]] || continue
+      if [[ "${requests[i]}" == *'[]' ]]; then
+        values[i]+="$value"$'\n'
+        counts[i]=$(( counts[i] + 1 ))
+      elif [[ -z "${found[i]}" ]]; then
         values[i]="$(__frontmatter__unquote "$value")"
         found[i]=1
       fi
     done
-  done < <(_frontmatter__parse_fields "$content" "$@")
+  done < <(_frontmatter__parse_fields "$content" ${names[@]+"${names[@]}"})
 
-  for (( i = 0; i < ${#fields[@]}; i++ )); do
-    printf '%s\n' "${values[i]}"
+  for (( i = 0; i < ${#requests[@]}; i++ )); do
+    if [[ "${requests[i]}" == *'[]' ]]; then
+      printf '%s\n%s' "${counts[i]}" "${values[i]}"
+    else
+      printf '%s\n' "${values[i]}"
+    fi
   done
 }
 

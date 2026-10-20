@@ -130,16 +130,22 @@ is_attached_to_own_line() {
   return 1
 }
 
-# Usage: get_subtask_ids REPO BOOKMARK TASK_FILE
+# Usage: get_subtask_ids REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
 # Prints one subtask task-id per line for all checkboxes ([ ], [-], [x]).
 # Includes [x] entries so that partially-checked-in children that are still
 # active can be propagated to; is_up_to_date handles skipping truly finished ones.
 get_subtask_ids() {
-  local repo="$1" bookmark="$2" task_file="$3"
-  local content
-  content="$(_task__read_file "$repo" "$bookmark" "$task_file")" || true
-  [[ -z "$content" ]] && return 0
-  _frontmatter__parse_repeated_field "$content" "subtask" | awk '
+  local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
+  local fields
+  fields="$(_task__read_fields "$repo" "$bookmark" "$bookmark" \
+    "$task_prefix" "$project_prefix" 'subtask[]')" || return 0
+  local subtask_count subtask subtasks=() i
+  { IFS= read -r subtask_count
+    for (( i = 0; i < subtask_count; i++ )); do
+      IFS= read -r subtask; subtasks+=("$subtask")
+    done
+  } <<< "$fields" || true
+  printf '%s\n' ${subtasks[@]+"${subtasks[@]}"} | awk '
     /^\[[ x\-]\]/ { sub(/^\[[ x\-]\][ \t]*/, ""); if ($1 != "") print $1 }
   '
 }
@@ -319,16 +325,13 @@ propagate_from() {
   local dry_run="$8"
   local depth="${9:-0}"
 
-  local task_file
-  task_file="$(_task__resolve_file "$from_bookmark" "$task_prefix" "$project_prefix")" \
-    || task_file=''
-  if [[ -z "$task_file" ]]; then
+  if ! _task__resolve_file "$from_bookmark" "$task_prefix" "$project_prefix" >/dev/null; then
     _ui__log "  Warning: $from_bookmark is not a task/project branch; cannot enumerate subtasks"
     return 0
   fi
 
   local subtasks
-  subtasks="$(get_subtask_ids "$repo" "$from_bookmark" "$task_file")" || true
+  subtasks="$(get_subtask_ids "$repo" "$from_bookmark" "$task_prefix" "$project_prefix")" || true
   [[ -z "$subtasks" ]] && return 0
 
   while IFS= read -r child_id; do
