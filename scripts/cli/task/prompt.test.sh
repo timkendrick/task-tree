@@ -57,6 +57,64 @@ test_task_prompt__explicit_task_id() {
 }
 
 
+test_task_prompt__explicit_task_id_not_checked_in() {
+  setup_workspace "prompt-explicit-ongoing"
+  proj_id=$(create_project "proj" "Project Title" "Project body") || true
+  checkout_task "$proj_id" >/dev/null || true
+  child_id=$(create_task "c" "Child Title" "Child body") || true
+
+  output="" exit_code=0
+  output=$(run_tt task prompt "$child_id" 2>&1) || exit_code=$?
+  assert_success "prompt succeeds" "$exit_code"
+  assert_contains "task header is child ID" "$output" "task: $child_id"
+  assert_contains "child title" "$output" "title: Child Title"
+  assert_contains "child body" "$output" "Child body"
+  assert_not_contains "no project title" "$output" "Project Title"
+}
+
+
+test_task_prompt__explicit_task_id_checked_in() {
+  setup_workspace "prompt-explicit-checked-in"
+  proj_id=$(create_project "proj" "Project Title" "Project body") || true
+  checkout_task "$proj_id" >/dev/null || true
+  child_id=$(create_task "c" "Child Title" "Child body") || true
+  checkout_task "$child_id" >/dev/null || true
+  edit_file "c.txt" "c"
+  checkpoint_task "child work" >/dev/null || true
+  checkin_task "$child_id" --complete >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task prompt "$child_id" 2>&1) || exit_code=$?
+  assert_success "prompt succeeds" "$exit_code"
+  assert_contains "task header is child ID" "$output" "task: $child_id"
+  assert_not_contains "task header is not project ID" "$output" "task: $proj_id"
+  assert_contains "child title" "$output" "title: Child Title"
+  assert_contains "child body" "$output" "Child body"
+  assert_not_contains "no project title" "$output" "Project Title"
+  assert_not_contains "no project body" "$output" "Project body"
+}
+
+
+test_task_prompt__explicit_task_id_checked_in_context() {
+  setup_workspace "prompt-explicit-checked-in-ctx"
+  proj_id=$(create_project "proj" "Project Title") || true
+  checkout_task "$proj_id" >/dev/null || true
+  echo "Project context body" | run_tt task context add --title "Project Ctx" --slug "pctx" >/dev/null 2>&1 || true
+  child_id=$(create_task "c" "Child Title") || true
+  checkout_task "$child_id" >/dev/null || true
+  echo "Child context body" | run_tt task context add --title "Child Ctx" --slug "cctx" >/dev/null 2>&1 || true
+  checkin_task "$child_id" --complete >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task prompt "$child_id" 2>&1) || exit_code=$?
+  assert_success "prompt succeeds" "$exit_code"
+  assert_contains "child context title" "$output" 'title: "Child Ctx"'
+  assert_contains "child context body" "$output" "Child context body"
+  assert_not_contains "no project context title" "$output" "Project Ctx"
+  assert_not_contains "no project context body" "$output" "Project context body"
+}
+
+
 test_task_prompt__no_context() {
   setup_workspace "prompt-noctx"
   proj_id=$(create_project "proj" "Project") || true
