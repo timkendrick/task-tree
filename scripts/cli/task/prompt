@@ -66,7 +66,7 @@ main() {
   project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # --- Resolve branch and task file ---
-  local branch task_file task_suffix
+  local branch task_file task_suffix task_id
 
   if [[ -z "$task_id_arg" ]]; then
     { read -r task_file; read -r branch; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
@@ -74,29 +74,27 @@ main() {
       _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
+    task_id="$branch"
     if _task__check_is_task_branch "$branch" "$task_prefix"; then
       task_suffix="${branch#$task_prefix}"
     else
       task_suffix="${branch#$project_prefix}"
     fi
   else
-    if ! branch="$(_task__find_branch "$repo" "$task_id_arg" "$task_prefix" "$project_prefix")"; then
-      _ui__log "Error: Could not locate branch for task '$task_id_arg'."
+    task_id="$task_id_arg"
+    # A checked-in task is read from the parent branch that received the
+    # checkin, so the task file path comes from the task ID, not the branch.
+    if ! branch="$(_task__find_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")"; then
+      _ui__log "Error: Could not locate branch for task '$task_id'."
       exit 1
     fi
-    if _task__check_is_task_branch "$branch" "$task_prefix"; then
-      task_suffix="${branch#$task_prefix}"
-    elif _task__check_is_project_branch "$branch" "$project_prefix"; then
-      task_suffix="${branch#$project_prefix}"
+    if _task__check_is_task_branch "$task_id" "$task_prefix"; then
+      task_suffix="${task_id#$task_prefix}"
+    elif _task__check_is_project_branch "$task_id" "$project_prefix"; then
+      task_suffix="${task_id#$project_prefix}"
     else
-      if _task__check_is_task_branch "$task_id_arg" "$task_prefix"; then
-        task_suffix="${task_id_arg#$task_prefix}"
-      elif _task__check_is_project_branch "$task_id_arg" "$project_prefix"; then
-        task_suffix="${task_id_arg#$project_prefix}"
-      else
-        _ui__log "Error: Cannot derive task file path for '$task_id_arg'."
-        exit 1
-      fi
+      _ui__log "Error: Cannot derive task file path for '$task_id'."
+      exit 1
     fi
     task_file="$(_path__task_file "$task_suffix")"
   fi
@@ -131,7 +129,7 @@ main() {
 
   # Mini frontmatter block
   printf -- '---\n'
-  printf 'task: %s\n' "$branch"
+  printf 'task: %s\n' "$task_id"
   printf 'title: %s\n' "$title"
   printf -- '---\n'
 
