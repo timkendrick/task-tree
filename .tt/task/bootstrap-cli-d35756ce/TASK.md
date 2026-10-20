@@ -167,6 +167,7 @@ subtask: [ ] task/filesystem-based-subtask-context-relations-1123316e
 subtask: [ ] task/task-attachments-references-77e7a81d
 subtask: [x] task/tt-sync-broken-pipe-2c829c37
 subtask: [ ] task/ensure-no-uncheckpointed-changes-27ef7e6d
+subtask: [ ] task/tt-task-propagate-branch-task-file-errors-ee9f5c1b
 ---
 Implement shell script implementations of all `tt` CLI commands
 
