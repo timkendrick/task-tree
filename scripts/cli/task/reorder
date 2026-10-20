@@ -220,18 +220,13 @@ reorder_subtask() {
   esac
 
   # 7. Read child title for commit message
-  local child_branch child_suffix child_content child_title
+  local child_branch child_title
   child_branch="$(_task__find_branch "$repo" "$child_id" "$task_prefix" "$project_prefix")" || {
     _ui__log "Error: Could not locate branch for '$child_id'."
     exit 1
   }
-  if _task__check_is_task_branch "$child_id" "$task_prefix"; then
-    child_suffix="${child_id#$task_prefix}"
-  else
-    child_suffix="${child_id#$project_prefix}"
-  fi
-  child_content="$(_task__read_file "$repo" "$child_branch" "$(_path__task_file "$child_suffix")")"
-  child_title="$(_frontmatter__parse_quoted_field "$child_content" "title")"
+  child_title="$(_task__read_title "$repo" "$child_branch" "$child_id" \
+    "$task_prefix" "$project_prefix")" || exit 1
 
   # 8. Begin transaction
   _history__begin_transaction "$repo"

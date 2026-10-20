@@ -99,16 +99,18 @@ main() {
   local current_worktree
   current_worktree="$(_worktree__resolve_current "$repo")"
 
-  # Read task file content from bookmark
-  local task_content
-  task_content="$(_task__read_file "$repo" "$bookmark" "$task_file")" || {
+  # Read task metadata from bookmark
+  local task_fields task_title task_status subtask_count subtask subtasks=() i
+  task_fields="$(_task__read_fields "$repo" "$bookmark" "$bookmark" \
+    "$task_prefix" "$project_prefix" title status 'subtask[]')" || {
     _ui__log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
     exit 1
   }
-
-  local task_title task_status
-  task_title="$(_frontmatter__parse_quoted_field "$task_content" "title")"
-  task_status="$(_frontmatter__parse_field "$task_content" "status")"
+  { IFS= read -r task_title; IFS= read -r task_status; IFS= read -r subtask_count
+    for (( i = 0; i < subtask_count; i++ )); do
+      IFS= read -r subtask; subtasks+=("$subtask")
+    done
+  } <<< "$task_fields" || true
 
   # If already DONE, nothing to do
   if [[ "$task_status" == "DONE" ]]; then
@@ -119,7 +121,7 @@ main() {
   # Precondition: all subtasks must be [x] unless --force
   if [[ "$force" != true ]]; then
     local incomplete_subs
-    incomplete_subs="$(_frontmatter__parse_repeated_field "$task_content" "subtask" \
+    incomplete_subs="$(printf '%s\n' ${subtasks[@]+"${subtasks[@]}"} \
       | awk '/^\[[ \-]\]/ { print "subtask: " $0 }')" || true
     if [[ -n "$incomplete_subs" ]]; then
       _ui__log "Error: Not all subtasks are complete. Use --force to proceed anyway."
