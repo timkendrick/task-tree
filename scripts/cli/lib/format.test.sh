@@ -31,4 +31,14 @@ test__format__status_checkbox__unknown() {
   assert_eq "empty status maps to question mark" "$(_format__status_checkbox "")" "[?]"
 }
 
+test__format__aligned_block__aligns_values_past_the_longest_key() {
+  assert_eq "values share a column one space past the longest key" \
+    "$(_format__aligned_block task "task/t-1" parent "project/p-2" title 'Say "hi"')" \
+    $'---\ntask:   task/t-1\nparent: project/p-2\ntitle:  Say "hi"\n---'
+}
+
+test__format__aligned_block__empty_block() {
+  assert_eq "no pairs gives just the delimiters" "$(_format__aligned_block)" $'---\n---'
+}
+
 run_tests "tt lib/format (unit)"

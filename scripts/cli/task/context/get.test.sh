@@ -86,6 +86,27 @@ test_context_get__from_explicit_task_via_task() {
 }
 
 
+test_context_get__renders_like_show_expand_context() {
+  setup_workspace "ctxget-render"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  printf '\nContext body  \n\n' | run_tt task context add --title 'Say "hi"' --slug "ctx" \
+    >/dev/null 2>&1 || true
+  local ctx_id
+  ctx_id="$(run_tt task context list 2>/dev/null)" || true
+
+  output="" exit_code=0
+  output=$(run_tt task context get 2>/dev/null) || exit_code=$?
+  assert_success "get succeeds" "$exit_code"
+  assert_contains "the context ID is named" "$output" "context: $ctx_id"
+  assert_contains "the title is a quoted frontmatter string" "$output" 'title: "Say \"hi\""'
+  assert_contains "the body is trimmed" "$output" $'---\nContext body\n'
+  assert_contains "show --expand-context renders the same block" \
+    "$(run_tt task show --expand-context 2>/dev/null)" "$output"
+}
+
 test_context_get__output_includes_frontmatter() {
   setup_workspace "ctxget-fm"
   proj_id=$(create_project "proj" "Project") || true

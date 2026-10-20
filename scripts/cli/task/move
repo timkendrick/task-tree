@@ -167,31 +167,13 @@ main() {
   done
 
   # Derive slugs and task file paths
-  local task_slug
-  if _task__check_is_task_branch "$task_id" "$task_prefix"; then
-    task_slug="${task_id#"$task_prefix"}"
-  else
-    task_slug="${task_id#"$project_prefix"}"
-  fi
-
-  local old_parent_slug
-  if _task__check_is_task_branch "$old_parent" "$task_prefix"; then
-    old_parent_slug="${old_parent#"$task_prefix"}"
-  else
-    old_parent_slug="${old_parent#"$project_prefix"}"
-  fi
-
-  local new_parent_slug
-  if _task__check_is_task_branch "$new_parent_id" "$task_prefix"; then
-    new_parent_slug="${new_parent_id#"$task_prefix"}"
-  else
-    new_parent_slug="${new_parent_id#"$project_prefix"}"
-  fi
-
-  local task_file old_parent_task_file new_parent_task_file
+  local task_slug task_file old_parent_task_file new_parent_task_file
+  task_slug="$(_task__resolve_suffix "$task_id" "$task_prefix" "$project_prefix")" || exit 1
   task_file="$(_path__task_file "$task_slug")"
-  old_parent_task_file="$(_path__task_file "$old_parent_slug")"
-  new_parent_task_file="$(_path__task_file "$new_parent_slug")"
+  old_parent_task_file="$(_task__resolve_file "$old_parent" "$task_prefix" "$project_prefix")" \
+    || exit 1
+  new_parent_task_file="$(_task__resolve_file "$new_parent_id" "$task_prefix" "$project_prefix")" \
+    || exit 1
 
   # Read task title for commit messages
   local task_title
@@ -229,7 +211,7 @@ main() {
   # place.
   move_old_parent_writer() {
     local root="$1"
-    _frontmatter__remove_subtask "$root/$old_parent_task_file" "$task_id"
+    _task__remove_subtask "$root/$old_parent_task_file" "$task_id"
   }
 
   _ui__log "Updating old parent: $old_parent"
@@ -243,30 +225,30 @@ main() {
   # Step 2: Update new parent — add subtask entry and task stub dir
   # ----------------------------------------------------------------
   # Writer invoked by _task__commit_on_branch with the staging root: adds the
-  # moved task's subtask entry to the staged new-parent task file and stages
-  # the task's stub file alongside it.
-  #
-  # The stub is read straight out of the old parent's pinned tip, so the new
-  # parent's copy is byte-identical to the one Step 1 removed. That identity
-  # is what keeps the rebase in Step 3 conflict-free: the three-way merge sees
-  # "theirs == base" for the stub and cleanly takes the task branch's own
-  # updated task file.
+  # moved task's subtask entry to the staged new-parent task file.
   move_new_parent_writer() {
     local root="$1"
-    _frontmatter__append_subtask "$root/$new_parent_task_file" "$task_id"
-    mkdir -p "$root/$(_path__dirname "$task_file")"
-    if _task__read_file "$repo" "$old_parent_tip" "$task_file" > "$root/$task_file"; then
-      _ui__log "Copied task stub from old parent to new parent: $task_file"
-    else
-      rm -f "$root/$task_file"
-      _ui__log "Warning: Could not copy task stub '$task_file' from old parent; skipping."
-    fi
+    _task__add_subtask "$root/$new_parent_task_file" "$task_id"
   }
+
+  # The task's stub file comes across exactly as recorded at the old parent's
+  # pinned tip, so the new parent's copy is byte-identical to the one Step 1
+  # removed. That identity is what keeps the rebase in Step 3 conflict-free:
+  # the three-way merge sees "theirs == base" for the stub and cleanly takes
+  # the task branch's own updated task file.
+  local -a stub_copy=()
+  if _task__check_file_exists "$repo" "$old_parent_tip" "$task_id" \
+      "$task_prefix" "$project_prefix"; then
+    stub_copy=(--copy-from "$old_parent_tip" "$task_file")
+    _ui__log "Copying task stub from old parent to new parent: $task_file"
+  else
+    _ui__log "Warning: Could not copy task stub '$task_file' from old parent; skipping."
+  fi
 
   _ui__log "Updating new parent: $new_parent_id"
   _task__commit_on_branch "$repo" "$new_parent_id" \
     "$(_commit__format_message "task" "move" "$task_id" "$task_title")" \
-    --modify "$new_parent_task_file" \
+    --modify "$new_parent_task_file" ${stub_copy[@]+"${stub_copy[@]}"} \
     -- move_new_parent_writer >/dev/null
 
   # ----------------------------------------------------------------

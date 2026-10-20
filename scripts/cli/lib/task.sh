@@ -17,10 +17,17 @@
 #   _task__delete_branch             — delete a task/project bookmark
 #   _task__rename_branch             — rename a task/project bookmark
 #   _task__read_file                 — read a repo file as recorded on a branch
+#   _task__resolve_suffix            — slug-hex suffix of a task ID
 #   _task__resolve_file              — repo-relative task file path of a task ID
 #   _task__read_fields               — frontmatter fields of a task at a revision
 #   _task__read_status               — status of a task at a revision
 #   _task__read_title                — decoded title of a task at a revision
+#   _task__parse_subtask_entry       — checkbox and subtask ID of a raw subtask entry
+#   _task__resolve_context_file      — repo-relative path of a task's context file
+#   _task__read_context_fields       — frontmatter fields of a context file at a revision
+#   _task__format_context            — render a context file with its context ID
+#   _task__check_file_exists         — whether a task's file exists at a revision
+#   _task__check_path_exists         — whether a repo-relative path exists at a revision
 #   _task__read_commit_message       — description recorded on a commit
 #   _task__list_commits_since_branch — commits on a branch's line since its tip
 #   _task__list_mainline_commits     — first-parent commit records of a range
@@ -43,7 +50,18 @@
 #   _task__find_for_revision         — task/project branch recorded by a revision
 #   _task__collect_descendant_dirs   — task dirs for all descendants of a task
 #   _task__write_stub                — minimal task file stub for a new task
+#   _task__write_file                — write a new task file
+#   _task__write_context_file        — write a new context file
 #   _task__write_symlink             — repo-root task symlink pointing at a task file
+#   _task__set_subtask_status        — set a subtask entry's checkbox in a staged task file
+#   _task__set_field                 — set a single-valued field of a staged task file
+#   _task__set_labels                — replace the label entries of a staged task file
+#   _task__set_subtasks              — replace the subtask entries of a staged task file
+#   _task__add_subtask               — add a subtask entry to a staged task file
+#   _task__remove_subtask            — remove a subtask entry from a staged task file
+#   _task__rename_subtask            — repoint a subtask entry at a new task ID
+#   _task__add_context               — add a context entry to a staged task file
+#   _task__remove_context            — remove a context entry from a staged task file
 #   _task__commit_on_branch          — staged bare write committed onto a bookmark
 #   _task__commit_fork               — fork commit pointing the task symlink at a task
 #   _task__start_branch              — point a new (or re-created) bookmark at a commit
@@ -162,18 +180,28 @@ _task__read_file() {
   _repo__read_file_at_revision "$repo" "$rev" "$path"
 }
 
+# Usage: _task__resolve_suffix TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Prints the slug-hex suffix of TASK_ID, a task or project ID: the part that
+# names its task directory. Returns 1 (nothing printed) when TASK_ID is
+# neither. Performs no VCS access.
+_task__resolve_suffix() {
+  local task_id="$1" task_prefix="$2" project_prefix="$3"
+  if _task__check_is_task_branch "$task_id" "$task_prefix"; then
+    printf '%s' "${task_id#"$task_prefix"}"
+  elif _task__check_is_project_branch "$task_id" "$project_prefix"; then
+    printf '%s' "${task_id#"$project_prefix"}"
+  else
+    return 1
+  fi
+}
+
 # Usage: _task__resolve_file TASK_ID TASK_PREFIX PROJECT_PREFIX
 # Prints the repo-relative task file path of TASK_ID, a task or project ID.
 # Returns 1 (nothing printed) when TASK_ID is neither. Performs no VCS access.
 _task__resolve_file() {
-  local task_id="$1" task_prefix="$2" project_prefix="$3"
-  if _task__check_is_task_branch "$task_id" "$task_prefix"; then
-    _path__task_file "${task_id#"$task_prefix"}"
-  elif _task__check_is_project_branch "$task_id" "$project_prefix"; then
-    _path__task_file "${task_id#"$project_prefix"}"
-  else
-    return 1
-  fi
+  local suffix
+  suffix="$(_task__resolve_suffix "$1" "$2" "$3")" || return 1
+  _path__task_file "$suffix"
 }
 
 # Usage: _task__read_fields REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX FIELD...
@@ -185,30 +213,123 @@ _task__resolve_file() {
 #   label[], context[], subtask[]
 #       a line holding the entry count, then one line per raw entry in file
 #       order.
+#   ...
+#       the body, verbatim, to the end of the output (last request only).
 # See _frontmatter__parse_values for the unpacking pattern. Reads the file
 # once, whatever the number of fields.
-# Returns 1 (nothing printed) when a FIELD is requested in the wrong form (an
-# error is logged), when TASK_ID is not a task or project ID, or when the task
-# file cannot be read at REV.
+# Returns 1 (nothing printed) when a FIELD is unknown or requested in the
+# wrong form (an error is logged), when TASK_ID is not a task or project ID, or
+# when the task file cannot be read at REV.
 _task__read_fields() {
   local repo="$1" rev="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
   shift 5
+  __task__check_document_requests 'title status created updated' 'label context subtask' \
+    "$@" || return 1
+  local task_file
+  task_file="$(_task__resolve_file "$task_id" "$task_prefix" "$project_prefix")" || return 1
+  __task__read_document_fields "$repo" "$rev" "$task_file" "$@"
+}
+
+# Usage: _task__check_path_exists REPO REV PATH
+# Returns 0 when the repo-relative PATH is recorded at REV, non-zero otherwise.
+# Documented pass-through to _repo__check_file_exists_at_revision for paths
+# that are not named by a task ID, such as a task file at a path a rename is
+# moving away from.
+_task__check_path_exists() {
+  _repo__check_file_exists_at_revision "$1" "$2" "$3"
+}
+
+# Usage: _task__resolve_context_file TASK_ID CTX_ID TASK_PREFIX PROJECT_PREFIX
+# Prints the repo-relative path of context CTX_ID of TASK_ID, a task or project
+# ID. Returns 1 (nothing printed) when TASK_ID is neither. Performs no VCS
+# access.
+_task__resolve_context_file() {
+  local suffix
+  suffix="$(_task__resolve_suffix "$1" "$3" "$4")" || return 1
+  _path__task_context "$suffix" "$2"
+}
+
+# Usage: _task__read_context_fields REPO REV TASK_ID CTX_ID TASK_PREFIX PROJECT_PREFIX FIELD...
+# As _task__read_fields, for context CTX_ID of TASK_ID. A context file has the
+# single-valued fields title, created and updated, no repeatable fields, and a
+# body ('...').
+_task__read_context_fields() {
+  local repo="$1" rev="$2" task_id="$3" ctx_id="$4" task_prefix="$5" project_prefix="$6"
+  shift 6
+  __task__check_document_requests 'title created updated' '' "$@" || return 1
+  local ctx_file
+  ctx_file="$(_task__resolve_context_file "$task_id" "$ctx_id" \
+    "$task_prefix" "$project_prefix")" || return 1
+  __task__read_document_fields "$repo" "$rev" "$ctx_file" "$@"
+}
+
+# Usage: _task__format_context REPO REV TASK_ID CTX_ID TASK_PREFIX PROJECT_PREFIX
+# Prints context CTX_ID of TASK_ID as recorded at REV: a frontmatter block
+# naming the context ID, followed by its title, created and updated fields
+# (each omitted when empty), then the body with leading and trailing blank
+# lines and trailing whitespace removed, then a blank line. Returns 1 (nothing
+# printed) when the context file cannot be read at REV.
+_task__format_context() {
+  local repo="$1" rev="$2" task_id="$3" ctx_id="$4" task_prefix="$5" project_prefix="$6"
+  local fields title='' created='' updated='' body=''
+  fields="$(_task__read_context_fields "$repo" "$rev" "$task_id" "$ctx_id" \
+    "$task_prefix" "$project_prefix" title created updated '...')" || return 1
+  { IFS= read -r title; IFS= read -r created; IFS= read -r updated
+    IFS= read -r -d '' body
+  } <<< "$fields" || true
+  body="${body%$'\n'}"
+
+  local -a pairs=(context "$ctx_id")
+  [[ -n "$title" ]] && pairs+=(title "$(_frontmatter__quote "$title")")
+  [[ -n "$created" ]] && pairs+=(created "$created")
+  [[ -n "$updated" ]] && pairs+=(updated "$updated")
+  _frontmatter__format_block "${pairs[@]}"
+  body="$(_string__trim_text "$body")"
+  [[ -n "$body" ]] && printf '%s\n' "$body"
+  printf '\n'
+}
+
+# Usage: __task__check_document_requests SINGLE_FIELDS LIST_FIELDS FIELD...
+# Checks each FIELD request against a document schema: SINGLE_FIELDS and
+# LIST_FIELDS are space-separated field names. A single-valued field is
+# requested by name, a repeatable field as 'NAME[]', and the body as '...'.
+# Logs an error and returns 1 for the first request that does not fit.
+__task__check_document_requests() {
+  local single=" $1 " list=" $2 "
+  shift 2
   local field
   for field in "$@"; do
-    case "$field" in
-      label|context|subtask)
-        printf "Error: Repeatable task field '%s' must be requested as '%s[]'.\n" \
-          "$field" "$field" >&2
-        return 1 ;;
-      title\[\]|status\[\]|created\[\]|updated\[\])
-        printf "Error: Single-valued task field '%s' cannot be requested as a list.\n" \
+    if [[ "$field" == '...' ]]; then
+      continue
+    elif [[ "$field" == *'[]' ]]; then
+      [[ "$list" == *" ${field%\[\]} "* ]] && continue
+      if [[ "$single" == *" ${field%\[\]} "* ]]; then
+        printf "Error: Single-valued field '%s' cannot be requested as a list.\n" \
           "${field%\[\]}" >&2
-        return 1 ;;
-    esac
+        return 1
+      fi
+    else
+      [[ "$single" == *" $field "* ]] && continue
+      if [[ "$list" == *" $field "* ]]; then
+        printf "Error: Repeatable field '%s' must be requested as '%s[]'.\n" \
+          "$field" "$field" >&2
+        return 1
+      fi
+    fi
+    printf "Error: Unknown field '%s'.\n" "$field" >&2
+    return 1
   done
-  local task_file content
-  task_file="$(_task__resolve_file "$task_id" "$task_prefix" "$project_prefix")" || return 1
-  content="$(_task__read_file "$repo" "$rev" "$task_file" 2>/dev/null)" || return 1
+}
+
+# Usage: __task__read_document_fields REPO REV PATH FIELD...
+# Reads the document at PATH as recorded at REV once, and prints its FIELDs
+# (_frontmatter__parse_values). Returns 1 (nothing printed) when the file
+# cannot be read at REV.
+__task__read_document_fields() {
+  local repo="$1" rev="$2" path="$3"
+  shift 3
+  local content
+  content="$(_task__read_file "$repo" "$rev" "$path" 2>/dev/null)" || return 1
   _frontmatter__parse_values "$content" "$@"
 }
 
@@ -223,6 +344,16 @@ _task__read_status() {
 # _task__read_fields.
 _task__read_title() {
   _task__read_fields "$1" "$2" "$3" "$4" "$5" title
+}
+
+# Usage: _task__check_file_exists REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Returns 0 when TASK_ID's task file exists at REV. Returns 1 when TASK_ID is
+# not a task or project ID, or the file does not exist there. Prints nothing.
+_task__check_file_exists() {
+  local repo="$1" rev="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
+  local task_file
+  task_file="$(_task__resolve_file "$task_id" "$task_prefix" "$project_prefix")" || return 1
+  _repo__check_file_exists_at_revision "$repo" "$rev" "$task_file" 2>/dev/null
 }
 
 # Usage: _task__read_commit_message REPO REV
@@ -376,6 +507,50 @@ _task__check_bookmark_current() {
   [[ "$ahead_count" -eq 0 ]]
 }
 
+# Usage: __task__list_subtasks REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Prints one "CHECKBOX<TAB>SUBTASK_ID" line per well-formed subtask entry of
+# TASK_ID's task file at REV, in file order. CHECKBOX is "[ ]", "[-]" or "[x]";
+# any title after the subtask ID is dropped. Returns 1 (nothing printed) when
+# the task file cannot be read.
+__task__list_subtasks() {
+  local fields
+  fields="$(_task__read_fields "$1" "$2" "$3" "$4" "$5" 'subtask[]')" || return 1
+  local subtask_count subtask i
+  { IFS= read -r subtask_count
+    for (( i = 0; i < subtask_count; i++ )); do
+      IFS= read -r subtask
+      [[ "$subtask" =~ $__TASK__SUBTASK_ENTRY ]] || continue
+      printf '[%s]\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    done
+  } <<< "$fields" || true
+}
+
+# The shape of a raw 'subtask:' entry: a checkbox, then the subtask ID, then
+# anything else (such as a title). Group 1 is the checkbox state, group 2 the ID.
+__TASK__SUBTASK_ENTRY='^\[([ x-])\][[:space:]]*([^[:space:]]+)'
+
+# Usage: _task__parse_subtask_entry ENTRY
+# Prints "CHECKBOX<TAB>SUBTASK_ID" for a raw 'subtask:' entry value, as read
+# with _task__read_fields ... 'subtask[]'. Returns 1 (nothing printed) when
+# ENTRY has no well-formed checkbox and ID. Performs no VCS access.
+_task__parse_subtask_entry() {
+  [[ "$1" =~ $__TASK__SUBTASK_ENTRY ]] || return 1
+  printf '[%s]\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+}
+
+# Usage: __task__check_lists_subtask SUBTASKS TASK_ID [CHECKBOX]
+# Returns 0 when SUBTASKS (the output of __task__list_subtasks) contains
+# TASK_ID, with CHECKBOX when it is given.
+__task__check_lists_subtask() {
+  local subtasks="$1" task_id="$2" want="${3:-}"
+  local checkbox id
+  while IFS=$'\t' read -r checkbox id; do
+    [[ "$id" == "$task_id" ]] || continue
+    [[ -z "$want" || "$checkbox" == "$want" ]] && return 0
+  done <<< "$subtasks"
+  return 1
+}
+
 # Usage: _task__find_parent_branch REPO TASK_ID TASK_PREFIX PROJECT_PREFIX
 # Scans all task/project bookmarks for one whose owner task file lists TASK_ID
 # in a subtask: entry (any checkbox state). Outputs the parent bookmark name.
@@ -391,19 +566,11 @@ _task__find_parent_branch() {
   local found=''
   while IFS= read -r branch; do
     [[ -z "$branch" ]] && continue
-    _task__check_is_task_branch "$branch" "$task_prefix" || _task__check_is_project_branch "$branch" "$project_prefix" || continue
     [[ "$branch" == "$task_id" ]] && continue
-    local suffix
-    if _task__check_is_task_branch "$branch" "$task_prefix"; then
-      suffix="${branch#$task_prefix}"
-    else
-      suffix="${branch#$project_prefix}"
-    fi
-    local path
-    path="$(_path__task_file "$suffix")"
-    local content
-    content="$(_repo__read_file_at_revision "$repo" "$branch" "$path")" || continue
-    if grep -qE "^subtask:[[:space:]]*\[[[:space:]x\-]\][[:space:]]+${task_id}([[:space:]]|$)" <<< "$content"; then
+    local subtasks
+    subtasks="$(__task__list_subtasks "$repo" "$branch" "$branch" \
+      "$task_prefix" "$project_prefix")" || continue
+    if __task__check_lists_subtask "$subtasks" "$task_id"; then
       if [[ -n "$found" ]]; then
         _ui__log "Error: Multiple parent branches found for '$task_id': '$found' and '$branch'."
         return 2
@@ -554,9 +721,8 @@ _task__get_full_range_records() {
   fi
 
   local target_file parent_file
-  target_file="$(_path__task_file "${task_id#"$task_prefix"}")"
-  parent_file="$(_task__full_range_bookmark_task_file "$parent_bookmark" "$task_prefix" "$project_prefix")"
-  if [[ -z "$parent_file" ]]; then
+  target_file="$(_task__resolve_file "$task_id" "$task_prefix" "$project_prefix")"
+  if ! parent_file="$(_task__resolve_file "$parent_bookmark" "$task_prefix" "$project_prefix")"; then
     _ui__log "Error: '$parent_bookmark' is not a task or project branch."
     return 1
   fi
@@ -699,18 +865,6 @@ _task__full_range_resolve_commit() {
   printf '%s' "$id"
 }
 
-# Usage: _task__full_range_bookmark_task_file BOOKMARK TASK_PREFIX PROJECT_PREFIX
-# Prints the canonical task file path owned by BOOKMARK, or nothing if
-# BOOKMARK is neither a task nor a project branch.
-_task__full_range_bookmark_task_file() {
-  local bookmark="$1" task_prefix="$2" project_prefix="$3"
-  if _task__check_is_task_branch "$bookmark" "$task_prefix"; then
-    _path__task_file "${bookmark#"$task_prefix"}"
-  elif _task__check_is_project_branch "$bookmark" "$project_prefix"; then
-    _path__task_file "${bookmark#"$project_prefix"}"
-  fi
-}
-
 # Usage: _task__full_range_creation_boundary REPO TASK_ID TARGET_FILE TARGET_COMMIT PARENT_COMMIT
 # Prints the immutable commit ID of the unique commit that created TARGET_FILE
 # within the combined ancestry of TARGET_COMMIT and PARENT_COMMIT. Exit 1 with
@@ -814,18 +968,10 @@ _task__find_branch() {
 
   while IFS= read -r branch; do
     [[ -z "$branch" ]] && continue
-    _task__check_is_task_branch "$branch" "$task_prefix" || _task__check_is_project_branch "$branch" "$project_prefix" || continue
-    local suffix
-    if _task__check_is_task_branch "$branch" "$task_prefix"; then
-      suffix="${branch#$task_prefix}"
-    else
-      suffix="${branch#$project_prefix}"
-    fi
-    local path
-    path="$(_path__task_file "$suffix")"
-    local c
-    c="$(_repo__read_file_at_revision "$repo" "$branch" "$path")" || continue
-    if grep -qE "^subtask:[[:space:]]*\[x\][[:space:]]+${task_id}([[:space:]]|$)" <<< "$c"; then
+    local subtasks
+    subtasks="$(__task__list_subtasks "$repo" "$branch" "$branch" \
+      "$task_prefix" "$project_prefix")" || continue
+    if __task__check_lists_subtask "$subtasks" "$task_id" '[x]'; then
       printf '%s' "$branch"
       return 0
     fi
@@ -842,6 +988,7 @@ _task__find_branch() {
 
 # Usage: _task__commit_on_branch REPO BRANCH MESSAGE
 #          [--modify PATH]... [--delete PATH]... [--delete-prefix PREFIX]...
+#          [--copy-from REV PATH]... [--move-prefix OLD NEW]...
 #          -- WRITER_FN [ARGS...]
 #
 # Commits a staged set of file writes and deletions onto BRANCH without
@@ -852,7 +999,7 @@ _task__find_branch() {
 # on any other branch stays where it is, even when BRANCH is an ancestor of
 # its own branch.
 #
-# The three inputs are ORTHOGONAL:
+# The inputs are ORTHOGONAL:
 #   --modify         materializes an existing branch-tip file (repo-root-
 #                    relative) into the staging directory for read-modify-
 #                    write; a path absent at the tip is an ERROR.
@@ -864,6 +1011,16 @@ _task__find_branch() {
 #   --delete-prefix  relative file; each --delete-prefix is expanded to the
 #                    exact files under it at the tip (a prefix matching no
 #                    files contributes nothing).
+#   --copy-from      places PATH (a file, or a directory with everything
+#                    beneath it) exactly as recorded at REV, reusing the
+#                    recorded content and modes; PATH absent at REV is an
+#                    ERROR.
+#   --move-prefix    relocates the exact files under OLD at the tip to the
+#                    same relative paths under NEW, as recorded (a prefix
+#                    matching no files contributes nothing).
+# Copied and moved files are not materialized into the staging directory; a
+# staged file at the same path replaces them. Removals apply first, then
+# copies and moves, then the staging directory.
 # A file disappearing from the staging directory is NOT a deletion — removals
 # are always declared via the delete flags.
 #
@@ -936,14 +1093,10 @@ _task__commit_fork() {
   local task_prefix project_prefix suffix
   task_prefix="$(_workspace__get_task_prefix "$repo")"
   project_prefix="$(_workspace__get_project_prefix "$repo")"
-  if _task__check_is_task_branch "$task_id" "$task_prefix"; then
-    suffix="${task_id#"$task_prefix"}"
-  elif _task__check_is_project_branch "$task_id" "$project_prefix"; then
-    suffix="${task_id#"$project_prefix"}"
-  else
+  suffix="$(_task__resolve_suffix "$task_id" "$task_prefix" "$project_prefix")" || {
     _ui__log "Error: '$task_id' is not a recognized task or project ID."
     return 1
-  fi
+  }
 
   # A full commit ID is already resolved; the bare commit verifies it names a
   # commit in the store.
@@ -1011,6 +1164,7 @@ _task__start_branch() {
 
 # Usage: _task__commit_handoff REPO BRANCH MESSAGE
 #          [--modify PATH]... [--delete PATH]... [--delete-prefix PREFIX]...
+#          [--copy-from REV PATH]... [--move-prefix OLD NEW]...
 #          -- WRITER_FN [ARGS...]
 #
 # Builds the linear handoff commit of a check-in or publish: a staged bare
@@ -1046,6 +1200,7 @@ _task__commit_handoff() {
 
 # Usage: _task__commit_detached REPO BASE_REV MESSAGE
 #          [--modify PATH]... [--delete PATH]... [--delete-prefix PREFIX]...
+#          [--copy-from REV PATH]... [--move-prefix OLD NEW]...
 #          -- WRITER_FN [ARGS...]
 #
 # Builds a staged bare commit on top of BASE_REV (the same flag and writer
@@ -1395,6 +1550,7 @@ _task__discard_commit() {
 
 # Usage: __task__commit_staged REPO TIP MESSAGE
 #          [--modify PATH]... [--delete PATH]... [--delete-prefix PREFIX]...
+#          [--copy-from REV PATH]... [--move-prefix OLD NEW]...
 #          -- WRITER_FN [ARGS...]
 #
 # Private staging engine shared by the staged commit builders: materializes each --modify path from TIP into a
@@ -1415,10 +1571,24 @@ __task__commit_staged() {
   local repo="$1" tip="$2" message="$3"
   shift 3
 
-  local -a modify_paths=() delete_paths=() delete_prefixes=()
+  local -a modify_paths=() delete_paths=() delete_prefixes=() copies=()
+  local -a move_olds=() move_news=()
   local saw_separator=''
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --copy-from|--move-prefix)
+        if [[ $# -lt 3 ]]; then
+          _ui__log "Error: $1 requires two arguments."
+          return 1
+        fi
+        if [[ "$1" == --copy-from ]]; then
+          copies+=(--copy "$2" "$3" "$3")
+        else
+          move_olds+=("$2")
+          move_news+=("$3")
+        fi
+        shift 3
+        ;;
       --modify|--delete|--delete-prefix)
         if [[ $# -lt 2 ]]; then
           _ui__log "Error: $1 requires a path argument."
@@ -1485,6 +1655,17 @@ __task__commit_staged() {
       done <<< "$expanded"
     done
 
+    local m
+    for (( m = 0; m < ${#move_olds[@]}; m++ )); do
+      expanded="$(_repo__list_files_at_revision "$repo" "$tip" "${move_olds[m]}")" \
+        || expanded=''
+      [[ -n "$expanded" ]] || continue
+      copies+=(--copy "$tip" "${move_olds[m]}" "${move_news[m]}")
+      while IFS= read -r delete_path; do
+        [[ -n "$delete_path" ]] && deletions+=("$delete_path")
+      done <<< "$expanded"
+    done
+
     "$writer_fn" "$stage" "$@" || {
       _ui__log "Error: Writer '$writer_fn' failed; nothing was committed."
       exit 1
@@ -1492,7 +1673,10 @@ __task__commit_staged() {
 
     local new_commit
     new_commit="$(_repo__commit_changeset "$repo" "$tip" "$message" "$stage" \
-      "${deletions[@]+"${deletions[@]}"}")" || exit 1
+      ${copies[@]+"${copies[@]}"} "${deletions[@]+"${deletions[@]}"}")" || {
+      [[ ${#copies[@]} -gt 0 ]] && _ui__log "Error: Could not commit onto '$tip'; check that every copied path exists."
+      exit 1
+    }
     [[ -n "$new_commit" ]] || exit 1
     printf '%s\n' "$new_commit"
   )
@@ -1571,22 +1755,6 @@ _task__find_for_revision() {
 # followed; unknown entries are skipped silently.
 #
 # Does not output the task's own directory (the caller already handles that).
-# Usage: __task__list_subtask_ids CONTENT
-# Prints the remainder of every frontmatter `subtask:` entry in CONTENT after
-# its checkbox, one per line. Internal helper for the descendant walk.
-__task__list_subtask_ids() {
-  local content="$1" line sep=0
-  local checkbox='^subtask:[[:space:]]*\[[[:space:]x-]\][[:space:]]*'
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ "$line" == '---' ]]; then sep=$(( sep + 1 )); continue; fi
-    [[ $sep -eq 1 && "$line" == subtask:* ]] || continue
-    if [[ "$line" =~ $checkbox ]]; then
-      line="${line#"${BASH_REMATCH[0]}"}"
-    fi
-    printf '%s\n' "$line"
-  done <<< "$content"
-}
-
 _task__collect_descendant_dirs() {
   local repo="$1" branch="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
 
@@ -1598,23 +1766,13 @@ _task__collect_descendant_dirs() {
     local current="${queue[0]}"
     queue=("${queue[@]:1}")      # shift
 
-    # Derive slug and read task file from branch
-    local suffix
-    if _task__check_is_task_branch "$current" "$task_prefix"; then
-      suffix="${current#$task_prefix}"
-    elif _task__check_is_project_branch "$current" "$project_prefix"; then
-      suffix="${current#$project_prefix}"
-    else
-      continue
-    fi
+    local subtasks
+    subtasks="$(__task__list_subtasks "$repo" "$branch" "$current" \
+      "$task_prefix" "$project_prefix")" || continue
 
-    local tf
-    tf="$(_path__task_file "$suffix")"
-    local content
-    content="$(_repo__read_file_at_revision "$repo" "$branch" "$tf")" || continue
-
-    # Extract all subtask IDs (any checkbox state)
-    while IFS= read -r subtask_id; do
+    # Follow every subtask (any checkbox state)
+    local _checkbox subtask_id
+    while IFS=$'\t' read -r _checkbox subtask_id; do
       [[ -z "$subtask_id" ]] && continue
       # Skip if already visited (cycle guard)
       local already=false
@@ -1628,19 +1786,13 @@ _task__collect_descendant_dirs() {
 
       # Emit directory for this descendant
       local sub_suffix
-      if _task__check_is_task_branch "$subtask_id" "$task_prefix"; then
-        sub_suffix="${subtask_id#$task_prefix}"
-      elif _task__check_is_project_branch "$subtask_id" "$project_prefix"; then
-        sub_suffix="${subtask_id#$project_prefix}"
-      else
-        continue
-      fi
+      sub_suffix="$(_task__resolve_suffix "$subtask_id" "$task_prefix" "$project_prefix")" || continue
       _path__task_dir "$sub_suffix"
       printf '\n'
 
       # Enqueue for further traversal
       queue+=("$subtask_id")
-    done < <(__task__list_subtask_ids "$content")
+    done <<< "$subtasks"
   done
 }
 
@@ -1665,8 +1817,45 @@ _task__write_stub() {
     ts="$(_string__generate_timestamp)"
   fi
   mkdir -p "$root/$dir"
-  local REWRITE_LABELS=() REWRITE_CONTEXTS=() REWRITE_SUBTASKS=()
-  _frontmatter__write_task_file "$root/$file" "" "TODO" "" "$ts" "$ts"
+  _task__write_file "$root/$file" "" "TODO" "$ts" "$ts" ""
+}
+
+# Usage: _task__write_file FILE TITLE STATUS CREATED UPDATED BODY [LABEL...]
+# Writes a new task file FILE (typically in a staging directory): a
+# frontmatter block with the quoted TITLE, STATUS, CREATED, UPDATED and one
+# 'label:' entry per LABEL, in canonical order, followed by BODY (omitted when
+# empty). A new task has no context or subtask entries yet; they are added
+# with _task__add_context and _task__add_subtask.
+_task__write_file() {
+  local file="$1" title="$2" status="$3" created="$4" updated="$5" body="$6"
+  shift 6
+  local -a pairs=(title "$(_frontmatter__quote "$title")" status "$status"
+    created "$created" updated "$updated")
+  local label
+  for label in "$@"; do pairs+=(label "$label"); done
+  __task__write_document "$file" "$body" "${pairs[@]}"
+}
+
+# Usage: _task__write_context_file FILE TITLE CREATED UPDATED BODY
+# Writes a new context file FILE (typically in a staging directory): a
+# frontmatter block with the quoted TITLE, CREATED and UPDATED, followed by
+# BODY (omitted when empty).
+_task__write_context_file() {
+  __task__write_document "$1" "$5" \
+    title "$(_frontmatter__quote "$2")" created "$3" updated "$4"
+}
+
+# Usage: __task__write_document FILE BODY [KEY VALUE]...
+# Writes FILE as a frontmatter block of the raw KEY VALUE pairs
+# (_frontmatter__format_block) followed by BODY and a newline, or by nothing
+# when BODY is empty.
+__task__write_document() {
+  local file="$1" body="$2"
+  shift 2
+  {
+    _frontmatter__format_block "$@"
+    [[ -z "$body" ]] || printf '%s\n' "$body"
+  } > "$file"
 }
 
 # _task__write_symlink ROOT TASK_SUFFIX
@@ -1678,4 +1867,140 @@ _task__write_stub() {
 _task__write_symlink() {
   local root="$1" suffix="$2"
   ln -snf "$(_path__task_file "$suffix")" "$root/$TT_TASK_SYMLINK_FILENAME"
+}
+
+# Usage: __task__staged_subtask_entries FILE
+# Prints every raw 'subtask:' entry value of the task file FILE, one per line,
+# in file order.
+__task__staged_subtask_entries() {
+  local fields subtask_count subtask i
+  fields="$(_frontmatter__parse_values "$(<"$1")" 'subtask[]')"
+  { IFS= read -r subtask_count
+    for (( i = 0; i < subtask_count; i++ )); do
+      IFS= read -r subtask; printf '%s\n' "$subtask"
+    done
+  } <<< "$fields" || true
+}
+
+# A raw 'subtask:' entry split into its checkbox (group 1), the whitespace after
+# it (group 2), the subtask ID (group 3) and the rest of the entry (group 4).
+__TASK__SUBTASK_ENTRY_PARTS='^(\[[ x-]\])([[:space:]]*)([^[:space:]]+)(.*)$'
+
+# Usage: _task__set_subtask_status FILE TASK_ID STATUS
+# Sets the checkbox of every 'subtask:' entry for TASK_ID in the task file FILE
+# (typically a staged copy) to the one for STATUS (TODO, IN-PROGRESS or DONE),
+# in place. Anything after the task ID on the entry, such as a title, is kept.
+# Entries without a well-formed checkbox are left alone. Leaves the file
+# unchanged when no entry matches. Logs an error and returns 1, leaving the
+# file unchanged, when STATUS is not a known status.
+_task__set_subtask_status() {
+  local file="$1" task_id="$2" status="$3"
+  case "$status" in
+    TODO|IN-PROGRESS|DONE) ;;
+    *)
+      printf "Error: Unknown task status '%s'.\n" "$status" >&2
+      return 1 ;;
+  esac
+  local checkbox subtask entries
+  checkbox="$(_format__status_checkbox "$status")"
+  entries="$(__task__staged_subtask_entries "$file")"
+  while IFS= read -r subtask; do
+    [[ "$subtask" =~ $__TASK__SUBTASK_ENTRY_PARTS ]] || continue
+    [[ "${BASH_REMATCH[3]}" == "$task_id" ]] || continue
+    _frontmatter__replace_entry "$file" subtask "$subtask" \
+      "${checkbox}${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
+  done <<< "$entries"
+}
+
+# Usage: _task__add_subtask FILE TASK_ID
+# Adds an unchecked 'subtask: [ ] TASK_ID' entry to the task file FILE
+# (typically a staged copy), in place, after the existing subtask entries.
+_task__add_subtask() {
+  _frontmatter__add_entry --before "$(__task__fields_after subtask)" "$1" subtask "[ ] $2"
+}
+
+# Usage: _task__remove_subtask FILE TASK_ID
+# Removes every 'subtask:' entry for TASK_ID, in any checkbox state and with
+# or without a trailing title, from the task file FILE (typically a staged
+# copy), in place. Leaves the file unchanged when no entry matches.
+_task__remove_subtask() {
+  local file="$1" task_id="$2"
+  local subtask entries
+  entries="$(__task__staged_subtask_entries "$file")"
+  while IFS= read -r subtask; do
+    [[ "$subtask" =~ $__TASK__SUBTASK_ENTRY_PARTS ]] || continue
+    [[ "${BASH_REMATCH[3]}" == "$task_id" ]] || continue
+    _frontmatter__remove_entry "$file" subtask "$subtask"
+  done <<< "$entries"
+}
+
+# Usage: _task__rename_subtask FILE OLD_ID NEW_ID
+# Repoints every 'subtask:' entry for OLD_ID in the task file FILE (typically
+# a staged copy) at NEW_ID, in place. The checkbox, anything after the ID and
+# the entry's position are kept. Leaves the file unchanged when no entry
+# matches.
+_task__rename_subtask() {
+  local file="$1" old_id="$2" new_id="$3"
+  local subtask entries
+  entries="$(__task__staged_subtask_entries "$file")"
+  while IFS= read -r subtask; do
+    [[ "$subtask" =~ $__TASK__SUBTASK_ENTRY_PARTS ]] || continue
+    [[ "${BASH_REMATCH[3]}" == "$old_id" ]] || continue
+    _frontmatter__replace_entry "$file" subtask "$subtask" \
+      "${BASH_REMATCH[1]}${BASH_REMATCH[2]}${new_id}${BASH_REMATCH[4]}"
+  done <<< "$entries"
+}
+
+# Usage: _task__add_context FILE CTX_ID
+# Adds a 'context: CTX_ID' entry to the task file FILE (typically a staged
+# copy), in place, after the existing context entries and before any subtasks.
+_task__add_context() {
+  _frontmatter__add_entry --before "$(__task__fields_after context)" "$1" context "$2"
+}
+
+# The canonical order of task file frontmatter fields (DESIGN.md §4.2).
+__TASK__FIELD_ORDER='title status created updated label context subtask'
+
+# Usage: __task__fields_after FIELD
+# Prints the task fields that follow FIELD in the canonical order, space-separated.
+__task__fields_after() {
+  local rest=" ${__TASK__FIELD_ORDER} "
+  rest="${rest#* "$1" }"
+  printf '%s' "${rest% }"
+}
+
+# Usage: _task__set_field FILE FIELD VALUE
+# Sets the single-valued field FIELD (title, status, created or updated) of
+# the task file FILE (typically a staged copy) to the raw VALUE, in place. An
+# absent field is inserted at its canonical position. A title must be encoded
+# by the caller (_frontmatter__quote).
+_task__set_field() {
+  _frontmatter__set_field --before "$(__task__fields_after "$2")" "$1" "$2" "$3"
+}
+
+# Usage: _task__set_labels FILE [LABEL...]
+# Replaces the 'label:' entries of the task file FILE (typically a staged copy)
+# with LABELs, in argument order, in place. When the task has no labels yet,
+# they are inserted at their canonical position.
+_task__set_labels() {
+  local file="$1"
+  shift
+  _frontmatter__set_entries --before "$(__task__fields_after label)" "$file" label "$@"
+}
+
+# Usage: _task__set_subtasks FILE [ENTRY...]
+# Replaces the 'subtask:' entries of the task file FILE (typically a staged
+# copy) with the raw ENTRYs, in argument order, in place. When the task has no
+# subtasks yet, they are inserted at their canonical position.
+_task__set_subtasks() {
+  local file="$1"
+  shift
+  _frontmatter__set_entries --before "$(__task__fields_after subtask)" "$file" subtask "$@"
+}
+
+# Usage: _task__remove_context FILE CTX_ID
+# Removes every 'context:' entry for CTX_ID from the task file FILE (typically
+# a staged copy), in place. Leaves the file unchanged when no entry matches.
+_task__remove_context() {
+  _frontmatter__remove_entry "$1" context "$2"
 }

@@ -157,11 +157,7 @@ main() {
       _ui__log "Error: Task '$task_id' not found in repository."
       exit 1
     fi
-    if _task__check_is_task_branch "$task_id" "$task_prefix"; then
-      task_slug="${task_id#$task_prefix}"
-    else
-      task_slug="${task_id#$project_prefix}"
-    fi
+    task_slug="$(_task__resolve_suffix "$task_id" "$task_prefix" "$project_prefix")" || exit 1
     task_file="$(_path__task_file "$task_slug")"
   else
     { read -r task_file; read -r task_id; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
@@ -169,11 +165,7 @@ main() {
       _ui__log "Error: Not on a task or project branch. Pass a task ID explicitly."
       exit 1
     fi
-    if _task__check_is_task_branch "$task_id" "$task_prefix"; then
-      task_slug="${task_id#$task_prefix}"
-    else
-      task_slug="${task_id#$project_prefix}"
-    fi
+    task_slug="$(_task__resolve_suffix "$task_id" "$task_prefix" "$project_prefix")" || exit 1
     task_file="$(_path__task_file "$task_slug")"
   fi
 
@@ -203,11 +195,7 @@ main() {
 
   # Derive parent slug and task file path
   local parent_slug parent_task_file
-  if _task__check_is_task_branch "$parent_bookmark" "$task_prefix"; then
-    parent_slug="${parent_bookmark#$task_prefix}"
-  else
-    parent_slug="${parent_bookmark#$project_prefix}"
-  fi
+  parent_slug="$(_task__resolve_suffix "$parent_bookmark" "$task_prefix" "$project_prefix")" || exit 1
   parent_task_file="$(_path__task_file "$parent_slug")"
 
   # Collect full descendant subtree
@@ -216,7 +204,8 @@ main() {
     "$task_prefix" "$project_prefix")"
 
   # Verify the parent task file exists on the parent branch before writing
-  if ! _task__read_file "$repo" "$parent_bookmark" "$parent_task_file" >/dev/null; then
+  if ! _task__check_file_exists "$repo" "$parent_bookmark" "$parent_bookmark" \
+    "$task_prefix" "$project_prefix"; then
     _ui__log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
     exit 1
   fi
@@ -259,7 +248,7 @@ main() {
   # directories themselves are removed via the --delete-prefix flags.
   delete_parent_writer() {
     local root="$1"
-    _frontmatter__remove_subtask "$root/$parent_task_file" "$task_id"
+    _task__remove_subtask "$root/$parent_task_file" "$task_id"
   }
 
   # Commit the subtask-entry removal and directory deletions onto the parent

@@ -1,5 +1,7 @@
-# Task/context file frontmatter parsing and mutation helpers for tt bootstrap
-# CLI scripts.
+# Generic frontmatter parsing, formatting and in-place mutation helpers for tt
+# bootstrap CLI scripts. Field names, field order and entry syntax belong to
+# the callers (see lib/task.sh); this module knows only the delimited block of
+# 'KEY: VALUE' lines and the body that follows it.
 # Source this file; do not execute directly.
 #
 # Public surface:
@@ -9,24 +11,14 @@
 #   _frontmatter__parse_quoted_field   — field value with matched quotes stripped
 #   _frontmatter__parse_values         — values of several fields, lists count-prefixed
 #   _frontmatter__parse_repeated_field — every value of a repeatable field
-#   _frontmatter__parse_task           — parse task content into PARSED_* globals
-#   _frontmatter__write_task_file      — write a canonical task file
-#   _frontmatter__write_context_file   — write a canonical context file
-#   _frontmatter__insert_line          — insert a line into a frontmatter block
-#   _frontmatter__append_context       — append a 'context:' entry
-#   _frontmatter__append_subtask       — append a 'subtask:' entry
-#   _frontmatter__remove_subtask       — remove a 'subtask:' entry by task ID
-#   _frontmatter__rename_subtask       — repoint a 'subtask:' entry at a new task ID
-#   _frontmatter__update_timestamp     — rewrite the 'updated:' field
-#   _frontmatter__set_status           — rewrite the 'status:' field
-#
-# Global-variable conventions (bash 3.2 functions cannot return structured
-# data, so these globals are part of the public surface):
-#   _frontmatter__parse_task sets PARSED_TITLE, PARSED_STATUS, PARSED_CREATED,
-#   PARSED_UPDATED, PARSED_BODY, and the arrays PARSED_LABELS, PARSED_CONTEXTS,
-#   PARSED_SUBTASKS.
-#   _frontmatter__write_task_file reads the arrays REWRITE_LABELS,
-#   REWRITE_CONTEXTS, REWRITE_SUBTASKS, which callers must set beforehand.
+#   _frontmatter__quote                — encode a value as a quoted frontmatter string
+#   _frontmatter__format_block         — delimited frontmatter block from key/value pairs
+#   _frontmatter__set_field            — set a single-valued field
+#   _frontmatter__set_entries          — replace every entry of a repeatable field
+#   _frontmatter__add_entry            — add one entry of a repeatable field
+#   _frontmatter__set_body             — replace the body after the frontmatter
+#   _frontmatter__remove_entry         — remove every entry of a field with a given value
+#   _frontmatter__replace_entry        — rewrite every entry of a field with a given value
 
 # Usage: _frontmatter__parse_body CONTENT
 # Outputs everything after the second "---" line (the frontmatter closing delimiter).
@@ -93,7 +85,7 @@ _frontmatter__parse_field() {
 # Usage: _frontmatter__parse_quoted_field CONTENT FIELD
 # As _frontmatter__parse_field, but for a value written as a quoted string:
 # strips a matched pair of surrounding double quotes and decodes the escapes
-# __frontmatter__quote writes. A value without a matched pair is returned as
+# _frontmatter__quote writes. A value without a matched pair is returned as
 # it is.
 _frontmatter__parse_quoted_field() {
   local value
@@ -110,7 +102,11 @@ _frontmatter__parse_quoted_field() {
 #   NAME[]  one line holding the number of occurrences N (0 when absent),
 #           followed by N lines holding each raw value in file order. An
 #           occurrence with an empty value gives an empty line.
-# A field requested more than once is printed once per request.
+#   ...     the body: everything after the closing delimiter, verbatim, as
+#           _frontmatter__parse_body prints it. Allowed only as the last
+#           request, so the body runs to the end of the output.
+# A field requested more than once is printed once per request. Returns 1
+# before printing anything when '...' is not the last request.
 #
 # A newline cannot occur inside a value: the frontmatter format stores each
 # value on one line, and quoting escapes newlines. A caller reads exactly one
@@ -124,9 +120,26 @@ _frontmatter__parse_quoted_field() {
 #       IFS= read -r subtask; subtasks+=("$subtask")
 #     done
 #   } <<< "$(_frontmatter__parse_values "$content" title 'subtask[]')" || true
+#
+# The body follows the last field line; read it to the end of the input, and
+# drop the newline the here-string appends:
+#
+#   { IFS= read -r title; IFS= read -r -d '' body; } \
+#     <<< "$(_frontmatter__parse_values "$content" title '...')" || true
+#   body="${body%$'\n'}"
 _frontmatter__parse_values() {
   local content="$1"; shift
   local requests=("$@") names=() values=() found=() counts=() i
+  local with_body=''
+  for (( i = 0; i < ${#requests[@]}; i++ )); do
+    [[ "${requests[i]}" == '...' ]] || continue
+    if (( i != ${#requests[@]} - 1 )); then
+      printf "Error: The body request '...' must be the last request.\n" >&2
+      return 1
+    fi
+    with_body=1
+    unset 'requests[i]'
+  done
   for (( i = 0; i < ${#requests[@]}; i++ )); do
     names[i]="${requests[i]%\[\]}"
     values[i]=''
@@ -158,14 +171,30 @@ _frontmatter__parse_values() {
       printf '%s\n' "${values[i]}"
     fi
   done
+  if [[ -n "$with_body" ]]; then
+    _frontmatter__parse_body "$content"
+  fi
 }
 
-# Usage: __frontmatter__quote VALUE
+# Usage: _frontmatter__format_block [KEY VALUE]...
+# Prints a '---'-delimited frontmatter block with one 'KEY: VALUE' line per
+# pair, in argument order. A KEY given more than once gives one line per pair.
+# Values are written raw; callers quote them with _frontmatter__quote.
+_frontmatter__format_block() {
+  printf -- '---\n'
+  while [[ $# -ge 2 ]]; do
+    printf '%s: %s\n' "$1" "$2"
+    shift 2
+  done
+  printf -- '---\n'
+}
+
+# Usage: _frontmatter__quote VALUE
 # Prints VALUE as a double-quoted string using JSON's basic escapes: a
 # backslash and a double quote are backslash-escaped, and newline, carriage
 # return, tab, backspace and form feed become \n, \r, \t, \b and \f, so the
 # value fits on one frontmatter line and reads back unchanged.
-__frontmatter__quote() {
+_frontmatter__quote() {
   local value="$1"
   value="${value//\\/\\\\}"
   value="${value//\"/\\\"}"
@@ -178,7 +207,7 @@ __frontmatter__quote() {
 }
 
 # Usage: __frontmatter__unquote TEXT
-# The inverse of __frontmatter__quote for TEXT that is a matched pair of
+# The inverse of _frontmatter__quote for TEXT that is a matched pair of
 # double quotes around a value: the quotes are removed and the escapes \" \\
 # \/ \n \r \t \b \f are decoded. Any other escape — \uXXXX among them — is
 # kept as written. A value with no backslash is returned as soon as the
@@ -220,8 +249,8 @@ __frontmatter__unquote() {
 }
 
 # Usage: _frontmatter__parse_repeated_field CONTENT FIELD
-# Extracts every value of a repeatable frontmatter field (label, context,
-# subtask), one per line, in file order. Outputs nothing if absent.
+# Extracts every value of a repeatable frontmatter field, one per line, in
+# file order. Outputs nothing if absent.
 _frontmatter__parse_repeated_field() {
   local line
   while IFS= read -r line; do
@@ -229,264 +258,171 @@ _frontmatter__parse_repeated_field() {
   done < <(_frontmatter__parse_fields "$1" "$2")
 }
 
-# _frontmatter__parse_task CONTENT
-#
-# Populates global variables from task frontmatter:
-#   PARSED_TITLE, PARSED_STATUS, PARSED_CREATED, PARSED_UPDATED, PARSED_BODY
-#   PARSED_LABELS (array), PARSED_CONTEXTS (array), PARSED_SUBTASKS (array)
-#
-# Exits 1 with an error message if any unrecognized frontmatter key is found.
-# Known keys: title, status, created, updated, label, context, subtask
-_frontmatter__parse_task() {
-  local content="$1"
-
-  PARSED_TITLE="$(_frontmatter__parse_quoted_field "$content" "title")"
-  PARSED_STATUS="$(_frontmatter__parse_field "$content" "status")"
-  PARSED_CREATED="$(_frontmatter__parse_field "$content" "created")"
-  PARSED_UPDATED="$(_frontmatter__parse_field "$content" "updated")"
-  PARSED_BODY="$(_frontmatter__parse_body "$content")"
-
-  PARSED_LABELS=()
-  while IFS= read -r lbl; do [[ -n "$lbl" ]] && PARSED_LABELS+=("$lbl"); done \
-    < <(_frontmatter__parse_repeated_field "$content" "label")
-
-  PARSED_CONTEXTS=()
-  while IFS= read -r ctx; do [[ -n "$ctx" ]] && PARSED_CONTEXTS+=("$ctx"); done \
-    < <(_frontmatter__parse_repeated_field "$content" "context")
-
-  PARSED_SUBTASKS=()
-  while IFS= read -r st; do [[ -n "$st" ]] && PARSED_SUBTASKS+=("$st"); done \
-    < <(_frontmatter__parse_repeated_field "$content" "subtask")
-
-  # Reject unrecognized frontmatter keys
-  local unknown='' line sep=0 first=1 key
+# Usage: __frontmatter__rewrite FILE MODE KEY BEFORE [ARG...]
+# Shared engine of the field mutators below. Rewrites FILE in place, in bash:
+# the file is a staged copy nothing else reads. Only lines inside the leading
+# frontmatter block are considered, and values are compared raw, with the
+# leading whitespace after 'KEY:' stripped. A file that does not begin with a
+# '---' line is left unchanged. BEFORE is a space-separated list of keys, used
+# by set mode only. MODE is one of:
+#   set VALUE...     the KEY lines are replaced by one 'KEY: VALUE' line per
+#                    VALUE, placed at the first line whose key is KEY or one
+#                    of BEFORE, or before the closing '---' when there is no
+#                    such line. No VALUE removes every KEY line.
+#   remove VALUE     every KEY line whose value is VALUE is dropped.
+#   replace OLD NEW  every KEY line whose value is OLD becomes 'KEY: NEW'.
+__frontmatter__rewrite() {
+  local file="$1" mode="$2" key="$3" before=" $4 "
+  shift 4
+  local -a args=("$@")
+  local line val sep=0 first=1 done_set='' out='' arg line_key
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ -n "$first" ]]; then
       first=''
-      [[ "$line" == '---' ]] || break
+      [[ "$line" == '---' ]] || return 0
     fi
     if [[ "$line" == '---' ]]; then
       sep=$(( sep + 1 ))
+      if [[ $sep -eq 2 && "$mode" == set && -z "$done_set" ]]; then
+        for arg in ${args[@]+"${args[@]}"}; do out+="$key: $arg"$'\n'; done
+        done_set=1
+      fi
+    elif [[ $sep -eq 1 && "$mode" == set && -z "$done_set" && "$line" == *:* \
+      && "${line%%:*}" != "$key" && "$before" == *" ${line%%:*} "* ]]; then
+      for arg in ${args[@]+"${args[@]}"}; do out+="$key: $arg"$'\n'; done
+      done_set=1
+    elif [[ $sep -eq 1 && "$line" == *:* && "${line%%:*}" == "$key" ]]; then
+      val="${line#"$key":}"
+      val="${val#"${val%%[!$' \t']*}"}"
+      case "$mode" in
+        set)
+          if [[ -z "$done_set" ]]; then
+            for arg in ${args[@]+"${args[@]}"}; do out+="$key: $arg"$'\n'; done
+            done_set=1
+          fi
+          continue ;;
+        remove)
+          [[ "$val" == "${args[0]}" ]] && continue ;;
+        replace)
+          [[ "$val" == "${args[0]}" ]] && line="$key: ${args[1]}" ;;
+      esac
+    fi
+    out+="$line"$'\n'
+  done < "$file"
+  printf '%s' "$out" > "$file"
+}
+
+# Usage: _frontmatter__set_field [--before KEYS] FILE KEY VALUE
+# Sets the single-valued field KEY to the raw VALUE in FILE's frontmatter, in
+# place: the first KEY line is rewritten and any later KEY lines are dropped.
+# When KEY is absent, 'KEY: VALUE' is inserted before the first line whose key
+# is one of the space-separated KEYS, or before the closing '---'. A value
+# written as a quoted string must be encoded by the caller (_frontmatter__quote).
+_frontmatter__set_field() {
+  local before=''
+  if [[ "${1:-}" == --before ]]; then before="$2"; shift 2; fi
+  __frontmatter__rewrite "$1" set "$2" "$before" "$3"
+}
+
+# Usage: _frontmatter__set_entries [--before KEYS] FILE KEY [VALUE...]
+# Replaces every entry of the repeatable field KEY in FILE's frontmatter with
+# one 'KEY: VALUE' line per raw VALUE, in argument order, in place. The new
+# entries take the position of the first existing entry; when KEY is absent
+# they are inserted before the first line whose key is one of the
+# space-separated KEYS, or before the closing '---'. No VALUE removes every
+# entry.
+_frontmatter__set_entries() {
+  local before=''
+  if [[ "${1:-}" == --before ]]; then before="$2"; shift 2; fi
+  local file="$1" key="$2"
+  shift 2
+  __frontmatter__rewrite "$file" set "$key" "$before" "$@"
+}
+
+# Usage: _frontmatter__add_entry [--before KEYS] FILE KEY VALUE
+# Adds a 'KEY: VALUE' entry (VALUE raw) to FILE's frontmatter, in place: after
+# the last existing KEY entry, or, when KEY is absent, before the first line
+# whose key is one of the space-separated KEYS, or before the closing '---'.
+# A file without a complete leading frontmatter block is left unchanged.
+# Rewritten in bash: the file is a staged copy nothing else reads.
+_frontmatter__add_entry() {
+  local before=''
+  if [[ "${1:-}" == --before ]]; then before=" $2 "; shift 2; fi
+  local file="$1" key="$2" value="$3"
+  local -a lines=()
+  local line sep=0 first=1 n=0 last_key=-1 first_anchor=-1 closing=-1 line_key
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -n "$first" ]]; then
+      first=''
+      [[ "$line" == '---' ]] || return 0
+    fi
+    lines[n]="$line"
+    if [[ "$line" == '---' ]]; then
+      sep=$(( sep + 1 ))
+      [[ $sep -eq 2 && $closing -lt 0 ]] && closing=$n
+    elif [[ $sep -eq 1 && "$line" == *:* ]]; then
+      line_key="${line%%:*}"
+      if [[ "$line_key" == "$key" ]]; then
+        last_key=$n
+      elif [[ $first_anchor -lt 0 && "$before" == *" $line_key "* ]]; then
+        first_anchor=$n
+      fi
+    fi
+    n=$(( n + 1 ))
+  done < "$file"
+  [[ $closing -ge 0 ]] || return 0
+
+  local at
+  if [[ $last_key -ge 0 ]]; then
+    at=$(( last_key + 1 ))
+  elif [[ $first_anchor -ge 0 ]]; then
+    at=$first_anchor
+  else
+    at=$closing
+  fi
+  local out='' i
+  for (( i = 0; i < n; i++ )); do
+    [[ $i -eq $at ]] && out+="$key: $value"$'\n'
+    out+="${lines[i]}"$'\n'
+  done
+  printf '%s' "$out" > "$file"
+}
+
+# Usage: _frontmatter__set_body FILE BODY
+# Replaces everything after FILE's closing frontmatter delimiter with BODY
+# followed by a newline, in place; an empty BODY leaves nothing after the
+# delimiter. A file without a complete leading frontmatter block is left
+# unchanged. Rewritten in bash: the file is a staged copy nothing else reads.
+_frontmatter__set_body() {
+  local file="$1" body="$2"
+  local line sep=0 first=1 out=''
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -n "$first" ]]; then
+      first=''
+      [[ "$line" == '---' ]] || return 0
+    fi
+    out+="$line"$'\n'
+    if [[ "$line" == '---' ]]; then
+      sep=$(( sep + 1 ))
       [[ $sep -eq 2 ]] && break
-      continue
     fi
-    [[ $sep -eq 1 && "$line" == [a-zA-Z]* ]] || continue
-    key="${line%%:*}"
-    case "$key" in
-      title|status|created|updated|label|context|subtask) ;;
-      *) unknown+="$key"$'\n' ;;
-    esac
-  done <<< "$content"
-  unknown="${unknown%$'\n'}"
-  if [[ -n "$unknown" ]]; then
-    printf 'Error: Unrecognized frontmatter field(s):\n%s\n' "$unknown" >&2
-    return 1
-  fi
-}
-
-# _frontmatter__write_task_file FILE TITLE STATUS BODY CREATED UPDATED
-#
-# Writes FILE with canonical frontmatter followed by BODY.
-# Arrays REWRITE_LABELS, REWRITE_CONTEXTS, REWRITE_SUBTASKS must be set by
-# the caller as environment variables before calling this function.
-#
-# Canonical field order: title, status, created, updated, label…, context…, subtask…
-# STATUS is omitted when empty (used for context files which have no status field).
-# Timestamps are caller-supplied; generate via _string__generate_timestamp at the call site.
-# FILE is written directly: callers stage files for a commit rather than
-# editing files anything else is reading.
-_frontmatter__write_task_file() {
-  local file="$1"
-  local title="$2"
-  local status="$3"
-  local body="$4"
-  local created="$5"
-  local updated="$6"
-
-  {
-    echo '---'
-    printf 'title: %s\n' "$(__frontmatter__quote "$title")"
-    [[ -n "$status" ]] && echo "status: $status"
-    echo "created: $created"
-    echo "updated: $updated"
-    for lbl in "${REWRITE_LABELS[@]+"${REWRITE_LABELS[@]}"}"; do
-      echo "label: $lbl"
-    done
-    for ctx in "${REWRITE_CONTEXTS[@]+"${REWRITE_CONTEXTS[@]}"}"; do
-      echo "context: $ctx"
-    done
-    for st in "${REWRITE_SUBTASKS[@]+"${REWRITE_SUBTASKS[@]}"}"; do
-      echo "subtask: $st"
-    done
-    echo '---'
-    if [[ -n "$body" ]]; then
-      printf '%s\n' "$body"
-    fi
-  } > "$file"
-}
-
-# _frontmatter__write_context_file FILE TITLE BODY CREATED UPDATED
-#
-# Writes a context file with title, created, updated, and body.
-# Context files have no status, label, context, or subtask fields.
-# Delegates to _frontmatter__write_task_file with empty status and empty arrays.
-_frontmatter__write_context_file() {
-  local file="$1"
-  local title="$2"
-  local body="$3"
-  local created="$4"
-  local updated="$5"
-  local REWRITE_LABELS=() REWRITE_CONTEXTS=() REWRITE_SUBTASKS=()
-  _frontmatter__write_task_file "$file" "$title" "" "$body" "$created" "$updated"
-}
-
-# _frontmatter__insert_line FILE LINE_TO_INSERT [BEFORE_PATTERN]
-#
-# Shared implementation for inserting a line into YAML frontmatter.
-# Inserts LINE_TO_INSERT at the correct position:
-#   - If BEFORE_PATTERN is given: before the first line matching that pattern
-#     within the frontmatter block.
-#   - If omitted: before the closing --- separator.
-# Rewritten in place, in bash: the file is a staged copy nothing else reads.
-_frontmatter__insert_line() {
-  local file="$1" line="$2" before="${3:-}"
-  local current sep=0 inserted='' out=''
-  while IFS= read -r current || [[ -n "$current" ]]; do
-    if [[ "$current" == '---' ]]; then
-      sep=$(( sep + 1 ))
-      if [[ $sep -eq 2 && -z "$inserted" ]]; then
-        out+="$line"$'\n'
-        inserted=1
-      fi
-    elif [[ $sep -eq 1 && -n "$before" && -z "$inserted" && "$current" =~ $before ]]; then
-      out+="$line"$'\n'
-      inserted=1
-    fi
-    out+="$current"$'\n'
   done < "$file"
+  [[ $sep -eq 2 ]] || return 0
+  [[ -n "$body" ]] && out+="$body"$'\n'
   printf '%s' "$out" > "$file"
 }
 
-# _frontmatter__append_context FILE CTX_ID
-#
-# Appends a 'context: CTX_ID' line before the first 'subtask:' line
-# (or before the closing '---' if no subtask entries exist).
-# Does not update the 'updated:' timestamp — call _frontmatter__update_timestamp
-# separately if needed.
-_frontmatter__append_context() {
-  _frontmatter__insert_line "$1" "context: $2" "^subtask:"
+# Usage: _frontmatter__remove_entry FILE KEY VALUE
+# Removes every KEY line whose raw value is VALUE from FILE's frontmatter, in
+# place. Leaves the file unchanged and returns 0 when no entry matches.
+_frontmatter__remove_entry() {
+  __frontmatter__rewrite "$1" remove "$2" '' "$3"
 }
 
-# _frontmatter__append_subtask FILE TASK_ID
-#
-# Appends a 'subtask: [ ] TASK_ID' line before the closing '---' separator
-# (after any existing context: or subtask: entries).
-_frontmatter__append_subtask() {
-  _frontmatter__insert_line "$1" "subtask: [ ] $2" ""
-}
-
-# _frontmatter__remove_subtask FILE TASK_ID
-#
-# Removes the 'subtask: [.] TASK_ID' line — any checkbox state (' ', 'x' or
-# '-') — from FILE's frontmatter, in place. The entry is matched on the task
-# ID alone, so a trailing title after the ID does not prevent removal. Only
-# lines inside the frontmatter block are considered: a body line that looks
-# like a subtask entry is left untouched. Removing an entry that does not
-# exist leaves the file unchanged and returns 0.
-# Rewritten in place, in bash: the file is a staged copy nothing else reads.
-_frontmatter__remove_subtask() {
-  local file="$1" task_id="$2"
-  local current sep=0 rest out=''
-  while IFS= read -r current || [[ -n "$current" ]]; do
-    if [[ "$current" == '---' ]]; then
-      sep=$(( sep + 1 ))
-    elif [[ $sep -eq 1 && "$current" == subtask:* ]]; then
-      rest="$(__frontmatter__subtask_rest "$current")"
-      [[ "${rest%%[[:space:]]*}" == "$task_id" ]] && continue
-    fi
-    out+="$current"$'\n'
-  done < "$file"
-  printf '%s' "$out" > "$file"
-}
-
-# Usage: __frontmatter__subtask_rest LINE
-# Prints a `subtask:` line with its key and checkbox prefix removed — the
-# task ID and whatever follows it. A line without a well-formed checkbox is
-# printed unchanged.
-__frontmatter__subtask_rest() {
-  local line="$1"
-  local checkbox='^subtask:[[:space:]]*\[[[:space:]x-]\][[:space:]]*'
-  if [[ "$line" =~ $checkbox ]]; then
-    line="${line#"${BASH_REMATCH[0]}"}"
-  fi
-  printf '%s' "$line"
-}
-
-# _frontmatter__rename_subtask FILE OLD_ID NEW_ID
-#
-# Rewrites the 'subtask: [.] OLD_ID' entry in FILE's frontmatter to name
-# NEW_ID instead, in place. The checkbox state and anything following the ID
-# on the line (e.g. a trailing title) are preserved, and the entry keeps its
-# position in the list. The entry is matched on the task ID alone, and only
-# lines inside the frontmatter block are considered: a body line that looks
-# like a subtask entry is left untouched. Renaming an entry that does not
-# exist leaves the file unchanged and returns 0.
-# Rewritten in place, in bash: the file is a staged copy nothing else reads.
-_frontmatter__rename_subtask() {
-  local file="$1" old_id="$2" new_id="$3"
-  local current sep=0 rest prefix out=''
-  while IFS= read -r current || [[ -n "$current" ]]; do
-    if [[ "$current" == '---' ]]; then
-      sep=$(( sep + 1 ))
-    elif [[ $sep -eq 1 && "$current" == subtask:* ]]; then
-      rest="$(__frontmatter__subtask_rest "$current")"
-      if [[ "${rest%%[[:space:]]*}" == "$old_id" ]]; then
-        # The checkbox prefix is whatever precedes the remainder.
-        prefix="${current:0:$(( ${#current} - ${#rest} ))}"
-        current="${prefix}${new_id}${rest:${#old_id}}"
-      fi
-    fi
-    out+="$current"$'\n'
-  done < "$file"
-  printf '%s' "$out" > "$file"
-}
-
-# _frontmatter__update_timestamp FILE TIMESTAMP
-#
-# Updates the 'updated:' field in the frontmatter of FILE to TIMESTAMP.
-# Rewritten in place, in bash: the file is a staged copy nothing else reads.
-_frontmatter__update_timestamp() {
-  local file="$1"
-  local ts="$2"
-  local current sep=0 out=''
-  while IFS= read -r current || [[ -n "$current" ]]; do
-    if [[ "$current" == '---' ]]; then
-      sep=$(( sep + 1 ))
-    elif [[ $sep -eq 1 && "$current" == updated:* ]]; then
-      current="updated: $ts"
-    fi
-    out+="$current"$'\n'
-  done < "$file"
-  printf '%s' "$out" > "$file"
-}
-
-# _frontmatter__set_status FILE STATUS
-#
-# Updates the 'status:' field in the frontmatter of FILE to STATUS. Only lines
-# inside the frontmatter block are considered: a body line starting with
-# 'status:' is left untouched. Does not update the 'updated:' timestamp.
-# Rewritten in place, in bash: the file is a staged copy nothing else reads.
-_frontmatter__set_status() {
-  local file="$1"
-  local status="$2"
-  local current sep=0 out=''
-  while IFS= read -r current || [[ -n "$current" ]]; do
-    if [[ "$current" == '---' ]]; then
-      sep=$(( sep + 1 ))
-    elif [[ $sep -eq 1 && "$current" == status:* ]]; then
-      current="status: $status"
-    fi
-    out+="$current"$'\n'
-  done < "$file"
-  printf '%s' "$out" > "$file"
+# Usage: _frontmatter__replace_entry FILE KEY OLD NEW
+# Rewrites every KEY line whose raw value is OLD to 'KEY: NEW' in FILE's
+# frontmatter, in place, keeping its position. Leaves the file unchanged and
+# returns 0 when no entry matches.
+_frontmatter__replace_entry() {
+  __frontmatter__rewrite "$1" replace "$2" '' "$3" "$4"
 }

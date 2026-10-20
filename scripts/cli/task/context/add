@@ -102,35 +102,25 @@ main() {
   workspace_dir="$(_workspace__get_dir "$repo")" || true
 
   # Resolve current branch and task file
-  local task_file task_suffix bookmark
+  local task_file bookmark
 
   if [[ -n "$task_id_arg" ]]; then
     bookmark="$task_id_arg"
     local suffix
-    if _task__check_is_task_branch "$bookmark" "$task_prefix"; then
-      suffix="${bookmark#$task_prefix}"
-    elif _task__check_is_project_branch "$bookmark" "$project_prefix"; then
-      suffix="${bookmark#$project_prefix}"
-    else
+    suffix="$(_task__resolve_suffix "$bookmark" "$task_prefix" "$project_prefix")" || {
       _ui__log "Error: '$task_id_arg' is not a task or project branch."
       exit 1
-    fi
+    }
     if ! _task__check_branch_exists "$repo" "$bookmark"; then
       _ui__log "Error: Branch '$bookmark' not found in repository."
       exit 1
     fi
-    task_suffix="$suffix"
     task_file="$(_path__task_file "$suffix")"
   else
     { read -r task_file; read -r bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$bookmark" ]]; then
       _ui__log "Error: not on a task or project branch."
       exit 1
-    fi
-    if _task__check_is_task_branch "$bookmark" "$task_prefix"; then
-      task_suffix="${bookmark#$task_prefix}"
-    else
-      task_suffix="${bookmark#$project_prefix}"
     fi
   fi
 
@@ -196,12 +186,13 @@ main() {
   ctx_hex="$(_string__generate_hex)"
   local ctx_id="context/${ctx_slug}-${ctx_hex}"
   local ctx_file
-  ctx_file="$(_path__task_context "$task_suffix" "$ctx_id")"
+  ctx_file="$(_task__resolve_context_file "$bookmark" "$ctx_id" \
+    "$task_prefix" "$project_prefix")" || exit 1
   local ctx_ts
   ctx_ts="$(_string__generate_timestamp)"
 
   # Verify the task file exists on the target branch (it may not be checked out)
-  if ! _task__read_file "$repo" "$bookmark" "$task_file" >/dev/null; then
+  if ! _task__check_file_exists "$repo" "$bookmark" "$bookmark" "$task_prefix" "$project_prefix"; then
     _ui__log "Error: task file not found on branch '$bookmark': $task_file"
     exit 1
   fi
@@ -211,10 +202,10 @@ main() {
   ctx_add_writer() {
     local root="$1"
     mkdir -p "$(_path__dirname "$root/$ctx_file")"
-    _frontmatter__write_context_file "$root/$ctx_file" "$ctx_title" "$body" "$ctx_ts" "$ctx_ts"
+    _task__write_context_file "$root/$ctx_file" "$ctx_title" "$ctx_ts" "$ctx_ts" "$body"
     # Add context reference to task file frontmatter and update 'updated' timestamp
-    _frontmatter__append_context "$root/$task_file" "$ctx_id"
-    _frontmatter__update_timestamp "$root/$task_file" "$ctx_ts"
+    _task__add_context "$root/$task_file" "$ctx_id"
+    _task__set_field "$root/$task_file" updated "$ctx_ts"
   }
 
   # Begin transaction (records before-op for undo)

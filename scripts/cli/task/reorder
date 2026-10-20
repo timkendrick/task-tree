@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 . "$SCRIPT_DIR/../lib/common.sh"
 
 # tt task reorder — Reorder a child task within its parent's subtask: list,
-# or tidy the frontmatter of a task file to canonical order.
+# or tidy a task's subtask: list by status.
 #
 # Usage:
 #   reorder [<task-id>] [--up | --down | --before <sibling-id> | --after <sibling-id>]
@@ -15,10 +15,9 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # With a modifier (--up, --down, --before, --after): reorders <task-id> (default:
 # current task) within its parent's subtask: list. The parent is located automatically.
 #
-# Without a modifier (tidy mode): canonicalises the frontmatter of <task-id> (default:
-# current task) on its canonical branch. Fields are reordered to: title, status, created,
-# updated, labels, contexts, subtasks (sorted by checkbox status: IN-PROGRESS first,
-# then TODO, then DONE, stable within each group).
+# Without a modifier (tidy mode): sorts the subtask: entries of <task-id> (default:
+# current task) on its canonical branch by checkbox status: IN-PROGRESS first, then
+# TODO, then DONE, stable within each group.
 
 readonly SCRIPT_NAME="${0##*/}"
 
@@ -26,15 +25,15 @@ usage() {
   cat <<EOF
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [options...]
 
-Reorder a task within its parent's subtask: list, or tidy the frontmatter
-of a task file to canonical order.
+Reorder a task within its parent's subtask: list, or tidy a task's subtask:
+list by status.
 
 When a modifier is given (--up, --down, --before, --after), reorders <task-id>
 (default: current task) within its parent's subtask: list. The parent is located
 automatically by scanning all task/project branches.
 
-When no modifier is given, canonicalises the frontmatter field order and groups
-subtask: entries by checkbox status (IN-PROGRESS first, then TODO, then DONE).
+When no modifier is given, groups <task-id>'s subtask: entries by checkbox status
+(IN-PROGRESS first, then TODO, then DONE).
 
 Options:
   <task-id>                    Task ID to operate on (default: current task).
@@ -93,6 +92,14 @@ subtask_lines_move() {
   subtask_lines=("${_result[@]+"${_result[@]}"}")
 }
 
+# Usage: subtask_line_id ENTRY
+# Prints the subtask ID of a raw subtask entry, or nothing when it is malformed.
+subtask_line_id() {
+  local parsed
+  parsed="$(_task__parse_subtask_entry "$1")" || return 0
+  printf '%s' "${parsed#*$'\t'}"
+}
+
 # ---------------------------------------------------------------------------
 # reorder_subtask — Reorder modifier mode
 # Modifies the parent task's subtask: list.
@@ -111,42 +118,27 @@ reorder_subtask() {
   }
 
   # 2. Determine parent task file path
-  local parent_suffix
-  if _task__check_is_task_branch "$parent_id" "$task_prefix"; then
-    parent_suffix="${parent_id#$task_prefix}"
-  else
-    parent_suffix="${parent_id#$project_prefix}"
-  fi
   local parent_task_file
-  parent_task_file="$(_path__task_file "$parent_suffix")"
+  parent_task_file="$(_task__resolve_file "$parent_id" "$task_prefix" "$project_prefix")" || exit 1
 
-  # 3. Read parent task file from the parent branch
-  local parent_content
-  parent_content="$(_task__read_file "$repo" "$parent_id" "$parent_task_file")" || {
+  # 3. Read the parent's title and subtask entries from the parent branch
+  local fields parent_title subtask_count subtask i
+  local -a subtask_lines=()
+  fields="$(_task__read_fields "$repo" "$parent_id" "$parent_id" \
+    "$task_prefix" "$project_prefix" title 'subtask[]')" || {
     _ui__log "Error: Could not read task file '$parent_task_file' from branch '$parent_id'."
     exit 1
   }
+  { IFS= read -r parent_title; IFS= read -r subtask_count
+    for (( i = 0; i < subtask_count; i++ )); do
+      IFS= read -r subtask; subtask_lines+=("$subtask")
+    done
+  } <<< "$fields" || true
 
-  # 4. Parse all parent frontmatter fields
-  _frontmatter__parse_task "$parent_content"
-  local parent_title="$PARSED_TITLE"
-  local parent_status="$PARSED_STATUS"
-  local parent_created="$PARSED_CREATED"
-  local parent_body="$PARSED_BODY"
-  local -a parent_labels=("${PARSED_LABELS[@]+"${PARSED_LABELS[@]}"}")
-  local -a parent_contexts=("${PARSED_CONTEXTS[@]+"${PARSED_CONTEXTS[@]}"}")
-  local -a subtask_lines=("${PARSED_SUBTASKS[@]+"${PARSED_SUBTASKS[@]}"}")
-
-  # 5. Find index of child_id in subtask_lines
-  # Subtask lines have format "[ ] task/id" or "[-] task/id" or "[x] task/id".
-  # The "[ ]" form splits into 3 awk fields ([, ], task/id), while "[-]" and "[x]"
-  # are single tokens. Use sed to strip the bracket group and whitespace instead.
+  # 4. Find index of child_id in subtask_lines
   local child_idx=-1
-  local i
   for i in "${!subtask_lines[@]}"; do
-    local line_id
-    line_id="$(printf '%s' "${subtask_lines[$i]}" | sed 's/^\[[^]]*\][[:space:]]*//')"
-    if [[ "$line_id" == "$child_id" ]]; then
+    if [[ "$(subtask_line_id "${subtask_lines[$i]}")" == "$child_id" ]]; then
       child_idx=$i
       break
     fi
@@ -156,7 +148,7 @@ reorder_subtask() {
     exit 1
   fi
 
-  # 6. Apply the modifier
+  # 5. Apply the modifier
   local n=${#subtask_lines[@]}
 
   case "$modifier" in
@@ -184,9 +176,9 @@ reorder_subtask() {
       # Find sibling index
       local sibling_idx=-1
       for i in "${!subtask_lines[@]}"; do
-        local line_id
-        line_id="$(printf '%s' "${subtask_lines[$i]}" | sed 's/^\[[^]]*\][[:space:]]*//')"
-        if [[ "$line_id" == "$sibling_id" ]]; then sibling_idx=$i; break; fi
+        if [[ "$(subtask_line_id "${subtask_lines[$i]}")" == "$sibling_id" ]]; then
+          sibling_idx=$i; break
+        fi
       done
       [[ $sibling_idx -eq -1 ]] && { _ui__log "Error: Sibling '$sibling_id' not found in parent's subtask list."; exit 1; }
       # No-op: child is already immediately before sibling
@@ -203,9 +195,9 @@ reorder_subtask() {
       # Find sibling index
       local sibling_idx=-1
       for i in "${!subtask_lines[@]}"; do
-        local line_id
-        line_id="$(printf '%s' "${subtask_lines[$i]}" | sed 's/^\[[^]]*\][[:space:]]*//')"
-        if [[ "$line_id" == "$sibling_id" ]]; then sibling_idx=$i; break; fi
+        if [[ "$(subtask_line_id "${subtask_lines[$i]}")" == "$sibling_id" ]]; then
+          sibling_idx=$i; break
+        fi
       done
       [[ $sibling_idx -eq -1 ]] && { _ui__log "Error: Sibling '$sibling_id' not found in parent's subtask list."; exit 1; }
       # No-op: child is already immediately after sibling
@@ -219,48 +211,36 @@ reorder_subtask() {
       ;;
   esac
 
-  # 7. Read child title for commit message
-  local child_branch child_title
-  child_branch="$(_task__find_branch "$repo" "$child_id" "$task_prefix" "$project_prefix")" || {
-    _ui__log "Error: Could not locate branch for '$child_id'."
-    exit 1
-  }
-  child_title="$(_task__read_title "$repo" "$child_branch" "$child_id" \
-    "$task_prefix" "$project_prefix")" || exit 1
-
-  # 8. Begin transaction
+  # 6. Begin transaction
   _history__begin_transaction "$repo"
 
-  # 9. Commit the rewritten parent task file onto the parent branch
-  export REWRITE_LABELS=("${parent_labels[@]+"${parent_labels[@]}"}")
-  export REWRITE_CONTEXTS=("${parent_contexts[@]+"${parent_contexts[@]}"}")
-  export REWRITE_SUBTASKS=("${subtask_lines[@]+"${subtask_lines[@]}"}")
+  # 7. Commit the reordered subtask entries onto the parent branch
   local reorder_updated
   reorder_updated="$(_string__generate_timestamp)"
-  # Writer invoked by _task__commit_on_branch with the staging root: rewrites
-  # the staged parent task file with the reordered subtask list.
+  # Writer invoked by _task__commit_on_branch with the staging root: replaces
+  # the staged parent task file's subtask entries with the reordered list.
   reorder_subtask_writer() {
     local root="$1"
-    _frontmatter__write_task_file "$root/$parent_task_file" \
-      "$parent_title" "$parent_status" "$parent_body" "$parent_created" "$reorder_updated"
+    _task__set_subtasks "$root/$parent_task_file" \
+      ${subtask_lines[@]+"${subtask_lines[@]}"}
+    _task__set_field "$root/$parent_task_file" updated "$reorder_updated"
   }
   _task__commit_on_branch "$repo" "$parent_id" \
     "$(_commit__format_message "task" "reorder" "$parent_id" "$parent_title")" \
     --modify "$parent_task_file" -- reorder_subtask_writer >/dev/null
-  unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
 
-  # 10. Commit transaction
+  # 8. Commit transaction
   _history__commit_transaction "$repo"
 
   _worktree__report_unsynced "$repo" "$parent_id"
 
-  # 11. Output
+  # 9. Output
   _ui__log "Reordered: $child_id in $parent_id"
 }
 
 # ---------------------------------------------------------------------------
 # reorder_frontmatter — Tidy mode
-# Canonicalises the frontmatter of the named task on its canonical branch.
+# Groups the subtask: entries of the named task on its canonical branch by status.
 reorder_frontmatter() {
   local repo="$1" task_id="$2"
   local task_prefix="$3" project_prefix="$4"
@@ -273,84 +253,57 @@ reorder_frontmatter() {
   }
 
   # 2. Determine task file path
-  local task_suffix
-  if _task__check_is_task_branch "$task_id" "$task_prefix"; then
-    task_suffix="${task_id#$task_prefix}"
-  else
-    task_suffix="${task_id#$project_prefix}"
-  fi
   local task_file
-  task_file="$(_path__task_file "$task_suffix")"
+  task_file="$(_task__resolve_file "$task_id" "$task_prefix" "$project_prefix")" || exit 1
 
-  # 3. Read task file content from the canonical branch
-  local task_content
-  task_content="$(_task__read_file "$repo" "$canonical_branch" "$task_file")" || {
+  # 3. Read the title and subtask entries from the canonical branch
+  local fields title subtask_count subtask i
+  local -a subtask_lines=()
+  fields="$(_task__read_fields "$repo" "$canonical_branch" "$task_id" \
+    "$task_prefix" "$project_prefix" title 'subtask[]')" || {
     _ui__log "Error: Could not read task file '$task_file' from branch '$canonical_branch'."
     exit 1
   }
+  { IFS= read -r title; IFS= read -r subtask_count
+    for (( i = 0; i < subtask_count; i++ )); do
+      IFS= read -r subtask; subtask_lines+=("$subtask")
+    done
+  } <<< "$fields" || true
 
-  # 4. Parse all frontmatter fields
-  _frontmatter__parse_task "$task_content"
-  local title="$PARSED_TITLE" status="$PARSED_STATUS"
-  local created="$PARSED_CREATED" body="$PARSED_BODY"
-  local -a labels=("${PARSED_LABELS[@]+"${PARSED_LABELS[@]}"}")
-  local -a contexts=("${PARSED_CONTEXTS[@]+"${PARSED_CONTEXTS[@]}"}")
-  local -a subtask_lines=("${PARSED_SUBTASKS[@]+"${PARSED_SUBTASKS[@]}"}")
-
-  # 5. Sort subtask lines by checkbox status (stable within each category)
+  # 4. Sort subtask lines by checkbox status (stable within each category)
   local -a sorted_subtasks=()
   sort_subtasks_by_status
 
-  # 6. Build proposed canonical content for no-op detection
-  local proposed
-  proposed="$(
-    echo '---'
-    echo "title: \"${title//\"/\\\"}\""
-    echo "status: $status"
-    echo "created: $created"
-    echo "updated: PLACEHOLDER"
-    for lbl in "${labels[@]+"${labels[@]}"}"; do echo "label: $lbl"; done
-    for ctx in "${contexts[@]+"${contexts[@]}"}"; do echo "context: $ctx"; done
-    for st  in "${sorted_subtasks[@]+"${sorted_subtasks[@]}"}"; do echo "subtask: $st"; done
-    echo '---'
-    if [[ -n "$body" ]]; then printf '%s\n' "$body"; fi
-  )"
+  # 5. No-op detection: the entries are already grouped
+  local changed=false
+  for (( i = 0; i < ${#subtask_lines[@]}; i++ )); do
+    [[ "${sorted_subtasks[i]}" == "${subtask_lines[i]}" ]] || changed=true
+  done
+  [[ "$changed" == true ]] || exit 0
 
-  # 7. No-op detection — strip updated: from both sides and compare
-  local current_stripped proposed_stripped
-  current_stripped="$(printf '%s' "$task_content" | grep -v '^updated:')"
-  proposed_stripped="$(printf '%s\n' "$proposed" | grep -v '^updated:')"
-  if [[ "$proposed_stripped" == "$current_stripped" ]]; then
-    exit 0  # already canonical, no commit needed
-  fi
-
-  # 8. Begin transaction
+  # 6. Begin transaction
   _history__begin_transaction "$repo"
 
-  # 9. Commit the canonicalised task file onto the canonical branch
-  export REWRITE_LABELS=("${labels[@]+"${labels[@]}"}")
-  export REWRITE_CONTEXTS=("${contexts[@]+"${contexts[@]}"}")
-  export REWRITE_SUBTASKS=("${sorted_subtasks[@]+"${sorted_subtasks[@]}"}")
+  # 7. Commit the sorted subtask entries onto the canonical branch
   local reorder_updated
   reorder_updated="$(_string__generate_timestamp)"
-  # Writer invoked by _task__commit_on_branch with the staging root: rewrites
-  # the staged task file in canonical frontmatter order.
+  # Writer invoked by _task__commit_on_branch with the staging root: replaces
+  # the staged task file's subtask entries with the sorted list.
   reorder_tidy_writer() {
     local root="$1"
-    _frontmatter__write_task_file "$root/$task_file" \
-      "$title" "$status" "$body" "$created" "$reorder_updated"
+    _task__set_subtasks "$root/$task_file" ${sorted_subtasks[@]+"${sorted_subtasks[@]}"}
+    _task__set_field "$root/$task_file" updated "$reorder_updated"
   }
   _task__commit_on_branch "$repo" "$canonical_branch" \
     "$(_commit__format_message "task" "reorder" "$task_id" "$title")" \
     --modify "$task_file" -- reorder_tidy_writer >/dev/null
-  unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
 
-  # 10. Commit transaction
+  # 8. Commit transaction
   _history__commit_transaction "$repo"
 
   _worktree__report_unsynced "$repo" "$canonical_branch"
 
-  # 11. Output
+  # 9. Output
   _ui__log "Tidied: $task_id"
 }
 

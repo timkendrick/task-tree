@@ -49,19 +49,6 @@ Examples:
 EOF
 }
 
-# Usage: branch_suffix BRANCH TASK_PREFIX PROJECT_PREFIX
-# Outputs the slug-hex part of a task or project branch name.
-# Returns 1 if BRANCH is neither a task nor a project branch.
-branch_suffix() {
-  local branch="$1" task_prefix="$2" project_prefix="$3"
-  if _task__check_is_task_branch "$branch" "$task_prefix"; then
-    printf '%s' "${branch#"$task_prefix"}"
-  elif _task__check_is_project_branch "$branch" "$project_prefix"; then
-    printf '%s' "${branch#"$project_prefix"}"
-  else
-    return 1
-  fi
-}
 
 # Usage: format_metadata TITLE STATUS
 # Prints "CHECKBOX|TITLE" for a task's decoded title and status. An empty status
@@ -119,7 +106,7 @@ emit_task_line() {
   local task_prefix="$6"
   local project_prefix="$7"
   local suffix
-  suffix="$(branch_suffix "$task_id" "$task_prefix" "$project_prefix")" || suffix="$task_id"
+  suffix="$(_task__resolve_suffix "$task_id" "$task_prefix" "$project_prefix")" || suffix="$task_id"
   local task_path
   task_path="$(_path__task_file "$suffix")"
   if [[ -n "$current_task_id" && "$task_id" == "$current_task_id" ]]; then
