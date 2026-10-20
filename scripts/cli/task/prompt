@@ -66,7 +66,7 @@ main() {
   project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # --- Resolve branch and task file ---
-  local branch task_file task_suffix task_id
+  local branch task_file task_id
 
   if [[ -z "$task_id_arg" ]]; then
     { read -r task_file; read -r branch; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
@@ -75,11 +75,6 @@ main() {
       exit 1
     fi
     task_id="$branch"
-    if _task__check_is_task_branch "$branch" "$task_prefix"; then
-      task_suffix="${branch#$task_prefix}"
-    else
-      task_suffix="${branch#$project_prefix}"
-    fi
   else
     task_id="$task_id_arg"
     # A checked-in task is read from the parent branch that received the
@@ -88,50 +83,35 @@ main() {
       _ui__log "Error: Could not locate branch for task '$task_id'."
       exit 1
     fi
-    if _task__check_is_task_branch "$task_id" "$task_prefix"; then
-      task_suffix="${task_id#$task_prefix}"
-    elif _task__check_is_project_branch "$task_id" "$project_prefix"; then
-      task_suffix="${task_id#$project_prefix}"
-    else
+    task_file="$(_task__resolve_file "$task_id" "$task_prefix" "$project_prefix")" || {
       _ui__log "Error: Cannot derive task file path for '$task_id'."
       exit 1
-    fi
-    task_file="$(_path__task_file "$task_suffix")"
+    }
   fi
 
-  # --- Read task file ---
-  local content
-  if ! content="$(_task__read_file "$repo" "$branch" "$task_file")"; then
+  # --- Read task fields and body ---
+  local fields
+  if ! fields="$(_task__read_fields "$repo" "$branch" "$task_id" "$task_prefix" "$project_prefix" \
+    title 'context[]' '...')"; then
     _ui__log "Error: Could not read task file '$task_file' from '$branch'."
     exit 1
   fi
 
-  # --- Parse fields ---
-  local title
-  title="$(_frontmatter__parse_quoted_field "$content" "title")"
-
-  local body
-  body="$(_frontmatter__parse_body "$content")"
-  # Trim leading/trailing blank lines
-  body="$(printf '%s' "$body" | awk 'NF{found=1} found{print}' | sed -e 's/[[:space:]]*$//')"
-
-  # Parse context IDs from frontmatter (one per line)
-  local contexts
-  contexts="$(printf '%s' "$content" | awk '
-    /^---$/ { n++; next }
-    n==1 && /^context:/ {
-      sub(/^context:[[:space:]]*/, "")
-      print
-    }
-  ')"
+  local title context_count ctx_entry i contexts='' body=''
+  { IFS= read -r title; IFS= read -r context_count
+    for (( i = 0; i < context_count; i++ )); do
+      IFS= read -r ctx_entry; contexts+="$ctx_entry"$'\n'
+    done
+    IFS= read -r -d '' body
+  } <<< "$fields" || true
+  contexts="${contexts%$'\n'}"
+  body="${body%$'\n'}"
+  body="$(_string__trim_text "$body")"
 
   # --- Emit prompt ---
 
   # Mini frontmatter block
-  printf -- '---\n'
-  printf 'task: %s\n' "$task_id"
-  printf 'title: %s\n' "$title"
-  printf -- '---\n'
+  _frontmatter__format_block task "$task_id" title "$(_frontmatter__quote "$title")"
 
   # Blank line + body + blank line
   printf '\n'
@@ -141,15 +121,12 @@ main() {
   if [[ -n "$contexts" ]]; then
     while IFS= read -r ctx_id; do
       [[ -z "$ctx_id" ]] && continue
-      local ctx_file ctx_content ctx_title ctx_body
-      ctx_file="$(_path__task_context "$task_suffix" "$ctx_id")"
-      ctx_content="$(_task__read_file "$repo" "$branch" "$ctx_file" || true)"
-      ctx_title="$(_frontmatter__parse_quoted_field "$ctx_content" "title" 2>/dev/null || true)"
-      ctx_body="$(_frontmatter__parse_body "$ctx_content")"
-      printf -- '---\n'
-      printf 'context: %s\n' "$ctx_id"
-      printf 'title: "%s"\n' "$ctx_title"
-      printf -- '---\n'
+      local ctx_title='' ctx_body=''
+      { IFS= read -r ctx_title; IFS= read -r -d '' ctx_body; } \
+        <<< "$(_task__read_context_fields "$repo" "$branch" "$task_id" "$ctx_id" \
+          "$task_prefix" "$project_prefix" title '...')" || true
+      ctx_body="${ctx_body%$'\n'}"
+      _frontmatter__format_block context "$ctx_id" title "$(_frontmatter__quote "$ctx_title")"
       printf '%s\n\n' "$ctx_body"
     done <<< "$contexts"
   fi

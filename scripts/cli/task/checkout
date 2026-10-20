@@ -175,11 +175,7 @@ main() {
 
   # Derive slug and task file path
   local task_slug task_file
-  if _task__check_is_task_branch "$task_id" "$task_prefix"; then
-    task_slug="${task_id#"$task_prefix"}"
-  else
-    task_slug="${task_id#"$project_prefix"}"
-  fi
+  task_slug="$(_task__resolve_suffix "$task_id" "$task_prefix" "$project_prefix")" || exit 1
   task_file="$(_path__task_file "$task_slug")"
 
   # Resolve workspace dir via .tt/workspace symlink
@@ -352,7 +348,7 @@ main() {
     # staged task file's status field to IN-PROGRESS.
     checkout_writer() {
       local root="$1"
-      _frontmatter__set_status "$root/$task_file" "IN-PROGRESS"
+      _task__set_field "$root/$task_file" status "IN-PROGRESS"
     }
     _task__commit_on_branch "$repo" "$task_id" \
       "$(_commit__format_message "task" "checkout" "$task_id" "$task_title")" \

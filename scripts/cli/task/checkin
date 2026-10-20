@@ -180,7 +180,8 @@ main() {
       _ui__log "Error: Branch '$child_bookmark' not found in repository."
       exit 1
     fi
-    child_slug="${child_bookmark#"$task_prefix"}"
+    child_slug="$(_task__resolve_suffix "$child_bookmark" "$task_prefix" "$project_prefix")" \
+      || exit 1
     task_file="$(_path__task_file "$child_slug")"
   else
     { read -r task_file; read -r child_bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
@@ -194,7 +195,8 @@ main() {
       _ui__log "  Use 'tt task publish --target <branch>' to publish project branches."
       exit 1
     fi
-    child_slug="${child_bookmark#"$task_prefix"}"
+    child_slug="$(_task__resolve_suffix "$child_bookmark" "$task_prefix" "$project_prefix")" \
+      || exit 1
   fi
 
   local task_id="$child_bookmark"
@@ -301,11 +303,7 @@ main() {
 
   # Derive parent slug and task file
   local parent_slug parent_task_file
-  if _task__check_is_task_branch "$parent_bookmark" "$task_prefix"; then
-    parent_slug="${parent_bookmark#"$task_prefix"}"
-  else
-    parent_slug="${parent_bookmark#"$project_prefix"}"
-  fi
+  parent_slug="$(_task__resolve_suffix "$parent_bookmark" "$task_prefix" "$project_prefix")" || exit 1
   parent_task_file="$(_path__task_file "$parent_slug")"
 
   # Resolve context: stdin or interactive editor
@@ -471,30 +469,13 @@ main() {
 
   # --- Build the handoff content ---
 
-  # Build updated parent task file content
+  # Parent task file as recorded on the parent branch; the handoff writer
+  # stages it onto the child's tip with the child's subtask status.
   local parent_task_content
   parent_task_content="$(_task__read_file "$repo" "$parent_bookmark" "$parent_task_file")" || {
     _ui__log "Error: Could not read parent task file '$parent_task_file' from '$parent_bookmark'."
     exit 1
   }
-
-  # Update the subtask entry in the parent task file to reflect the child's status.
-  local updated_parent_content new_cb
-  new_cb="$(_format__status_checkbox "$task_status")"
-  updated_parent_content="$(printf '%s' "$parent_task_content" | awk -v id="$task_id" -v cb="$new_cb" '
-    BEGIN { sep = 0 }
-    /^---$/ { sep++; print; next }
-    sep == 1 && /^subtask:[[:space:]]*\[[ \-x]\]/ {
-      rest = $0
-      sub(/^subtask:[[:space:]]*\[[[:space:]\-x]\][[:space:]]*/, "", rest)
-      split(rest, parts, /[[:space:]]/)
-      if (parts[1] == id) {
-        sub(/\[[ \-x]\]/, cb)
-      }
-      print; next
-    }
-    { print }
-  ')"
 
   # If --context is provided, a context file is created on the parent task
   local ctx_id='' ctx_file='' ctx_title='' ctx_ts=''
@@ -505,7 +486,8 @@ main() {
     local ctx_hex
     ctx_hex="$(_string__generate_hex)"
     ctx_id="context/${ctx_slug}-${ctx_hex}"
-    ctx_file="$(_path__task_context "$parent_slug" "$ctx_id")"
+    ctx_file="$(_task__resolve_context_file "$parent_bookmark" "$ctx_id" \
+      "$task_prefix" "$project_prefix")" || exit 1
     ctx_ts="$(_string__generate_timestamp)"
   fi
 
@@ -520,11 +502,12 @@ main() {
     local root="$1"
     ln -s "$(_path__task_file "$parent_slug")" "$root/$TT_TASK_SYMLINK_FILENAME"
     mkdir -p "$root/$(_path__dirname "$parent_task_file")"
-    printf '%s\n' "$updated_parent_content" > "$root/$parent_task_file"
+    printf '%s\n' "$parent_task_content" > "$root/$parent_task_file"
+    _task__set_subtask_status "$root/$parent_task_file" "$task_id" "$task_status" || return 1
     if [[ -n "$ctx_id" ]]; then
       mkdir -p "$root/$(_path__dirname "$ctx_file")"
-      _frontmatter__write_context_file "$root/$ctx_file" "$ctx_title" "$context_text" "$ctx_ts" "$ctx_ts"
-      _frontmatter__append_context "$root/$parent_task_file" "$ctx_id"
+      _task__write_context_file "$root/$ctx_file" "$ctx_title" "$ctx_ts" "$ctx_ts" "$context_text"
+      _task__add_context "$root/$parent_task_file" "$ctx_id"
     fi
   }
 

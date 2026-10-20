@@ -1362,6 +1362,70 @@ test__jj__commit_changeset__deletions_before_overlay() {
     "$(_jj__list_files_at_revision "$REPO" "$commit")" "old.txt"
 }
 
+test__jj__commit_changeset__copy_reuses_recorded_entries() {
+  setup_workspace
+  mkdir -p dir/sub
+  printf 'a\n' > dir/a.txt
+  printf '#!/bin/sh\n' > dir/sub/tool.sh
+  chmod +x dir/sub/tool.sh
+  ln -s a.txt dir/link
+  printf 'no trailing newline' > single.txt
+  jj -R "$REPO" commit -m "sources" >/dev/null 2>&1
+  jj -R "$REPO" bookmark create src -r '@-' >/dev/null 2>&1
+
+  local stage="$_TEST_ROOT/stage-copy"
+  mkdir -p "$stage"
+  mkdir -p "$stage/moved"
+  printf 'staged\n' > "$stage/moved/a.txt"
+
+  local commit exit_code=0
+  commit="$(_jj__commit_changeset "$REPO" main "copies" "$stage" \
+    --copy src dir moved --copy src single.txt copied.txt)" || exit_code=$?
+  assert_success "changeset committed" "$exit_code"
+
+  local git=(git --git-dir="$REPO/.git") src_commit
+  src_commit="$(jj -R "$REPO" log -r src --no-graph -T commit_id 2>/dev/null)"
+  assert_eq "a copied file reuses the recorded blob" \
+    "$("${git[@]}" rev-parse "${commit}:copied.txt")" \
+    "$("${git[@]}" rev-parse "${src_commit}:single.txt")"
+  assert_eq "a directory's executable keeps its mode" \
+    "$("${git[@]}" ls-tree "$commit" -- moved/sub/tool.sh | cut -d' ' -f1)" "100755"
+  assert_eq "a directory's symlink stays a symlink" \
+    "$("${git[@]}" ls-tree "$commit" -- moved/link | cut -d' ' -f1)" "120000"
+  assert_eq "a staged file overlays a copied one" \
+    "$(_jj__read_file_at_revision "$REPO" "$commit" moved/a.txt)" "staged"
+}
+
+test__jj__commit_changeset__copy_after_deletion_moves_a_directory() {
+  setup_workspace
+  mkdir -p old
+  printf 'x\n' > old/x.txt
+  jj -R "$REPO" commit -m "old dir" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set main -r '@-' >/dev/null 2>&1
+
+  local stage="$_TEST_ROOT/stage-move"
+  mkdir -p "$stage"
+  local commit exit_code=0
+  commit="$(_jj__commit_changeset "$REPO" main "move" "$stage" \
+    --copy main old new old/x.txt)" || exit_code=$?
+  assert_success "changeset committed" "$exit_code"
+  assert_contains "the file is at its new path" \
+    "$(_jj__list_files_at_revision "$REPO" "$commit")" "new/x.txt"
+  assert_not_contains "the old path is gone" \
+    "$(_jj__list_files_at_revision "$REPO" "$commit")" "old/x.txt"
+}
+
+test__jj__commit_changeset__copy_of_an_absent_path_fails() {
+  setup_workspace
+  local stage="$_TEST_ROOT/stage-copy-absent"
+  mkdir -p "$stage"
+  local out exit_code=0
+  out="$(_jj__commit_changeset "$REPO" main "absent" "$stage" \
+    --copy main no-such-path dest 2>/dev/null)" || exit_code=$?
+  assert_failure "copying an absent path fails" "$exit_code"
+  assert_eq "no commit printed" "$out" ''
+}
+
 test__jj__commit_changeset__identity_from_jj_config() {
   setup_workspace
   local expected_name expected_email

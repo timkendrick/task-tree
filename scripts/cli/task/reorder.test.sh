@@ -61,6 +61,27 @@ test_task_reorder__up_basic() {
 }
 
 
+test_task_reorder__changes_only_subtasks_and_timestamp() {
+  setup_workspace "reorder-targeted"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "ta" "Task A") || true
+  task_b=$(create_task "tb" "Task B") || true
+  printf 'Project body\n' | run_tt task edit "$proj_id" >/dev/null 2>&1 || true
+  checkout_task "$task_a" >/dev/null || true
+
+  local proj_file before after
+  proj_file=".tt/task/${proj_id#project/}/TASK.md"
+  before="$(jj -R "$REPO" file show -r "$proj_id" "$proj_file" 2>/dev/null)"
+  run_tt task reorder "$task_b" --up >/dev/null 2>&1 || true
+  after="$(jj -R "$REPO" file show -r "$proj_id" "$proj_file" 2>/dev/null)"
+
+  assert_eq "b moved up" "$(subtask_order "$proj_id")" "$task_b $task_a"
+  assert_eq "everything but the subtask entries and timestamp is unchanged" \
+    "$(printf '%s\n' "$after" | grep -v '^subtask:\|^updated:')" \
+    "$(printf '%s\n' "$before" | grep -v '^subtask:\|^updated:')"
+}
+
 test_task_reorder__down_basic() {
   setup_workspace "reorder-down"
   proj_id=$(create_project "proj" "Project") || true
@@ -299,20 +320,30 @@ test_task_reorder__tidy_noop() {
 }
 
 
-test_task_reorder__tidy_frontmatter_field_order() {
-  setup_workspace "reorder-tidy-fields"
+test_task_reorder__tidy_changes_only_subtasks_and_timestamp() {
+  setup_workspace "reorder-tidy-targeted"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
+  task_b=$(create_task "tb" "Task B") || true
+  checkout_task "$task_b" >/dev/null || true
+  run_tt task complete "$task_b" >/dev/null 2>&1 || true
+  run_tt task checkin "$task_b" >/dev/null 2>&1 || true
+  checkout_task "$proj_id" >/dev/null || true
   task_a=$(create_task "ta" "Task A") || true
-  checkout_task "$task_a" >/dev/null || true
+  printf 'Project body\n' | run_tt task edit "$proj_id" >/dev/null 2>&1 || true
 
+  local proj_file before after
+  proj_file=".tt/task/${proj_id#project/}/TASK.md"
+  before="$(jj -R "$REPO" file show -r "$proj_id" "$proj_file" 2>/dev/null)"
   run_tt task reorder "$proj_id" >/dev/null 2>&1 || true
-  local fields
-  fields="$(frontmatter_field_order "$proj_id")"
-  # Should be: title status created updated (no labels/contexts/subtasks if none)
-  assert_matches "canonical field order" "$fields" "^title status created updated"
-}
+  after="$(jj -R "$REPO" file show -r "$proj_id" "$proj_file" 2>/dev/null)"
 
+  assert_eq "the TODO subtask is sorted before the DONE one" "$(subtask_order "$proj_id")" \
+    "$task_a $task_b"
+  assert_eq "everything but the subtask entries and timestamp is unchanged" \
+    "$(printf '%s\n' "$after" | grep -v '^subtask:\|^updated:')" \
+    "$(printf '%s\n' "$before" | grep -v '^subtask:\|^updated:')"
+}
 
 test_task_reorder__tidy_labels_preserved() {
   setup_workspace "reorder-tidy-labels"

@@ -881,12 +881,19 @@ _jj__refresh_worktree() {
 # is involved either.
 # ---------------------------------------------------------------------------
 
-# Usage: _jj__commit_changeset REPO PARENT_REV MESSAGE STAGE_DIR [DELETE_PATH...]
+# Usage: _jj__commit_changeset REPO PARENT_REV MESSAGE STAGE_DIR
+#          [--copy SRC_REV SRC_PATH DEST_PATH]... [DELETE_PATH...]
 #
 # Builds a commit directly in the Git object store backing the jj repository
 # and prints its full commit ID. The commit's tree is PARENT_REV's tree with
-# each DELETE_PATH (a repo-root-relative path) removed first and every file
-# under STAGE_DIR overlaid on top, paths taken relative to STAGE_DIR:
+# each DELETE_PATH (a repo-root-relative path) removed first, then each --copy
+# applied, then every file under STAGE_DIR overlaid on top. A --copy places
+# SRC_PATH as recorded at SRC_REV at DEST_PATH: a file is copied to DEST_PATH,
+# and a directory has every entry beneath it copied to the same relative path
+# beneath DEST_PATH. Copied entries reuse the recorded blobs and modes, so
+# content, executable bits and symlinks come across byte for byte without
+# passing through the shell. A SRC_PATH absent at SRC_REV is an error. Staged
+# files take paths relative to STAGE_DIR:
 #   - a symlink becomes a symlink entry (mode 120000) whose blob is the link
 #     target string
 #   - an executable file keeps mode 100755
@@ -915,6 +922,12 @@ _jj__refresh_worktree() {
 _jj__commit_changeset() {
   local repo="$1" parent_rev="$2" message="$3" stage_dir="$4"
   shift 4
+  local -a copy_specs=()
+  while [[ "${1:-}" == --copy ]]; do
+    [[ $# -ge 4 ]] || return 1
+    copy_specs+=("$2" "$3" "$4")
+    shift 4
+  done
   _jj__check_backend_supported "$repo" || return $?
   local canonical_repo
   canonical_repo="$(_jj__resolve_repository_root "$repo")" || return 1
@@ -942,6 +955,36 @@ _jj__commit_changeset() {
   user_name="${identity%%$'\t'*}"
   user_email="${identity#*$'\t'}"
   [[ -n "$user_name" && -n "$user_email" ]] || return 1
+
+  # Resolve each copy into tree entries of its source commit.
+  local -a copy_modes=() copy_blobs=() copy_paths=()
+  local c src_rev src_path dest_path src_commit record meta path found
+  for (( c = 0; c < ${#copy_specs[@]}; c += 3 )); do
+    src_rev="${copy_specs[c]}" src_path="${copy_specs[c + 1]}" dest_path="${copy_specs[c + 2]}"
+    if _jj__check_is_canonical_commit_id "$src_rev"; then
+      src_commit="$src_rev"
+    else
+      src_commit="$(_jj__resolve_commit "$repo" "$src_rev")" || return 1
+    fi
+    [[ -n "$src_commit" ]] || return 1
+    found=''
+    while IFS= read -r -d '' record; do
+      meta="${record%%$'\t'*}"
+      path="${record#*$'\t'}"
+      if [[ "$path" == "$src_path" ]]; then
+        copy_paths+=("$dest_path")
+      elif [[ "$path" == "$src_path"/* ]]; then
+        copy_paths+=("$dest_path/${path#"$src_path"/}")
+      else
+        continue
+      fi
+      copy_modes+=("${meta%% *}")
+      copy_blobs+=("${meta##* }")
+      found=1
+    done < <(unset GIT_WORK_TREE GIT_INDEX_FILE
+      __jj__git --git-dir="$git_dir" ls-tree -r -z "$src_commit" -- "$src_path")
+    [[ -n "$found" ]] || return 1
+  done
 
   # Collect the staged entries: regular files are hashed in one batch, symlink
   # targets are read here and embedded in the fast-import stream.
@@ -1002,6 +1045,10 @@ _jj__commit_changeset() {
         printf 'D %s\n' "$(__jj__quote_import_path "$delete_path")"
       done
       local i
+      for (( i = 0; i < ${#copy_paths[@]}; i++ )); do
+        printf 'M %s %s %s\n' "${copy_modes[$i]}" "${copy_blobs[$i]}" \
+          "$(__jj__quote_import_path "${copy_paths[$i]}")"
+      done
       for (( i = 0; i < ${#file_paths[@]}; i++ )); do
         printf 'M %s %s %s\n' "${file_modes[$i]}" "${file_blobs[$i]}" \
           "$(__jj__quote_import_path "${file_paths[$i]}")"
