@@ -352,6 +352,65 @@ test__task__commit_on_branch__stages_new_file_without_touching_working_copy() {
   assert_eq "@ did not move" "$(_repo__resolve_commit "$REPO" '@')" "$wc_before"
 }
 
+test__task__commit_on_branch__copy_from_places_a_recorded_path() {
+  setup_workspace "commit-on-branch-copy-from"
+  _fixture_side_branch
+
+  local commit exit_code=0
+  commit="$(_task__commit_on_branch "$REPO" main "copy prefix from side" \
+    --copy-from "$SIDE_TIP" prefix -- _writer_noop)" || exit_code=$?
+  assert_success "staged commit created" "$exit_code"
+  assert_eq "a copied file has the recorded content" \
+    "$(_repo__read_file_at_revision "$REPO" main prefix/a.txt)" "a"
+  assert_eq "every file under the copied directory is present" \
+    "$(_repo__read_file_at_revision "$REPO" main prefix/b.txt)" "b"
+  assert_not_contains "nothing else comes across" \
+    "$(_repo__list_files_at_revision "$REPO" main)" "outside.txt"
+
+  exit_code=0
+  _task__commit_on_branch "$REPO" main "copy absent" \
+    --copy-from "$SIDE_TIP" no-such-path -- _writer_noop >/dev/null 2>&1 || exit_code=$?
+  assert_failure "copying an absent path fails" "$exit_code"
+}
+
+test__task__commit_on_branch__move_prefix_relocates_a_directory() {
+  setup_workspace "commit-on-branch-move-prefix"
+  _fixture_side_branch
+
+  local commit exit_code=0
+  commit="$(_task__commit_on_branch "$REPO" side "move prefix" \
+    --move-prefix prefix moved -- _writer_noop)" || exit_code=$?
+  assert_success "staged commit created" "$exit_code"
+  local files
+  files="$(_repo__list_files_at_revision "$REPO" side)"
+  assert_contains "the files are at the new prefix" "$files" "moved/a.txt"
+  assert_contains "every file moved" "$files" "moved/b.txt"
+  assert_not_contains "the old prefix is gone" "$files" "prefix/a.txt"
+  assert_eq "content is unchanged" "$(_repo__read_file_at_revision "$REPO" side moved/a.txt)" "a"
+
+  exit_code=0
+  local before
+  before="$(_repo__resolve_commit "$REPO" side)"
+  _task__commit_on_branch "$REPO" side "move absent" \
+    --move-prefix no-such-prefix elsewhere -- _writer_stage_new_file "x" >/dev/null 2>&1 \
+    || exit_code=$?
+  assert_success "an absent prefix contributes nothing" "$exit_code"
+  assert_not_contains "nothing lands at the destination" \
+    "$(_repo__list_files_at_revision "$REPO" side)" "elsewhere/"
+  assert_neq "the rest of the commit is still made" "$(_repo__resolve_commit "$REPO" side)" "$before"
+}
+
+test__task__check_path_exists__reports_recorded_paths() {
+  setup_workspace "check-path-exists"
+  _fixture_side_branch
+  local exit_code=0
+  _task__check_path_exists "$REPO" side prefix/a.txt || exit_code=$?
+  assert_success "a recorded path exists" "$exit_code"
+  exit_code=0
+  _task__check_path_exists "$REPO" side no-such.txt || exit_code=$?
+  assert_failure "an unrecorded path does not" "$exit_code"
+}
+
 test__task__commit_on_branch__modify_materializes_tip_content() {
   setup_workspace "commit-on-branch-modify"
   _fixture_side_branch
@@ -799,6 +858,18 @@ test__task__resolve_current__reports_no_task_when_none_is_recorded() {
 # _task__resolve_file
 # ---------------------------------------------------------------------------
 
+test__task__resolve_suffix__strips_either_prefix() {
+  assert_eq "a task ID maps to its suffix" \
+    "$(_task__resolve_suffix "task/t-0123abcd" "task/" "project/")" "t-0123abcd"
+  assert_eq "a project ID maps to its suffix" \
+    "$(_task__resolve_suffix "project/p-0123abcd" "task/" "project/")" "p-0123abcd"
+
+  local output='' exit_code=0
+  output="$(_task__resolve_suffix "other/t-0123abcd" "task/" "project/")" || exit_code=$?
+  assert_eq "an ID with neither prefix returns 1" "$exit_code" "1"
+  assert_eq "nothing printed for an ID with neither prefix" "$output" ''
+}
+
 test__task__resolve_file__maps_task_and_project_ids() {
   local output='' exit_code=0
   output="$(_task__resolve_file "task/t-0123abcd" "task/" "project/")" || exit_code=$?
@@ -903,13 +974,152 @@ test__task__read_fields__reads_repeatable_fields_as_counted_lists() {
 
 test__task__read_fields__rejects_fields_in_the_wrong_form() {
   local output='' exit_code field
-  for field in subtask label context 'title[]' 'status[]'; do
+  for field in subtask label context 'title[]' 'status[]' unknown 'unknown[]'; do
     exit_code=0
     output="$(_task__read_fields "/nonexistent" "rev" "task/t-0123abcd" "task/" "project/" \
       title "$field" 2>/dev/null)" || exit_code=$?
     assert_eq "'$field' is rejected" "$exit_code" "1"
     assert_eq "nothing printed when '$field' is rejected" "$output" ''
   done
+}
+
+# Writer: appends " Child title" to every subtask entry of the task file at
+# the path passed as its second argument.
+_writer_title_subtask_entries() {
+  local stage="$1" path="$2"
+  local line out=''
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == 'subtask: ['* ]] && line+=" Child title"
+    out+="$line"$'\n'
+  done < "$stage/$path"
+  printf '%s' "$out" > "$stage/$path"
+}
+
+test__task__subtask_lookups__ignore_trailing_entry_titles() {
+  setup_workspace "subtask-lookups-titled"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  child_id=$(create_task "c" "Child") || true
+
+  local task_prefix project_prefix proj_file
+  task_prefix="$(_workspace__get_task_prefix "$REPO")"
+  project_prefix="$(_workspace__get_project_prefix "$REPO")"
+  proj_file="$(_task__resolve_file "$proj_id" "$task_prefix" "$project_prefix")"
+  _task__commit_on_branch "$REPO" "$proj_id" "title entries" \
+    --modify "$proj_file" -- _writer_title_subtask_entries "$proj_file" >/dev/null
+  assert_contains "the fixture titles the subtask entry" \
+    "$(_task__read_file "$REPO" "$proj_id" "$proj_file")" "subtask: [ ] $child_id Child title"
+
+  assert_eq "__task__list_subtasks drops the title after the ID" \
+    "$(__task__list_subtasks "$REPO" "$proj_id" "$proj_id" "$task_prefix" "$project_prefix")" \
+    "[ ]"$'\t'"$child_id"
+  assert_eq "the parent is found through a titled entry" \
+    "$(_task__find_parent_branch "$REPO" "$child_id" "$task_prefix" "$project_prefix")" \
+    "$proj_id"
+  assert_eq "a titled entry is followed to the child" \
+    "$(_task__collect_descendant_dirs "$REPO" "$proj_id" "$proj_id" \
+      "$task_prefix" "$project_prefix")" \
+    "$(_path__task_dir "${child_id#task/}")"
+}
+
+test__task__read_fields__reads_the_body() {
+  setup_workspace "read-fields-body"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  printf 'First\nSecond\n' | run_tt task edit "$task_id" >/dev/null 2>&1 || true
+
+  local title body
+  { IFS= read -r title; IFS= read -r -d '' body; } \
+    <<< "$(_read_fields "$task_id" "$task_id" title '...')" || true
+  body="${body%$'\n'}"
+  assert_eq "the title precedes the body" "$title" "T"
+  assert_eq "the body is read from the branch" "$body" $'First\nSecond'
+}
+
+test__task__resolve_context_file__maps_a_task_and_context_id() {
+  local output='' exit_code=0
+  output="$(_task__resolve_context_file "task/t-0123abcd" "context/c-4567cdef" \
+    "task/" "project/")" || exit_code=$?
+  assert_success "a task's context resolves" "$exit_code"
+  assert_eq "the context file sits in the task directory" "$output" \
+    "$(_path__task_context "t-0123abcd" "context/c-4567cdef")"
+
+  exit_code=0
+  output="$(_task__resolve_context_file "other/t-0123abcd" "context/c-4567cdef" \
+    "task/" "project/")" || exit_code=$?
+  assert_eq "an ID with neither prefix returns 1" "$exit_code" "1"
+  assert_eq "nothing printed for an ID with neither prefix" "$output" ''
+}
+
+test__task__read_context_fields__reads_fields_and_body() {
+  setup_workspace "read-context-fields"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  printf 'Ctx body\n' | run_tt task context add --title 'Say "hi"' --slug "ctx" \
+    >/dev/null 2>&1 || true
+  local ctx_id
+  ctx_id="$(run_tt task context list 2>/dev/null)" || true
+
+  local task_prefix project_prefix title created body
+  task_prefix="$(_workspace__get_task_prefix "$REPO")"
+  project_prefix="$(_workspace__get_project_prefix "$REPO")"
+  { IFS= read -r title; IFS= read -r created; IFS= read -r -d '' body; } \
+    <<< "$(_task__read_context_fields "$REPO" "$task_id" "$task_id" "$ctx_id" \
+      "$task_prefix" "$project_prefix" title created '...')" || true
+  body="${body%$'\n'}"
+  assert_eq "the title is decoded" "$title" 'Say "hi"'
+  assert_output_not_empty "the created timestamp is read" "$created"
+  assert_eq "the body follows the fields" "$body" "Ctx body"
+
+  local output='' exit_code=0 field
+  for field in status 'label[]' 'context[]'; do
+    exit_code=0
+    output="$(_task__read_context_fields "$REPO" "$task_id" "$task_id" "$ctx_id" \
+      "$task_prefix" "$project_prefix" "$field" 2>/dev/null)" || exit_code=$?
+    assert_eq "'$field' is not a context field" "$exit_code" "1"
+    assert_eq "nothing printed for '$field'" "$output" ''
+  done
+
+  exit_code=0
+  output="$(_task__read_context_fields "$REPO" "$task_id" "$task_id" "context/none-0123abcd" \
+    "$task_prefix" "$project_prefix" title 2>/dev/null)" || exit_code=$?
+  assert_eq "a missing context file returns 1" "$exit_code" "1"
+}
+
+test__task__parse_subtask_entry__checkbox_and_id() {
+  assert_eq "an entry with a title" \
+    "$(_task__parse_subtask_entry '[x] task/a-1 Title A')" $'[x]\ttask/a-1'
+  assert_eq "an unchecked entry" "$(_task__parse_subtask_entry '[ ] task/b-2')" $'[ ]\ttask/b-2'
+  local output exit_code=0
+  output="$(_task__parse_subtask_entry 'task/c-3')" || exit_code=$?
+  assert_eq "an entry without a checkbox returns 1" "$exit_code" "1"
+  assert_eq "nothing printed for a malformed entry" "$output" ''
+}
+
+test__task__set_field_and_labels__keep_the_canonical_order() {
+  local file="$_TEST_ROOT/canonical-set.md"
+  printf '%s\n' '---' 'title: "T"' 'status: TODO' 'updated: U' \
+    'context: context/c-3' 'subtask: [ ] task/a-1' '---' 'Body' > "$file"
+  _task__set_field "$file" created C
+  _task__set_labels "$file" bug ui
+  _task__set_field "$file" title '"New"'
+  assert_eq "absent fields land at their canonical positions" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "New"' 'status: TODO' 'created: C' 'updated: U' \
+      'label: bug' 'label: ui' 'context: context/c-3' 'subtask: [ ] task/a-1' '---' 'Body')"
+  assert_frontmatter_order "the result is in canonical order" "$(<"$file")"
+}
+
+test__task__set_subtasks__replaces_the_entries() {
+  local file="$_TEST_ROOT/set-subtasks.md"
+  printf '%s\n' '---' 'title: "T"' 'subtask: [ ] task/a-1' 'subtask: [x] task/b-2 B' \
+    'context: context/c-3' '---' > "$file"
+  _task__set_subtasks "$file" '[x] task/b-2 B' '[ ] task/a-1'
+  assert_eq "the entries are rewritten in the given order" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'subtask: [x] task/b-2 B' 'subtask: [ ] task/a-1' \
+      'context: context/c-3' '---')"
 }
 
 test__task__read_status_and_title__print_the_single_value() {
@@ -965,6 +1175,434 @@ test__task__find_for_revision__fails_without_a_single_recorded_task() {
   output="$(_task__find_for_revision "$REPO" '@ | @-')" || exit_code=$?
   assert_failure "a revision naming several commits is rejected" "$exit_code"
   assert_eq "nothing printed for several commits" "$output" ''
+}
+
+# ---------------------------------------------------------------------------
+# _task__set_subtask_status, _task__remove_context
+# ---------------------------------------------------------------------------
+
+# Writes a task file with titled and untitled subtask entries, two contexts and
+# a body that mimics both.
+_make_staged_task_file() {
+  printf '%s\n' '---' 'title: "T"' 'status: TODO' 'context: context/a-1' \
+    'context: context/b-2' 'subtask: [ ] task/a-1 Title A' 'subtask: [-] task/b-2' \
+    '---' 'subtask: [ ] task/a-1' 'context: context/a-1' > "$1"
+}
+
+test__task__set_subtask_status__rewrites_the_checkbox_and_keeps_the_title() {
+  local file="$_TEST_ROOT/set-status.md"
+  _make_staged_task_file "$file"
+  _task__set_subtask_status "$file" task/a-1 DONE
+  _task__set_subtask_status "$file" task/b-2 TODO
+  assert_eq "checkboxes rewritten, titles and body kept" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'status: TODO' 'context: context/a-1' \
+      'context: context/b-2' 'subtask: [x] task/a-1 Title A' 'subtask: [ ] task/b-2' \
+      '---' 'subtask: [ ] task/a-1' 'context: context/a-1')"
+}
+
+test__task__set_subtask_status__unknown_task_is_a_no_op() {
+  local file="$_TEST_ROOT/set-status-none.md" before exit_code=0
+  _make_staged_task_file "$file"
+  before="$(<"$file")"
+  _task__set_subtask_status "$file" task/a-11 DONE || exit_code=$?
+  assert_success "an unlisted task ID returns 0" "$exit_code"
+  assert_eq "file unchanged for an unlisted task ID" "$(<"$file")" "$before"
+}
+
+test__task__set_subtask_status__rejects_an_unknown_status() {
+  local file="$_TEST_ROOT/set-status-bad.md" before exit_code=0
+  _make_staged_task_file "$file"
+  before="$(<"$file")"
+  _task__set_subtask_status "$file" task/a-1 Done 2>/dev/null || exit_code=$?
+  assert_eq "an unknown status returns 1" "$exit_code" "1"
+  assert_eq "file unchanged for an unknown status" "$(<"$file")" "$before"
+}
+
+test__task__remove_context__removes_only_the_named_context() {
+  local file="$_TEST_ROOT/remove-context.md"
+  _make_staged_task_file "$file"
+  _task__remove_context "$file" context/a-1
+  assert_eq "only the named frontmatter entry removed" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'status: TODO' 'context: context/b-2' \
+      'subtask: [ ] task/a-1 Title A' 'subtask: [-] task/b-2' \
+      '---' 'subtask: [ ] task/a-1' 'context: context/a-1')"
+}
+
+# ---------------------------------------------------------------------------
+# _task__check_file_exists
+# ---------------------------------------------------------------------------
+
+test__task__check_file_exists__reports_presence_at_a_revision() {
+  setup_workspace "check-file-exists"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  local before_child
+  before_child=$(get_bookmark_commit "$proj_id")
+  task_id=$(create_task "t" "T") || true
+
+  local task_prefix project_prefix exit_code=0
+  task_prefix="$(_workspace__get_task_prefix "$REPO")"
+  project_prefix="$(_workspace__get_project_prefix "$REPO")"
+  _task__check_file_exists "$REPO" "$task_id" "$task_id" "$task_prefix" "$project_prefix" \
+    || exit_code=$?
+  assert_success "the task file exists on its branch" "$exit_code"
+
+  exit_code=0
+  _task__check_file_exists "$REPO" "$before_child" "$task_id" "$task_prefix" "$project_prefix" \
+    || exit_code=$?
+  assert_eq "the task file is missing before it was created" "$exit_code" "1"
+
+  local output=''
+  exit_code=0
+  output="$(_task__check_file_exists "$REPO" "$task_id" "other/t-0123abcd" \
+    "$task_prefix" "$project_prefix")" || exit_code=$?
+  assert_eq "an ID with neither prefix returns 1" "$exit_code" "1"
+  assert_eq "nothing printed" "$output" ''
+}
+
+# Helper: create a temp task file with the given frontmatter lines + no body
+_make_task_file() {
+  local path="$1"; shift
+  {
+    echo '---'
+    for line in "$@"; do echo "$line"; done
+    echo '---'
+  } > "$path"
+}
+
+# ---------------------------------------------------------------------------
+# _task__add_context
+# ---------------------------------------------------------------------------
+
+test__task__add_context__inserts_before_subtask() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z" \
+    "subtask: [ ] task/child-abc12345"
+
+  _task__add_context "$file" "context/research-xyz12345"
+
+  local content
+  content="$(cat "$file")"
+  assert_frontmatter_order "context before subtask" "$content"
+
+  local ctx_line sub_line
+  ctx_line="$(printf '%s\n' "$content" | grep -n '^context:' | cut -d: -f1 | head -1)"
+  sub_line="$(printf '%s\n' "$content" | grep -n '^subtask:' | cut -d: -f1 | head -1)"
+  assert_eq "context line number before subtask line number" \
+    "$([[ "$ctx_line" -lt "$sub_line" ]] && echo yes || echo no)" "yes"
+}
+
+test__task__add_context__inserts_before_closing_sep_when_no_subtask() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z"
+
+  _task__add_context "$file" "context/research-xyz12345"
+
+  local content
+  content="$(cat "$file")"
+  assert_contains "context entry present" "$content" "context: context/research-xyz12345"
+  assert_frontmatter_order "valid ordering" "$content"
+}
+
+test__task__add_context__multiple_contexts_before_subtask() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z" \
+    "subtask: [ ] task/child-abc12345"
+
+  _task__add_context "$file" "context/ctx1-aaa11111"
+  _task__add_context "$file" "context/ctx2-bbb22222"
+
+  local content
+  content="$(cat "$file")"
+  assert_frontmatter_order "all contexts before subtask" "$content"
+
+  local last_ctx_line sub_line
+  last_ctx_line="$(printf '%s\n' "$content" | grep -n '^context:' | cut -d: -f1 | tail -1)"
+  sub_line="$(printf '%s\n' "$content" | grep -n '^subtask:' | cut -d: -f1 | head -1)"
+  assert_eq "last context line before first subtask line" \
+    "$([[ "$last_ctx_line" -lt "$sub_line" ]] && echo yes || echo no)" "yes"
+}
+
+# ---------------------------------------------------------------------------
+# _task__add_subtask
+# ---------------------------------------------------------------------------
+
+test__task__add_subtask__inserts_after_context() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z" \
+    "context: context/research-xyz12345"
+
+  _task__add_subtask "$file" "task/child-abc12345"
+
+  local content
+  content="$(cat "$file")"
+  assert_frontmatter_order "subtask after context" "$content"
+
+  local ctx_line sub_line
+  ctx_line="$(printf '%s\n' "$content" | grep -n '^context:' | cut -d: -f1 | head -1)"
+  sub_line="$(printf '%s\n' "$content" | grep -n '^subtask:' | cut -d: -f1 | head -1)"
+  assert_eq "context line before subtask line" \
+    "$([[ "$ctx_line" -lt "$sub_line" ]] && echo yes || echo no)" "yes"
+}
+
+test__task__add_subtask__inserts_at_end_when_empty() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z"
+
+  _task__add_subtask "$file" "task/child-abc12345"
+
+  local content
+  content="$(cat "$file")"
+  assert_contains "subtask entry present" "$content" "subtask: [ ] task/child-abc12345"
+  assert_frontmatter_order "valid ordering" "$content"
+}
+
+test__task__remove_subtask__removes_any_checkbox_state() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z" \
+    "subtask: [ ] task/unchecked-aaa11111" \
+    "subtask: [x] task/checked-bbb22222 Checked title" \
+    "subtask: [-] task/skipped-ccc33333"
+
+  _task__remove_subtask "$file" "task/unchecked-aaa11111"
+  local content
+  content="$(cat "$file")"
+  assert_not_contains "unchecked entry removed" "$content" "task/unchecked-aaa11111"
+  assert_contains "checked entry intact" "$content" \
+    "subtask: [x] task/checked-bbb22222 Checked title"
+  assert_contains "skipped entry intact" "$content" \
+    "subtask: [-] task/skipped-ccc33333"
+
+  _task__remove_subtask "$file" "task/checked-bbb22222"
+  content="$(cat "$file")"
+  assert_not_contains "checked entry with trailing title removed" \
+    "$content" "task/checked-bbb22222"
+  assert_contains "skipped entry still intact" "$content" \
+    "subtask: [-] task/skipped-ccc33333"
+
+  _task__remove_subtask "$file" "task/skipped-ccc33333"
+  content="$(cat "$file")"
+  assert_not_contains "skipped entry removed" "$content" "task/skipped-ccc33333"
+  assert_not_contains "no subtask lines left" "$content" "subtask:"
+  assert_contains "other frontmatter intact" "$content" 'title: "Test"'
+}
+
+test__task__remove_subtask__ignores_body_fence() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  # The body's fenced block repeats the exact frontmatter entry; only the
+  # frontmatter occurrence may be removed.
+  printf '%s\n' \
+    '---' \
+    'title: "Test"' \
+    'subtask: [ ] task/real-abc12345' \
+    '---' \
+    'The frontmatter looked like:' \
+    '' \
+    '```markdown' \
+    '---' \
+    'subtask: [ ] task/real-abc12345' \
+    '---' \
+    '```' \
+    > "$file"
+
+  _task__remove_subtask "$file" "task/real-abc12345"
+
+  local content
+  content="$(cat "$file")"
+  assert_output_empty "frontmatter has no subtask entries left" \
+    "$(_frontmatter__parse_repeated_field "$content" subtask)"
+  assert_eq "body occurrence survives" \
+    "$(printf '%s\n' "$content" | grep -c 'subtask: \[ \] task/real-abc12345' || true)" \
+    "1"
+  assert_contains "body prose intact" "$content" "The frontmatter looked like:"
+}
+
+test__task__remove_subtask__nonexistent_entry_is_noop() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z" \
+    "subtask: [ ] task/present-aaa11111"
+
+  local before
+  before="$(cat "$file")"
+  local exit_code=0
+  _task__remove_subtask "$file" "task/absent-zzz99999" || exit_code=$?
+  assert_success "removing a nonexistent entry returns 0" "$exit_code"
+  assert_eq "file unchanged" "$(cat "$file")" "$before"
+}
+
+# ---------------------------------------------------------------------------
+# _task__rename_subtask
+# ---------------------------------------------------------------------------
+
+test__task__rename_subtask__preserves_checkbox_title_and_order() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z" \
+    "subtask: [ ] task/first-aaa11111" \
+    "subtask: [x] task/second-bbb22222 Second title" \
+    "subtask: [-] task/third-ccc33333"
+
+  _task__rename_subtask "$file" "task/second-bbb22222" "task/renamed-bbb22222"
+  local content
+  content="$(cat "$file")"
+  assert_contains "entry repointed, checkbox and title kept" "$content" \
+    "subtask: [x] task/renamed-bbb22222 Second title"
+  assert_not_contains "old ID gone" "$content" "task/second-bbb22222"
+  assert_eq "list order preserved" \
+    "$(_frontmatter__parse_repeated_field "$content" subtask)" \
+    "$(printf '[ ] task/first-aaa11111\n[x] task/renamed-bbb22222 Second title\n[-] task/third-ccc33333')"
+
+  _task__rename_subtask "$file" "task/third-ccc33333" "task/last-ccc33333"
+  content="$(cat "$file")"
+  assert_contains "skipped-state entry repointed" "$content" \
+    "subtask: [-] task/last-ccc33333"
+  assert_contains "other frontmatter intact" "$content" 'title: "Test"'
+}
+
+test__task__rename_subtask__ignores_body_fence() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  # The body's fenced block repeats the exact frontmatter entry; only the
+  # frontmatter occurrence may be rewritten.
+  printf '%s\n' \
+    '---' \
+    'title: "Test"' \
+    'subtask: [ ] task/real-abc12345' \
+    '---' \
+    'The frontmatter looked like:' \
+    '' \
+    '```markdown' \
+    '---' \
+    'subtask: [ ] task/real-abc12345' \
+    '---' \
+    '```' \
+    > "$file"
+
+  _task__rename_subtask "$file" "task/real-abc12345" "task/renamed-abc12345"
+
+  local content
+  content="$(cat "$file")"
+  assert_eq "frontmatter entry repointed" \
+    "$(_frontmatter__parse_repeated_field "$content" subtask)" \
+    "[ ] task/renamed-abc12345"
+  assert_eq "body occurrence survives" \
+    "$(printf '%s\n' "$content" | grep -c 'subtask: \[ \] task/real-abc12345' || true)" \
+    "1"
+}
+
+test__task__rename_subtask__nonexistent_entry_is_noop() {
+  local dir
+  dir="$(mktemp -d)"
+  trap 'rm -rf "$dir"' RETURN
+  local file="$dir/TASK.md"
+
+  _make_task_file "$file" \
+    "title: \"Test\"" \
+    "status: TODO" \
+    "created: 2025-01-01T00:00:00Z" \
+    "updated: 2025-01-01T00:00:00Z" \
+    "subtask: [ ] task/present-aaa11111"
+
+  local before
+  before="$(cat "$file")"
+  local exit_code=0
+  _task__rename_subtask "$file" "task/absent-zzz99999" "task/other-zzz99999" \
+    || exit_code=$?
+  assert_success "renaming a nonexistent entry returns 0" "$exit_code"
+  assert_eq "file unchanged" "$(cat "$file")" "$before"
+}
+
+test__task__write_file__canonical_task_file() {
+  local file="$_TEST_ROOT/write-file.md"
+  _task__write_file "$file" 'Say "hi"' TODO C U $'Body\nmore' bug ui
+  assert_eq "frontmatter in canonical order, then the body" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "Say \"hi\""' 'status: TODO' 'created: C' 'updated: U' \
+      'label: bug' 'label: ui' '---' 'Body' 'more')"
+  assert_eq "the title reads back" "$(_frontmatter__parse_values "$(<"$file")" title)" 'Say "hi"'
+}
+
+test__task__write_file__empty_body() {
+  local file="$_TEST_ROOT/write-file-empty.md"
+  _task__write_file "$file" '' TODO C C ''
+  assert_eq "nothing follows the closing delimiter" "$(cat "$file"; printf x)" \
+    "$(printf '%s\n' '---' 'title: ""' 'status: TODO' 'created: C' 'updated: C' '---')"$'\n'x
+}
+
+test__task__write_context_file__fields_and_body() {
+  local file="$_TEST_ROOT/write-context.md"
+  _task__write_context_file "$file" 'Notes' C U 'Context body.'
+  assert_eq "a context file has a title, timestamps and a body" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "Notes"' 'created: C' 'updated: U' '---' 'Context body.')"
 }
 
 run_tests "tt lib/task (unit)"

@@ -67,7 +67,7 @@ test_task_prompt__explicit_task_id_not_checked_in() {
   output=$(run_tt task prompt "$child_id" 2>&1) || exit_code=$?
   assert_success "prompt succeeds" "$exit_code"
   assert_contains "task header is child ID" "$output" "task: $child_id"
-  assert_contains "child title" "$output" "title: Child Title"
+  assert_contains "child title" "$output" 'title: "Child Title"'
   assert_contains "child body" "$output" "Child body"
   assert_not_contains "no project title" "$output" "Project Title"
 }
@@ -88,7 +88,7 @@ test_task_prompt__explicit_task_id_checked_in() {
   assert_success "prompt succeeds" "$exit_code"
   assert_contains "task header is child ID" "$output" "task: $child_id"
   assert_not_contains "task header is not project ID" "$output" "task: $proj_id"
-  assert_contains "child title" "$output" "title: Child Title"
+  assert_contains "child title" "$output" 'title: "Child Title"'
   assert_contains "child body" "$output" "Child body"
   assert_not_contains "no project title" "$output" "Project Title"
   assert_not_contains "no project body" "$output" "Project body"
@@ -114,6 +114,34 @@ test_task_prompt__explicit_task_id_checked_in_context() {
   assert_not_contains "no project context body" "$output" "Project context body"
 }
 
+
+test_task_prompt__task_title_is_quoted() {
+  setup_workspace "prompt-title-quoted"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" 'Say "hi"') || true
+  checkout_task "$task_id" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task prompt 2>&1) || exit_code=$?
+  assert_success "prompt succeeds" "$exit_code"
+  assert_contains "the task title is a quoted frontmatter string" "$output" \
+    $'---\ntask: '"$task_id"$'\ntitle: "Say \\"hi\\""\n---'
+}
+
+test_task_prompt__context_title_is_quoted() {
+  setup_workspace "prompt-ctx-quoted"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "Body" | run_tt task context add --title 'Say "hi"' --slug "ctx" >/dev/null 2>&1 || true
+
+  output="" exit_code=0
+  output=$(run_tt task prompt 2>&1) || exit_code=$?
+  assert_success "prompt succeeds" "$exit_code"
+  assert_contains "the context title is escaped" "$output" 'title: "Say \"hi\""'
+}
 
 test_task_prompt__no_context() {
   setup_workspace "prompt-noctx"

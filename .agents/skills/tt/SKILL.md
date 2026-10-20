@@ -250,7 +250,7 @@ tt task context add --title "Design notes"  # opens editor
 ```
 tt task context get [<context-id>...] [--task <task-id>]
 ```
-Print raw content of context file(s). If no IDs given, prints all context files for the task.
+Print context file(s), each as a frontmatter block naming the context ID, title, created and updated fields, then the trimmed body. If no IDs given, prints all context files for the task.
 
 #### `tt task context list`  (alias: `tt list-context`)
 ```

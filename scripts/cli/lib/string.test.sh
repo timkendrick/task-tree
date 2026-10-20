@@ -99,4 +99,10 @@ test__string__generate_timestamp__iso8601_utc() {
     '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
 }
 
+test__string__trim_text__strips_surrounding_blank_lines_and_trailing_space() {
+  assert_eq "surrounding blank lines and trailing whitespace removed" \
+    "$(_string__trim_text $'\n  \n  first  \n\nsecond\t\n\n \n'; printf x)" $'  first\n\nsecondx'
+  assert_eq "blank text trims to nothing" "$(_string__trim_text $' \n\t\n')" ''
+}
+
 run_tests "tt lib/string (unit)"
