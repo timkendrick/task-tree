@@ -1,6 +1,6 @@
 ---
 title: "Fix `tt task prompt` for a task checked in to its parent"
-status: IN-PROGRESS
+status: DONE
 created: 2026-10-20T12:32:01Z
 updated: 2026-10-20T12:32:01Z
 ---
