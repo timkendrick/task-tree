@@ -471,26 +471,80 @@ test_task_propagate__up_to_date_done_child_untouched() {
   assert_eq "the child bookmark does not move" "$(get_bookmark_commit "$CHILD")" "$bm_before"
 }
 
-test_task_propagate__unreadable_child_task_file_counts_as_done() {
+# Parks CHILD on REV, a project commit that predates its task file: its whole
+# history is in the project's, and its task file cannot be read at its tip.
+# Usage: _park_child_unreadable CHILD REV
+_park_child_unreadable() {
+  local child="$1" rev="$2"
+  jj -R "$REPO" bookmark set "$child" -r "$rev" --allow-backwards >/dev/null 2>&1
+  assert_eq "the fixture leaves the task file of $child unreadable" \
+    "$(jj -R "$REPO" file show -r "$child" ".tt/task/${child#task/}/TASK.md" 2>/dev/null)" ""
+}
+
+test_task_propagate__unreadable_child_task_file_fails() {
   setup_workspace "prop-fork-unreadable"
   PROJ=$(create_project "proj" "Project") || true
   checkout_task "$PROJ" >/dev/null || true
   local before_child
   before_child=$(get_bookmark_commit "$PROJ")
   CHILD=$(create_task "c" "Child") || true
-
-  # Park the child on a project commit that predates its task file: its whole
-  # history is in the project's, and its task file cannot be read at its tip.
-  jj -R "$REPO" bookmark set "$CHILD" -r "$before_child" --allow-backwards >/dev/null 2>&1
-  assert_eq "the fixture leaves the child's task file unreadable" \
-    "$(jj -R "$REPO" file show -r "$CHILD" ".tt/task/${CHILD#task/}/TASK.md" 2>/dev/null)" ""
+  _park_child_unreadable "$CHILD" "$before_child"
 
   output="" exit_code=0
-  output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
-  assert_success "propagate succeeds" "$exit_code"
-  assert_contains "the child is reported up to date" "$output" "$CHILD: already up to date"
+  output=$(run_tt task propagate --from "$PROJ" 2>&1 >/dev/null) || exit_code=$?
+  assert_failure "propagate fails" "$exit_code"
+  assert_contains "the child is reported on stderr" "$output" \
+    "Warning: $CHILD: could not read its task file at the branch tip; skipping"
+  assert_not_contains "the child is not reported up to date" "$output" "already up to date"
   assert_not_contains "no fork commit is created" "$output" "creating fork commit"
   assert_eq "the child bookmark does not move" "$(get_bookmark_commit "$CHILD")" "$before_child"
+}
+
+test_task_propagate__unreadable_child_task_file_dry_run_fails() {
+  setup_workspace "prop-fork-unreadable-dry-run"
+  PROJ=$(create_project "proj" "Project") || true
+  checkout_task "$PROJ" >/dev/null || true
+  local before_child
+  before_child=$(get_bookmark_commit "$PROJ")
+  CHILD=$(create_task "c" "Child") || true
+  _park_child_unreadable "$CHILD" "$before_child"
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" --dry-run 2>&1 >/dev/null) || exit_code=$?
+  assert_failure "propagate fails" "$exit_code"
+  assert_contains "the child is reported on stderr" "$output" \
+    "Warning: $CHILD: could not read its task file at the branch tip; skipping"
+}
+
+test_task_propagate__unreadable_child_task_file_rolls_back_siblings() {
+  setup_workspace "prop-fork-unreadable-siblings"
+  PROJ=$(create_project "proj" "Project") || true
+  checkout_task "$PROJ" >/dev/null || true
+  local before_bad
+  SIBLING=$(create_task "s" "Sibling") || true
+  before_bad=$(get_bookmark_commit "$PROJ")
+  BAD=$(create_task "b" "Bad") || true
+  OTHER=$(create_task "o" "Other") || true
+  _park_child_unreadable "$BAD" "$before_bad"
+  _add_work "parent-file.txt" "Parent update"
+
+  local sibling_before other_before
+  sibling_before=$(get_bookmark_commit "$SIBLING")
+  other_before=$(get_bookmark_commit "$OTHER")
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
+  assert_failure "propagate fails" "$exit_code"
+  assert_contains "the sibling before the bad child is processed" "$output" \
+    "$SIBLING: rebase onto $PROJ"
+  assert_contains "the bad child is reported" "$output" \
+    "Warning: $BAD: could not read its task file at the branch tip; skipping"
+  assert_contains "the sibling after the bad child is processed" "$output" \
+    "$OTHER: rebase onto $PROJ"
+  assert_eq "the earlier sibling's rebase is rolled back" \
+    "$(get_bookmark_commit "$SIBLING")" "$sibling_before"
+  assert_eq "the later sibling's rebase is rolled back" \
+    "$(get_bookmark_commit "$OTHER")" "$other_before"
+  assert_file_not_on_branch "the sibling lacks the parent's change" "$SIBLING" "parent-file.txt"
 }
 
 test_task_propagate__checkin_propagate_forks_the_checked_in_child() {
