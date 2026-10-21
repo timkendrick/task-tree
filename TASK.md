@@ -1,1 +1,1 @@
-.tt/task/tt-worktree-prune-2c7055f6/TASK.md
+.tt/task/bootstrap-cli-d35756ce/TASK.md

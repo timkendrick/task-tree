@@ -12,7 +12,7 @@ subtask: [ ] task/completed-task-file-location-253f710e
 subtask: [ ] task/implicit-bookmark-check-4f5404cf
 subtask: [ ] task/rename-anonymous-task-id-arguments-2509eae4
 subtask: [ ] task/tt-history-truncate-b37bc2e3
-subtask: [ ] task/tt-worktree-prune-2c7055f6
+subtask: [x] task/tt-worktree-prune-2c7055f6
 subtask: [ ] task/tt-task-checkin-delete-worktree-bb7f3e3f
 subtask: [ ] task/standardize-filesystem-operations-efdeb08e
 subtask: [x] task/standardize-vcs-operations-d5419005
