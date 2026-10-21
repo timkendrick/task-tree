@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt worktree prune` CLI command"
-status: IN-PROGRESS
+status: DONE
 created: 2026-04-06T13:51:52Z
 updated: 2026-04-06T13:51:53Z
 ---
