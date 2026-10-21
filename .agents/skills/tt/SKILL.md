@@ -133,7 +133,7 @@ tt task checkin [<task-id>] [--complete] [--rebase | --merge] [--force] [--delet
 ```
 Merge a task branch into its parent. `--complete` marks it done first. `--delete` removes the task file after checkin, along with the task's dedicated worktree if it has one (pass `--retain-worktree` to keep it). `--propagate` propagates the updated parent tip to sibling branches.
 
-Checkin never removes a worktree unless `--delete` is given; use `tt worktree delete` to tear one down on its own.
+Checkin never removes a worktree unless `--delete` is given; use `tt worktree delete` to tear one down on its own, or `tt worktree prune` to remove every worktree whose task is `DONE`.
 
 `--switch` moves the `HEAD` worktree symlink to the parent task's worktree after the merge (falling back to the canonical repository root if the parent is not checked out anywhere). Without it, `HEAD` is left exactly where it was.
 
@@ -301,6 +301,12 @@ Output the path of the dedicated worktree with the given jj workspace name (the 
 tt worktree delete <worktree-path> [--force]
 ```
 Delete the given worktree directory and remove its jj workspace. The task still exists and can be checked out again to recreate the worktree.
+
+#### `tt worktree prune`
+```
+tt worktree prune [--dry-run] [--force]
+```
+Delete every worktree whose task is `DONE`, using `tt worktree delete` for each one. Prints each deleted path to stdout. `--dry-run` prints the same paths without deleting anything. `--force` is passed through to each delete. A worktree that fails to delete is reported and skipped, and the command exits non-zero.
 
 ---
 
