@@ -1,6 +1,6 @@
 ---
 title: "Report errors whn parsing remote branch task files in `tt task propagate`"
-status: IN-PROGRESS
+status: DONE
 created: 2026-10-20T10:11:13Z
 updated: 2026-10-20T10:11:13Z
 ---
