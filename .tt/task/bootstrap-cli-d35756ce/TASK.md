@@ -168,7 +168,7 @@ subtask: [ ] task/task-attachments-references-77e7a81d
 subtask: [x] task/tt-sync-broken-pipe-2c829c37
 subtask: [ ] task/ensure-no-uncheckpointed-changes-27ef7e6d
 subtask: [ ] task/tt-task-propagate-branch-task-file-errors-ee9f5c1b
-subtask: [-] task/task-frontmatter-field-helpers-2e49ca70
+subtask: [x] task/task-frontmatter-field-helpers-2e49ca70
 subtask: [x] task/tt-task-prompt-checked-in-task-861409c5
 ---
 Implement shell script implementations of all `tt` CLI commands
