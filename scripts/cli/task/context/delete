@@ -101,52 +101,40 @@ main() {
       _ui__log "Error: Branch '$branch' not found in repository."
       exit 1
     fi
-    if _task__check_is_task_branch "$branch" "$task_prefix"; then
-      task_suffix="${branch#$task_prefix}"
-    elif _task__check_is_project_branch "$branch" "$project_prefix"; then
-      task_suffix="${branch#$project_prefix}"
-    else
+    task_suffix="$(_task__resolve_suffix "$branch" "$task_prefix" "$project_prefix")" || {
       _ui__log "Error: '$task_id_arg' is not a task or project branch."
       exit 1
-    fi
+    }
   else
     branch="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$branch" ]]; then
       _ui__log "Error: Not on a task or project branch. Use --task to specify."
       exit 1
     fi
-    if _task__check_is_task_branch "$branch" "$task_prefix"; then
-      task_suffix="${branch#$task_prefix}"
-    else
-      task_suffix="${branch#$project_prefix}"
-    fi
+    task_suffix="$(_task__resolve_suffix "$branch" "$task_prefix" "$project_prefix")" || exit 1
   fi
 
   # Precondition: the working-copy commit must not carry a bookmark
   _worktree__ensure_working_copy "$repo" || exit 1
   _worktree__ensure_canonical_current "$repo" || exit 1
 
-  # Read the task file from the task's own branch, so tasks that are not checked
-  # out anywhere can still be edited.
-  local task_file task_content
+  # Read the task's context IDs from its own branch, so tasks that are not
+  # checked out anywhere can still be edited.
+  local task_file task_fields
   task_file="$(_path__task_file "$task_suffix")"
-  task_content="$(_task__read_file "$repo" "$branch" "$task_file")" || {
+  task_fields="$(_task__read_fields "$repo" "$branch" "$branch" \
+    "$task_prefix" "$project_prefix" 'context[]')" || {
     _ui__log "Error: Could not read task file '$task_file' from branch '$branch'."
     exit 1
   }
-
-  # Parse context IDs from task frontmatter
   local -a all_ctx_ids=()
-  while IFS= read -r ctx_id; do
-    [[ -z "$ctx_id" ]] && continue
-    all_ctx_ids+=("$ctx_id")
-  done < <(printf '%s' "$task_content" | awk '
-    /^---$/ { n++; next }
-    n==1 && /^context:/ {
-      sub(/^context:[[:space:]]*/, "")
-      print
-    }
-  ') || true
+  local context_count ctx_id i
+  { IFS= read -r context_count
+    for (( i = 0; i < context_count; i++ )); do
+      IFS= read -r ctx_id
+      [[ -n "$ctx_id" ]] && all_ctx_ids+=("$ctx_id")
+    done
+  } <<< "$task_fields" || true
 
   # Validate requested context ID exists
   local found=false
@@ -163,13 +151,14 @@ main() {
   fi
 
   # Read the context file to get its title for the commit message
-  local ctx_file ctx_content ctx_title
-  ctx_file="$(_path__task_context "$task_suffix" "$ctx_id_arg")"
-  ctx_content="$(_task__read_file "$repo" "$branch" "$ctx_file")" || {
+  local ctx_file ctx_title
+  ctx_file="$(_task__resolve_context_file "$branch" "$ctx_id_arg" \
+    "$task_prefix" "$project_prefix")" || exit 1
+  ctx_title="$(_task__read_context_fields "$repo" "$branch" "$branch" "$ctx_id_arg" \
+    "$task_prefix" "$project_prefix" title)" || {
     _ui__log "Error: Could not read context file '$ctx_file' from branch '$branch'."
     exit 1
   }
-  ctx_title="$(_frontmatter__parse_quoted_field "$ctx_content" "title")"
 
   if [[ -z "$ctx_title" ]]; then
     ctx_title="(untitled)"
@@ -179,21 +168,14 @@ main() {
   local new_timestamp
   new_timestamp="$(_string__generate_timestamp)"
 
-  # Remove context entry from task frontmatter and update 'updated' timestamp
-  local updated_task_content
-  updated_task_content="$(printf '%s' "$task_content" | awk -v ctx="$ctx_id_arg" -v ts="$new_timestamp" '
-    /^---$/ { sep++; if (sep == 2) { print "---"; next } }
-    /^context:/ && sep == 1 { val = $0; sub(/^context:[[:space:]]*/, "", val); if (val == ctx) next }
-    /^updated:/ && sep == 1 { print "updated: " ts; next }
-    { print }
-  ')"
-
-  # Writer invoked by _task__commit_on_branch with the staging root: rewrites
-  # the task file without the deleted context entry. The context file itself
-  # is removed via the --delete flag on the commit call.
+  # Writer invoked by _task__commit_on_branch with the staging root: removes
+  # the deleted context's entry from the staged task file and updates its
+  # 'updated' timestamp. The context file itself is removed via the --delete
+  # flag on the commit call.
   ctx_delete_writer() {
     local root="$1"
-    printf '%s\n' "$updated_task_content" > "$root/$task_file"
+    _task__remove_context "$root/$task_file" "$ctx_id_arg"
+    _task__set_field "$root/$task_file" updated "$new_timestamp"
   }
 
   # Begin transaction (records before-op for undo)

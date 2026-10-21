@@ -8,321 +8,10 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Unit tests for frontmatter helpers in lib/frontmatter.sh
 # ---------------------------------------------------------------------------
-# These tests operate directly on temp files (not through tt commands) to
-# validate the AWK helpers in isolation.
+# These tests operate directly on strings and temp files (not through tt
+# commands) to validate the helpers in isolation.
 # ---------------------------------------------------------------------------
 
-# Helper: create a temp task file with the given frontmatter lines + no body
-_make_task_file() {
-  local path="$1"; shift
-  {
-    echo '---'
-    for line in "$@"; do echo "$line"; done
-    echo '---'
-  } > "$path"
-}
-
-# ---------------------------------------------------------------------------
-# _frontmatter__append_context
-# ---------------------------------------------------------------------------
-
-test__frontmatter__append_context__inserts_before_subtask() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  _make_task_file "$file" \
-    "title: \"Test\"" \
-    "status: TODO" \
-    "created: 2025-01-01T00:00:00Z" \
-    "updated: 2025-01-01T00:00:00Z" \
-    "subtask: [ ] task/child-abc12345"
-
-  _frontmatter__append_context "$file" "context/research-xyz12345"
-
-  local content
-  content="$(cat "$file")"
-  assert_frontmatter_order "context before subtask" "$content"
-
-  local ctx_line sub_line
-  ctx_line="$(printf '%s\n' "$content" | grep -n '^context:' | cut -d: -f1 | head -1)"
-  sub_line="$(printf '%s\n' "$content" | grep -n '^subtask:' | cut -d: -f1 | head -1)"
-  assert_eq "context line number before subtask line number" \
-    "$([[ "$ctx_line" -lt "$sub_line" ]] && echo yes || echo no)" "yes"
-}
-
-test__frontmatter__append_context__inserts_before_closing_sep_when_no_subtask() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  _make_task_file "$file" \
-    "title: \"Test\"" \
-    "status: TODO" \
-    "created: 2025-01-01T00:00:00Z" \
-    "updated: 2025-01-01T00:00:00Z"
-
-  _frontmatter__append_context "$file" "context/research-xyz12345"
-
-  local content
-  content="$(cat "$file")"
-  assert_contains "context entry present" "$content" "context: context/research-xyz12345"
-  assert_frontmatter_order "valid ordering" "$content"
-}
-
-test__frontmatter__append_context__multiple_contexts_before_subtask() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  _make_task_file "$file" \
-    "title: \"Test\"" \
-    "status: TODO" \
-    "created: 2025-01-01T00:00:00Z" \
-    "updated: 2025-01-01T00:00:00Z" \
-    "subtask: [ ] task/child-abc12345"
-
-  _frontmatter__append_context "$file" "context/ctx1-aaa11111"
-  _frontmatter__append_context "$file" "context/ctx2-bbb22222"
-
-  local content
-  content="$(cat "$file")"
-  assert_frontmatter_order "all contexts before subtask" "$content"
-
-  local last_ctx_line sub_line
-  last_ctx_line="$(printf '%s\n' "$content" | grep -n '^context:' | cut -d: -f1 | tail -1)"
-  sub_line="$(printf '%s\n' "$content" | grep -n '^subtask:' | cut -d: -f1 | head -1)"
-  assert_eq "last context line before first subtask line" \
-    "$([[ "$last_ctx_line" -lt "$sub_line" ]] && echo yes || echo no)" "yes"
-}
-
-# ---------------------------------------------------------------------------
-# _frontmatter__append_subtask
-# ---------------------------------------------------------------------------
-
-test__frontmatter__append_subtask__inserts_after_context() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  _make_task_file "$file" \
-    "title: \"Test\"" \
-    "status: TODO" \
-    "created: 2025-01-01T00:00:00Z" \
-    "updated: 2025-01-01T00:00:00Z" \
-    "context: context/research-xyz12345"
-
-  _frontmatter__append_subtask "$file" "task/child-abc12345"
-
-  local content
-  content="$(cat "$file")"
-  assert_frontmatter_order "subtask after context" "$content"
-
-  local ctx_line sub_line
-  ctx_line="$(printf '%s\n' "$content" | grep -n '^context:' | cut -d: -f1 | head -1)"
-  sub_line="$(printf '%s\n' "$content" | grep -n '^subtask:' | cut -d: -f1 | head -1)"
-  assert_eq "context line before subtask line" \
-    "$([[ "$ctx_line" -lt "$sub_line" ]] && echo yes || echo no)" "yes"
-}
-
-test__frontmatter__append_subtask__inserts_at_end_when_empty() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  _make_task_file "$file" \
-    "title: \"Test\"" \
-    "status: TODO" \
-    "created: 2025-01-01T00:00:00Z" \
-    "updated: 2025-01-01T00:00:00Z"
-
-  _frontmatter__append_subtask "$file" "task/child-abc12345"
-
-  local content
-  content="$(cat "$file")"
-  assert_contains "subtask entry present" "$content" "subtask: [ ] task/child-abc12345"
-  assert_frontmatter_order "valid ordering" "$content"
-}
-
-# ---------------------------------------------------------------------------
-# _frontmatter__update_timestamp
-# ---------------------------------------------------------------------------
-
-test__frontmatter__update_timestamp__updates_in_place() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  _make_task_file "$file" \
-    "title: \"Test\"" \
-    "status: TODO" \
-    "created: 2025-01-01T00:00:00Z" \
-    "updated: 2025-01-01T00:00:00Z"
-
-  _frontmatter__update_timestamp "$file" "2025-06-15T12:00:00Z"
-
-  local content
-  content="$(cat "$file")"
-  assert_contains "updated timestamp changed" "$content" "updated: 2025-06-15T12:00:00Z"
-  assert_not_contains "old timestamp gone" "$content" "updated: 2025-01-01T00:00:00Z"
-}
-
-# ---------------------------------------------------------------------------
-# _frontmatter__set_status
-# ---------------------------------------------------------------------------
-
-test__frontmatter__set_status__rewrites_frontmatter_field_only() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  _make_task_file "$file" \
-    "title: \"Test\"" \
-    "status: TODO" \
-    "created: 2025-01-01T00:00:00Z" \
-    "updated: 2025-01-01T00:00:00Z"
-  printf 'status: body line\n' >> "$file"
-
-  _frontmatter__set_status "$file" "IN-PROGRESS"
-
-  local content
-  content="$(cat "$file")"
-  assert_contains "status changed" "$content" "status: IN-PROGRESS"
-  assert_not_contains "old status gone" "$content" "status: TODO"
-  assert_contains "body line untouched" "$content" "status: body line"
-  assert_contains "updated timestamp untouched" "$content" "updated: 2025-01-01T00:00:00Z"
-}
-
-# ---------------------------------------------------------------------------
-# _frontmatter__write_task_file
-# ---------------------------------------------------------------------------
-
-test__frontmatter__write_task_file__canonical_order() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  REWRITE_LABELS=("bug" "feature")
-  REWRITE_CONTEXTS=("context/ctx1-aaa11111" "context/ctx2-bbb22222")
-  REWRITE_SUBTASKS=("[ ] task/child-abc12345" "[x] task/child-def67890")
-
-  _frontmatter__write_task_file "$file" "My Task" "IN-PROGRESS" "Task body here." "2025-01-01T00:00:00Z" "2025-06-01T12:00:00Z"
-
-  local content
-  content="$(cat "$file")"
-  assert_frontmatter_order "full rewrite canonical order" "$content"
-  assert_contains "label bug" "$content" "label: bug"
-  assert_contains "label feature" "$content" "label: feature"
-  assert_contains "context 1" "$content" "context: context/ctx1-aaa11111"
-  assert_contains "context 2" "$content" "context: context/ctx2-bbb22222"
-  assert_contains "subtask 1" "$content" "subtask: [ ] task/child-abc12345"
-  assert_contains "subtask 2" "$content" "subtask: [x] task/child-def67890"
-  assert_contains "body preserved" "$content" "Task body here."
-
-  unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
-}
-
-test__frontmatter__write_task_file__atomic_write() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  # Write an initial file
-  _make_task_file "$file" "title: \"Old\""
-
-  REWRITE_LABELS=()
-  REWRITE_CONTEXTS=()
-  REWRITE_SUBTASKS=()
-
-  _frontmatter__write_task_file "$file" "New Title" "TODO" "" "2025-01-01T00:00:00Z" "2025-06-01T12:00:00Z"
-
-  local content
-  content="$(cat "$file")"
-  assert_contains "title updated" "$content" 'title: "New Title"'
-
-  unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
-}
-
-test__frontmatter__write_task_file__label_before_context_before_subtask() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  REWRITE_LABELS=("enhancement")
-  REWRITE_CONTEXTS=("context/plan-abc12345")
-  REWRITE_SUBTASKS=("[ ] task/child-def67890")
-
-  _frontmatter__write_task_file "$file" "Task" "TODO" "" "2025-01-01T00:00:00Z" "2025-06-01T12:00:00Z"
-
-  local content
-  content="$(cat "$file")"
-  assert_frontmatter_order "label before context before subtask" "$content"
-
-  local lbl_line ctx_line sub_line
-  lbl_line="$(printf '%s\n' "$content" | grep -n '^label:' | cut -d: -f1 | head -1)"
-  ctx_line="$(printf '%s\n' "$content" | grep -n '^context:' | cut -d: -f1 | head -1)"
-  sub_line="$(printf '%s\n' "$content" | grep -n '^subtask:' | cut -d: -f1 | head -1)"
-  assert_eq "label before context" \
-    "$([[ "$lbl_line" -lt "$ctx_line" ]] && echo yes || echo no)" "yes"
-  assert_eq "context before subtask" \
-    "$([[ "$ctx_line" -lt "$sub_line" ]] && echo yes || echo no)" "yes"
-
-  unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
-}
-
-test__frontmatter__write_task_file__omits_status_when_empty() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  REWRITE_LABELS=()
-  REWRITE_CONTEXTS=()
-  REWRITE_SUBTASKS=()
-
-  _frontmatter__write_task_file "$file" "No Status" "" "" "2025-01-01T00:00:00Z" "2025-06-01T12:00:00Z"
-
-  local content
-  content="$(cat "$file")"
-  assert_not_contains "no status line" "$content" "^status:"
-  assert_contains "title present" "$content" 'title: "No Status"'
-
-  unset REWRITE_LABELS REWRITE_CONTEXTS REWRITE_SUBTASKS
-}
-
-# ---------------------------------------------------------------------------
-# _frontmatter__write_context_file
-# ---------------------------------------------------------------------------
-
-test__frontmatter__write_context_file__fields() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/context.md"
-
-  _frontmatter__write_context_file "$file" "My Context" "Context body." "2025-01-01T00:00:00Z" "2025-06-01T12:00:00Z"
-
-  local content
-  content="$(cat "$file")"
-  assert_contains "title" "$content" 'title: "My Context"'
-  assert_contains "created" "$content" 'created: 2025-01-01T00:00:00Z'
-  assert_contains "updated" "$content" 'updated: 2025-06-01T12:00:00Z'
-  assert_contains "body" "$content" 'Context body.'
-  assert_not_contains "no status" "$content" '^status:'
-  assert_not_contains "no label" "$content" '^label:'
-  assert_not_contains "no context ref" "$content" '^context:'
-  assert_not_contains "no subtask" "$content" '^subtask:'
-}
 
 # ---------------------------------------------------------------------------
 # _frontmatter__parse_fields and friends
@@ -513,19 +202,49 @@ test__frontmatter__parse_values__documented_unpacking() {
     "${#subtasks[@]}:${subtasks[0]}:${subtasks[1]}" "2:[x] task/a-1 Title A:"
 }
 
-test__frontmatter__write_task_file__quoted_title_round_trips_escapes() {
-  local file="$_TEST_ROOT/escapes.md" title
-  title=$'He said "hi" \\ there\tand more'
-  local REWRITE_LABELS=() REWRITE_CONTEXTS=() REWRITE_SUBTASKS=()
-  _frontmatter__write_task_file "$file" "$title" "TODO" "" \
-    "2026-01-01T00:00:00Z" "2026-01-01T00:00:00Z"
+test__frontmatter__parse_values__body_follows_the_fields() {
   local content
-  content="$(<"$file")"
-  assert_eq "title written with JSON escapes on one line" \
-    "$(_frontmatter__parse_field "$content" title)" \
-    '"He said \"hi\" \\ there\tand more"'
-  assert_eq "title reads back unchanged" \
-    "$(_frontmatter__parse_quoted_field "$content" title)" "$title"
+  content="$(printf '%s\n' '---' 'title: "T"' 'subtask: [ ] task/a-1' '---' '' \
+    'Body line' '---' 'status: not a field')"
+  assert_eq "fields, then the body verbatim" \
+    "$(_frontmatter__parse_values "$content" title 'subtask[]' '...')" \
+    $'T\n1\n[ ] task/a-1\n\nBody line\n---\nstatus: not a field'
+}
+
+test__frontmatter__parse_values__documented_body_unpacking() {
+  local content title body
+  content="$(printf '%s\n' '---' 'title: "T"' '---' '' '  indented' 'last')"
+  { IFS= read -r title; IFS= read -r -d '' body; } \
+    <<< "$(_frontmatter__parse_values "$content" title '...')" || true
+  body="${body%$'\n'}"
+  assert_eq "title unpacked" "$title" "T"
+  assert_eq "body unpacked verbatim" "$body" $'\n  indented\nlast'
+}
+
+test__frontmatter__parse_values__body_only_and_empty_body() {
+  local content
+  content="$(printf '%s\n' '---' 'title: "T"' '---')"
+  assert_eq "an empty body prints nothing" "$(_frontmatter__parse_values "$content" '...')" ''
+  assert_eq "an empty body after a field" \
+    "$(_frontmatter__parse_values "$content" title '...')" 'T'
+}
+
+test__frontmatter__parse_values__body_must_be_last() {
+  local output exit_code=0
+  output="$(_frontmatter__parse_values "$(_content_with_lists)" '...' title 2>/dev/null)" \
+    || exit_code=$?
+  assert_failure "'...' before another request is rejected" "$exit_code"
+  assert_eq "nothing printed when '...' is misplaced" "$output" ''
+}
+
+test__frontmatter__format_block__writes_pairs_in_order() {
+  local block
+  block="$(_frontmatter__format_block title "$(_frontmatter__quote 'Say "hi"')" \
+    label a label b)"
+  assert_eq "one raw line per pair, repeated keys kept" "$block" \
+    $'---\ntitle: "Say \\"hi\\""\nlabel: a\nlabel: b\n---'
+  assert_eq "the block parses back" \
+    "$(_frontmatter__parse_values "$block" title 'label[]')" $'Say "hi"\n2\na\nb'
 }
 
 test__frontmatter__parse_repeated_field__all_values_in_order() {
@@ -542,225 +261,157 @@ test__frontmatter__parse_repeated_field__absent_key() {
     "$(_frontmatter__parse_repeated_field "$content" label)" ""
 }
 
-test__frontmatter__parse_task__ignores_body_fence() {
-  local content
-  content="$(printf '%s\n' \
-    '---' \
-    'title: "Real title"' \
-    'status: DONE' \
-    'label: bug' \
-    'context: context/notes-abc12345' \
-    'subtask: [x] task/a-1 Title A' \
-    '---' \
-    'Body:' \
-    '' \
-    '```markdown' \
-    '---' \
-    'label: fake' \
-    'context: context/fake-99' \
-    'subtask: [ ] task/fake-99' \
-    '---' \
-    '```')"
-
-  _frontmatter__parse_task "$content"
-
-  assert_eq "title" "$PARSED_TITLE" "Real title"
-  assert_eq "status" "$PARSED_STATUS" "DONE"
-  assert_eq "label count" "${#PARSED_LABELS[@]}" "1"
-  assert_eq "label" "${PARSED_LABELS[0]}" "bug"
-  assert_eq "context count" "${#PARSED_CONTEXTS[@]}" "1"
-  assert_eq "context" "${PARSED_CONTEXTS[0]}" "context/notes-abc12345"
-  assert_eq "subtask count" "${#PARSED_SUBTASKS[@]}" "1"
-  assert_eq "subtask" "${PARSED_SUBTASKS[0]}" "[x] task/a-1 Title A"
-}
-
 # ---------------------------------------------------------------------------
-# _frontmatter__remove_subtask
+# _frontmatter__set_field, _frontmatter__remove_entry, _frontmatter__replace_entry
 # ---------------------------------------------------------------------------
 
-test__frontmatter__remove_subtask__removes_any_checkbox_state() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  _make_task_file "$file" \
-    "title: \"Test\"" \
-    "status: TODO" \
-    "created: 2025-01-01T00:00:00Z" \
-    "updated: 2025-01-01T00:00:00Z" \
-    "subtask: [ ] task/unchecked-aaa11111" \
-    "subtask: [x] task/checked-bbb22222 Checked title" \
-    "subtask: [-] task/skipped-ccc33333"
-
-  _frontmatter__remove_subtask "$file" "task/unchecked-aaa11111"
-  local content
-  content="$(cat "$file")"
-  assert_not_contains "unchecked entry removed" "$content" "task/unchecked-aaa11111"
-  assert_contains "checked entry intact" "$content" \
-    "subtask: [x] task/checked-bbb22222 Checked title"
-  assert_contains "skipped entry intact" "$content" \
-    "subtask: [-] task/skipped-ccc33333"
-
-  _frontmatter__remove_subtask "$file" "task/checked-bbb22222"
-  content="$(cat "$file")"
-  assert_not_contains "checked entry with trailing title removed" \
-    "$content" "task/checked-bbb22222"
-  assert_contains "skipped entry still intact" "$content" \
-    "subtask: [-] task/skipped-ccc33333"
-
-  _frontmatter__remove_subtask "$file" "task/skipped-ccc33333"
-  content="$(cat "$file")"
-  assert_not_contains "skipped entry removed" "$content" "task/skipped-ccc33333"
-  assert_not_contains "no subtask lines left" "$content" "subtask:"
-  assert_contains "other frontmatter intact" "$content" 'title: "Test"'
+# Writes a task file with duplicate entries and a body that mimics them.
+_make_entry_file() {
+  printf '%s\n' '---' 'title: "T"' 'status: TODO' 'context: c/a' 'label: l' \
+    'context: c/b' 'context:   c/a' 'status: DONE' '---' 'context: c/a' 'status: BODY' > "$1"
 }
 
-test__frontmatter__remove_subtask__ignores_body_fence() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  # The body's fenced block repeats the exact frontmatter entry; only the
-  # frontmatter occurrence may be removed.
-  printf '%s\n' \
-    '---' \
-    'title: "Test"' \
-    'subtask: [ ] task/real-abc12345' \
-    '---' \
-    'The frontmatter looked like:' \
-    '' \
-    '```markdown' \
-    '---' \
-    'subtask: [ ] task/real-abc12345' \
-    '---' \
-    '```' \
-    > "$file"
-
-  _frontmatter__remove_subtask "$file" "task/real-abc12345"
-
-  local content
-  content="$(cat "$file")"
-  assert_output_empty "frontmatter has no subtask entries left" \
-    "$(_frontmatter__parse_repeated_field "$content" subtask)"
-  assert_eq "body occurrence survives" \
-    "$(printf '%s\n' "$content" | grep -c 'subtask: \[ \] task/real-abc12345' || true)" \
-    "1"
-  assert_contains "body prose intact" "$content" "The frontmatter looked like:"
+test__frontmatter__set_field__rewrites_first_and_drops_duplicates() {
+  local file="$_TEST_ROOT/set.md"
+  _make_entry_file "$file"
+  _frontmatter__set_field "$file" status IN-PROGRESS
+  assert_eq "first line rewritten, later one dropped, body untouched" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'status: IN-PROGRESS' 'context: c/a' 'label: l' \
+      'context: c/b' 'context:   c/a' '---' 'context: c/a' 'status: BODY')"
 }
 
-test__frontmatter__remove_subtask__nonexistent_entry_is_noop() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  _make_task_file "$file" \
-    "title: \"Test\"" \
-    "status: TODO" \
-    "created: 2025-01-01T00:00:00Z" \
-    "updated: 2025-01-01T00:00:00Z" \
-    "subtask: [ ] task/present-aaa11111"
-
-  local before
-  before="$(cat "$file")"
-  local exit_code=0
-  _frontmatter__remove_subtask "$file" "task/absent-zzz99999" || exit_code=$?
-  assert_success "removing a nonexistent entry returns 0" "$exit_code"
-  assert_eq "file unchanged" "$(cat "$file")" "$before"
+test__frontmatter__set_field__appends_an_absent_field() {
+  local file="$_TEST_ROOT/set-absent.md"
+  _make_entry_file "$file"
+  _frontmatter__set_field "$file" updated U
+  assert_eq "appended before the closing delimiter" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'status: TODO' 'context: c/a' 'label: l' \
+      'context: c/b' 'context:   c/a' 'status: DONE' 'updated: U' '---' 'context: c/a' 'status: BODY')"
 }
 
-# ---------------------------------------------------------------------------
-# _frontmatter__rename_subtask
-# ---------------------------------------------------------------------------
-
-test__frontmatter__rename_subtask__preserves_checkbox_title_and_order() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  _make_task_file "$file" \
-    "title: \"Test\"" \
-    "status: TODO" \
-    "created: 2025-01-01T00:00:00Z" \
-    "updated: 2025-01-01T00:00:00Z" \
-    "subtask: [ ] task/first-aaa11111" \
-    "subtask: [x] task/second-bbb22222 Second title" \
-    "subtask: [-] task/third-ccc33333"
-
-  _frontmatter__rename_subtask "$file" "task/second-bbb22222" "task/renamed-bbb22222"
-  local content
-  content="$(cat "$file")"
-  assert_contains "entry repointed, checkbox and title kept" "$content" \
-    "subtask: [x] task/renamed-bbb22222 Second title"
-  assert_not_contains "old ID gone" "$content" "task/second-bbb22222"
-  assert_eq "list order preserved" \
-    "$(_frontmatter__parse_repeated_field "$content" subtask)" \
-    "$(printf '[ ] task/first-aaa11111\n[x] task/renamed-bbb22222 Second title\n[-] task/third-ccc33333')"
-
-  _frontmatter__rename_subtask "$file" "task/third-ccc33333" "task/last-ccc33333"
-  content="$(cat "$file")"
-  assert_contains "skipped-state entry repointed" "$content" \
-    "subtask: [-] task/last-ccc33333"
-  assert_contains "other frontmatter intact" "$content" 'title: "Test"'
+test__frontmatter__remove_entry__removes_every_match() {
+  local file="$_TEST_ROOT/remove.md"
+  _make_entry_file "$file"
+  _frontmatter__remove_entry "$file" context c/a
+  assert_eq "every frontmatter match removed, body untouched" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'status: TODO' 'label: l' 'context: c/b' \
+      'status: DONE' '---' 'context: c/a' 'status: BODY')"
 }
 
-test__frontmatter__rename_subtask__ignores_body_fence() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
-
-  # The body's fenced block repeats the exact frontmatter entry; only the
-  # frontmatter occurrence may be rewritten.
-  printf '%s\n' \
-    '---' \
-    'title: "Test"' \
-    'subtask: [ ] task/real-abc12345' \
-    '---' \
-    'The frontmatter looked like:' \
-    '' \
-    '```markdown' \
-    '---' \
-    'subtask: [ ] task/real-abc12345' \
-    '---' \
-    '```' \
-    > "$file"
-
-  _frontmatter__rename_subtask "$file" "task/real-abc12345" "task/renamed-abc12345"
-
-  local content
-  content="$(cat "$file")"
-  assert_eq "frontmatter entry repointed" \
-    "$(_frontmatter__parse_repeated_field "$content" subtask)" \
-    "[ ] task/renamed-abc12345"
-  assert_eq "body occurrence survives" \
-    "$(printf '%s\n' "$content" | grep -c 'subtask: \[ \] task/real-abc12345' || true)" \
-    "1"
+test__frontmatter__replace_entry__replaces_every_match_in_place() {
+  local file="$_TEST_ROOT/replace.md"
+  _make_entry_file "$file"
+  _frontmatter__replace_entry "$file" context c/a c/z
+  assert_eq "every frontmatter match replaced in position, body untouched" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'status: TODO' 'context: c/z' 'label: l' \
+      'context: c/b' 'context: c/z' 'status: DONE' '---' 'context: c/a' 'status: BODY')"
 }
 
-test__frontmatter__rename_subtask__nonexistent_entry_is_noop() {
-  local dir
-  dir="$(mktemp -d)"
-  trap 'rm -rf "$dir"' RETURN
-  local file="$dir/TASK.md"
+test__frontmatter__entry_mutators__no_match_leaves_file_unchanged() {
+  local file="$_TEST_ROOT/nomatch.md" before exit_code=0
+  _make_entry_file "$file"
+  before="$(<"$file")"
+  _frontmatter__remove_entry "$file" context c/none || exit_code=$?
+  _frontmatter__replace_entry "$file" label none other || exit_code=$?
+  assert_success "no match returns 0" "$exit_code"
+  assert_eq "file unchanged" "$(<"$file")" "$before"
+}
 
-  _make_task_file "$file" \
-    "title: \"Test\"" \
-    "status: TODO" \
-    "created: 2025-01-01T00:00:00Z" \
-    "updated: 2025-01-01T00:00:00Z" \
-    "subtask: [ ] task/present-aaa11111"
+test__frontmatter__entry_mutators__file_without_frontmatter_unchanged() {
+  local file="$_TEST_ROOT/nofm.md" before
+  printf '%s\n' 'status: TODO' 'context: c/a' > "$file"
+  before="$(<"$file")"
+  _frontmatter__set_field "$file" status DONE
+  _frontmatter__remove_entry "$file" context c/a
+  _frontmatter__replace_entry "$file" status TODO DONE
+  assert_eq "file unchanged" "$(<"$file")" "$before"
+}
 
-  local before
-  before="$(cat "$file")"
-  local exit_code=0
-  _frontmatter__rename_subtask "$file" "task/absent-zzz99999" "task/other-zzz99999" \
-    || exit_code=$?
-  assert_success "renaming a nonexistent entry returns 0" "$exit_code"
-  assert_eq "file unchanged" "$(cat "$file")" "$before"
+test__frontmatter__set_entries__replaces_at_the_first_position() {
+  local file="$_TEST_ROOT/entries.md"
+  printf '%s\n' '---' 'title: "T"' 'subtask: [ ] task/a-1' 'status: TODO' \
+    'subtask: [x] task/b-2' '---' 'subtask: body' > "$file"
+  _frontmatter__set_entries "$file" subtask '[x] task/b-2' '[ ] task/a-1'
+  assert_eq "entries replaced in order at the first entry's position, body kept" \
+    "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'subtask: [x] task/b-2' 'subtask: [ ] task/a-1' \
+      'status: TODO' '---' 'subtask: body')"
+}
+
+test__frontmatter__set_entries__appends_when_absent_and_removes_when_empty() {
+  local file="$_TEST_ROOT/entries-absent.md"
+  printf '%s\n' '---' 'title: "T"' '---' > "$file"
+  _frontmatter__set_entries "$file" label a b
+  assert_eq "absent entries appended before the closing delimiter" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'label: a' 'label: b' '---')"
+  _frontmatter__set_entries "$file" label
+  assert_eq "no values removes every entry" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' '---')"
+}
+
+test__frontmatter__set_entries__absent_entries_go_before_the_anchor_keys() {
+  local file="$_TEST_ROOT/entries-before.md"
+  printf '%s\n' '---' 'title: "T"' 'subtask: [ ] task/a-1' '---' > "$file"
+  _frontmatter__set_entries --before 'context subtask' "$file" label a b
+  assert_eq "absent entries inserted before the first anchor key" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'label: a' 'label: b' 'subtask: [ ] task/a-1' '---')"
+  _frontmatter__set_entries --before 'context subtask' "$file" label c
+  assert_eq "present entries stay in place" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'label: c' 'subtask: [ ] task/a-1' '---')"
+}
+
+test__frontmatter__set_field__absent_field_goes_before_the_anchor_keys() {
+  local file="$_TEST_ROOT/field-before.md"
+  printf '%s\n' '---' 'title: "T"' 'updated: U' 'label: l' '---' > "$file"
+  _frontmatter__set_field --before 'updated label' "$file" created C
+  assert_eq "absent field inserted before the first anchor key" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'created: C' 'updated: U' 'label: l' '---')"
+}
+
+test__frontmatter__add_entry__after_the_last_entry() {
+  local file="$_TEST_ROOT/add-entry.md"
+  printf '%s\n' '---' 'title: "T"' 'context: c-1' 'subtask: [ ] a' 'context: c-2' \
+    'subtask: [ ] b' '---' 'context: body' > "$file"
+  _frontmatter__add_entry --before subtask "$file" context c-3
+  assert_eq "added after the last existing entry, body ignored" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'context: c-1' 'subtask: [ ] a' 'context: c-2' \
+      'context: c-3' 'subtask: [ ] b' '---' 'context: body')"
+}
+
+test__frontmatter__add_entry__absent_key_goes_before_the_anchor_keys() {
+  local file="$_TEST_ROOT/add-entry-absent.md"
+  printf '%s\n' '---' 'title: "T"' 'subtask: [ ] a' '---' > "$file"
+  _frontmatter__add_entry --before 'context subtask' "$file" context c-1
+  assert_eq "inserted before the first anchor key" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'context: c-1' 'subtask: [ ] a' '---')"
+  _frontmatter__add_entry "$file" label l
+  assert_eq "without anchors, inserted before the closing delimiter" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' 'context: c-1' 'subtask: [ ] a' 'label: l' '---')"
+}
+
+test__frontmatter__add_entry__leaves_a_file_without_frontmatter() {
+  local file="$_TEST_ROOT/add-entry-plain.md"
+  printf '%s\n' 'plain' > "$file"
+  _frontmatter__add_entry "$file" label l
+  assert_eq "no frontmatter: unchanged" "$(<"$file")" 'plain'
+}
+
+test__frontmatter__set_body__replaces_the_body() {
+  local file="$_TEST_ROOT/body.md"
+  printf '%s\n' '---' 'title: "T"' '---' 'old' '---' 'old too' > "$file"
+  _frontmatter__set_body "$file" $'new\n\nbody'
+  assert_eq "everything after the closing delimiter replaced" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' '---' 'new' '' 'body')"
+  _frontmatter__set_body "$file" ''
+  assert_eq "an empty body leaves nothing after the delimiter" "$(<"$file")" \
+    "$(printf '%s\n' '---' 'title: "T"' '---')"
+}
+
+test__frontmatter__set_body__leaves_a_file_without_frontmatter() {
+  local file="$_TEST_ROOT/no-fm.md"
+  printf '%s\n' 'plain' > "$file"
+  _frontmatter__set_body "$file" 'new'
+  assert_eq "no frontmatter: unchanged" "$(<"$file")" 'plain'
 }
 
 run_tests "tt lib/frontmatter (unit)"

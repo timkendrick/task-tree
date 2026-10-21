@@ -194,11 +194,43 @@ test_task_edit__frontmatter_canonical_order() {
   checkout_task "$task_id" >/dev/null || true
   echo "Body" | run_tt task context add --title "Ctx" --slug "ctx" >/dev/null 2>&1 || true
 
-  # Run edit to trigger _frontmatter__write_task_file
+  # Edit the title of a task whose frontmatter has every kind of field
   run_tt task edit --title "Updated T" <<< "" >/dev/null 2>&1 || true
 
   content="$(read_task_file "$task_id")"
   assert_frontmatter_order "canonical order after edit" "$content"
+}
+
+test_task_edit__first_label_keeps_the_canonical_order() {
+  setup_workspace "edit-first-label"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  create_task_under "$task_id" "child" "Child" >/dev/null || true
+  checkout_task "$task_id" >/dev/null || true
+
+  run_tt task edit --label "bug" <<< "" >/dev/null 2>&1 || true
+
+  content="$(read_task_file "$task_id")"
+  assert_contains "the label is written" "$content" "label: bug"
+  assert_frontmatter_order "the first label goes before the subtask entries" "$content"
+}
+
+test_task_edit__leaves_unrelated_frontmatter_untouched() {
+  setup_workspace "edit-targeted"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+
+  local before after
+  before="$(read_task_file "$task_id")"
+  run_tt task edit --title "Renamed" <<< "" >/dev/null 2>&1 || true
+  after="$(read_task_file "$task_id")"
+  assert_contains "the title is rewritten" "$after" 'title: "Renamed"'
+  assert_eq "nothing but the title and timestamp changes" \
+    "$(printf '%s\n' "$after" | grep -v '^title:\|^updated:')" \
+    "$(printf '%s\n' "$before" | grep -v '^title:\|^updated:')"
 }
 
 test_task_edit__refuses_when_the_canonical_workspace_is_stale() {

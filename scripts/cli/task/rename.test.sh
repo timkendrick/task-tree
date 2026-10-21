@@ -261,6 +261,26 @@ test_task_rename__parent_subtask_entry_updated() {
 }
 
 
+test_task_rename__after_a_move_to_a_newer_parent() {
+  setup_workspace "rename-after-move"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "child" "Child") || true
+  checkout_task "$proj_id" >/dev/null || true
+  new_parent=$(create_task "newparent" "New parent") || true
+  run_tt task move --task "$task_id" --parent "$new_parent" >/dev/null 2>&1 || true
+  assert_subtask_entry "fixture: the child moved under the newer parent" \
+    "$new_parent" "$task_id" "[ ]"
+
+  # The child's introduction commit predates the new parent's task file.
+  checkout_task "$task_id" >/dev/null || true
+  output="" exit_code=0
+  output=$(run_tt task rename --slug "child2" 2>&1) || exit_code=$?
+  assert_success "the rename succeeds" "$exit_code"
+  local new_id="task/child2-${task_id#task/child-}"
+  assert_subtask_entry "the parent lists the renamed child" "$new_parent" "$new_id" "[ ]"
+}
+
 test_task_rename__preserves_task_file_content() {
   setup_workspace "rename-preserve"
   proj_id=$(create_project "proj" "Project") || true

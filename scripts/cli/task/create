@@ -110,12 +110,9 @@ resolve_parent() {
       _ui__log "Error: Parent task not found: $parent_task_id"
       exit 1
     fi
-    if _task__check_is_task_branch "$parent_task_id" "$task_prefix"; then
-      local suffix="${parent_task_id#$task_prefix}"
-      printf '%s\n%s\n%s\n' "$parent_rev" "$(_path__task_file "$suffix")" "$parent_task_id"
-    elif _task__check_is_project_branch "$parent_task_id" "$project_prefix"; then
-      local suffix="${parent_task_id#$project_prefix}"
-      printf '%s\n%s\n%s\n' "$parent_rev" "$(_path__task_file "$suffix")" "$parent_task_id"
+    local parent_task_file
+    if parent_task_file="$(_task__resolve_file "$parent_task_id" "$task_prefix" "$project_prefix")"; then
+      printf '%s\n%s\n%s\n' "$parent_rev" "$parent_task_file" "$parent_task_id"
     else
       printf '%s\n\n\n' "$parent_rev"
     fi
@@ -449,11 +446,10 @@ main() {
   # branch starts from is TODO with the creation timestamp and nothing else.
   commit_metadata() {
     local updated="$stub_ts"
-    local REWRITE_LABELS=("${labels[@]+"${labels[@]}"}") REWRITE_SUBTASKS=() REWRITE_CONTEXTS=()
     metadata_writer() {
       local root="$1"
-      _frontmatter__write_task_file "$root/$task_file" \
-        "$title" "TODO" "$body" "$stub_ts" "$updated"
+      _task__write_file "$root/$task_file" \
+        "$title" "TODO" "$stub_ts" "$updated" "$body" ${labels[@]+"${labels[@]}"}
     }
     _task__commit_on_branch "$repo" "$task_id" \
       "$(_commit__format_message "task" "edit" "$task_id" "$title")" \
@@ -472,7 +468,7 @@ main() {
     create_parent_writer() {
       local root="$1"
       _task__write_stub "$root" "$task_suffix" "$stub_ts"
-      _frontmatter__append_subtask "$root/$parent_task_file" "$task_id"
+      _task__add_subtask "$root/$parent_task_file" "$task_id"
     }
     local parent_tip
     parent_tip="$(_task__commit_on_branch "$repo" "$parent_bookmark" \

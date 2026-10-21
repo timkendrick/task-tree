@@ -76,14 +76,10 @@ main() {
   else
     bookmark="$task_id_arg"
     local suffix
-    if _task__check_is_task_branch "$bookmark" "$task_prefix"; then
-      suffix="${bookmark#$task_prefix}"
-    elif _task__check_is_project_branch "$bookmark" "$project_prefix"; then
-      suffix="${bookmark#$project_prefix}"
-    else
+    suffix="$(_task__resolve_suffix "$bookmark" "$task_prefix" "$project_prefix")" || {
       _ui__log "Error: '$task_id_arg' is not a task or project branch."
       exit 1
-    fi
+    }
     if ! _task__check_branch_exists "$repo" "$bookmark"; then
       _ui__log "Error: Branch '$bookmark' not found in repository."
       exit 1
@@ -137,7 +133,7 @@ main() {
   # staged task file's status field to DONE.
   complete_writer() {
     local root="$1"
-    _frontmatter__set_status "$root/$task_file" "DONE"
+    _task__set_field "$root/$task_file" status "DONE"
   }
 
   # Begin transaction (records before-op for undo)

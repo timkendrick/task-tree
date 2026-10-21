@@ -79,25 +79,17 @@ main() {
       _ui__log "Error: Branch '$branch' not found in repository."
       exit 1
     fi
-    if _task__check_is_task_branch "$branch" "$task_prefix"; then
-      task_suffix="${branch#$task_prefix}"
-    elif _task__check_is_project_branch "$branch" "$project_prefix"; then
-      task_suffix="${branch#$project_prefix}"
-    else
+    task_suffix="$(_task__resolve_suffix "$branch" "$task_prefix" "$project_prefix")" || {
       _ui__log "Error: '$task_id' is not a task or project branch."
       exit 1
-    fi
+    }
   else
     branch="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$branch" ]]; then
       _ui__log "Error: Not on a task or project branch. Use --task to specify."
       exit 1
     fi
-    if _task__check_is_task_branch "$branch" "$task_prefix"; then
-      task_suffix="${branch#$task_prefix}"
-    else
-      task_suffix="${branch#$project_prefix}"
-    fi
+    task_suffix="$(_task__resolve_suffix "$branch" "$task_prefix" "$project_prefix")" || exit 1
   fi
 
   # Apply "where to read" rule: use _task__find_branch to locate canonical branch
