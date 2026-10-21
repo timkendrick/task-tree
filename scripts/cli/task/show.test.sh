@@ -40,7 +40,7 @@ test_task_show__after_the_branch_advanced_elsewhere() {
   output="" exit_code=0
   output=$(run_tt task show 2>&1) || exit_code=$?
   assert_success "show succeeds" "$exit_code"
-  assert_contains "the task checked out here is shown" "$output" "task:     $task_id"
+  assert_contains "the task checked out here is shown" "$output" "task:   $task_id"
   assert_contains "its metadata is read from the advanced branch" "$output" "My Task, advanced"
 }
 
@@ -95,6 +95,20 @@ test_task_show__task_with_subtasks() {
   assert_contains "subtask listed" "$output" "child"
 }
 
+
+test_task_show__untitled_subtask_on_one_line() {
+  setup_workspace "show-untitled-sub"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  child=$(create_task "child" "Child Task") || true
+  # Without a branch the subtask's title cannot be read.
+  jj -R "$REPO" bookmark delete "$child" >/dev/null 2>&1
+
+  output="" exit_code=0
+  output=$(run_tt task show "$proj_id" 2>&1) || exit_code=$?
+  assert_success "show with an untitled subtask" "$exit_code"
+  assert_contains "checkbox and ID share one line" "$output" "- [ ] $child"
+}
 
 test_task_show__task_with_no_subtasks() {
   setup_workspace "show-nosub"
@@ -151,6 +165,23 @@ test_task_show__expand_context_shows_content() {
   output=$(run_tt task show --expand-context 2>&1) || exit_code=$?
   assert_success "expand-context succeeds" "$exit_code"
   assert_contains "context body expanded" "$output" "Expanded body text"
+}
+
+
+test_task_show__expand_context_reencodes_an_escaped_title() {
+  setup_workspace "show-expand-escaped"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "Body" | run_tt task context add --title 'Say "hi" \ there' --slug "ctx" \
+    >/dev/null 2>&1 || true
+
+  output="" exit_code=0
+  output=$(run_tt task show --expand-context 2>&1) || exit_code=$?
+  assert_success "expand-context succeeds" "$exit_code"
+  assert_contains "the expanded title is a quoted frontmatter string" "$output" \
+    'title: "Say \"hi\" \\ there"'
 }
 
 

@@ -50,17 +50,6 @@ Examples:
 EOF
 }
 
-# task_file_changed CURRENT_CONTENT PROPOSED_FILE
-# Returns 0 (true) if the proposed file differs from the current content
-# in any field other than 'updated:', 1 (false) if the edit would be a no-op.
-task_file_changed() {
-  local current_content="$1" proposed_file="$2"
-  local current_stripped proposed_stripped
-  current_stripped="$(printf '%s' "$current_content" | grep -v '^updated:')"
-  proposed_stripped="$(grep -v '^updated:' "$proposed_file")"
-  [[ "$current_stripped" != "$proposed_stripped" ]]
-}
-
 main() {
   local task_id_arg=''
   local new_title=''
@@ -113,14 +102,10 @@ main() {
   else
     bookmark="$task_id_arg"
     local suffix
-    if _task__check_is_task_branch "$bookmark" "$task_prefix"; then
-      suffix="${bookmark#$task_prefix}"
-    elif _task__check_is_project_branch "$bookmark" "$project_prefix"; then
-      suffix="${bookmark#$project_prefix}"
-    else
+    suffix="$(_task__resolve_suffix "$bookmark" "$task_prefix" "$project_prefix")" || {
       _ui__log "Error: '$task_id_arg' is not a task or project branch."
       exit 1
-    fi
+    }
     if ! _task__check_branch_exists "$repo" "$bookmark"; then
       _ui__log "Error: Branch '$bookmark' not found in repository."
       exit 1
@@ -132,29 +117,26 @@ main() {
   _worktree__ensure_working_copy "$repo" || exit 1
   _worktree__ensure_canonical_current "$repo" || exit 1
 
-  # Read current task file content from bookmark
-  local task_content
-  task_content="$(_task__read_file "$repo" "$bookmark" "$task_file")" || {
+  # Read the current title, created timestamp, labels and body from the bookmark
+  local fields current_title current_created label_count label current_body='' i
+  local -a current_labels=()
+  fields="$(_task__read_fields "$repo" "$bookmark" "$bookmark" "$task_prefix" "$project_prefix" \
+    title created 'label[]' '...')" || {
     _ui__log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
     exit 1
   }
+  { IFS= read -r current_title; IFS= read -r current_created; IFS= read -r label_count
+    for (( i = 0; i < label_count; i++ )); do
+      IFS= read -r label; [[ -n "$label" ]] && current_labels+=("$label")
+    done
+    IFS= read -r -d '' current_body
+  } <<< "$fields" || true
+  current_body="${current_body%$'\n'}"
 
-  # Parse current values from frontmatter
-  _frontmatter__parse_task "$task_content"
-  local current_title="$PARSED_TITLE"
-  local current_status="$PARSED_STATUS"
-  local current_created="$PARSED_CREATED"
-  local current_body="$PARSED_BODY"
-  local -a current_labels=()
-  current_labels=("${PARSED_LABELS[@]+"${PARSED_LABELS[@]}"}")
-  local -a current_subtasks=()
-  current_subtasks=("${PARSED_SUBTASKS[@]+"${PARSED_SUBTASKS[@]}"}")
-  local -a current_contexts=()
-  current_contexts=("${PARSED_CONTEXTS[@]+"${PARSED_CONTEXTS[@]}"}")
-
-  # If created is empty (old format task file), generate one now
+  # A task file without a created timestamp (old format) gets one now
+  local new_created=''
   if [[ -z "$current_created" ]]; then
-    current_created="$(_string__generate_timestamp)"
+    new_created="$(_string__generate_timestamp)"
   fi
 
   # Determine interactive mode: no metadata flags and stdin is a terminal → open editor
@@ -200,37 +182,43 @@ main() {
     final_labels+=("$lbl")
   done
 
-  # Export arrays for _frontmatter__write_task_file
-  export REWRITE_LABELS=("${final_labels[@]+"${final_labels[@]}"}")
-  export REWRITE_SUBTASKS=("${current_subtasks[@]+"${current_subtasks[@]}"}")
-  export REWRITE_CONTEXTS=("${current_contexts[@]+"${current_contexts[@]}"}")
+  local labels_changed=false
+  if [[ ${#final_labels[@]} -ne ${#current_labels[@]} ]]; then
+    labels_changed=true
+  else
+    for (( i = 0; i < ${#final_labels[@]}; i++ )); do
+      [[ "${final_labels[i]}" == "${current_labels[i]}" ]] || labels_changed=true
+    done
+  fi
+
+  # Check for a no-op BEFORE beginning the transaction (avoids orphaned
+  # in-progress entries).
+  if [[ "$final_title" == "$current_title" && "$final_body" == "$current_body" \
+    && "$labels_changed" == false && -z "$new_created" ]]; then
+    _ui__log "No changes to task $bookmark."
+    printf '%s\n' "$bookmark"
+    return 0
+  fi
 
   # Generate the updated timestamp once so all write calls in this invocation are consistent.
   local updated
   updated="$(_string__generate_timestamp)"
 
-  # Check for a no-op BEFORE beginning the transaction (avoids orphaned
-  # in-progress entries). Compare against the file content at the bookmark,
-  # which is what the commit would be built on.
-  local tmpfile
-  tmpfile="$(mktemp)"
-  _frontmatter__write_task_file "$tmpfile" \
-    "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
-
-  if ! task_file_changed "$task_content" "$tmpfile"; then
-    rm -f "$tmpfile"
-    _ui__log "No changes to task $bookmark."
-    printf '%s\n' "$bookmark"
-    unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
-    return 0
-  fi
-  rm -f "$tmpfile"
-
-  # Writer invoked by _task__commit_on_branch with the staging root.
+  # Writer invoked by _task__commit_on_branch with the staging root: rewrites
+  # only the fields that changed, and the updated timestamp.
   task_edit_writer() {
-    local root="$1"
-    _frontmatter__write_task_file "$root/$task_file" \
-      "$final_title" "$current_status" "$final_body" "$current_created" "$updated"
+    local file="$1/$task_file"
+    if [[ "$final_title" != "$current_title" ]]; then
+      _task__set_field "$file" title "$(_frontmatter__quote "$final_title")"
+    fi
+    if [[ "$labels_changed" == true ]]; then
+      _task__set_labels "$file" ${final_labels[@]+"${final_labels[@]}"}
+    fi
+    [[ -n "$new_created" ]] && _task__set_field "$file" created "$new_created"
+    _task__set_field "$file" updated "$updated"
+    if [[ "$final_body" != "$current_body" ]]; then
+      _frontmatter__set_body "$file" "$final_body"
+    fi
   }
 
   # Begin transaction (records before-op for undo)
@@ -245,7 +233,6 @@ main() {
 
   _worktree__report_unsynced "$repo" "$bookmark"
 
-  unset REWRITE_LABELS REWRITE_SUBTASKS REWRITE_CONTEXTS
   printf '%s\n' "$bookmark"
 }
 

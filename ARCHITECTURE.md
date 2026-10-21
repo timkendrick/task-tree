@@ -43,15 +43,15 @@ directives, in dependency order:
 | --- | --- |
 | `ui.sh` | Diagnostic logging, command execution and tracing, editor prompts, interactive selection |
 | `string.sh` | Slugs, slug validation, hex identifiers, timestamps |
-| `format.sh` | Value formatting shared across commands |
+| `format.sh` | Value and display-block formatting shared across commands |
 | `path.sh` | Repo-relative path construction, symlink resolution, metadata exclusions |
-| `frontmatter.sh` | Task and context file frontmatter parsing and rewriting |
+| `frontmatter.sh` | Frontmatter parsing (fields, counted lists, body), block formatting and in-place field rewriting |
 | `commit.sh` | `[tt:<ns>:<id>:<op>]` commit message construction and parsing |
 | `hook.sh` | Hook discovery, environment and the blocking/non-blocking exit contract |
 | `repo.sh` | The backend-neutral VCS interface and the backend contract |
 | `vcs/jj.sh` | The jj backend — the only caller of `jj` and `git` |
 | `history.sh` | The `.tt/history` transaction log; begin, commit, rollback |
-| `task.sh` | The task model: branch classification, task file resolution and field reads, current-task resolution, parent lookup, task ranges, staged writes onto branches |
+| `task.sh` | The task model: branch classification, task and context file resolution and field reads, task field writes in canonical order, current-task resolution, parent lookup, task ranges, staged writes onto branches |
 | `workspace.sh` | Repository resolution, `.tt/config.toml`, the workspace directory and `HEAD` symlinks |
 | `worktree.sh` | The worktree model: lifecycle, working-copy invariants, reattachment, sync, out-of-sync reporting |
 
@@ -240,7 +240,7 @@ No working copy is involved in any of these; each rewrites the commit graph dire
 
 | Operation | Purpose |
 | --- | --- |
-| `commit_changeset` | Build a commit from a staging directory plus a deletion list |
+| `commit_changeset` | Build a commit from a staging directory plus deletions and recorded-entry copies |
 | `create_merge_commit` | Create a merge commit over two or more parents |
 | `set_description` | Replace a revision's description |
 | `move_commits` | Rebase revisions and their descendants onto a destination |
@@ -313,11 +313,14 @@ where output the caller did not want ends up — stderr when tracing, `/dev/null
 Writing a file into a commit normally requires a working copy. `commit_changeset` does it without
 one, by building the commit directly in the Git object store that backs the repository.
 
-A changeset is expressed as two orthogonal inputs:
+A changeset is expressed as three orthogonal inputs:
 
 - a **staging directory** whose layout mirrors repository-root-relative paths, holding the files to
-  create or replace, with symlinks present as real symlinks; and
-- an explicit **deletion list** naming individual repository-root-relative file paths.
+  create or replace, with symlinks present as real symlinks;
+- an explicit **deletion list** naming individual repository-root-relative file paths; and
+- a **copy list**, each entry placing a file or directory as recorded at some revision at a
+  destination path. A copy reuses the recorded blobs and modes, so content never passes through
+  the shell and arrives byte for byte.
 
 The staging directory is a *sparse overlay*: it expresses only the paths that change, and everything
 else is inherited from the parent commit. A file merely being absent from it is therefore **not** a
@@ -332,6 +335,7 @@ blobs  ← hash every staged regular file into the object store, in one call
 stream ← a fast-import commit: the parent revision as its base, the
          repository-configured identity rather than the ambient git identity,
          then for each deletion path:   D path
+         then for each copied entry:    M <recorded mode> <recorded blob> path
          then for each staged file:     M 100755|100644 <blob> path
          then for each staged symlink:  M 120000 inline path, with the link target
 commit ← run fast-import over the stream; it writes the tree and the commit and
@@ -340,8 +344,9 @@ import the ref so the backend learns the commit, then drop the ref, forget the
 bookmark it became, and reconcile the deletion within the same transaction
 ```
 
-Deletions are applied before the overlay, so one call may delete a path and stage a replacement
-beneath the same prefix. Granularity is one bare commit per logical tt commit; a command writing to
+Deletions are applied before copies, and copies before the overlay, so one call may delete a path
+and stage a replacement beneath the same prefix, or delete a directory and copy it elsewhere (a
+move). Granularity is one bare commit per logical tt commit; a command writing to
 two branches makes two calls.
 
 No working tree or index is involved on either side: the tree is described to a single
@@ -358,7 +363,8 @@ the new bookmark at it. Neither builder moves a bookmark, so the same fork commi
 branch and a branch that resumes above its parent's tip.
 
 The facade wrapper for writes onto an existing branch is `_task__commit_on_branch`, which resolves the branch tip, materialises any
-files the caller wants to read-modify-write, expands delete-prefixes into exact paths, runs the
+files the caller wants to read-modify-write, expands delete-prefixes into exact paths, turns
+copies and prefix moves into recorded-entry copies, runs the
 caller's writer function against the staging directory, commits, reattaches the current worktree,
 and only then advances the bookmark.
 

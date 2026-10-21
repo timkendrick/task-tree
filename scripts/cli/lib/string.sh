@@ -3,10 +3,21 @@
 #
 # Public surface:
 #   _string__first_line          — the first line of a multi-line string
+#   _string__trim_text           — strip surrounding blank lines and trailing whitespace
 #   _string__to_slug             — derive a slug from a free-form title
 #   _string__validate_slug       — validate slug shape (errors to stderr)
 #   _string__generate_hex        — random 8-character hex string for IDs
 #   _string__generate_timestamp  — current ISO 8601 UTC timestamp
+
+# Usage: _string__trim_text TEXT
+# Prints TEXT without its leading blank lines (lines holding only whitespace
+# count as blank), without trailing whitespace on each line, and without
+# trailing blank lines or a final newline.
+_string__trim_text() {
+  local trimmed
+  trimmed="$(printf '%s' "$1" | awk 'NF{found=1} found{print}' | sed -e 's/[[:space:]]*$//')"
+  printf '%s' "$trimmed"
+}
 
 # Usage: _string__first_line TEXT
 # Prints the first line of TEXT, without a trailing newline. Empty output for

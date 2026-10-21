@@ -1,6 +1,6 @@
 ---
 title: "Add helpers to read task frontmatter fields from a branch"
-status: IN-PROGRESS
+status: DONE
 created: 2026-10-20T10:20:36Z
 updated: 2026-10-20T10:20:36Z
 ---
