@@ -216,7 +216,7 @@ Remove a task from its parent branch. `--force` skips the DONE status check.
 tt task propagate [--from <parent-id>] [--to <child-id>...] [--rebase | --merge]
                   [--shallow] [--force] [--dry-run]
 ```
-Rebase or merge descendant task branches onto the parent's current tip. Defaults to the current branch.
+Rebase or merge descendant task branches onto the parent's current tip. Defaults to the current branch. If a descendant's task file cannot be read at its branch tip, propagate warns about it, checks the remaining descendants, then fails without changing any branch.
 
 #### `tt task publish`
 ```

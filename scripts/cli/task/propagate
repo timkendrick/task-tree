@@ -38,6 +38,10 @@ readonly SCRIPT_NAME="${0##*/}"
 # Global: specific --to targets (empty array = all descendants)
 TO_FILTER=()
 
+# Global: set when a child is skipped because of an error; the command then
+# fails, rolling back every branch it has already updated.
+HAS_ERRORS=false
+
 usage() {
   cat <<EOF
 Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [options...]
@@ -97,16 +101,12 @@ is_behind() {
   [[ -n "$result" ]]
 }
 
-# Usage: is_done REPO CHILD_BOOKMARK TASK_PREFIX PROJECT_PREFIX
-# Returns 0 (true) if the child's task file at CHILD_BOOKMARK's tip records
-# status DONE. An unreadable task file (e.g. one at a legacy path) also counts
-# as DONE, so propagate never starts new work on a task it cannot read.
-is_done() {
+# Usage: read_status REPO CHILD_BOOKMARK TASK_PREFIX PROJECT_PREFIX
+# Prints the status recorded by the child's task file at CHILD_BOOKMARK's tip.
+# Fails when the task file cannot be read there (e.g. one at a legacy path).
+read_status() {
   local repo="$1" child="$2" task_prefix="$3" project_prefix="$4"
-  local status
-  status="$(_task__read_status "$repo" "$child" "$child" "$task_prefix" "$project_prefix")" \
-    || return 0
-  [[ "$status" == "DONE" ]]
+  _task__read_status "$repo" "$child" "$child" "$task_prefix" "$project_prefix"
 }
 
 # Usage: is_attached_to_own_line REPO CHILD_BOOKMARK PARENT_BOOKMARK TASK_FILE
@@ -358,8 +358,17 @@ propagate_from() {
     fi
 
     if is_up_to_date "$repo" "$child_id" "$from_bookmark"; then
-      if is_behind "$repo" "$child_id" "$from_bookmark" && \
-         ! is_done "$repo" "$child_id" "$task_prefix" "$project_prefix"; then
+      local child_status=DONE
+      if is_behind "$repo" "$child_id" "$from_bookmark"; then
+        child_status="$(read_status "$repo" "$child_id" "$task_prefix" "$project_prefix")" \
+          || child_status=''
+      fi
+      if [[ -z "$child_status" ]]; then
+        # Whether the child continues on a fork commit depends on its status,
+        # so a child whose status is unknown cannot be propagated.
+        _ui__log "  Warning: $child_id: could not read its task file at the branch tip; skipping"
+        HAS_ERRORS=true
+      elif [[ "$child_status" != DONE ]]; then
         # The child's whole history is in the parent's, but its task is not
         # finished: it continues from a fork commit on the parent's tip.
         _ui__log "  $child_id: checked in but still in progress, creating fork commit"
@@ -466,6 +475,13 @@ main() {
   # then it moves with that branch — never away from it and back.
   propagate_from "$repo" "$from_bookmark" "$task_prefix" "$project_prefix" \
     "$strategy" "$shallow" "$force" "$dry_run" 0
+
+  # Exiting before the commit rolls back the transaction, undoing every
+  # branch already updated.
+  if [[ "$HAS_ERRORS" == true ]]; then
+    _ui__log "Error: Propagate failed; no branches were changed."
+    exit 1
+  fi
 
   # Commit transaction (records after-op for undo; skip for dry-run)
   if [[ "$dry_run" != true ]]; then
