@@ -1,3 +1,7 @@
+## Agent guidelines
+
+Design decisions often require understanding convoluted edge case scenarios. Explain complex graph topology scenarios via worked examples described in bullet points and illustrated with `jj log` style graph diagrams.
+
 ## Coding guidelines
 
 **IMPORTANT:** Make sure you read and thoroughly understand all coding guidelines from `@.agents/rules/` before making *any* code changes
@@ -14,7 +18,9 @@ Use the **bootstrap** `./scripts/cli/tt` CLI for task and VCS management. This b
 
 To see an overview of the current task, run `tt task show`.
 
-**IMPORTANT:** The bootstrap CLI operates directly on this repository. Commands like `tt task checkout` will change the currently checked-out repository contents (switching branches/worktrees), which can be disorienting mid-session. Always run both `jj log` and `tt task tree` before and after running any bootstrap CLI commands so you know exactly where you are and what changed.
+**IMPORTANT:** The bootstrap CLI operates directly on this repository. `tt task checkout` changes the currently checked-out repository contents (switching branches/worktrees) and `tt worktree switch` redirects which worktree is active, either of which can be disorienting mid-session. Other commands write to branches without moving the working copy, and will instead report worktrees their write left out of sync — bring those forward with `tt worktree sync`. Always run both `jj log` and `tt task tree` before and after running any bootstrap CLI commands so you know exactly where you are and what changed.
+
+Branch-writing commands refuse to run while the working-copy commit carries a bookmark. If you see `Error: The working-copy commit is the tip of bookmark '<name>'`, run `jj new` to start a working-copy commit above it and retry.
 
 For documentation on `tt` commands, run one of the following:
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
@@ -9,6 +9,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #
 # Computes the transitive closure of child branches registered under --from (or the current
 # branch) and rebases each one that is behind the parent onto the parent's current tip.
+#
+# Every commit on a child's own line points the task symlink at the child, and propagate
+# keeps it that way:
+#   - A child whose whole history is already in the parent's, but whose task is not DONE,
+#     advances onto a new fork commit on the parent's tip (under either strategy).
+#   - A rebase whose moved commits hang off a commit of the child's own line (left there
+#     by an earlier check-in) puts a fork commit on the parent's tip underneath them.
+#   - A merge is described as '[tt:task:<parent-id>:propagate] <parent title>' and takes
+#     the task symlink from the child's previous tip.
+# Propagate never creates an empty commit.
 #
 # Usage:
 #   propagate [options...]
@@ -27,6 +37,10 @@ readonly SCRIPT_NAME="${0##*/}"
 
 # Global: specific --to targets (empty array = all descendants)
 TO_FILTER=()
+
+# Global: set when a child is skipped because of an error; the command then
+# fails, rolling back every branch it has already updated.
+HAS_ERRORS=false
 
 usage() {
   cat <<EOF
@@ -54,170 +68,251 @@ Examples:
 EOF
 }
 
+# Usage: read_title REPO BRANCH TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Prints the title of TASK_ID's task file at BRANCH's tip, or nothing when the
+# file cannot be read there.
+read_title() {
+  _task__read_title "$@" || true
+}
+
 # Usage: is_up_to_date REPO CHILD_BOOKMARK PARENT_BOOKMARK
 # Returns 0 (true) if there are no commits in CHILD_BOOKMARK's ancestry that are not
 # already in PARENT_BOOKMARK's ancestry. This handles the case where the child has been
 # partially checked in (some commits already merged via a handoff commit), or where the
-# parent is already a direct or indirect ancestor of the child.
+# parent is already a direct or indirect ancestor of the child. Also true when the
+# child's unmerged commits already hang directly off the parent's tip (e.g. a fork
+# commit placed there by a prior propagate).
 is_up_to_date() {
   local repo="$1" child="$2" parent="$3"
-  local result
-  # Compute the unmerged range: ancestors of child NOT yet in parent's ancestry.
-  # If empty, the child has nothing new to propagate.
-  result="$(jj -R "$repo" --ignore-working-copy log -r "roots(::${child} ~ ::${parent})" \
-    --no-graph -T 'commit_id' 2>/dev/null)" || true
-  [[ -z "$result" ]] && return 0
-  # Also up to date if all unmerged roots are already descendants of parent
-  # (e.g. a resume commit was placed directly on the parent tip after a prior propagate).
-  local non_descendant_roots
-  non_descendant_roots="$(jj -R "$repo" --ignore-working-copy log \
-    -r "roots(::${child} ~ ::${parent}) ~ (${parent}+)" \
-    --no-graph -T 'commit_id' 2>/dev/null)" || true
-  [[ -z "$non_descendant_roots" ]]
+  _task__check_up_to_date "$repo" "$parent" "$child"
 }
 
-# Usage: is_checked_in REPO CHILD_BOOKMARK PARENT_BOOKMARK
-# Returns 0 (true) if CHILD_BOOKMARK is a strict ancestor of PARENT_BOOKMARK,
-# meaning a prior handoff commit from the child has already been merged into the parent.
-is_checked_in() {
+# Usage: is_behind REPO CHILD_BOOKMARK PARENT_BOOKMARK
+# Returns 0 (true) if PARENT_BOOKMARK carries commits that CHILD_BOOKMARK's ancestry
+# does not contain. For an up-to-date child this means the child is a strict ancestor
+# of the parent: a check-in brought all of the child's work into the parent, and the
+# parent moved on.
+is_behind() {
   local repo="$1" child="$2" parent="$3"
+  # A range is empty exactly when it has no roots, so the roots of the range
+  # running from the child to the parent answer the question directly.
   local result
-  result="$(jj -R "$repo" --ignore-working-copy log -r "${child}..${parent}" \
-    --no-graph -T 'commit_id' 2>/dev/null)" || true
+  result="$(_task__list_unmerged_roots "$repo" "$child" "$parent")" || true
   [[ -n "$result" ]]
 }
 
-# Usage: is_partially_checked_in REPO CHILD_BOOKMARK PARENT_BOOKMARK TASK_PREFIX PROJECT_PREFIX
-# Returns 0 (true) if the child has been checked in to the parent AND the child's task
-# status is not DONE — i.e. it was a partial (in-progress) checkin and work should continue.
-is_partially_checked_in() {
-  local repo="$1" child="$2" parent="$3" task_prefix="$4" project_prefix="$5"
-  is_checked_in "$repo" "$child" "$parent" || return 1
-  local suffix
-  if is_task_branch "$child" "$task_prefix"; then
-    suffix="${child#$task_prefix}"
-  elif is_project_branch "$child" "$project_prefix"; then
-    suffix="${child#$project_prefix}"
-  else
-    return 1
-  fi
-  local task_file
-  task_file="$(task_file_path "$suffix")"
-  local content status
-  content="$(jj_show_at_revision "$repo" "$child" "$task_file")" || true
-  # If the task file is unreadable (e.g. it lives at a legacy path format),
-  # treat the task as complete so we never create spurious resume commits.
-  [[ -z "$content" ]] && return 1
-  status="$(parse_frontmatter_field "$content" "status")"
-  [[ "$status" != "DONE" ]]
+# Usage: read_status REPO CHILD_BOOKMARK TASK_PREFIX PROJECT_PREFIX
+# Prints the status recorded by the child's task file at CHILD_BOOKMARK's tip.
+# Fails when the task file cannot be read there (e.g. one at a legacy path).
+read_status() {
+  local repo="$1" child="$2" task_prefix="$3" project_prefix="$4"
+  _task__read_status "$repo" "$child" "$child" "$task_prefix" "$project_prefix"
 }
 
-# Usage: get_subtask_ids REPO BOOKMARK TASK_FILE
+# Usage: is_attached_to_own_line REPO CHILD_BOOKMARK PARENT_BOOKMARK TASK_FILE
+# Returns 0 (true) if any commit that the child's unmerged range hangs off
+# points the task symlink at TASK_FILE, the child's own task file. Such a
+# commit is a child commit that an earlier check-in brought into the parent.
+# The moved commits then do not include the child's fork commit, so on the
+# parent's tip they would inherit the parent's task symlink.
+is_attached_to_own_line() {
+  local repo="$1" child="$2" parent="$3" task_file="$4"
+  local root_parents
+  root_parents="$(_task__list_unmerged_root_parents "$repo" "$parent" "$child")" \
+    || root_parents=''
+  local root_parent target
+  while IFS= read -r root_parent; do
+    [[ -n "$root_parent" ]] || continue
+    target="$(_task__read_symlink "$repo" "$root_parent" "$TT_TASK_SYMLINK_FILENAME")" \
+      || continue
+    [[ "$target" == "$task_file" ]] && return 0
+  done <<< "$root_parents"
+  return 1
+}
+
+# Usage: get_subtask_ids REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
 # Prints one subtask task-id per line for all checkboxes ([ ], [-], [x]).
 # Includes [x] entries so that partially-checked-in children that are still
 # active can be propagated to; is_up_to_date handles skipping truly finished ones.
 get_subtask_ids() {
-  local repo="$1" bookmark="$2" task_file="$3"
-  local content
-  content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || true
-  [[ -z "$content" ]] && return 0
-  parse_repeated_frontmatter_field "$content" "subtask" | awk '
+  local repo="$1" bookmark="$2" task_prefix="$3" project_prefix="$4"
+  local fields
+  fields="$(_task__read_fields "$repo" "$bookmark" "$bookmark" \
+    "$task_prefix" "$project_prefix" 'subtask[]')" || return 0
+  local subtask_count subtask subtasks=() i
+  { IFS= read -r subtask_count
+    for (( i = 0; i < subtask_count; i++ )); do
+      IFS= read -r subtask; subtasks+=("$subtask")
+    done
+  } <<< "$fields" || true
+  printf '%s\n' ${subtasks[@]+"${subtasks[@]}"} | awk '
     /^\[[ x\-]\]/ { sub(/^\[[ x\-]\][ \t]*/, ""); if ($1 != "") print $1 }
   '
 }
 
-# Usage: propagate_one_rebase REPO CHILD_BOOKMARK FROM_BOOKMARK FORCE DRY_RUN
+# Usage: build_fork_commit REPO CHILD_BOOKMARK FROM_BOOKMARK TASK_PREFIX PROJECT_PREFIX
+# Builds a fork commit for the child on FROM_BOOKMARK's tip and prints its
+# commit ID. The commit points the task symlink at the child's task file. No
+# bookmark moves and no worktree is reattached.
+build_fork_commit() {
+  local repo="$1" child="$2" from="$3" task_prefix="$4" project_prefix="$5"
+  local title fork_commit
+  title="$(read_title "$repo" "$child" "$child" "$task_prefix" "$project_prefix")"
+  fork_commit="$(_task__commit_fork "$repo" "$child" "$from" "$title")" || {
+    _ui__log "Error: Could not create a fork commit for '$child' on '$from'."
+    exit 1
+  }
+  printf '%s' "$fork_commit"
+}
+
+# Usage: propagate_one_fork REPO CHILD_BOOKMARK FROM_BOOKMARK TASK_PREFIX PROJECT_PREFIX DRY_RUN
+# Advances a child whose whole history is already in FROM's history onto a new
+# fork commit on FROM's tip. The fork commit points the task symlink back at
+# the child, so work resumed there belongs to the child.
+propagate_one_fork() {
+  local repo="$1" child="$2" from="$3" task_prefix="$4" project_prefix="$5" dry_run="$6"
+
+  if [[ "$dry_run" == true ]]; then
+    _ui__log "  [dry-run] fork $child onto $from"
+    return 0
+  fi
+
+  local child_tip
+  child_tip="$(_task__resolve_revision "$repo" "$child")" || {
+    _ui__log "Error: Could not resolve branch '$child'."
+    exit 1
+  }
+
+  local fork_commit
+  fork_commit="$(build_fork_commit "$repo" "$child" "$from" "$task_prefix" "$project_prefix")"
+
+  # Follow the advance with the invoking worktree only when it sits on the
+  # child branch; worktrees on the parent also descend from the child's old
+  # tip, and must not be dragged onto the child.
+  _worktree__reattach_current "$repo" "$child" "$child_tip" "$fork_commit"
+  _task__advance_branch "$repo" "$child" "$fork_commit"
+}
+
+# Usage: propagate_one_rebase REPO CHILD_BOOKMARK FROM_BOOKMARK TASK_FILE TASK_PREFIX PROJECT_PREFIX FORCE DRY_RUN
 # Rebases the unmerged range of CHILD_BOOKMARK onto FROM_BOOKMARK.
 # If the child has been partially checked in (some commits already in FROM's ancestry
 # via a prior handoff merge), only the commits not yet in FROM's ancestry are rebased.
+# When the range hangs off a commit of the child's own line, a fork commit on FROM's
+# tip goes underneath it, so the moved commits keep pointing the task symlink at the
+# child.
 propagate_one_rebase() {
-  local repo="$1" child="$2" from="$3" force="$4" dry_run="$5"
-  local jj_opts=(-R "$repo")
+  local repo="$1" child="$2" from="$3" task_file="$4"
+  local task_prefix="$5" project_prefix="$6" force="$7" dry_run="$8"
 
-  # Compute the roots of the unmerged range: commits in child's ancestry not yet in
-  # from's ancestry. These are the commits to rebase directly onto from.
+  # The roots of the unmerged range are the commits in the child's ancestry not
+  # yet in FROM's ancestry that hang off inherited history. Nothing there means
+  # the child is already up to date (guard; the caller should have checked).
   local rebase_roots
-  rebase_roots="$(jj "${jj_opts[@]}" log -r "roots(::${child} ~ ::${from})" \
-    --no-graph -T 'commit_id' 2>/dev/null)" || true
+  rebase_roots="$(_task__list_unmerged_roots "$repo" "$from" "$child")" || true
 
   if [[ -z "$rebase_roots" ]]; then
-    # No unmerged commits — already up to date (guard; caller should have checked this)
     return 0
   fi
+
+  local needs_fork=false
+  is_attached_to_own_line "$repo" "$child" "$from" "$task_file" && needs_fork=true
 
   if [[ "$dry_run" == true ]]; then
-    log "  [dry-run] rebase $child onto $from"
+    if [[ "$needs_fork" == true ]]; then
+      _ui__log "  [dry-run] fork $child onto $from, then rebase $child onto the fork commit"
+    else
+      _ui__log "  [dry-run] rebase $child onto $from"
+    fi
     return 0
   fi
 
-  jj "${jj_opts[@]}" rebase -s "roots(::${child} ~ ::${from})" -d "$from"
+  local destination="$from"
+  if [[ "$needs_fork" == true ]]; then
+    _ui__log "  $child: creating fork commit"
+    destination="$(build_fork_commit "$repo" "$child" "$from" "$task_prefix" "$project_prefix")"
+  fi
 
-  if [[ "$force" != true ]] && has_conflicts "$repo" "${child}::"; then
-    log "Error: Conflicts detected in $child after rebase onto $from."
-    log "  Use --force to proceed despite conflicts."
+  _task__move_unmerged_range "$repo" "$from" "$child" "$destination" || {
+    _ui__log "Error: Could not rebase $child onto $from."
+    exit 1
+  }
+
+  # The rebase replays every commit of the range, so a conflict may surface on
+  # any of them, not just the branch tip: a later commit can cancel a conflict
+  # an earlier one introduced. Commits above the tip moved too.
+  if [[ "$force" != true ]] && \
+     { _task__check_range_conflicts "$repo" "$from" "$child" || \
+       _task__check_descendant_conflicts "$repo" "$child"; }; then
+    _ui__log "Error: Conflicts detected in $child after rebase onto $from."
+    _ui__log "  Use --force to proceed despite conflicts."
     exit 1
   fi
 }
 
-# Usage: propagate_one_merge REPO CHILD_BOOKMARK FROM_BOOKMARK FORCE DRY_RUN ORIGINAL_REV
-# Creates a merge commit on CHILD_BOOKMARK combining its current tip with FROM_BOOKMARK.
+# Usage: propagate_one_merge REPO CHILD_BOOKMARK FROM_BOOKMARK TASK_PREFIX PROJECT_PREFIX FORCE DRY_RUN
+# Creates a merge commit on CHILD_BOOKMARK combining its current tip with FROM_BOOKMARK,
+# described as a propagate of FROM_BOOKMARK. The merge keeps the child's task symlink.
 propagate_one_merge() {
-  local repo="$1" child="$2" from="$3" force="$4" dry_run="$5" original_rev="$6"
-  local jj_opts=(-R "$repo")
+  local repo="$1" child="$2" from="$3" task_prefix="$4" project_prefix="$5"
+  local force="$6" dry_run="$7"
 
   if [[ "$dry_run" == true ]]; then
-    log "  [dry-run] merge $from into $child"
+    local label
+    label="$(_commit__format_message "task" "propagate" "$from" "")"
+    _ui__log "  [dry-run] merge $from into $child as ${label% }"
     return 0
   fi
 
-  # Create a merge commit (two parents: child tip + from tip), then move child bookmark there.
-  jj "${jj_opts[@]}" new "$child" "$from"
-  jj "${jj_opts[@]}" bookmark set "$child"
+  local child_tip
+  child_tip="$(_task__resolve_revision "$repo" "$child")" || {
+    _ui__log "Error: Could not resolve branch '$child'."
+    exit 1
+  }
 
-  if [[ "$force" != true ]] && has_conflicts "$repo" "$child"; then
-    log "Error: Conflicts in $child after merging $from."
-    log "  Use --force to proceed despite conflicts."
+  # A two-parent commit with the child's tip first and the incoming parent tip
+  # second. Like a check-in merge, it is described by the incoming task.
+  local message merge_commit
+  message="$(_commit__format_message "task" "propagate" "$from" \
+    "$(read_title "$repo" "$from" "$from" "$task_prefix" "$project_prefix")")"
+  merge_commit="$(_task__merge_branch "$repo" "$message" "$child_tip" "$from")" || {
+    _ui__log "Error: Could not merge '$from' into '$child'."
+    exit 1
+  }
+
+  # The merge resolves the task symlink to the parent's task file when the
+  # parent's side changed it in a check-in handoff, and leaves it conflicted
+  # when both sides changed it. The child's own tip records the right target.
+  # The restore rewrites the merge, so it runs while nothing descends from it
+  # yet, and the merge is found again by its change ID.
+  local merge_change
+  merge_change="$(_task__resolve_change "$repo" "$merge_commit")" || {
+    _ui__log "Error: Could not resolve the merge of '$from' into '$child'."
+    exit 1
+  }
+  _task__restore_symlink "$repo" "$child_tip" "$merge_commit" || {
+    _ui__log "Error: Could not restore the task symlink of '$child'."
+    exit 1
+  }
+  merge_commit="$(_task__resolve_revision "$repo" "$merge_change")" || {
+    _ui__log "Error: Could not resolve the merge of '$from' into '$child'."
+    exit 1
+  }
+
+  # Follow the advance with the invoking worktree only when it sits on the
+  # child branch; every commit on the incoming parent's line also descends
+  # from the child's fork point, so plain descent would relocate worktrees
+  # that have nothing to do with this child.
+  _worktree__reattach_current "$repo" "$child" "$child_tip" "$merge_commit"
+  _task__advance_branch "$repo" "$child" "$merge_commit"
+
+  if [[ "$force" != true ]] && _task__check_conflicts "$repo" "$child"; then
+    _ui__log "Error: Conflicts in $child after merging $from."
+    _ui__log "  Use --force to proceed despite conflicts."
     exit 1
   fi
-
-  # Restore working copy after jj new moved it
-  jj "${jj_opts[@]}" edit "$original_rev" 2>/dev/null || true
 }
 
-# Usage: create_resume_commit REPO CHILD_BOOKMARK ORIGINAL_REV DESTINATION
-# Creates a new empty commit on top of DESTINATION and advances CHILD_BOOKMARK to it.
-# DESTINATION defaults to CHILD_BOOKMARK when not supplied (post-rebase/merge case).
-# For fully-merged IN-PROGRESS children, pass the parent bookmark as DESTINATION so the
-# child advances to the parent tip rather than staying behind it.
-#
-# Idempotent: if child is already equal to destination, does nothing instead of
-# creating a redundant empty commit.
-create_resume_commit() {
-  local repo="$1" child="$2" original_rev="$3" destination="${4:-}"
-  [[ -z "$destination" ]] && destination="$child"
-  local jj_opts=(-R "$repo")
-
-  # Check if child and destination are already the same commit
-  # If so, skip creating a new commit (idempotent behavior)
-  local child_commit
-  child_commit="$(jj "${jj_opts[@]}" --ignore-working-copy log -r "$child" \
-    -n 1 --no-graph -T 'commit_id' 2>/dev/null)" || true
-  local destination_commit
-  destination_commit="$(jj "${jj_opts[@]}" --ignore-working-copy log -r "$destination" \
-    -n 1 --no-graph -T 'commit_id' 2>/dev/null)" || true
-
-  if [[ "$child_commit" == "$destination_commit" ]]; then
-    # Child is already at destination — no need to create another commit
-    return 0
-  fi
-
-  # Child is not at destination — create a resume commit
-  jj "${jj_opts[@]}" new "$destination"
-  jj "${jj_opts[@]}" bookmark set "$child"
-  jj "${jj_opts[@]}" edit "$original_rev" 2>/dev/null || true
-}
-
-# Usage: propagate_from REPO FROM_BOOKMARK TASK_PREFIX PROJECT_PREFIX STRATEGY SHALLOW FORCE DRY_RUN ORIGINAL_REV DEPTH
+# Usage: propagate_from REPO FROM_BOOKMARK TASK_PREFIX PROJECT_PREFIX STRATEGY SHALLOW FORCE DRY_RUN DEPTH
 # Recursively propagates all registered subtasks of FROM_BOOKMARK onto FROM_BOOKMARK's current tip.
 propagate_from() {
   local repo="$1"
@@ -228,36 +323,24 @@ propagate_from() {
   local shallow="$6"
   local force="$7"
   local dry_run="$8"
-  local original_rev="$9"
-  local depth="${10:-0}"
+  local depth="${9:-0}"
 
-  # Derive task file path from bookmark name
-  local suffix
-  if is_task_branch "$from_bookmark" "$task_prefix"; then
-    suffix="${from_bookmark#$task_prefix}"
-  elif is_project_branch "$from_bookmark" "$project_prefix"; then
-    suffix="${from_bookmark#$project_prefix}"
-  else
-    log "  Warning: $from_bookmark is not a task/project branch; cannot enumerate subtasks"
+  if ! _task__resolve_file "$from_bookmark" "$task_prefix" "$project_prefix" >/dev/null; then
+    _ui__log "  Warning: $from_bookmark is not a task/project branch; cannot enumerate subtasks"
     return 0
   fi
 
-  local task_file
-  task_file="$(task_file_path "$suffix")"
   local subtasks
-  subtasks="$(get_subtask_ids "$repo" "$from_bookmark" "$task_file")" || true
+  subtasks="$(get_subtask_ids "$repo" "$from_bookmark" "$task_prefix" "$project_prefix")" || true
   [[ -z "$subtasks" ]] && return 0
-
-  local jj_opts=(-R "$repo")
 
   while IFS= read -r child_id; do
     [[ -z "$child_id" ]] && continue
 
     # Only process recognised task/project branches
-    if ! is_task_branch "$child_id" "$task_prefix" && \
-       ! is_project_branch "$child_id" "$project_prefix"; then
-      continue
-    fi
+    local child_task_file
+    child_task_file="$(_task__resolve_file "$child_id" "$task_prefix" "$project_prefix")" \
+      || continue
 
     # Apply --to filter at top level only
     if [[ $depth -eq 0 ]] && [[ ${#TO_FILTER[@]} -gt 0 ]]; then
@@ -269,44 +352,55 @@ propagate_from() {
     fi
 
     # Check bookmark exists in repo
-    if ! jj "${jj_opts[@]}" --ignore-working-copy log -r "$child_id" --no-graph -T '' 2>/dev/null; then
-      log "  $child_id: bookmark not found in repo; skipping"
+    if ! _task__check_branch_exists "$repo" "$child_id"; then
+      _ui__log "  $child_id: bookmark not found in repo; skipping"
       continue
     fi
 
-    local partial=false
-    is_partially_checked_in "$repo" "$child_id" "$from_bookmark" "$task_prefix" "$project_prefix" \
-      && partial=true
-
     if is_up_to_date "$repo" "$child_id" "$from_bookmark"; then
-      if [[ "$partial" == true ]]; then
-        # Child is fully merged into parent but still IN-PROGRESS: no rebase needed,
-        # but we must advance the child bookmark to the parent tip so work can resume.
-        log "  $child_id: checked in but still in progress — creating resume commit"
+      local child_status=DONE
+      if is_behind "$repo" "$child_id" "$from_bookmark"; then
+        child_status="$(read_status "$repo" "$child_id" "$task_prefix" "$project_prefix")" \
+          || child_status=''
+      fi
+      if [[ -z "$child_status" ]]; then
+        # Whether the child continues on a fork commit depends on its status,
+        # so a child whose status is unknown cannot be propagated.
+        _ui__log "  Warning: $child_id: could not read its task file at the branch tip; skipping"
+        HAS_ERRORS=true
+      elif [[ "$child_status" != DONE ]]; then
+        # The child's whole history is in the parent's, but its task is not
+        # finished: it continues from a fork commit on the parent's tip.
+        _ui__log "  $child_id: checked in but still in progress, creating fork commit"
+        propagate_one_fork "$repo" "$child_id" "$from_bookmark" "$task_prefix" "$project_prefix" \
+          "$dry_run"
         if [[ "$dry_run" != true ]]; then
-          create_resume_commit "$repo" "$child_id" "$original_rev" "$from_bookmark"
+          _worktree__report_unsynced "$repo" "$child_id"
         fi
       else
-        log "  $child_id: already up to date"
+        _ui__log "  $child_id: already up to date"
       fi
     else
-      log "  $child_id: $strategy onto $from_bookmark"
+      _ui__log "  $child_id: $strategy onto $from_bookmark"
       if [[ "$strategy" == rebase ]]; then
-        propagate_one_rebase "$repo" "$child_id" "$from_bookmark" "$force" "$dry_run"
+        propagate_one_rebase "$repo" "$child_id" "$from_bookmark" "$child_task_file" \
+          "$task_prefix" "$project_prefix" "$force" "$dry_run"
       else
-        propagate_one_merge "$repo" "$child_id" "$from_bookmark" "$force" "$dry_run" "$original_rev"
+        propagate_one_merge "$repo" "$child_id" "$from_bookmark" "$task_prefix" \
+          "$project_prefix" "$force" "$dry_run"
       fi
 
-      if [[ "$partial" == true ]] && [[ "$dry_run" != true ]]; then
-        log "  $child_id: creating resume commit"
-        create_resume_commit "$repo" "$child_id" "$original_rev"
+      # The child branch just moved; worktrees other than the invoking one
+      # that were sitting on it are now behind its new tip.
+      if [[ "$dry_run" != true ]]; then
+        _worktree__report_unsynced "$repo" "$child_id"
       fi
     fi
 
     # Recurse into child's subtasks unless --shallow
     if [[ "$shallow" == false ]]; then
       propagate_from "$repo" "$child_id" "$task_prefix" "$project_prefix" \
-        "$strategy" "$shallow" "$force" "$dry_run" "$original_rev" "$((depth + 1))"
+        "$strategy" "$shallow" "$force" "$dry_run" "$((depth + 1))"
     fi
   done <<< "$subtasks"
 }
@@ -341,58 +435,60 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
-  local jj_opts=(-R "$repo")
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Resolve --from: explicit or current branch
   local from_bookmark
   if [[ -n "$from" ]]; then
     from_bookmark="$from"
-    if ! jj "${jj_opts[@]}" --ignore-working-copy log -r "$from_bookmark" --no-graph -T '' 2>/dev/null; then
-      log "Error: --from '$from_bookmark' not found in repository"
+    if ! _task__check_branch_exists "$repo" "$from_bookmark"; then
+      _ui__log "Error: --from '$from_bookmark' not found in repository"
       exit 1
     fi
   else
-    from_bookmark="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+    from_bookmark="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$from_bookmark" ]]; then
-      log "Error: Not on a task or project branch. Use --from to specify the source."
+      _ui__log "Error: Not on a task or project branch. Use --from to specify the source."
       exit 1
     fi
   fi
 
-  log "Propagating from: $from_bookmark"
-  [[ "$dry_run" == true ]] && log "(dry-run: no changes will be made)"
+  _ui__log "Propagating from: $from_bookmark"
+  [[ "$dry_run" == true ]] && _ui__log "(dry-run: no changes will be made)"
 
-  # Begin transaction (records before-op for undo; skip for dry-run)
+  # Precondition and transaction, skipped for --dry-run: it makes no changes,
+  # so it neither needs a rollback point nor has anything to absorb.
   if [[ "$dry_run" != true ]]; then
-    tt_begin_transaction "$repo"
+    # Precondition: the working-copy commit must not carry a bookmark
+    _worktree__ensure_working_copy "$repo" || exit 1
+    _worktree__ensure_canonical_current "$repo" || exit 1
+    _history__begin_transaction "$repo"
   fi
 
-  # Capture @ to restore after merge/rebase operations move it.
-  # (On error, tt_rollback_transaction restores the entire jj state including WC position.)
-  local original_rev
-  original_rev="$(get_worktree_current_rev "$repo")"
-
+  # No working-copy position is saved or restored: propagation only writes to
+  # the descendant branches themselves. The one case where the working copy
+  # moves at all is when it is checked out on a branch being propagated, and
+  # then it moves with that branch — never away from it and back.
   propagate_from "$repo" "$from_bookmark" "$task_prefix" "$project_prefix" \
-    "$strategy" "$shallow" "$force" "$dry_run" "$original_rev" 0
+    "$strategy" "$shallow" "$force" "$dry_run" 0
 
-  # Explicitly restore WC to where the user was before the command.
-  # This must happen before tt_commit_transaction so the restore is
-  # captured in the transaction's after-op-id.
-  if [[ -n "$original_rev" ]]; then
-    jj -R "$repo" edit "$original_rev" 2>/dev/null || true
+  # Exiting before the commit rolls back the transaction, undoing every
+  # branch already updated.
+  if [[ "$HAS_ERRORS" == true ]]; then
+    _ui__log "Error: Propagate failed; no branches were changed."
+    exit 1
   fi
 
   # Commit transaction (records after-op for undo; skip for dry-run)
   if [[ "$dry_run" != true ]]; then
-    tt_commit_transaction "$repo"
+    _history__commit_transaction "$repo"
   fi
 
-  log "Propagate complete."
+  _ui__log "Propagate complete."
 }
 
 main "$@"

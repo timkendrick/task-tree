@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
 # tt task complete — Mark the current task (or a given task) as DONE.
 #
 # Usage:
-#   complete [<task-id>] [--worktree=<path>] [--force] [--repo PATH]
+#   complete [<task-id>] [--force] [--repo PATH]
 #
 # Options:
 #   <task-id>            Task ID to complete. Default: current task.
-#   --worktree=<path>    Worktree to use when task has multiple worktrees.
 #   --force              Proceed even if not all subtasks are checked off.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
@@ -20,13 +19,12 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [--worktree=<path>] [--force] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<task-id>] [--force] [--repo PATH]
 
 Mark the current task (or a given task) as DONE.
 
 Options:
   <task-id>             Task ID to complete (default: current task).
-  --worktree=<path>     Worktree to use when task has multiple worktrees.
   --force               Proceed even if subtasks are not all complete.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
@@ -37,12 +35,10 @@ main() {
   local force=false
   local repo=''
   local task_id_arg=''
-  local worktree_arg=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --force)      force=true; shift ;;
-      --worktree=*) worktree_arg="${1#--worktree=}"; shift ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
@@ -58,166 +54,114 @@ main() {
     esac
   done
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Resolve workspace dir via .tt/workspace symlink
   local workspace_dir
-  workspace_dir="$(get_workspace_dir "$repo")" || true
+  workspace_dir="$(_workspace__get_dir "$repo")" || true
 
   local bookmark task_file
 
   if [[ -z "$task_id_arg" ]]; then
-    { read -r _rev; read -r task_file; read -r bookmark; } < <(resolve_current "$repo" "$task_prefix" "$project_prefix")
+    { read -r task_file; read -r bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
 
     if [[ -z "$bookmark" ]]; then
-      log "Error: Not on a task or project branch."
+      _ui__log "Error: Not on a task or project branch."
       exit 1
     fi
   else
     bookmark="$task_id_arg"
     local suffix
-    if is_task_branch "$bookmark" "$task_prefix"; then
-      suffix="${bookmark#$task_prefix}"
-    elif is_project_branch "$bookmark" "$project_prefix"; then
-      suffix="${bookmark#$project_prefix}"
-    else
-      log "Error: '$task_id_arg' is not a task or project branch."
+    suffix="$(_task__resolve_suffix "$bookmark" "$task_prefix" "$project_prefix")" || {
+      _ui__log "Error: '$task_id_arg' is not a task or project branch."
+      exit 1
+    }
+    if ! _task__check_branch_exists "$repo" "$bookmark"; then
+      _ui__log "Error: Branch '$bookmark' not found in repository."
       exit 1
     fi
-    if ! jj -R "$repo" log -r "$bookmark" --no-graph -T '' 2>/dev/null; then
-      log "Error: Branch '$bookmark' not found in repository."
-      exit 1
-    fi
-    task_file="$(task_file_path "$suffix")"
+    task_file="$(_path__task_file "$suffix")"
   fi
 
-  # Resolve current worktree (where the user is running from)
+  # Precondition: the working-copy commit must not carry a bookmark
+  _worktree__ensure_working_copy "$repo" || exit 1
+  _worktree__ensure_canonical_current "$repo" || exit 1
+
+  # Resolve the current worktree (where the user is running from); hooks run here
   local current_worktree
-  current_worktree="$(resolve_current_worktree "$repo")"
+  current_worktree="$(_worktree__resolve_current "$repo")"
 
-  # Resolve target worktree for the task (with multiple-worktree disambiguation)
-  local target_worktree
-  if ! target_worktree="$(resolve_task_worktree "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
-      "$current_worktree" "$worktree_arg")"; then
-    exit 1
-  fi
-
-  # Count how many worktrees exist for this task (needed for restore logic)
-  local wt_count
-  wt_count="$(find_worktrees_for_branch "$repo" "$bookmark" "$task_prefix" "$project_prefix" \
-    | grep -c . 2>/dev/null || true)"
-
-  # Precondition: WC must be clean
-  if ! is_wc_clean "$target_worktree"; then
-    log "Error: Working copy has uncommitted changes. Commit or discard first."
-    exit 1
-  fi
-
-  # Record original @ before any modifications.
-  # We save the parent commit_id (not the WC change_id) because `jj new` in the
-  # switched_to_task path will abandon the current empty WC commit, making its
-  # change_id unresolvable. The parent commit_id is stable.
-  local original_rev original_parent_rev
-  original_rev="$(get_worktree_current_rev "$target_worktree")" || true
-  original_parent_rev="$(jj -R "$target_worktree" log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)" || true
-
-  # Read task file content from bookmark
-  local task_content
-  task_content="$(jj_show_at_revision "$repo" "$bookmark" "$task_file")" || {
-    log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
+  # Read task metadata from bookmark
+  local task_fields task_title task_status subtask_count subtask subtasks=() i
+  task_fields="$(_task__read_fields "$repo" "$bookmark" "$bookmark" \
+    "$task_prefix" "$project_prefix" title status 'subtask[]')" || {
+    _ui__log "Error: Could not read task file '$task_file' from bookmark '$bookmark'."
     exit 1
   }
-
-  local task_title task_status
-  task_title="$(parse_quoted_frontmatter_field "$task_content" "title")"
-  task_status="$(parse_frontmatter_field "$task_content" "status")"
+  { IFS= read -r task_title; IFS= read -r task_status; IFS= read -r subtask_count
+    for (( i = 0; i < subtask_count; i++ )); do
+      IFS= read -r subtask; subtasks+=("$subtask")
+    done
+  } <<< "$task_fields" || true
 
   # If already DONE, nothing to do
   if [[ "$task_status" == "DONE" ]]; then
-    log "Task is already DONE: $bookmark"
+    _ui__log "Task is already DONE: $bookmark"
     exit 0
   fi
 
   # Precondition: all subtasks must be [x] unless --force
   if [[ "$force" != true ]]; then
     local incomplete_subs
-    incomplete_subs="$(parse_repeated_frontmatter_field "$task_content" "subtask" \
+    incomplete_subs="$(printf '%s\n' ${subtasks[@]+"${subtasks[@]}"} \
       | awk '/^\[[ \-]\]/ { print "subtask: " $0 }')" || true
     if [[ -n "$incomplete_subs" ]]; then
-      log "Error: Not all subtasks are complete. Use --force to proceed anyway."
-      log "  Incomplete subtasks:"
+      _ui__log "Error: Not all subtasks are complete. Use --force to proceed anyway."
+      _ui__log "  Incomplete subtasks:"
       printf '%s\n' "$incomplete_subs" | while IFS= read -r line; do
-        log "    $line"
+        _ui__log "    $line"
       done
       exit 1
     fi
   fi
 
+  # Writer invoked by _task__commit_on_branch with the staging root: flips the
+  # staged task file's status field to DONE.
+  complete_writer() {
+    local root="$1"
+    _task__set_field "$root/$task_file" status "DONE"
+  }
+
   # Begin transaction (records before-op for undo)
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
   # Run pre-complete hook (blocking)
-  run_hook "$repo" "pre-complete" true "$target_worktree" "${workspace_dir:-}" \
+  _hook__run "$repo" "pre-complete" true "$current_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$bookmark" \
     "TT_TASK_BRANCH=$bookmark"
 
-  # If no separate worktree exists and an explicit task-id was given, switch onto the task branch
-  local switched_to_task=false
-  if [[ "$wt_count" -eq 0 && -n "$task_id_arg" ]]; then
-    jj -R "$target_worktree" new "$bookmark"
-    switched_to_task=true
-  fi
-
-  # Update status: IN-PROGRESS -> DONE in task file
-  local tmpfile
-  tmpfile="$(mktemp)"
-  awk '
-    /^---$/ { n++; print; next }
-    n == 1 && /^status:/ { print "status: DONE"; next }
-    { print }
-  ' "$target_worktree/$task_file" > "$tmpfile"
-  mv "$tmpfile" "$target_worktree/$task_file"
-
-  # Commit and advance bookmark
-  jj -R "$target_worktree" commit -m "$(format_commit_message "task" "complete" "$bookmark" "$task_title")"
-  jj -R "$target_worktree" bookmark set "$bookmark" -r '@-'
-
+  # Commit the status change onto the task branch
   local commit_id
-  commit_id="$(jj -R "$target_worktree" log -r "${bookmark}" --no-graph -T 'commit_id' 2>/dev/null)" || true
-
-  # Restore @ if we switched to the task branch or used a different worktree
-  local should_restore=false
-  if [[ "$switched_to_task" == true ]]; then
-    should_restore=true
-  elif [[ "$target_worktree" != "$current_worktree" ]]; then
-    should_restore=true
-  fi
-
-  if [[ "$should_restore" == true ]]; then
-    if [[ "$switched_to_task" == true && -n "$original_parent_rev" ]]; then
-      # The original WC was abandoned by `jj new "$bookmark"`, so we can't
-      # restore the old change_id. Instead, create a fresh WC on top of
-      # the parent commit the user was previously on.
-      jj -R "$target_worktree" new -r "$original_parent_rev"
-    elif [[ -n "$original_rev" ]]; then
-      jj -R "$target_worktree" new -r "$original_rev"
-    fi
-  fi
+  commit_id="$(_task__commit_on_branch "$repo" "$bookmark" \
+    "$(_commit__format_message "task" "complete" "$bookmark" "$task_title")" \
+    --modify "$task_file" -- complete_writer)"
 
   # Commit transaction (records after-op for undo)
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
+
+  _worktree__report_unsynced "$repo" "$bookmark"
 
   # Run post-complete hook (non-blocking)
-  run_hook "$repo" "post-complete" false "$target_worktree" "${workspace_dir:-}" \
+  _hook__run "$repo" "post-complete" false "$current_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$bookmark" \
     "TT_TASK_BRANCH=$bookmark" \
     "TT_COMMIT=${commit_id}"
 
-  log "Completed: $bookmark"
+  _ui__log "Completed: $bookmark"
 }
 
 main "$@"

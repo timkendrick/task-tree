@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 
 # Build a project branch holding task A, with subtask A1 checked into it, plus a
@@ -25,6 +25,22 @@ _setup_two_level_tree() {
   checkout_task "$proj_id" >/dev/null || true
   edit_file "p.txt" "p"
   checkpoint_task "project work" >/dev/null || true
+}
+
+
+# Build a project branch and a target branch (main) that both change README.md
+# since the project forked, so merging one into the other conflicts.
+# Sets proj_id.
+_setup_conflicting_target() {
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  edit_file "README.md" "project"
+  checkpoint_task "Project edit" >/dev/null || true
+
+  jj -R "$REPO" new main >/dev/null 2>&1
+  edit_file "README.md" "target"
+  jj_commit "Target edit"
+  jj -R "$REPO" bookmark set main -r @- >/dev/null 2>&1
 }
 
 
@@ -85,15 +101,136 @@ test_task_publish__non_existent_target_rejected() {
 }
 
 
-test_task_publish__dirty_wc_rejected() {
+# Publish writes nothing through any working copy and validates no unmerged
+# range, so it has no clean-working-copy precondition: uncommitted changes in
+# the invoking worktree survive on disk and are absorbed into no branch.
+test_task_publish__dirty_wc_preserved_not_absorbed() {
   setup_workspace "pub-dirty"
   proj_id=$(create_project "proj" "Project") || true
   checkout_task "$proj_id" >/dev/null || true
   edit_file "dirty.txt" "dirty"
 
+  main_before=$(get_bookmark_commit "main")
+
   output="" exit_code=0
   output=$(run_tt task publish "$proj_id" --target "main" -m "Ship it" 2>&1) || exit_code=$?
-  assert_failure "dirty WC rejected" "$exit_code"
+  assert_success "publish succeeds with dirty WC" "$exit_code"
+  assert_neq "main advanced" "$(get_bookmark_commit "main")" "$main_before"
+  assert_file_exists "dirty file still on disk" "$REPO/dirty.txt"
+  assert_wc_dirty "WC still dirty"
+  assert_file_not_on_branch "dirty file not on main" "main" "dirty.txt"
+  assert_file_not_on_branch "dirty file not on project branch" "$proj_id" "dirty.txt"
+}
+
+
+test_task_publish__refuses_bookmark_on_working_copy() {
+  setup_workspace "pub-bm-refusal"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+
+  main_before=$(get_bookmark_commit "main")
+
+  # Clean working copy carrying the project's own bookmark
+  jj -R "$REPO" bookmark set "$proj_id" -r '@' >/dev/null 2>&1
+  output="" exit_code=0
+  output=$(run_tt task publish "$proj_id" --target "main" -m "Ship it" 2>&1) || exit_code=$?
+  assert_failure "own bookmark on @ refused" "$exit_code"
+  assert_contains "error names the bookmark" "$output" "tip of bookmark"
+  assert_eq "main did not advance" "$(get_bookmark_commit "main")" "$main_before"
+
+  # Bookmark unrelated to the publish; the working-copy guard alone refuses
+  jj -R "$REPO" bookmark set "$proj_id" -r '@-' --allow-backwards >/dev/null 2>&1
+  jj -R "$REPO" bookmark set unrelated -r '@' >/dev/null 2>&1
+  exit_code=0
+  output=$(run_tt task publish "$proj_id" --target "main" -m "Ship it" 2>&1) || exit_code=$?
+  assert_failure "unrelated bookmark on @ refused" "$exit_code"
+  assert_contains "error names the unrelated bookmark" "$output" "unrelated"
+  assert_eq "main still did not advance" "$(get_bookmark_commit "main")" "$main_before"
+}
+
+
+test_task_publish__conflict_refused() {
+  setup_workspace "pub-conflict-refused"
+  _setup_conflicting_target
+  main_before=$(get_bookmark_commit "main")
+
+  output="" exit_code=0
+  output=$(run_tt task publish "$proj_id" --target "main" -m "Ship it" 2>&1) || exit_code=$?
+  assert_failure "conflicting publish refused" "$exit_code"
+  assert_contains "reports the conflict" "$output" "Merge conflicts detected"
+  assert_eq "main did not advance" "$(get_bookmark_commit "main")" "$main_before"
+  assert_no_conflicts "repository left conflict-free"
+}
+
+
+test_task_publish__conflict_forced() {
+  setup_workspace "pub-conflict-forced"
+  _setup_conflicting_target
+  main_before=$(get_bookmark_commit "main")
+
+  output="" exit_code=0
+  output=$(run_tt task publish "$proj_id" --target "main" -m "Ship it" --force 2>&1) || exit_code=$?
+  assert_success "--force publishes despite the conflict" "$exit_code"
+  assert_neq "main advanced" "$(get_bookmark_commit "main")" "$main_before"
+
+  exit_code=0
+  has_conflicts "main" || exit_code=$?
+  assert_success "published merge carries the conflict" "$exit_code"
+
+  first_parent=$(jj -R "$REPO" log -r 'main' --no-graph \
+    -T 'parents.map(|c| c.commit_id().short(8)).join(" ")' 2>/dev/null)
+  assert_eq "first parent is the old target tip" "${first_parent%% *}" "$main_before"
+}
+
+
+# Publish affects the target branch, not the invoking worktree: @ does not
+# move, and the target advances to a merge whose first parent is the old
+# target tip and whose second parent is the scaffolding-removal handoff.
+test_task_publish__wc_does_not_move_and_merge_shape() {
+  setup_workspace "pub-wc-shape"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  edit_file "src/main.sh" "echo hello"
+  checkpoint_task "Work" >/dev/null || true
+
+  main_before=$(get_bookmark_commit "main")
+  proj_tip=$(get_bookmark_commit "$proj_id")
+  wc_before=$(get_wc_commit)
+
+  output="" exit_code=0
+  output=$(run_tt task publish "$proj_id" --target "main" -m "Ship it" 2>&1) || exit_code=$?
+  assert_success "publish succeeds" "$exit_code"
+
+  # @ does not move
+  assert_eq "@ commit unchanged" "$(get_wc_commit)" "$wc_before"
+  assert_current_task "WC still on project branch" "$proj_id"
+  assert_eq "project bookmark unchanged" "$(get_bookmark_commit "$proj_id")" "$proj_tip"
+
+  # Merge shape: exactly two parents, old target tip first, handoff second;
+  # the merge itself introduces no file changes beyond the auto-merge.
+  merge_parents=$(jj -R "$REPO" log -r 'main' --no-graph \
+    -T 'parents.map(|c| c.commit_id().short(8)).join(" ")' 2>/dev/null)
+  assert_eq "merge has exactly two parents" \
+    "$(printf '%s\n' "$merge_parents" | wc -w | tr -d ' ')" "2"
+  assert_eq "first parent is the old target tip" "${merge_parents%% *}" "$main_before"
+  handoff_commit="${merge_parents##* }"
+  assert_eq "second parent is the handoff" \
+    "$(get_commit_message_first_line "$handoff_commit")" \
+    "[tt:task:${proj_id}:handoff] Project"
+  assert_commit_empty "merge introduces no file changes" "main"
+
+  # Handoff shape: a single linear commit on the project tip that only
+  # removes the scaffolding (root TASK.md symlink and the .tt/task/ tree).
+  handoff_parents=$(jj -R "$REPO" log -r "$handoff_commit" --no-graph \
+    -T 'parents.map(|c| c.commit_id().short(8)).join(" ")' 2>/dev/null)
+  assert_eq "handoff sits on the project tip" "$handoff_parents" "$proj_tip"
+  handoff_files=$(get_modified_files "$handoff_commit")
+  assert_contains "handoff removes the root TASK.md symlink" "$handoff_files" "TASK.md"
+  assert_contains "handoff removes the project task file" "$handoff_files" ".tt/task/${proj_id#*/}/TASK.md"
+  stray=$(printf '%s\n' "$handoff_files" | grep -v -e '^TASK\.md$' -e '^\.tt/task/' || true)
+  assert_output_empty "handoff touches only scaffolding" "$stray"
+  assert_file_on_branch "workspace config kept on main" "main" ".tt/config.toml"
 }
 
 
@@ -174,8 +311,28 @@ test_task_publish__empty_message_rejected() {
   output="" exit_code=0
   output=$(run_tt task publish "$proj_id" --target "main" -m "" 2>&1) || exit_code=$?
   assert_failure "empty message rejected" "$exit_code"
-  assert_contains "reports the cancellation" "$output" "Publish cancelled."
+  assert_contains "reports the cancellation" "$output" "Publish canceled: no message provided."
   assert_eq "main did not advance" "$(get_bookmark_commit "main")" "$main_before"
+}
+
+
+test_task_publish__omitted_message_without_terminal_fails() {
+  setup_workspace "pub-no-tty"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  checkpoint_task "Work" >/dev/null || true
+
+  main_before=$(get_bookmark_commit "main")
+  project_before=$(get_bookmark_commit "$proj_id")
+
+  output="" exit_code=0
+  output=$(run_tt task publish "$proj_id" --target "main" </dev/null 2>&1) || exit_code=$?
+  assert_failure "publish without --message fails" "$exit_code"
+  assert_contains "error explains --message is required" "$output" \
+    "cannot open an editor for the publish message: stdin is not a terminal. Pass --message <msg>."
+  assert_eq "main did not advance" "$(get_bookmark_commit "main")" "$main_before"
+  assert_eq "project branch unchanged" "$(get_bookmark_commit "$proj_id")" "$project_before"
+  assert_no_pending_transaction "no transaction opened"
 }
 
 
@@ -190,8 +347,8 @@ test_task_publish__changelog_summarizes_work_since_target() {
   body=$(get_commit_message "main")
   assert_matches "message line is preserved" "$body" "^\[tt:task:${proj_id}:publish\] Ship it$"
   assert_matches "change summary header" "$body" '^Change summary:$'
-  assert_matches "checked-in task reported" "$body" "^- \`${task_a}\` - Task A$"
-  assert_matches "nested subtask keeps its indentation" "$body" "^  - \`${task_a1}\` - Task A1$"
+  assert_matches "checked-in task reported" "$body" "^- \`${task_a}\` \(\`[0-9a-f]{8}\`\) - Task A$"
+  assert_matches "nested subtask keeps its indentation" "$body" "^  - \`${task_a1}\` \(\`[0-9a-f]{8}\`\) - Task A1$"
   assert_matches "project checkpoint reported" "$body" '^- `[0-9a-f]{8}` - project work$'
   assert_not_contains "no placeholder when work exists" "$body" "No code changes"
 }
@@ -222,7 +379,7 @@ test_task_publish__changelog_covers_history_before_first_publish() {
 
   first_body=$(get_commit_message "main")
   assert_matches "first publish reports the whole project history" \
-    "$first_body" "^- \`${task_a}\` - Task A$"
+    "$first_body" "^- \`${task_a}\` \(\`[0-9a-f]{8}\`\) - Task A$"
   assert_matches "first publish reports the project checkpoint" \
     "$first_body" '^- `[0-9a-f]{8}` - project work$'
 
@@ -253,7 +410,7 @@ test_task_publish__changelog_depth_limits_levels() {
   assert_success "publish succeeds" "$exit_code"
 
   body=$(get_commit_message "main")
-  assert_matches "checked-in task reported" "$body" "^- \`${task_a}\` - Task A$"
+  assert_matches "checked-in task reported" "$body" "^- \`${task_a}\` \(\`[0-9a-f]{8}\`\) - Task A$"
   assert_not_contains "nested subtask omitted at depth 1" "$body" "$task_a1"
 }
 
@@ -279,5 +436,15 @@ test_task_publish__changelog_depth_requires_changelog() {
   assert_failure "non-numeric depth rejected" "$exit_code"
 }
 
+
+test_task_publish__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "publish-stale-canonical"
+  setup_stale_canonical "published"
+
+  # -m keeps the command out of the editor, which it would otherwise open
+  # before reaching its preconditions.
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task publish "$STALE_PROJ_ID" --target main -m "publish"
+}
 
 run_tests "tt task publish"

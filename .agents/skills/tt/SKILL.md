@@ -29,6 +29,72 @@ tt task --help           # List available task subcommands
 tt --help                # General usage
 ```
 
+## Worktrees and the canonical repository
+
+The **canonical repository** is the original repository directory (`tt workspace repo` prints it). A **worktree** is any other jj workspace of the same repository, usually created for one task by `tt task checkout --worktree`.
+
+`tt` acts on the canonical repository only when a command runs from it, or when a command names it explicitly. Run from a worktree, `tt` leaves the canonical repository wherever the user left it:
+
+- `tt task checkout --worktree` never reuses the canonical repository.
+- `tt worktree sync --all` skips the canonical repository.
+- Out-of-sync warnings never name the canonical repository.
+- `tt worktree list` never lists the canonical repository.
+
+## Working copy rules
+
+Two rules govern how `tt` treats the working copy. Both are worth knowing before running anything, because they explain the most common failure and the most common surprise.
+
+**Commands that write to a branch do not move the working copy.** They build the commit on the branch directly, leaving `@` exactly where it was and never absorbing uncommitted changes into what they commit. Only `tt task checkout`, `tt task checkpoint`, `tt workspace init`, `tt worktree sync` and `tt history undo` move a working copy at all. (`tt worktree switch` moves no working copy either — it only redirects the `HEAD` symlink.)
+
+A dirty working copy is therefore fine for most commands, including `tt task edit`, `tt task create`, `tt task complete`, `tt task delete`, `tt task reorder`, `tt task publish`, `tt task propagate`, `tt worktree switch` and the context commands. These still require a clean one:
+
+| Command | Condition |
+|---|---|
+| `tt task checkin` | Only when called without an explicit task ID |
+| `tt task move`, `tt task rename` | Always |
+| `tt task checkout` | Unless `--force`, or when creating a new worktree |
+| `tt worktree delete`, `tt history undo` | Unless `--force` |
+| `tt workspace init` | Always |
+
+The corollary: a worktree sitting on a branch that some other command advanced is left on the old tip. It is usable, just **behind**. Commands report this by name after a write:
+
+```
+The following worktrees are now out of sync:
+  <path> (<task-id>)
+Run 'tt worktree sync' in each of them to bring them up to date.
+```
+
+`tt worktree sync --all` does the whole set in one go, and preserves uncommitted work in each target worktree.
+
+**A branch write refuses while the working-copy commit carries a bookmark.** `tt` expects `@` to sit *above* the branch tip, not to be it. If `@` is itself a bookmarked commit, commands abort with:
+
+```
+Error: The working-copy commit is the tip of bookmark '<name>'.
+```
+
+This happens after driving `jj` directly — typically `jj edit <bookmark>`. Recover by starting a new working-copy commit on top of it (`jj new`), then re-run the `tt` command. The refusal covers any bookmark on `@`, not just the branch being written.
+
+**A branch write refuses while a workspace it depends on is stale.** A workspace is *stale* when its files belong to a commit whose content has since been rewritten; `jj` then refuses every command there. Commands abort with:
+
+```
+Error: The workspace is stale: <path>
+  Recover it first: tt worktree refresh <path> --force
+  Uncommitted changes in that workspace will be lost.
+```
+
+Stale is **not** the same as *behind*. A worktree left on an older tip is behind: its files are valid, `tt worktree sync` brings it forward, and uncommitted work is preserved. A stale workspace's files match no commit at all, only `tt worktree refresh --force` clears it, and **uncommitted work there is lost** — a stale working copy cannot be snapshotted first. Never reach for `refresh` when `sync` is what the situation calls for.
+
+If a command fails and its rollback cannot restore, it says so and **leaves the transaction lock in place** on purpose, so the next `tt` command refuses rather than running against a half-written repository:
+
+```
+Error: Could not restore the VCS operation state.
+  The repository was left mid-transaction at operation <op-id>.
+```
+
+Recover with `tt history undo --force` to retry the revert, or `tt history unlock --force` once you have fixed the repository by hand. `tt history undo` restores from whichever worktree you run it in, so run it from a healthy one.
+
+The workspace named in the refusal is most often the canonical repository root rather than the worktree you are standing in. That is deliberate: it is the workspace a failed command's rollback restores from, and in a repository driven from task worktrees nobody is standing in it, so it can sit stale unnoticed. Recover it with `tt worktree refresh --root --force` and re-run the command.
+
 ### Task commands
 
 #### `tt task create`
@@ -37,23 +103,23 @@ tt task create --title "<title>" [--slug <slug>] [--parent <task-id>]
                [--label <label>...] [--propagate [--rebase | --merge] [--shallow] [--force]]
                [--checkout [--worktree[=<path>]]]
 ```
-Creates a task under the current branch (or `--parent`). Body read from stdin if piped. On success, prints the generated task ID to stdout (all other output is on stderr) so it can be piped, e.g. `tt task checkout "$(tt task create --slug foo --title 'Foo' < ./desc.md)"`.
+Creates a task under the task this worktree has checked out (or `--parent`); fails when nothing is checked out and no `--parent` is given. Body read from stdin if piped. On success, prints the generated task ID to stdout (all other output is on stderr) so it can be piped, e.g. `tt task checkout "$(tt task create --slug foo --title 'Foo' < ./desc.md)"`.
 
 #### `tt task checkout`
 ```
 tt task checkout <task-id> [--worktree[=<path>]] [--switch] [--force]
 ```
-Switch to the given task branch. `--worktree` uses/creates a dedicated jj workspace; `--switch` also updates HEAD to the new worktree. Returns the worktree path to stdout for piping into other commands.
+Switch to the given task branch. `--worktree` uses/creates a worktree for the task (never the canonical repository); `--switch` also updates HEAD to the new worktree. Returns the worktree path to stdout for piping into other commands.
 
 #### `tt task checkpoint`
 ```
 tt task checkpoint [-m <message>] [--squash]
 ```
-Record the current state of work. `--squash` collapses all commits since the last bookmark into a single checkpoint commit.
+Record the current state of work. `--squash` collapses all commits since the last bookmark into a single checkpoint commit. Always pass `-m` when running non-interactively: without it the command opens an editor, and when stdin is not a terminal it exits with an error instead. An empty message cancels the checkpoint.
 
 #### `tt task complete`
 ```
-tt task complete [<task-id>] [--worktree=<path>] [--force]
+tt task complete [<task-id>] [--force]
 ```
 Mark a task DONE. Requires all child tasks to be done, unless `--force` is given.
 
@@ -67,7 +133,7 @@ tt task checkin [<task-id>] [--complete] [--rebase | --merge] [--force] [--delet
 ```
 Merge a task branch into its parent. `--complete` marks it done first. `--delete` removes the task file after checkin, along with the task's dedicated worktree if it has one (pass `--retain-worktree` to keep it). `--propagate` propagates the updated parent tip to sibling branches.
 
-Checkin never removes a worktree unless `--delete` is given; use `tt worktree delete` to tear one down on its own.
+Checkin never removes a worktree unless `--delete` is given; use `tt worktree delete` to tear one down on its own, or `tt worktree prune` to remove every worktree whose task is `DONE`.
 
 `--switch` moves the `HEAD` worktree symlink to the parent task's worktree after the merge (falling back to the canonical repository root if the parent is not checked out anywhere). Without it, `HEAD` is left exactly where it was.
 
@@ -96,6 +162,18 @@ Print the current task or project branch name.
 tt task parent [<task-id>] [--project]
 ```
 Print the parent task ID. `--project` walks up to find the nearest ancestor project.
+
+#### `tt task find`  (alias: `tt find`)
+```
+tt task find --revision <revision> [--repo PATH]
+```
+Print the task or project ID a revision belongs to. `<revision>` is any revision expression the version-control system accepts, and must resolve to exactly one commit.
+
+#### `tt task revset`  (alias: `tt revset`)
+```
+tt task revset [--task <task-id>] [--all] [--git] [--repo PATH]
+```
+Print the revision range covering all unmerged commits on a task branch since it diverged from its parent — the same range `tt task diff` shows the contents of. Without `--task`, uses the current task and extends the range to any trailing commits beyond the task bookmark. `--git` prints a `<from>..<to>` commit-ID range instead of the native revset, for feeding to tools that expect Git syntax. `--all` prints the task's complete range across every connected component, and is not supported for project branches.
 
 #### `tt task diff`  (alias: `tt diff`)
 ```
@@ -129,23 +207,23 @@ Reparent a task by moving it to a different parent.
 
 #### `tt task delete`
 ```
-tt task delete [<task-id>] [--worktree=<path>] [--force]
+tt task delete [<task-id>] [--force]
 ```
-Remove a task from its parent branch. `--force` skips DONE and clean working-copy checks.
+Remove a task from its parent branch. `--force` skips the DONE status check.
 
 #### `tt task propagate`
 ```
 tt task propagate [--from <parent-id>] [--to <child-id>...] [--rebase | --merge]
                   [--shallow] [--force] [--dry-run]
 ```
-Rebase or merge descendant task branches onto the parent's current tip. Defaults to the current branch.
+Rebase or merge descendant task branches onto the parent's current tip. Defaults to the current branch. If a descendant's task file cannot be read at its branch tip, propagate warns about it, checks the remaining descendants, then fails without changing any branch.
 
 #### `tt task publish`
 ```
 tt task publish [<project-id>] --target <branch> [-m <message>]
-                [--changelog [--changelog-depth <n>]] [--rebase | --merge] [--force]
+                [--changelog [--changelog-depth <n>]] [--force]
 ```
-Merge a project branch into an external target branch (e.g. `main`). Removes task scaffolding files from the delivery branch. Use for projects, not tasks. The publish commit message comes from `-m`, or from an editor when it is omitted; an empty message cancels the publish. `--changelog` prefills the message with a summary of the work since the target branch, bounded by `--changelog-depth`.
+Merge a project branch into an external target branch (e.g. `main`). Removes task scaffolding files from the delivery branch. Use for projects, not tasks. The publish commit message comes from `-m`, or from an editor when it is omitted; an empty message cancels the publish. Always pass `-m` when running non-interactively: when stdin is not a terminal, omitting it is an error. `--changelog` prefills the message with a summary of the work since the target branch, bounded by `--changelog-depth`.
 
 #### `tt task prompt`
 ```
@@ -172,7 +250,7 @@ tt task context add --title "Design notes"  # opens editor
 ```
 tt task context get [<context-id>...] [--task <task-id>]
 ```
-Print raw content of context file(s). If no IDs given, prints all context files for the task.
+Print context file(s), each as a frontmatter block naming the context ID, title, created and updated fields, then the trimmed body. If no IDs given, prints all context files for the task.
 
 #### `tt task context list`  (alias: `tt list-context`)
 ```
@@ -190,15 +268,27 @@ Delete a context file and remove its `context:` entry from the task frontmatter.
 
 #### `tt worktree switch`  (alias: `tt switch`)
 ```
-tt worktree switch [<worktree-path>] [--force]
+tt worktree switch [<worktree-path>]
 ```
 Redirect the virtual project's HEAD symlink to an existing worktree. The worktree must already exist (run `tt task checkout --worktree` first).
+
+#### `tt worktree sync`  (alias: `tt sync`)
+```
+tt worktree sync [<worktree-path>] [--all]
+```
+Bring a worktree forward onto the head of the branch it is checked out on, updating its files to match. Use it when a command reports that worktrees are out of sync: a branch write advances the bookmark without moving any working copy but the invoking one. Uncommitted changes in the target worktree are preserved. Defaults to the worktree containing the current directory; `--all` synchronizes every out-of-sync worktree in the repository, plus the canonical repository when run from it. Reports the files added, modified and removed. Fires no hooks — the checked-out task does not change.
+
+#### `tt worktree refresh`  (alias: `tt refresh`)
+```
+tt worktree refresh [<path>] [--root] [--force]
+```
+Recover a stale workspace — one whose files belong to a rewritten commit, which `jj` refuses to load. Defaults to the worktree containing the current directory; `<path>` targets that worktree, `--root` targets the canonical repository root. There is no `--all`. Exits 0 silently when the target is not stale; without `--force` a stale target is reported and nothing changes. **Uncommitted changes in the recovered workspace are lost** — use `tt worktree sync` instead when the worktree is merely behind. Opens no transaction, so `tt history undo` does not revert it, and it stays usable while a transaction lock is present.
 
 #### `tt worktree list`
 ```
 tt worktree list [--task <task-id>] [--quiet]
 ```
-List all jj workspaces and their corresponding tt task/project IDs. `--quiet` prints names only.
+List all worktrees and their corresponding tt task/project IDs. The canonical repository is not listed. `--quiet` prints names only.
 
 #### `tt worktree show`
 ```
@@ -212,15 +302,21 @@ tt worktree delete <worktree-path> [--force]
 ```
 Delete the given worktree directory and remove its jj workspace. The task still exists and can be checked out again to recreate the worktree.
 
+#### `tt worktree prune`
+```
+tt worktree prune [--dry-run] [--force]
+```
+Delete every worktree whose task is `DONE`, using `tt worktree delete` for each one. Prints each deleted path to stdout. `--dry-run` prints the same paths without deleting anything. `--force` is passed through to each delete. A worktree that fails to delete is reported and skipped, and the command exits non-zero.
+
 ---
 
 ## Standard tt workflow
 
 All tasks should follow the general `tt` workflow:
 
-1. **Create a task** — `tt task create --title "<title>" [--slug <slug>] [--parent <parent-task-id>] [--label <label>...] [--propagate] [--checkout [--worktree[=<path>]]]`. Creates a new task under the parent (default: current branch), adds `subtask: [ ] <task-id>` to the parent, and forks the child branch. With `--propagate`, updates sibling branches. With `--checkout`, runs checkout on the newly created task; `--worktree` optionally uses or creates a dedicated jj workspace. Run `tt task create --help` for options.
+1. **Create a task** — `tt task create --title "<title>" [--slug <slug>] [--parent <parent-task-id>] [--label <label>...] [--propagate] [--checkout [--worktree[=<path>]]]`. Creates a new task under the parent (default: current branch), adds `subtask: [ ] <task-id>` to the parent, and forks the child branch. The child branch's first commit points `./TASK.md` at the new task, so a worktree on the branch reports the task as current even before checkout. With `--propagate`, updates sibling branches. With `--checkout`, runs checkout on the newly created task; `--worktree` optionally uses or creates a worktree. Run `tt task create --help` for options.
 
-2. **Begin a task** — `tt task checkout <task-id> [--worktree[=<path>]] [--switch] [--force]`. Switches to the task branch, updates status to IN-PROGRESS if TODO, creates TASK.md symlink on first checkout. With `--worktree`, uses or creates a dedicated jj workspace; `--switch` also updates the HEAD symlink to the new worktree. Run `tt task checkout --help` for options.
+2. **Begin a task** — `tt task checkout <task-id> [--worktree[=<path>]] [--switch] [--force]`. Switches to the task branch and updates status to IN-PROGRESS if TODO or DONE. Checkout does not change `./TASK.md`. With `--worktree`, uses or creates a worktree; `--switch` also updates the HEAD symlink to the new worktree. Run `tt task checkout --help` for options.
 
 3. **Work on the task** — Make commits on the branch and accumulate context in `./TASK.md`.
    - **Add context** — Run `tt task context add [--title TITLE] [--slug SLUG]` to create a standalone context file for the task (reads body from stdin if piped, otherwise opens editor). Run `tt task context add --help` for options.
@@ -318,26 +414,14 @@ Instead of implementing child tasks sequentially, spawn one agent per child task
 2. Each spawned agent follows the Large Tasks Phase 2 steps for its assigned child task, **with the following differences for parallel operation**:
 
    - **Stay in the assigned worktree.** Agents must not check out other tasks or switch workspaces. Each agent is responsible only for its own task. In particular, never pass `--switch` to `tt task checkin`: it would move the shared `HEAD` symlink out from under the other agents.
-   - **Use the rebase-refresh idiom** when checking in, to avoid merge conflicts and stale working copies. Instead of a plain `tt task checkin`, run:
+   - **Use the rebase-sync idiom** when checking in, to avoid merge conflicts and leaving sibling worktrees behind. Instead of a plain `tt task checkin`, run:
      ```shell
-     tt task checkin --complete --rebase --propagate \
-       && jj workspace update-stale && jj workspace list --template 'name ++ "\n"' \
-         | while read workspace; do
-            echo "Updating workspace: $workspace"
-            (cd $(jj workspace root --name "$workspace") && jj workspace update-stale)
-            done
+     tt task checkin --complete --rebase --propagate && tt worktree sync --all
      ```
-     This sequence ensures the latest parent tip is rebased into the child branch before check-in, and that all workspaces are brought up to date afterward.
+     `--rebase` pulls the latest parent tip into the child branch before the check-in, and `tt worktree sync --all` brings every worktree the propagation left behind onto its branch head afterwards, preserving each one's uncommitted work.
 
 ### Caveats
 
 - **Worktree isolation is strict.** The only mechanism of communication between agents is via propagated task context (handoff notes). Agents must not attempt to change worktree, or to read or write files in another agent's worktree.
-- **Stale workspaces.** After any checkin that propagates to sibling branches, all other workspaces that share those branches may become stale. Run `jj workspace update-stale` in each affected workspace after propagation. If needed, this can be automated with a shell alias:
-  ```shell
-  jj workspace update-stale && jj workspace list --template 'name ++ "\n"' \
-    | while read workspace; do
-        echo "Updating workspace: $workspace"
-        (cd $(jj workspace root --name "$workspace") && jj workspace update-stale)
-      done
-  ```
-- **Conflict prevention.** Conflicts typically arise when the parent task has not been propagated into the child branch before check-in. Always use the rebase-refresh idiom above to prevent this.
+- **Worktrees left behind.** A checkin that propagates to sibling branches advances those branches without touching the worktrees sitting on them, so those worktrees are left on the old tip. The command names each one it left behind; run `tt worktree sync --all` afterwards to bring them all forward. Do not hand-roll this with `jj` — `tt worktree sync` snapshots each worktree before moving it, so uncommitted work survives.
+- **Conflict prevention.** Conflicts typically arise when the parent task has not been propagated into the child branch before check-in. Always use the rebase-sync idiom above to prevent this.

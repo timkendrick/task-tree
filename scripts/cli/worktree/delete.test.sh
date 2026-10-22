@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 
 test_worktree_delete__basic_delete() {
@@ -324,6 +324,95 @@ test_worktree_delete__canonical_repo_force_not_allowed() {
   output=$(run_tt worktree delete "$REPO" --force 2>&1) || exit_code=$?
   assert_failure "canonical repo rejected even with --force" "$exit_code"
   assert_contains "mentions not a task worktree" "$output" "Not a task worktree"
+}
+
+
+# Sets up a DONE task with a clean dedicated worktree, which passes every
+# other safety check. Sets task_id and worktree_path.
+# Usage: setup_deletable_worktree NAME
+setup_deletable_worktree() {
+  setup_workspace "$1"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "my-task" "My Task") || true
+  worktree_path=$(create_task_worktree "$task_id" --switch)
+  run_tt_in_worktree "$worktree_path" task complete "$task_id" >/dev/null 2>&1 || true
+}
+
+
+test_worktree_delete__in_use_cwd_rejected() {
+  # A process whose current directory is inside the worktree blocks deletion.
+  setup_deletable_worktree "wt-del-in-use-cwd"
+  local pid
+  pid=$(spawn_dummy_process_in_dir "$worktree_path")
+  trap "abort_dummy_process $pid" EXIT
+
+  output="" exit_code=0
+  output=$(run_tt worktree delete "$worktree_path" 2>&1) || exit_code=$?
+  abort_dummy_process "$pid"
+  assert_failure "in-use worktree rejected" "$exit_code"
+  assert_contains "mentions in use" "$output" "is in use by the following processes"
+  assert_contains "lists the dummy process" "$output" "$pid tail"
+  assert_contains "suggests --force" "$output" "Stop these processes first, or use --force."
+  assert_file_exists "worktree dir kept" "$worktree_path"
+  assert_contains "workspace still registered" \
+    "$(jj -R "$REPO" workspace list --no-pager -T 'name ++ "\n"' 2>/dev/null)" "$task_id"
+}
+
+
+test_worktree_delete__in_use_open_file_rejected() {
+  # A process holding a file open inside the worktree blocks deletion, even
+  # when its current directory is elsewhere.
+  setup_deletable_worktree "wt-del-in-use-file"
+  local pid
+  pid=$(spawn_dummy_process_holding_file "$worktree_path/.tt/config.toml")
+  trap "abort_dummy_process $pid" EXIT
+
+  output="" exit_code=0
+  output=$(run_tt worktree delete "$worktree_path" 2>&1) || exit_code=$?
+  abort_dummy_process "$pid"
+  assert_failure "in-use worktree rejected" "$exit_code"
+  assert_contains "lists the dummy process" "$output" "$pid tail"
+  assert_file_exists "worktree dir kept" "$worktree_path"
+}
+
+
+test_worktree_delete__in_use_force() {
+  # --force skips the in-use check.
+  setup_deletable_worktree "wt-del-in-use-force"
+  local pid
+  pid=$(spawn_dummy_process_in_dir "$worktree_path")
+  trap "abort_dummy_process $pid" EXIT
+
+  output="" exit_code=0
+  output=$(run_tt worktree delete "$worktree_path" --force 2>&1) || exit_code=$?
+  abort_dummy_process "$pid"
+  assert_success "--force deletes in-use worktree" "$exit_code"
+  assert_file_not_exists "worktree dir removed" "$worktree_path"
+}
+
+
+test_worktree_delete__lsof_missing_rejected() {
+  # Without lsof the worktree cannot be shown to be unused, so deletion is refused.
+  setup_deletable_worktree "wt-del-no-lsof"
+
+  output="" exit_code=0
+  output=$(PATH="$(path_without_command lsof)" run_tt worktree delete "$worktree_path" 2>&1) || exit_code=$?
+  assert_failure "deletion refused without lsof" "$exit_code"
+  assert_contains "mentions lsof" "$output" "lsof is not installed"
+  assert_contains "suggests --force" "$output" "Install lsof, or use --force."
+  assert_file_exists "worktree dir kept" "$worktree_path"
+}
+
+
+test_worktree_delete__lsof_missing_force() {
+  # --force does not need lsof.
+  setup_deletable_worktree "wt-del-no-lsof-force"
+
+  output="" exit_code=0
+  output=$(PATH="$(path_without_command lsof)" run_tt worktree delete "$worktree_path" --force 2>&1) || exit_code=$?
+  assert_success "--force deletes without lsof" "$exit_code"
+  assert_file_not_exists "worktree dir removed" "$worktree_path"
 }
 
 

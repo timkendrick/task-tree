@@ -19,7 +19,7 @@ set -euo pipefail
 
 readonly SCRIPT_NAME="${0##*/}"
 
-log() {
+_ui__log() {
   printf '%s\n' "$*" >&2
 }
 
@@ -81,6 +81,7 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} publish      →  tt task publish
   ${SCRIPT_NAME} show         →  tt task show
   ${SCRIPT_NAME} parent       →  tt task parent
+  ${SCRIPT_NAME} find         →  tt task find
   ${SCRIPT_NAME} propagate    →  tt task propagate
   ${SCRIPT_NAME} checkpoint   →  tt task checkpoint
   ${SCRIPT_NAME} complete     →  tt task complete
@@ -96,6 +97,8 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} undo         →  tt history undo
   ${SCRIPT_NAME} init         →  tt workspace init
   ${SCRIPT_NAME} switch       →  tt worktree switch
+  ${SCRIPT_NAME} sync         →  tt worktree sync
+  ${SCRIPT_NAME} refresh      →  tt worktree refresh
   ${SCRIPT_NAME} active       →  tt worktree active
   ${SCRIPT_NAME} repo         →  tt workspace repo
   ${SCRIPT_NAME} root         →  tt workspace root
@@ -111,13 +114,15 @@ EOF
 
 main() {
   local script_dir
-  script_dir="$(cd "$(dirname "$0")" && pwd)"
+  script_dir="$(cd "${0%/*}" && pwd)"
 
   # Resolve top-level aliases before dispatching
   case "${1:-}" in
     undo)        set -- history  undo         "${@:2}" ;;
     init)        set -- workspace init        "${@:2}" ;;
     switch)      set -- worktree switch      "${@:2}" ;;
+    sync)        set -- worktree sync        "${@:2}" ;;
+    refresh)     set -- worktree refresh     "${@:2}" ;;
     current)     set -- task     current      "${@:2}" ;;
     edit)        set -- task     edit         "${@:2}" ;;
     create)      set -- task     create       "${@:2}" ;;
@@ -126,6 +131,7 @@ main() {
     publish)     set -- task     publish      "${@:2}" ;;
     show)        set -- task     show         "${@:2}" ;;
     parent)      set -- task     parent       "${@:2}" ;;
+    find)        set -- task     find         "${@:2}" ;;
     propagate)   set -- task     propagate    "${@:2}" ;;
     checkpoint)  set -- task     checkpoint   "${@:2}" ;;
     complete)    set -- task     complete     "${@:2}" ;;
@@ -199,9 +205,9 @@ main() {
 
       # Neither directory nor executable → error
       if [[ -z "$accumulated_name" ]]; then
-        log "Error: ${SCRIPT_NAME}: command not found: $arg"
+        _ui__log "Error: ${SCRIPT_NAME}: command not found: $arg"
       else
-        log "Error: ${SCRIPT_NAME}: subcommand not found: $arg"
+        _ui__log "Error: ${SCRIPT_NAME}: subcommand not found: $arg"
       fi
       exit 1
     fi

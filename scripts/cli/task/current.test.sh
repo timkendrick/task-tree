@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 
 test_task_current__on_a_task_branch() {
@@ -18,6 +18,23 @@ test_task_current__on_a_task_branch() {
 }
 
 
+test_task_current__on_a_task_never_checked_out() {
+  # The task branch's fork commit records the task, so a working copy parked on
+  # the branch before its first checkout is already on that task.
+  setup_workspace "current-never-checked-out"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  jj -R "$REPO" new "$task_id" >/dev/null 2>&1
+
+  output="" exit_code=0
+  output=$(run_tt task current 2>&1) || exit_code=$?
+  assert_success "current succeeds" "$exit_code"
+  assert_eq "current names the never-checked-out task" "$output" "$task_id"
+  assert_task_status "task is still TODO" "$task_id" "TODO"
+}
+
+
 test_task_current__on_a_project_branch() {
   setup_workspace "current-project"
   proj_id=$(create_project "proj" "Project") || true
@@ -27,6 +44,30 @@ test_task_current__on_a_project_branch() {
   output=$(run_tt task current 2>&1) || exit_code=$?
   assert_success "current succeeds" "$exit_code"
   assert_matches "output is project ID" "$output" "project/%proj%"
+}
+
+
+test_task_current__after_the_branch_advanced_elsewhere() {
+  # A write issued from another worktree advances this worktree's branch without
+  # moving its working copy, leaving the bookmark on a sibling of the
+  # working-copy commit: the nearest bookmarked ancestor is then the project the
+  # task forked from, but the task checked out here has not changed.
+  setup_workspace "current-advanced-elsewhere"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mine" "Mine") || true
+  other_id=$(create_task "other" "Other") || true
+  other_wt=$(create_task_worktree "$other_id")
+  checkout_task "$task_id" >/dev/null || true
+
+  run_tt_in_worktree "$other_wt" task edit "$task_id" --title "Mine, advanced" >/dev/null 2>&1 || true
+  assert_not_ancestor "this worktree is left behind its branch" "$task_id" '@'
+  assert_task_symlink "the worktree still records the task it checked out" "$task_id"
+
+  output="" exit_code=0
+  output=$(run_tt task current 2>&1) || exit_code=$?
+  assert_success "current succeeds" "$exit_code"
+  assert_eq "current names the task checked out here" "$output" "$task_id"
 }
 
 
