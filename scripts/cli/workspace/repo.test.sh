@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 
 test_workspace_repo__canonical_repo_returns_itself() {
@@ -23,7 +23,7 @@ test_workspace_repo__alias_tt_repo() {
 test_workspace_repo__from_worktree_resolves_canonical() {
   setup_workspace "ws-repo-from-wt"
   proj_id=$(create_project "proj" "Project") || true
-  task_id=$(create_task "my-task" "My Task") || true
+  task_id=$(create_task_under "$proj_id" "my-task" "My Task") || true
 
   # Check out the task with a dedicated worktree
   worktree_path=$(create_task_worktree "$task_id")

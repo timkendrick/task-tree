@@ -1,23 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
 # tt task checkout — switch to a task or project branch.
 #
+# Working-copy-bound: a checkout exists to put a working copy on a branch, so
+# unlike the commands that write their branch bare it creates worktrees and
+# moves working copies. Every VCS operation therefore goes through the
+# working-copy-bound facades in lib/worktree.sh, which take the worktree root
+# explicitly — the target worktree here is not necessarily the one the command
+# was invoked from.
+#
 # Checking out a task whose status is TODO (never checked out) or DONE (completed)
 # creates a [tt:task:<task-id>:checkout] commit setting status to IN-PROGRESS and
-# advances the task bookmark. Reopening a DONE task appends this commit to the task's
-# existing branch; no parent changes are pulled in unless --rebase/--merge is given.
+# advances the task bookmark. The commit changes the status only: the TASK.md symlink
+# already points at the task, set by the branch's fork commit. The commit is built
+# bare on the task branch before any working copy moves, so uncommitted changes never
+# end up in it. Reopening a DONE task appends this commit to the task's existing
+# branch; no parent changes are pulled in unless --rebase/--merge is given.
 #
 # Usage:
 #   checkout <task-id> [--worktree[=<path>] [--switch]] [--rebase | --merge] [--force] [--repo PATH]
 #
 # Options:
 #   <task-id>            Task or project ID (required)
-#   --worktree[=<path>]  Use or create a dedicated jj workspace for this task.
+#   --worktree[=<path>]  Use or create a worktree for this task (never the canonical
+#                        repository).
 #                        Without =<path>, derives path from <workspace-dir>/<task-id>.
 #   --switch             (only with --worktree) Also update the HEAD symlink to the new
 #                        worktree. Without this flag, HEAD is not updated when --worktree
@@ -39,7 +50,8 @@ Arguments:
   <task-id>  Task or project ID (e.g. task/foo-abc12345, project/bar-deadbeef)
 
 Options:
-  --worktree[=<path>]  Use or create a dedicated jj workspace for this task.
+  --worktree[=<path>]  Use or create a worktree for this task (never the canonical
+                        repository).
                         If no path given, defaults to <workspace-dir>/<task-id>
                         (resolved from the .tt/workspace symlink).
   --switch              (only with --worktree) Also update the HEAD symlink to the
@@ -135,51 +147,45 @@ main() {
     usage >&2; exit 1
   fi
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Validate task_id format
-  if ! is_task_branch "$task_id" "$task_prefix" && ! is_project_branch "$task_id" "$project_prefix"; then
-    log "Error: '$task_id' is not a recognized task or project ID"
-    log "  Expected prefix '$task_prefix' or '$project_prefix' with 8-hex suffix"
+  if ! _task__check_is_task_branch "$task_id" "$task_prefix" && ! _task__check_is_project_branch "$task_id" "$project_prefix"; then
+    _ui__log "Error: '$task_id' is not a recognized task or project ID"
+    _ui__log "  Expected prefix '$task_prefix' or '$project_prefix' with 8-hex suffix"
     exit 1
   fi
 
   # --rebase/--merge pull changes from the parent branch; project branches have no parent.
-  if [[ -n "$strategy" ]] && is_project_branch "$task_id" "$project_prefix"; then
-    log "Error: --rebase/--merge require a task branch."
-    log "  '$task_id' is a project branch and has no parent."
+  if [[ -n "$strategy" ]] && _task__check_is_project_branch "$task_id" "$project_prefix"; then
+    _ui__log "Error: --rebase/--merge require a task branch."
+    _ui__log "  '$task_id' is a project branch and has no parent."
     exit 1
   fi
 
-  local jj_opts=(-R "$repo")
-
   # Verify bookmark exists
-  if ! jj "${jj_opts[@]}" log -r "$task_id" --no-graph -T '' 2>/dev/null; then
-    log "Error: Task '$task_id' not found in repository"
+  if ! _task__check_branch_exists "$repo" "$task_id"; then
+    _ui__log "Error: Task '$task_id' not found in repository"
     exit 1
   fi
 
   # Derive slug and task file path
   local task_slug task_file
-  if is_task_branch "$task_id" "$task_prefix"; then
-    task_slug="${task_id#"$task_prefix"}"
-  else
-    task_slug="${task_id#"$project_prefix"}"
-  fi
-  task_file="$(task_file_path "$task_slug")"
+  task_slug="$(_task__resolve_suffix "$task_id" "$task_prefix" "$project_prefix")" || exit 1
+  task_file="$(_path__task_file "$task_slug")"
 
   # Resolve workspace dir via .tt/workspace symlink
   local workspace_dir
-  workspace_dir="$(get_workspace_dir "$repo")" || true
+  workspace_dir="$(_workspace__get_dir "$repo")" || true
 
   # Resolve current worktree and bookmark for hook env vars
   local current_worktree previous_task_id previous_task_branch
-  current_worktree="$(resolve_current_worktree "$repo")"
-  previous_task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")"
+  current_worktree="$(_worktree__resolve_current "$repo")"
+  previous_task_id="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
   previous_task_branch="$previous_task_id"
 
   # Determine target worktree and whether it's being created fresh
@@ -188,22 +194,23 @@ main() {
   if [[ "$worktree_flag" == true ]]; then
     # --worktree: determine workspace path
     if [[ -z "$worktree_path" ]]; then
-      # Use find_worktrees_for_branch to locate any existing workspace for this task
+      # Reuse a worktree already holding this task. The canonical repository is
+      # never reused, even when it is on the task: --worktree asks for a worktree.
       local existing_worktrees worktree_count
-      existing_worktrees="$(find_worktrees_for_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")"
+      existing_worktrees="$(_worktree__find_for_branch "$repo" "$task_id")"
       worktree_count="$(printf '%s' "$existing_worktrees" | grep -c . 2>/dev/null || true)"
       if [[ "$worktree_count" -gt 1 ]]; then
-        log "Error: Multiple workspaces found for '$task_id'; specify --worktree=<path>:"
-        printf '%s' "$existing_worktrees" | while IFS= read -r p; do log "  $p"; done
+        _ui__log "Error: Multiple workspaces found for '$task_id'; specify --worktree=<path>:"
+        printf '%s' "$existing_worktrees" | while IFS= read -r p; do _ui__log "  $p"; done
         exit 1
       elif [[ "$worktree_count" -eq 1 ]]; then
         worktree_path="$existing_worktrees"
-        log "Found existing workspace: $worktree_path"
+        _ui__log "Found existing workspace: $worktree_path"
       else
         # No existing workspace found; derive conventional path
         if [[ -z "$workspace_dir" ]]; then
-          log "Error: --worktree requires a workspace dir or an explicit path (--worktree=<path>)"
-          log "  Run 'tt workspace init' to create the .tt/workspace symlink."
+          _ui__log "Error: --worktree requires a workspace dir or an explicit path (--worktree=<path>)"
+          _ui__log "  Run 'tt workspace init' to create the .tt/workspace symlink."
           exit 1
         fi
         worktree_path="${workspace_dir}/${task_id}"
@@ -211,10 +218,10 @@ main() {
     fi
 
     # When --worktree=<path> was explicitly given, verify it doesn't
-    # conflict with an existing workspace at a different path.
+    # conflict with an existing worktree at a different path.
     if [[ "$explicit_path" == true ]]; then
       local existing_wts
-      existing_wts="$(find_worktrees_for_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")"
+      existing_wts="$(_worktree__find_for_branch "$repo" "$task_id")"
       if [[ -n "$existing_wts" ]]; then
         local normalized_worktree match_found=false
         normalized_worktree="$(realpath "$worktree_path" 2>/dev/null || echo "$worktree_path")"
@@ -229,9 +236,9 @@ main() {
         done <<< "$existing_wts"
         if [[ "$match_found" != true ]]; then
           local first_existing
-          first_existing="$(printf '%s' "$existing_wts" | head -1)"
-          log "Error: Task '$task_id' already has a workspace at '$first_existing'."
-          log "  Multiple worktrees per task are not supported."
+          first_existing="$(_string__first_line "$existing_wts")"
+          _ui__log "Error: Task '$task_id' already has a workspace at '$first_existing'."
+          _ui__log "  Multiple worktrees per task are not supported."
           exit 1
         fi
       fi
@@ -239,48 +246,60 @@ main() {
 
     target_worktree="$worktree_path"
 
-    if [[ -d "$target_worktree" && ( -d "$target_worktree/.jj" || -L "$target_worktree/.jj" ) ]]; then
+    if _worktree__check_exists "$target_worktree"; then
+      # A worktree about to be created cannot be stale, so only an existing one
+      # is guarded. The check precedes the cleanliness test below, which loads
+      # the target's working copy and would fail there with a backend error.
+      _worktree__ensure_worktree_current "$repo" "$target_worktree" || exit 1
+
       # Existing workspace: check for local changes
-      if ! is_wc_clean "$target_worktree"; then
+      if ! _worktree__check_clean "$target_worktree"; then
         if [[ "$force" != true ]]; then
-          log "Error: Workspace '$target_worktree' has uncommitted changes."
-          log "  Commit or discard changes first, or use --force to proceed anyway."
+          _ui__log "Error: Workspace '$target_worktree' has uncommitted changes."
+          _ui__log "  Commit or discard changes first, or use --force to proceed anyway."
           exit 1
         fi
-        log "Warning: Workspace has uncommitted changes (proceeding due to --force)."
+        _ui__log "Warning: Workspace has uncommitted changes (proceeding due to --force)."
       fi
-      log "Using existing workspace: $target_worktree"
+      _ui__log "Using existing workspace: $target_worktree"
     else
       new_worktree=true
-      mkdir -p "$(dirname "$target_worktree")"
+      mkdir -p "$(_path__dirname "$target_worktree")"
     fi
   else
     # No --worktree: use current workspace
     target_worktree="$current_worktree"
-    if ! is_wc_clean "$target_worktree"; then
+    if ! _worktree__check_clean "$target_worktree"; then
       if [[ "$force" != true ]]; then
-        log "Error: Working copy has uncommitted changes."
-        log "  Commit or discard changes first, or use --force to proceed anyway."
+        _ui__log "Error: Working copy has uncommitted changes."
+        _ui__log "  Commit or discard changes first, or use --force to proceed anyway."
         exit 1
       fi
-      log "Warning: Working copy has uncommitted changes (proceeding due to --force)."
+      _ui__log "Warning: Working copy has uncommitted changes (proceeding due to --force)."
     fi
   fi
 
+  # Precondition: the working-copy commit of the worktree this command was
+  # invoked from must not carry a bookmark. The transaction below snapshots
+  # that working copy, and a bookmark sitting on it would follow the snapshot,
+  # absorbing whatever is uncommitted there into the branch it names.
+  _worktree__ensure_working_copy "$repo" || exit 1
+  _worktree__ensure_canonical_current "$repo" || exit 1
+
   # Begin transaction (records before-op for undo)
-  tt_begin_transaction "$repo"
+  _history__begin_transaction "$repo"
 
   # --- Optional: rebase/merge parent into this task before checking out ---
   # Runs inside the transaction so a propagation failure rolls the whole command back.
   if [[ -n "$strategy" ]]; then
     local parent_bookmark
-    parent_bookmark="$(find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
+    parent_bookmark="$(_task__find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || {
       local rc=$?
-      [[ $rc -eq 1 ]] && log "Error: No parent branch found containing subtask entry for '$task_id'."
+      [[ $rc -eq 1 ]] && _ui__log "Error: No parent branch found containing subtask entry for '$task_id'."
       exit 1
     }
 
-    log "Propagating parent ($strategy) into task before checkout..."
+    _ui__log "Propagating parent ($strategy) into task before checkout..."
     "$SCRIPT_DIR/propagate" \
       --from "$parent_bookmark" \
       --to "$task_id" \
@@ -290,22 +309,21 @@ main() {
     # If the working copy was clean going in, it must still be clean. Skipped under
     # --force, where a dirty working copy was explicitly permitted up front, and for
     # brand-new worktrees, which do not exist on disk yet.
-    if [[ "$force" != true ]] && [[ "$new_worktree" != true ]] && ! is_wc_clean "$target_worktree"; then
-      log "Error: Working copy not clean after propagation."
+    if [[ "$force" != true ]] && [[ "$new_worktree" != true ]] && ! _worktree__check_clean "$target_worktree"; then
+      _ui__log "Error: Working copy not clean after propagation."
       exit 1
     fi
   fi
 
   # Read task frontmatter from the bookmark (after any propagation, so the values
   # reflect the branch's current tip).
-  local task_file_content task_title task_status
-  task_file_content="$(jj_show_at_revision "$repo" "$task_id" "$task_file")" || true
-  task_title="$(parse_quoted_frontmatter_field "$task_file_content" "title")"
-  task_status="$(parse_frontmatter_field "$task_file_content" "status")"
+  local task_fields task_title task_status
+  task_fields="$(_task__read_fields "$repo" "$task_id" "$task_id" \
+    "$task_prefix" "$project_prefix" title status)" || task_fields=''
+  { IFS= read -r task_title; IFS= read -r task_status; } <<< "$task_fields" || true
 
   # Determine if a status-updating checkout commit is needed.
-  # Status TODO means the task hasn't been initialized via checkout yet.
-  # (TASK.md may exist on the branch via ancestor inheritance but point to a different task.)
+  # Status TODO means the task has never been checked out.
   # Status DONE means the task was completed and is now being reopened: the commit returns
   # the task to IN-PROGRESS on its existing branch. Nothing is pulled from the parent branch
   # (use --rebase/--merge for that).
@@ -318,85 +336,73 @@ main() {
     reopening=true
   fi
 
-  # Perform the checkout
-  if [[ "$new_worktree" == true ]]; then
-    log "Creating workspace: $target_worktree"
-    jj "${jj_opts[@]}" workspace add --name "$task_id" -r "$task_id" "$target_worktree" >&2
-    # Plant .tt/workspace symlink in the new worktree.
-    # Note: history lives in the canonical repo only.
-    mkdir -p "$target_worktree/$(tt_metadata_path)"
-    if [[ -L "$repo/$(tt_metadata_path 'workspace')" ]]; then
-      set_workspace_dir "$target_worktree" "$(get_workspace_dir "$repo")"
-    fi
-  elif [[ "$worktree_flag" == true ]]; then
-    # Existing workspace: move its WC to a new commit on top of the task bookmark
-    jj -R "$target_worktree" new "$task_id" >&2
-  else
-    # Main workspace: new WC on top of task bookmark
-    jj "${jj_opts[@]}" new "$task_id" >&2
-  fi
-
   # Create the checkout commit (first checkout, or reopening a completed task)
   if [[ "$needs_begin" == true ]]; then
     if [[ "$reopening" == true ]]; then
-      log "Reopening completed task: $task_id"
+      _ui__log "Reopening completed task: $task_id"
     else
-      log "Initializing task: $task_id"
+      _ui__log "Initializing task: $task_id"
     fi
 
-    # Create TASK.md symlink in the worktree root (idempotent when reopening)
-    local task_file_rel
-    task_file_rel="$(task_file_path "$task_slug")"
-    ln -sf "$task_file_rel" "$target_worktree/$TT_TASK_SYMLINK_FILENAME"
-    log "Created $TT_TASK_SYMLINK_FILENAME -> $task_file_rel"
+    # Writer invoked by _task__commit_on_branch with the staging root: sets the
+    # staged task file's status field to IN-PROGRESS.
+    checkout_writer() {
+      local root="$1"
+      _task__set_field "$root/$task_file" status "IN-PROGRESS"
+    }
+    _task__commit_on_branch "$repo" "$task_id" \
+      "$(_commit__format_message "task" "checkout" "$task_id" "$task_title")" \
+      --modify "$task_file" -- checkout_writer >/dev/null
+  fi
 
-    # Update status to IN-PROGRESS in the task file
-    local tmpfile
-    tmpfile="$(mktemp)"
-    awk '
-      /^---$/ { n++; print; next }
-      n == 1 && /^status:/ { print "status: IN-PROGRESS"; next }
-      { print }
-    ' "$target_worktree/$task_file" > "$tmpfile"
-    mv "$tmpfile" "$target_worktree/$task_file"
-
-    # Describe the WC, advance the bookmark, then create a clean working WC on top
-    jj -R "$target_worktree" describe -m "$(format_commit_message "task" "checkout" "$task_id" "$task_title")" >&2
-    jj -R "$target_worktree" bookmark set "$task_id" >&2
-    jj -R "$target_worktree" new "@" >&2
+  # Perform the checkout onto the task bookmark's (possibly new) tip
+  if [[ "$new_worktree" == true ]]; then
+    _ui__log "Creating workspace: $target_worktree"
+    _worktree__create "$repo" "$task_id" "$target_worktree" "$task_id"
+    # Plant .tt/workspace symlink in the new worktree.
+    # Note: history lives in the canonical repo only.
+    mkdir -p "$target_worktree/$(_path__metadata)"
+    if [[ -L "$repo/$(_path__metadata 'workspace')" ]]; then
+      _workspace__set_dir "$target_worktree" "$(_workspace__get_dir "$repo")"
+    fi
+  else
+    # Existing workspace — the dedicated one under --worktree, otherwise the
+    # one this command runs in: move its working copy to a new commit on top
+    # of the task bookmark.
+    _worktree__start_working_copy "$target_worktree" "$task_id"
   fi
 
   # Update HEAD symlink and fire post-checkout hook.
   # With --worktree without --switch: run hooks but skip HEAD update.
   if [[ "$worktree_flag" != true || "$switch_flag" == true ]]; then
-    perform_workspace_switch "$repo" "${workspace_dir:-}" "$task_id" \
+    _worktree__switch "$repo" "${workspace_dir:-}" "$task_id" \
       "$target_worktree" "$current_worktree" "$previous_task_id"
   else
-    run_hook "$repo" "pre-checkout" true "$current_worktree" "${workspace_dir:-}" \
+    _hook__run "$repo" "pre-checkout" true "$current_worktree" "${workspace_dir:-}" \
       "TT_TASK_ID=$task_id" "TT_TASK_BRANCH=$task_id" \
       "TT_PREVIOUS_TASK_ID=${previous_task_id}" "TT_PREVIOUS_TASK_BRANCH=${previous_task_branch}"
     # (no HEAD update)
-    run_hook "$repo" "post-checkout" false "$target_worktree" "${workspace_dir:-}" \
+    _hook__run "$repo" "post-checkout" false "$target_worktree" "${workspace_dir:-}" \
       "TT_TASK_ID=$task_id" "TT_TASK_BRANCH=$task_id" \
       "TT_PREVIOUS_TASK_ID=${previous_task_id}" "TT_PREVIOUS_TASK_BRANCH=${previous_task_branch}"
   fi
 
   # Run setup hook for new worktrees (optional / non-blocking)
   if [[ "$new_worktree" == true ]]; then
-    run_hook "$repo" "setup" false "$target_worktree" "${workspace_dir:-}" \
+    _hook__run "$repo" "setup" false "$target_worktree" "${workspace_dir:-}" \
       "TT_TASK_ID=$task_id" \
       "TT_BRANCH=$task_id"
   fi
 
   # Commit transaction (records after-op for undo)
-  tt_commit_transaction "$repo"
+  _history__commit_transaction "$repo"
 
   if [[ -n "$previous_task_id" ]]; then
-    log "  Switched from: $previous_task_id"
+    _ui__log "  Switched from: $previous_task_id"
   fi
-  log "Checked out: $task_id"
+  _ui__log "Checked out: $task_id"
   if [[ "$worktree_flag" == true ]]; then
-    log "  Worktree: $target_worktree"
+    _ui__log "  Worktree: $target_worktree"
   fi
 
   # Print the worktree path to stdout for piping

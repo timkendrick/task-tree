@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 
 test_task_create__create_project() {
@@ -34,6 +34,49 @@ test_task_create__create_task_under_project() {
 }
 
 
+test_task_create__child_branch_starts_on_fork_commit() {
+  setup_workspace "create-fork-commit"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  task_id=$(create_task "child" "Child Task") || true
+  local fork="${task_id}-"
+  assert_commit_message_first_line "child's first commit is the fork commit" \
+    "$fork" "[tt:task:${task_id}:fork] Child Task"
+  assert_commit_message_first_line "parent tip is the create commit" \
+    "$proj_id" "[tt:task:${task_id}:create] Child Task"
+  assert_eq "fork commit's parent is the parent's create commit" \
+    "$(get_full_commit_id "${fork}-")" "$(get_full_commit_id "$proj_id")"
+  assert_eq "fork commit changes only TASK.md" "$(get_modified_files "$fork")" "TASK.md"
+  assert_task_symlink_at_rev "TASK.md points at the child on the fork commit" "$fork" "$task_id"
+  assert_task_symlink_at_rev "TASK.md points at the child at the child bookmark" "$task_id" "$task_id"
+  assert_task_symlink_at_rev "parent's create commit leaves TASK.md on the parent" "$proj_id" "$proj_id"
+}
+
+
+test_task_create__project_starts_on_new_commit() {
+  setup_workspace "create-project-new-commit"
+  proj_id=$(create_project "proj" "Project") || true
+  local first="${proj_id}-"
+  assert_commit_message_first_line "project's first commit is the new commit" \
+    "$first" "[tt:task:${proj_id}:new] Project"
+  assert_task_symlink_at_rev "TASK.md points at the project on the new commit" "$first" "$proj_id"
+  assert_file_on_branch "new commit writes the stub" "$first" ".tt/task/${proj_id#*/}/TASK.md"
+  assert_commit_message_first_line "edit commit follows" \
+    "$proj_id" "[tt:task:${proj_id}:edit] Project"
+}
+
+
+test_task_create__child_of_non_task_branch_starts_on_new_commit() {
+  setup_workspace "create-non-task-parent"
+  task_id=$(create_task_under "main" "loose" "Loose Task") || true
+  assert_matches "task created under a non-task bookmark" "$task_id" "task/%loose%"
+  assert_commit_message_first_line "first commit is the new commit" \
+    "${task_id}-" "[tt:task:${task_id}:new] Loose Task"
+  assert_task_symlink_at_rev "TASK.md points at the task" "$task_id" "$task_id"
+}
+
+
 test_task_create__create_with_checkout() {
   setup_workspace "create-checkout"
   proj_id=$(create_project "proj" "Project") || true
@@ -42,7 +85,7 @@ test_task_create__create_with_checkout() {
   task_id=$(run_tt task create --slug "mytask" --title "My Task" --checkout <<< "" 2>/dev/null | tail -1) || true
   assert_success "create with --checkout succeeds" "$?"
   assert_matches "task ID format" "$task_id" "task/%mytask%"
-  assert_current_task_matches "WC on new task" "task/%mytask%"
+  assert_wc_on_branch_matches "WC on new task" "task/%mytask%"
   assert_task_status "status is IN-PROGRESS" "$task_id" "IN-PROGRESS"
 }
 
@@ -89,6 +132,21 @@ test_task_create__invalid_slug_rejected() {
 }
 
 
+test_task_create__no_task_checked_out_rejected() {
+  # A task needs a parent, and with nothing checked out nothing records which
+  # one it should be: the command says so rather than forking a parentless task
+  # from whichever bookmark happens to lie below the working copy.
+  setup_workspace "create-no-current"
+  output="" exit_code=0
+  output=$(run_tt task create --slug "orphan" --title "Orphan" <<< "" 2>&1) || exit_code=$?
+  assert_failure "create with nothing checked out rejected" "$exit_code"
+  assert_contains "error explains the branch requirement" "$output" "Not on a task or project branch"
+  assert_contains "error offers --parent" "$output" "--parent"
+  assert_contains "error offers --project" "$output" "--project"
+  assert_revset_count "no branch was created" 'bookmarks()' 1
+}
+
+
 test_task_create__project_with_parent_rejected() {
   setup_workspace "create-exclusive"
   output="" exit_code=0
@@ -104,6 +162,86 @@ test_task_create__wc_position_preserved_without_checkout() {
 
   task_id=$(create_task "child" "Child") || true
   assert_current_task "WC still on parent" "$proj_id"
+}
+
+
+test_task_create__refuses_bookmark_on_working_copy() {
+  setup_workspace "create-bm-refusal"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  # Clean working copy carrying the parent's own bookmark
+  jj -R "$REPO" bookmark set "$proj_id" -r '@' >/dev/null 2>&1
+  output="" exit_code=0
+  output=$(run_tt task create --slug "blocked" --title "Blocked" <<< "" 2>&1) || exit_code=$?
+  assert_failure "parent bookmark on @ refused" "$exit_code"
+  assert_contains "error names the bookmark" "$output" "tip of bookmark"
+  assert_no_subtask_entry "no subtask entry added" "$proj_id" "task/blocked"
+
+  # Bookmark unrelated to the parent being written (explicit --parent, so the
+  # working-copy guard itself is what refuses)
+  jj -R "$REPO" bookmark set "$proj_id" -r '@-' --allow-backwards >/dev/null 2>&1
+  jj -R "$REPO" bookmark set unrelated -r '@' >/dev/null 2>&1
+  exit_code=0
+  output=$(run_tt task create --parent "$proj_id" --slug "blocked" --title "Blocked" <<< "" 2>&1) || exit_code=$?
+  assert_failure "unrelated bookmark on @ refused" "$exit_code"
+  assert_contains "error names the unrelated bookmark" "$output" "unrelated"
+}
+
+
+test_task_create__dirty_wc_preserved_not_absorbed() {
+  setup_workspace "create-dirty-keep"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  # Dirty WC: the branch writes must neither reject nor absorb it
+  edit_file "scratch.txt" "uncommitted scratch"
+
+  task_id=$(create_task "child" "Child" "Body") || true
+  assert_matches "task created with dirty WC" "$task_id" "task/%child%"
+  assert_subtask_entry "subtask registered on parent" "$proj_id" "$task_id" "[ ]"
+  assert_file_exists "dirty file still on disk" "$REPO/scratch.txt"
+  assert_wc_dirty "WC still dirty"
+  assert_file_not_on_branch "dirty file not on parent branch" "$proj_id" "scratch.txt"
+  assert_file_not_on_branch "dirty file not on child branch" "$task_id" "scratch.txt"
+}
+
+
+test_task_create__working_copy_commit_stays_put() {
+  setup_workspace "create-wc-stays"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  # With @ sitting on the parent branch's line, a create keeps @ attached to
+  # the advanced parent tip: same change ID, parent is the create commit.
+  change_before=$(get_wc_change_id)
+  task_a=$(create_task "ta" "Task A") || true
+  change_after=$(get_wc_change_id)
+  assert_eq "same WC change after create on current branch" "$change_after" "$change_before"
+  parent_commit=$(jj -R "$REPO" log -r '@-' --no-graph -T 'commit_id.short(8)' 2>/dev/null)
+  assert_eq "@ parent is new parent tip" "$parent_commit" "$(get_bookmark_commit "$proj_id")"
+  assert_current_task "WC still on parent" "$proj_id"
+}
+
+
+test_task_create__wc_untouched_when_other_branch_checked_out() {
+  setup_workspace "create-wc-other-branch"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "ta" "Task A") || true
+  task_b=$(create_task "tb" "Task B") || true
+  checkout_task "$task_a" >/dev/null || true
+
+  # Creating under a branch that is not in @'s ancestry line must leave @
+  # entirely untouched (identical commit ID — nothing moved, so nothing was
+  # restored either).
+  wc_before=$(get_wc_commit)
+  task_c=$(create_task_under "$proj_id" "tc" "Task C") || true
+  wc_after=$(get_wc_commit)
+  assert_eq "@ commit unchanged after cross-branch create" "$wc_after" "$wc_before"
+  assert_matches "task created" "$task_c" "task/%tc%"
+  assert_subtask_entry "subtask registered on parent" "$proj_id" "$task_c" "[ ]"
+  assert_current_task "WC still on task A" "$task_a"
 }
 
 
@@ -211,6 +349,41 @@ test_task_create__subtask_after_existing_context() {
 
   content="$(read_task_file "$task_id")"
   assert_frontmatter_order "canonical order after subtask added to parent with context" "$content"
+}
+
+test_task_create__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "create-stale-canonical"
+  setup_stale_canonical "created"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task create --slug "child" --title "Child"
+}
+
+test_task_create__ancestor_write_leaves_the_worktree_on_its_task() {
+  setup_workspace "create-ancestor-worktree"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  local task_wt
+  task_wt=$(create_task_worktree "$task_id")
+
+  local fork_status=0
+  is_vcs_ancestor "$proj_id" "$task_id" || fork_status=$?
+  assert_success "the project tip is an ancestor of the task worktree" "$fork_status"
+  local wt_parent_before proj_before
+  wt_parent_before="$(jj -R "$task_wt" --ignore-working-copy log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)"
+  proj_before="$(get_bookmark_commit "$proj_id")"
+
+  local exit_code=0
+  run_tt_in_worktree "$task_wt" task create --parent "$proj_id" --slug "sibling" \
+    --title "Sibling" <<< "" >/dev/null 2>&1 || exit_code=$?
+  assert_success "create succeeds" "$exit_code"
+  assert_neq "the project branch advanced" "$(get_bookmark_commit "$proj_id")" "$proj_before"
+  assert_eq "the worktree is still on its task" \
+    "$(run_tt_in_worktree "$task_wt" task current 2>/dev/null)" "$task_id"
+  assert_eq "the worktree has not moved" \
+    "$(jj -R "$task_wt" --ignore-working-copy log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)" \
+    "$wt_parent_before"
 }
 
 run_tests "tt task create"

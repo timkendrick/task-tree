@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 
 test_task_prompt__basic_prompt_output() {
@@ -14,7 +14,9 @@ test_task_prompt__basic_prompt_output() {
   output="" exit_code=0
   output=$(run_tt task prompt 2>&1) || exit_code=$?
   assert_success "prompt succeeds" "$exit_code"
-  assert_contains "starts with Implement task" "$output" "Implement task: My Task"
+  assert_eq "starts with frontmatter" "$(printf '%s\n' "$output" | head -1)" "---"
+  assert_not_contains "no summary line" "$output" "Implement task:"
+  assert_eq "ends with separator" "$(printf '%s\n' "$output" | tail -1)" "---"
   assert_contains "task ID in frontmatter" "$output" "task:"
   assert_contains "body present" "$output" "Task body text"
   assert_contains "commands section" "$output" "tt task tree --focus"
@@ -34,6 +36,7 @@ test_task_prompt__message() {
   output=$(run_tt task prompt --message "Extra instructions here" 2>&1) || exit_code=$?
   assert_success "prompt with message succeeds" "$exit_code"
   assert_contains "extra message present" "$output" "Extra instructions here"
+  assert_eq "separator before message" "$(printf '%s\n' "$output" | tail -3 | head -1)" "---"
 }
 
 
@@ -53,6 +56,92 @@ test_task_prompt__explicit_task_id() {
   assert_contains "body B" "$output" "Body B"
 }
 
+
+test_task_prompt__explicit_task_id_not_checked_in() {
+  setup_workspace "prompt-explicit-ongoing"
+  proj_id=$(create_project "proj" "Project Title" "Project body") || true
+  checkout_task "$proj_id" >/dev/null || true
+  child_id=$(create_task "c" "Child Title" "Child body") || true
+
+  output="" exit_code=0
+  output=$(run_tt task prompt "$child_id" 2>&1) || exit_code=$?
+  assert_success "prompt succeeds" "$exit_code"
+  assert_contains "task header is child ID" "$output" "task: $child_id"
+  assert_contains "child title" "$output" 'title: "Child Title"'
+  assert_contains "child body" "$output" "Child body"
+  assert_not_contains "no project title" "$output" "Project Title"
+}
+
+
+test_task_prompt__explicit_task_id_checked_in() {
+  setup_workspace "prompt-explicit-checked-in"
+  proj_id=$(create_project "proj" "Project Title" "Project body") || true
+  checkout_task "$proj_id" >/dev/null || true
+  child_id=$(create_task "c" "Child Title" "Child body") || true
+  checkout_task "$child_id" >/dev/null || true
+  edit_file "c.txt" "c"
+  checkpoint_task "child work" >/dev/null || true
+  checkin_task "$child_id" --complete >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task prompt "$child_id" 2>&1) || exit_code=$?
+  assert_success "prompt succeeds" "$exit_code"
+  assert_contains "task header is child ID" "$output" "task: $child_id"
+  assert_not_contains "task header is not project ID" "$output" "task: $proj_id"
+  assert_contains "child title" "$output" 'title: "Child Title"'
+  assert_contains "child body" "$output" "Child body"
+  assert_not_contains "no project title" "$output" "Project Title"
+  assert_not_contains "no project body" "$output" "Project body"
+}
+
+
+test_task_prompt__explicit_task_id_checked_in_context() {
+  setup_workspace "prompt-explicit-checked-in-ctx"
+  proj_id=$(create_project "proj" "Project Title") || true
+  checkout_task "$proj_id" >/dev/null || true
+  echo "Project context body" | run_tt task context add --title "Project Ctx" --slug "pctx" >/dev/null 2>&1 || true
+  child_id=$(create_task "c" "Child Title") || true
+  checkout_task "$child_id" >/dev/null || true
+  echo "Child context body" | run_tt task context add --title "Child Ctx" --slug "cctx" >/dev/null 2>&1 || true
+  checkin_task "$child_id" --complete >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task prompt "$child_id" 2>&1) || exit_code=$?
+  assert_success "prompt succeeds" "$exit_code"
+  assert_contains "child context title" "$output" 'title: "Child Ctx"'
+  assert_contains "child context body" "$output" "Child context body"
+  assert_not_contains "no project context title" "$output" "Project Ctx"
+  assert_not_contains "no project context body" "$output" "Project context body"
+}
+
+
+test_task_prompt__task_title_is_quoted() {
+  setup_workspace "prompt-title-quoted"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" 'Say "hi"') || true
+  checkout_task "$task_id" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task prompt 2>&1) || exit_code=$?
+  assert_success "prompt succeeds" "$exit_code"
+  assert_contains "the task title is a quoted frontmatter string" "$output" \
+    $'---\ntask: '"$task_id"$'\ntitle: "Say \\"hi\\""\n---'
+}
+
+test_task_prompt__context_title_is_quoted() {
+  setup_workspace "prompt-ctx-quoted"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo "Body" | run_tt task context add --title 'Say "hi"' --slug "ctx" >/dev/null 2>&1 || true
+
+  output="" exit_code=0
+  output=$(run_tt task prompt 2>&1) || exit_code=$?
+  assert_success "prompt succeeds" "$exit_code"
+  assert_contains "the context title is escaped" "$output" 'title: "Say \"hi\""'
+}
 
 test_task_prompt__no_context() {
   setup_workspace "prompt-noctx"

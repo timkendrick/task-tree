@@ -262,8 +262,6 @@ tt task propagate
 
 If propagate produces conflicts, they likely stem from independent migration commits on both the task branch and the project branch (see step 3 above). Resolve by keeping the project branch's version of all shared task files.
 
-After resolving, audit all CLI scripts for any remaining references to the old file format path patterns (e.g. `.tt/task/${suffix}.md` instead of `task_file_path "$suffix"`). Any path helper functions used across multiple commands should be centralised in `common.sh`.
-
 ---
 
 ## Rollback

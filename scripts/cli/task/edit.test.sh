@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 test_task_edit__edit_title() {
   setup_workspace "edit-title"
@@ -109,6 +109,78 @@ test_task_edit__help() {
 }
 
 
+test_task_edit__refuses_bookmark_on_working_copy() {
+  setup_workspace "edit-bm-refusal"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+
+  # Clean working copy carrying the task's own bookmark
+  jj -R "$REPO" bookmark set "$task_id" -r '@' >/dev/null 2>&1
+  output="" exit_code=0
+  output=$(run_tt task edit --title "Updated" </dev/null 2>&1) || exit_code=$?
+  assert_failure "own bookmark on @ refused" "$exit_code"
+  assert_contains "error names the bookmark" "$output" "tip of bookmark"
+  assert_task_title "title unchanged" "$task_id" "T"
+
+  # Bookmark unrelated to the edit target (explicit task-id, so the
+  # working-copy guard itself is what refuses)
+  jj -R "$REPO" bookmark set "$task_id" -r '@-' --allow-backwards >/dev/null 2>&1
+  jj -R "$REPO" bookmark set unrelated -r '@' >/dev/null 2>&1
+  exit_code=0
+  output=$(run_tt task edit "$task_id" --title "Updated" </dev/null 2>&1) || exit_code=$?
+  assert_failure "unrelated bookmark on @ refused" "$exit_code"
+  assert_contains "error names the unrelated bookmark" "$output" "unrelated"
+  assert_task_title "title still unchanged" "$task_id" "T"
+}
+
+
+test_task_edit__dirty_wc_preserved_not_absorbed() {
+  setup_workspace "edit-dirty-keep"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  edit_file "scratch.txt" "uncommitted scratch"
+
+  output="" exit_code=0
+  output=$(run_tt task edit --title "Updated" </dev/null 2>&1) || exit_code=$?
+  assert_success "edit succeeds with dirty WC" "$exit_code"
+  assert_task_title "title updated" "$task_id" "Updated"
+  assert_file_exists "dirty file still on disk" "$REPO/scratch.txt"
+  assert_wc_dirty "WC still dirty"
+  modified=$(get_modified_files "$task_id")
+  assert_not_contains "dirty file not in task commit" "$modified" "scratch.txt"
+  assert_file_not_on_branch "dirty file not on branch" "$task_id" "scratch.txt"
+}
+
+
+test_task_edit__working_copy_commit_stays_put() {
+  setup_workspace "edit-wc-stays"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_a=$(create_task "ta" "A") || true
+  task_b=$(create_task "tb" "B") || true
+  checkout_task "$task_a" >/dev/null || true
+
+  # Same-branch edit: @ keeps its change ID and sits on the new branch tip
+  change_before=$(get_wc_change_id)
+  run_tt task edit --title "Updated A" </dev/null >/dev/null 2>&1 || true
+  change_after=$(get_wc_change_id)
+  assert_eq "same WC change after same-branch edit" "$change_after" "$change_before"
+  parent_commit=$(jj -R "$REPO" log -r '@-' --no-graph -T 'commit_id.short(8)' 2>/dev/null)
+  assert_eq "@ parent is new branch tip" "$parent_commit" "$(get_bookmark_commit "$task_a")"
+
+  # Explicit task-id for a branch not checked out anywhere: @ entirely untouched
+  wc_before=$(get_wc_commit)
+  run_tt task edit "$task_b" --title "Updated B" </dev/null >/dev/null 2>&1 || true
+  wc_after=$(get_wc_commit)
+  assert_eq "@ commit unchanged after cross-branch edit" "$wc_after" "$wc_before"
+  assert_task_title "b updated" "$task_b" "Updated B"
+}
+
+
 test_task_edit__frontmatter_canonical_order() {
   setup_workspace "edit-order"
   proj_id=$(create_project "proj" "Project") || true
@@ -122,11 +194,78 @@ test_task_edit__frontmatter_canonical_order() {
   checkout_task "$task_id" >/dev/null || true
   echo "Body" | run_tt task context add --title "Ctx" --slug "ctx" >/dev/null 2>&1 || true
 
-  # Run edit to trigger write_task_file
+  # Edit the title of a task whose frontmatter has every kind of field
   run_tt task edit --title "Updated T" <<< "" >/dev/null 2>&1 || true
 
   content="$(read_task_file "$task_id")"
   assert_frontmatter_order "canonical order after edit" "$content"
+}
+
+test_task_edit__first_label_keeps_the_canonical_order() {
+  setup_workspace "edit-first-label"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  create_task_under "$task_id" "child" "Child" >/dev/null || true
+  checkout_task "$task_id" >/dev/null || true
+
+  run_tt task edit --label "bug" <<< "" >/dev/null 2>&1 || true
+
+  content="$(read_task_file "$task_id")"
+  assert_contains "the label is written" "$content" "label: bug"
+  assert_frontmatter_order "the first label goes before the subtask entries" "$content"
+}
+
+test_task_edit__leaves_unrelated_frontmatter_untouched() {
+  setup_workspace "edit-targeted"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+
+  local before after
+  before="$(read_task_file "$task_id")"
+  run_tt task edit --title "Renamed" <<< "" >/dev/null 2>&1 || true
+  after="$(read_task_file "$task_id")"
+  assert_contains "the title is rewritten" "$after" 'title: "Renamed"'
+  assert_eq "nothing but the title and timestamp changes" \
+    "$(printf '%s\n' "$after" | grep -v '^title:\|^updated:')" \
+    "$(printf '%s\n' "$before" | grep -v '^title:\|^updated:')"
+}
+
+test_task_edit__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "edit-stale-canonical"
+  setup_stale_canonical "edited"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task edit "$STALE_TASK_ID" --title "Renamed"
+}
+
+test_task_edit__ancestor_write_leaves_the_worktree_on_its_task() {
+  setup_workspace "edit-ancestor-worktree"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  local task_wt
+  task_wt=$(create_task_worktree "$task_id")
+
+  local fork_status=0
+  is_vcs_ancestor "$proj_id" "$task_id" || fork_status=$?
+  assert_success "the project tip is an ancestor of the task worktree" "$fork_status"
+  local wt_parent_before proj_before
+  wt_parent_before="$(jj -R "$task_wt" --ignore-working-copy log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)"
+  proj_before="$(get_bookmark_commit "$proj_id")"
+
+  local exit_code=0
+  run_tt_in_worktree "$task_wt" task edit "$proj_id" --title "Renamed project" \
+    <<< "" >/dev/null 2>&1 || exit_code=$?
+  assert_success "edit succeeds" "$exit_code"
+  assert_neq "the project branch advanced" "$(get_bookmark_commit "$proj_id")" "$proj_before"
+  assert_eq "the worktree is still on its task" \
+    "$(run_tt_in_worktree "$task_wt" task current 2>/dev/null)" "$task_id"
+  assert_eq "the worktree has not moved" \
+    "$(jj -R "$task_wt" --ignore-working-copy log -r '@-' --no-graph -T 'commit_id' 2>/dev/null)" \
+    "$wt_parent_before"
 }
 
 run_tests "tt task edit"

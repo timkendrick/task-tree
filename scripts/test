@@ -5,13 +5,37 @@ set -euo pipefail
 #
 # Discovers all *.test.sh files under scripts/cli/ and runs each one.
 # With --parallel, all tests across all suites are fed into a flat worker pool
-# capped at TT_TEST_CONCURRENCY (default 4) concurrent processes;
-# a single summary is printed at the end.
+# capped at TT_TEST_CONCURRENCY (default: the number of CPUs) concurrent
+# processes; a single summary is printed at the end.
 # Exits with non-zero if any test fails.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { printf '%s\n' "$*" >&2; }
+
+# The number of CPUs, for the default worker count; 4 when it cannot be read.
+_cpu_count() {
+  local n=''
+  if command -v sysctl >/dev/null 2>&1; then
+    n="$(sysctl -n hw.ncpu 2>/dev/null)" || n=''
+  fi
+  if [[ -z "$n" ]] && command -v nproc >/dev/null 2>&1; then
+    n="$(nproc 2>/dev/null)" || n=''
+  fi
+  [[ "$n" =~ ^[0-9]+$ && "$n" -gt 0 ]] || n=4
+  printf '%s' "$n"
+}
+
+# Current time in milliseconds, matching the harness helper of the same name.
+_ms_now() {
+  if command -v perl >/dev/null 2>&1; then
+    perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import time; print(int(time.time()*1000))'
+  else
+    printf '%d000' "$(date +%s)"
+  fi
+}
 
 if [[ -z "${NO_COLOR:-}" && -t 2 ]]; then
   _BOLD='\033[1m'
@@ -91,11 +115,70 @@ main() {
     _export_filters
   fi
 
+  _front_load_path
+  _build_template
+  _open_setup_cache
+
   if [[ "$mode" == "parallel" ]]; then
     _run_parallel "${test_files[@]}"
   else
     _run_series "${test_files[@]}"
   fi
+}
+
+# Move the directories holding the tools every test launches — the VCS
+# binaries and the shell — to the front of PATH, followed by the system
+# directories. Nothing is removed: every other directory follows in its
+# original order. Each tt command is a fresh shell whose first use of a tool
+# name walks PATH directory by directory, and on a long PATH that walk is a
+# measurable share of a command that runs for a fraction of a second.
+_front_load_path() {
+  local -a front=()
+  local tool dir seen
+  for tool in jj git bash perl; do
+    dir="$(command -v "$tool" 2>/dev/null)" || continue
+    dir="${dir%/*}"
+    front+=("$dir")
+  done
+  front+=(/usr/bin /bin /usr/sbin /sbin)
+  local new_path='' entry
+  for entry in "${front[@]}"; do
+    case ":$new_path:" in *":$entry:"*) continue ;; esac
+    new_path="${new_path:+$new_path:}$entry"
+  done
+  local IFS=':'
+  for entry in $PATH; do
+    [[ -n "$entry" ]] || continue
+    case ":$new_path:" in *":$entry:"*) continue ;; esac
+    new_path="$new_path:$entry"
+  done
+  export PATH="$new_path"
+}
+
+# Create the command cache the harness records tt command results in, export
+# its location as _TT_TEST_CACHE, and remove it on exit. See the harness's
+# "Command cache" section.
+_open_setup_cache() {
+  local cache
+  cache="$(mktemp -d "${TT_TEST_ROOT:-${TMPDIR:-/tmp}}/tt-cache-XXXXXX")"
+  local template="${_TT_TEST_TEMPLATE:-}"
+  trap "rm -rf '$cache' ${template:+'$template'}" EXIT
+  export _TT_TEST_CACHE="$cache"
+}
+
+# Build the template workspace every test's setup_workspace copies, and export
+# its location as _TT_TEST_TEMPLATE. Built once per run, beside the per-test
+# directories (under TT_TEST_ROOT when set), and removed on exit. The build
+# runs in a subshell so the harness's own bookkeeping stays out of the runner.
+_build_template() {
+  local template
+  template="$(mktemp -d "${TT_TEST_ROOT:-${TMPDIR:-/tmp}}/tt-template-XXXXXX")"
+  trap "rm -rf '$template'" EXIT
+  (
+    . "$SCRIPT_DIR/harness/harness.sh"
+    build_workspace "$template/repo" "$template/virtual"
+  ) || { log "Failed to build the template workspace."; exit 1; }
+  export _TT_TEST_TEMPLATE="$template"
 }
 
 # ---------------------------------------------------------------------------
@@ -140,11 +223,7 @@ _print_summary() {
   fi
 
   local now
-  if command -v python3 >/dev/null 2>&1; then
-    now="$(python3 -c 'import time; print(int(time.time()*1000))')"
-  else
-    now="$(( $(date +%s) * 1000 ))"
-  fi
+  now="$(_ms_now)"
   elapsed=$(( now - start_ms ))
 
   printf '\n%b══════════════════════════════════════════════════════════════%b\n' "$_BOLD" "$_RESET" >&2
@@ -173,11 +252,7 @@ _run_series() {
   trap "rm -rf '$results_dir'" RETURN
 
   local start_ms
-  if command -v python3 >/dev/null 2>&1; then
-    start_ms="$(python3 -c 'import time; print(int(time.time()*1000))')"
-  else
-    start_ms="$(( $(date +%s) * 1000 ))"
-  fi
+  start_ms="$(_ms_now)"
 
   # Registration pass: get filtered test names per suite for global [n/N].
   local -a suite_counts=()
@@ -203,7 +278,7 @@ _run_series() {
     if ! _TT_TEST_RESULTS_DIR="$results_dir" \
        _TT_TEST_OFFSET="$offset" \
        _TT_TEST_TOTAL="$global_total" \
-       bash "$test_file"; then
+       bash "$test_file" </dev/null; then
       ((failed++)) || true
     fi
     (( offset += suite_counts[i] )) || true
@@ -231,11 +306,7 @@ _run_parallel() {
   mkdir -p "$results_dir"
 
   local start_ms
-  if command -v python3 >/dev/null 2>&1; then
-    start_ms="$(python3 -c 'import time; print(int(time.time()*1000))')"
-  else
-    start_ms="$(( $(date +%s) * 1000 ))"
-  fi
+  start_ms="$(_ms_now)"
 
   # ---------------------------------------------------------------------------
   # Registration pass: collect per-suite test names.
@@ -285,7 +356,7 @@ _run_parallel() {
     return 0
   fi
 
-  local concurrency="${TT_TEST_CONCURRENCY:-4}"
+  local concurrency="${TT_TEST_CONCURRENCY:-$(_cpu_count)}"
   log "Running $total test(s) across $concurrency workers..."
 
   # Pass color intent to subprocesses: their stderr is redirected to a file so
@@ -323,9 +394,9 @@ _run_parallel() {
         _TT_TEST_FORCE_COLOR="$force_color" \
         _TT_TEST_OFFSET="$(( flat_idxs[$j] - 1 ))" \
         _TT_TEST_TOTAL="$global_total" \
-        bash "${flat_suite_files[$j]}" >"$out" 2>&1
+        bash "${flat_suite_files[$j]}" >"$out" 2>&1 </dev/null
         printf '%d' $? > "$exit_file"
-        touch "$done_file"
+        : > "$done_file"
       ) &
       pids+=("$!")
       (( submitted++ )) || true
@@ -337,8 +408,8 @@ _run_parallel() {
     for (( k=0; k<submitted; k++ )); do
       local printed_file="$tmp_dir/test-$k.printed"
       if [[ -f "${done_files[$k]}" && ! -f "$printed_file" ]]; then
-        cat "${out_files[$k]}" >&2
-        touch "$printed_file"
+        [[ -s "${out_files[$k]}" ]] && printf '%s\n' "$(<"${out_files[$k]}")" >&2
+        : > "$printed_file"
         (( completed++ )) || true
         (( active-- )) || true
         (( flushed++ )) || true
@@ -356,7 +427,7 @@ _run_parallel() {
   local failed=0
   for (( k=0; k<total; k++ )); do
     local exit_code=0
-    [[ -f "${exit_files[$k]}" ]] && exit_code="$(cat "${exit_files[$k]}")"
+    [[ -f "${exit_files[$k]}" ]] && exit_code="$(<"${exit_files[$k]}")"
     if [[ "$exit_code" != "0" ]]; then
       (( failed++ )) || true
     fi

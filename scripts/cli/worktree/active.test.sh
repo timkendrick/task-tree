@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 
 test_worktree_active__after_init_returns_repo() {
@@ -32,7 +32,7 @@ test_worktree_active__repo_flag() {
 test_worktree_active__worktree_without_switch_keeps_head() {
   setup_workspace "wt-active-no-switch"
   proj_id=$(create_project "proj" "Project") || true
-  task_id=$(create_task "my-task" "My Task") || true
+  task_id=$(create_task_under "$proj_id" "my-task" "My Task") || true
 
   # --worktree without --switch creates the worktree but must NOT move HEAD
   run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
@@ -48,7 +48,7 @@ test_worktree_active__worktree_without_switch_keeps_head() {
 test_worktree_active__after_checkout_switch_returns_worktree() {
   setup_workspace "wt-active-checkout"
   proj_id=$(create_project "proj" "Project") || true
-  task_id=$(create_task "my-task" "My Task") || true
+  task_id=$(create_task_under "$proj_id" "my-task" "My Task") || true
 
   # --worktree --switch creates the worktree and points HEAD at it
   run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true

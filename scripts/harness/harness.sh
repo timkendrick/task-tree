@@ -8,8 +8,15 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   exit 1
 fi
 
+# VCS tracing must never leak in from the ambient environment: TT_LOG=info or
+# TT_LOG=verbose echoes backend command lines to stderr and forwards output the
+# backend would otherwise discard, and suites that fold stderr into captured
+# output would then assert against trace lines. Suites that exercise tracing set
+# TT_LOG explicitly per invocation.
+unset TT_LOG
+
 # Resolve paths
-HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HARNESS_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 REPO_ROOT="$(cd "$HARNESS_DIR/../.." && pwd)"
 TT="$REPO_ROOT/scripts/cli/tt"
 
@@ -21,14 +28,23 @@ declare -a _FAILURES=()
 
 
 
-# Temp dir for accumulating results across subshells
-_RESULTS_DIR="$(mktemp -d)"
-trap 'rm -rf "$_RESULTS_DIR"' EXIT
+# Temp dir for accumulating results across subshells. The runner supplies a
+# shared one as _TT_TEST_RESULTS_DIR; a suite run on its own creates its own.
+if [[ -n "${_TT_TEST_RESULTS_DIR:-}" ]]; then
+  _RESULTS_DIR="$_TT_TEST_RESULTS_DIR"
+  _OWN_RESULTS_DIR=''
+else
+  _RESULTS_DIR="$(mktemp -d)"
+  _OWN_RESULTS_DIR="$_RESULTS_DIR"
+fi
 
-# Suite start time in milliseconds. Uses python3 for sub-second precision;
-# falls back to whole seconds via date if python3 is unavailable.
+# Suite start time in milliseconds. Uses perl for sub-second precision (it
+# starts in a few milliseconds, where python3 takes tens); falls back to
+# python3, then to whole seconds via date.
 _ms_now() {
-  if command -v python3 >/dev/null 2>&1; then
+  if command -v perl >/dev/null 2>&1; then
+    perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'
+  elif command -v python3 >/dev/null 2>&1; then
     python3 -c 'import time; print(int(time.time()*1000))'
   else
     printf '%d000' "$(date +%s)"
@@ -67,32 +83,60 @@ if [[ -n "${TT_TEST_ROOT:-}" ]]; then
 else
   _TEST_ROOT="$(mktemp -d)"
 fi
-trap 'rm -rf "$_TEST_ROOT"' EXIT
+trap 'rm -rf "$_TEST_ROOT" ${_OWN_RESULTS_DIR:+"$_OWN_RESULTS_DIR"}' EXIT
 
 # Per-test workspace vars (set by setup_workspace)
 REPO=""
 VIRTUAL=""
 
+# Build a fresh jj repo + tt workspace: an initial commit on `main`, then
+# `tt workspace init` against a sibling virtual folder. REPO must not yet
+# exist; VIRTUAL is created by workspace init.
+# Usage: build_workspace REPO VIRTUAL
+build_workspace() {
+  local repo="$1" virtual="$2"
+  mkdir -p "$repo"
+  # Resolve any symlinks in the path (e.g. /var -> /private/var on macOS)
+  repo="$(cd "$repo" && pwd -P)"
+
+  jj git init "$repo" >/dev/null 2>&1
+
+  echo "initial" > "$repo/README.md"
+  jj -R "$repo" commit -m "Initial commit" >/dev/null 2>&1
+  jj -R "$repo" bookmark set main >/dev/null 2>&1
+
+  "$TT" workspace init "$repo" "$virtual" >/dev/null 2>&1
+  # workspace init creates .tt/workspace symlink automatically; no further setup needed.
+}
+
 # Create a fresh jj repo + tt workspace for a test.
 # Sets REPO, VIRTUAL, and exports TT_REPO, changes CWD to REPO.
+#
+# When the runner has built a template workspace (_TT_TEST_TEMPLATE names a
+# directory holding `repo` and `virtual` as build_workspace leaves them), the
+# workspace is a copy of that template rather than a fresh build: every test
+# starts from the identical state, and a copy is a single process where a
+# build is a dozen. Only the two absolute symlinks — `.tt/workspace` in the
+# repo and `HEAD` in the virtual folder — are re-pointed at the copy; nothing
+# else in a workspace records where it lives.
 # Usage: setup_workspace [name]
 setup_workspace() {
   local name="${1:-test-$$-$RANDOM}"
-  REPO="$_TEST_ROOT/$name/repo"
-  VIRTUAL="$_TEST_ROOT/$name/virtual"
-  mkdir -p "$REPO"
-  # Resolve any symlinks in the path (e.g. /var -> /private/var on macOS)
-  REPO="$(cd "$REPO" && pwd -P)"
-
-  jj git init "$REPO" >/dev/null 2>&1
+  local root="$_TEST_ROOT/$name"
+  REPO="$root/repo"
+  VIRTUAL="$root/virtual"
+  if [[ -n "${_TT_TEST_TEMPLATE:-}" && -d "$_TT_TEST_TEMPLATE/repo" ]]; then
+    mkdir -p "$root"
+    cp -R "$_TT_TEST_TEMPLATE/repo" "$_TT_TEST_TEMPLATE/virtual" "$root/"
+    # Resolve any symlinks in the path (e.g. /var -> /private/var on macOS)
+    REPO="$(cd "$REPO" && pwd -P)"
+    ln -sfn "$VIRTUAL" "$REPO/.tt/workspace"
+    ln -sfn "$REPO" "$VIRTUAL/HEAD"
+  else
+    build_workspace "$REPO" "$VIRTUAL"
+    REPO="$(cd "$REPO" && pwd -P)"
+  fi
   cd "$REPO"
-
-  echo "initial" > README.md
-  jj -R "$REPO" commit -m "Initial commit" >/dev/null 2>&1
-  jj -R "$REPO" bookmark set main >/dev/null 2>&1
-
-  "$TT" workspace init "$REPO" "$VIRTUAL" >/dev/null 2>&1
-  # workspace init creates .tt/workspace symlink automatically; no further setup needed.
 
   # Export so run_tt forwards it as --repo to all tt commands
   export TT_REPO="$REPO"
@@ -105,7 +149,11 @@ setup_workspace() {
 # Run a tt command, with stdout and stderr captured separately.
 # Usage: run_tt [args...]
 run_tt() {
-  TT_REPO="${TT_REPO:-${REPO:-}}" "$TT" "$@"
+  if _harness_cache_ready && _harness_read_stdin; then
+    _harness_run_cached "$_HARNESS_STDIN" "$@"
+  else
+    TT_REPO="${TT_REPO:-${REPO:-}}" "$TT" "$@"
+  fi
 }
 
 # Run a tt command from within a worktree, simulating a user who has cd'd into
@@ -121,7 +169,7 @@ run_tt_in_worktree() {
 # Usage: edit_file PATH CONTENT
 edit_file() {
   local path="$1" content="$2"
-  mkdir -p "$(dirname "$path")"
+  [[ "$path" == */* ]] && mkdir -p "${path%/*}"
   printf '%s\n' "$content" > "$path"
 }
 
@@ -129,7 +177,7 @@ edit_file() {
 # Usage: append_file PATH CONTENT
 append_file() {
   local path="$1" content="$2"
-  mkdir -p "$(dirname "$path")"
+  [[ "$path" == */* ]] && mkdir -p "${path%/*}"
   printf '%s\n' "$content" >> "$path"
 }
 
@@ -141,21 +189,27 @@ append_file() {
 # Usage: id=$(create_project SLUG TITLE [BODY])
 create_project() {
   local slug="$1" title="$2" body="${3:-}"
-  run_tt task create --project --slug "$slug" --title "$title" <<< "$body" 2>/dev/null | tail -1
+  local out
+  out="$(run_tt task create --project --slug "$slug" --title "$title" <<< "$body" 2>/dev/null)" || return $?
+  printf '%s\n' "${out##*$'\n'}"
 }
 
 # Create a child task under the current branch and return its ID on stdout.
 # Usage: id=$(create_task SLUG TITLE [BODY])
 create_task() {
   local slug="$1" title="$2" body="${3:-}"
-  run_tt task create --slug "$slug" --title "$title" <<< "$body" 2>/dev/null | tail -1
+  local out
+  out="$(run_tt task create --slug "$slug" --title "$title" <<< "$body" 2>/dev/null)" || return $?
+  printf '%s\n' "${out##*$'\n'}"
 }
 
 # Create a child task under a specific parent and return its ID on stdout.
 # Usage: id=$(create_task_under PARENT_ID SLUG TITLE [BODY])
 create_task_under() {
   local parent="$1" slug="$2" title="$3" body="${4:-}"
-  run_tt task create --parent "$parent" --slug "$slug" --title "$title" <<< "$body" 2>/dev/null | tail -1
+  local out
+  out="$(run_tt task create --parent "$parent" --slug "$slug" --title "$title" <<< "$body" 2>/dev/null)" || return $?
+  printf '%s\n' "${out##*$'\n'}"
 }
 
 # Checkout a task (switches WC to it).
@@ -203,7 +257,293 @@ checkin_task() {
 # Capture the task ID from the last line of stdout.
 # Usage: TASK_ID=$(last_line "$output")
 last_line() {
-  printf '%s' "$1" | tail -1
+  local text="${1%$'\n'}"
+  printf '%s' "${text##*$'\n'}"
+}
+
+# ---------------------------------------------------------------------------
+# Process Helpers
+#
+# Dummy processes stand in for a long-running process (e.g. a web server)
+# that uses a worktree's files. Each runs `tail -f /dev/null`, which does
+# nothing until killed, so it holds the path until the test releases it with
+# abort_dummy_process. It is not a child of the tt commands the test runs, nor
+# an ancestor of them, so tt does not mistake it for part of its own process
+# lineage.
+#
+# A dummy process has no timeout, so a test that spawns one also registers an
+# EXIT trap that aborts it, in case the test stops before its explicit abort:
+#
+#   pid=$(spawn_dummy_process_in_dir "$dir")
+#   trap "abort_dummy_process $pid" EXIT
+#   ...assertions...
+#   abort_dummy_process "$pid"
+# ---------------------------------------------------------------------------
+
+# Start a dummy process whose current directory is DIR. Prints its PID once
+# lsof reports it in DIR.
+# Usage: pid=$(spawn_dummy_process_in_dir DIR)
+spawn_dummy_process_in_dir() {
+  local dir="$1"
+  (cd "$dir" && exec tail -f /dev/null) </dev/null >/dev/null 2>&1 &
+  __harness_await_dummy_process "$!" "$(cd "$dir" && pwd -P)"
+}
+
+# Start a dummy process that holds FILE open, with its current directory
+# elsewhere. Prints its PID once lsof reports it holding FILE.
+# Usage: pid=$(spawn_dummy_process_holding_file FILE)
+spawn_dummy_process_holding_file() {
+  local file="$1"
+  (cd / && exec tail -f /dev/null 3<"$file") </dev/null >/dev/null 2>&1 &
+  __harness_await_dummy_process "$!" "$(cd "${file%/*}" && pwd -P)/${file##*/}"
+}
+
+# Stop a dummy process and wait until it has exited. Does nothing if it has
+# already exited, so the EXIT trap backstop can call it after the test has.
+# Usage: abort_dummy_process PID
+abort_dummy_process() {
+  local pid="$1" waited=0
+  kill "$pid" 2>/dev/null || return 0
+  while kill -0 "$pid" 2>/dev/null && [[ $waited -lt 50 ]]; do
+    sleep 0.1
+    waited=$(( waited + 1 ))
+  done
+}
+
+# Waits until lsof reports PID using the canonical path CANONICAL_PATH, so the
+# test never races the dummy process's startup, then prints PID. Aborts the
+# process and returns 1 if that never happens.
+# Usage: __harness_await_dummy_process PID CANONICAL_PATH
+__harness_await_dummy_process() {
+  local pid="$1" canonical_path="$2" waited=0
+  while [[ $waited -lt 50 ]]; do
+    if lsof -a -p "$pid" -F n 2>/dev/null | grep -qxF "n$canonical_path"; then
+      printf '%s' "$pid"
+      return 0
+    fi
+    sleep 0.1
+    waited=$(( waited + 1 ))
+  done
+  abort_dummy_process "$pid"
+  printf 'Error: dummy process %s never started using %s\n' "$pid" "$canonical_path" >&2
+  return 1
+}
+
+# Prints the current PATH with the executable NAME made unfindable: each entry
+# that holds NAME is replaced by a directory of links to that entry's other
+# contents.
+# Usage: PATH="$(path_without_command NAME)" run_tt ...
+path_without_command() {
+  local name="$1"
+  local -a entries=()
+  IFS=':' read -ra entries <<< "$PATH"
+  local result='' entry shadow target i=0
+  for entry in "${entries[@]}"; do
+    if [[ -x "$entry/$name" ]]; then
+      shadow="$_TEST_ROOT/path-without-$name-$i"
+      mkdir -p "$shadow"
+      for target in "$entry"/*; do
+        [[ "${target##*/}" == "$name" ]] || ln -sf "$target" "$shadow/"
+      done
+      entry="$shadow"
+    fi
+    result+="${result:+:}$entry"
+    i=$(( i + 1 ))
+  done
+  printf '%s' "$result"
+}
+
+# ---------------------------------------------------------------------------
+# Command cache
+#
+# Every tt command a test runs through run_tt costs dozens of processes, and
+# process creation is what bounds the suite, while most tests reach their
+# starting point through the same commands applied to the same state. The
+# runner therefore keeps a cache (_TT_TEST_CACHE) of what each command did:
+# the first time a command runs against a given workspace state it is run for
+# real and its resulting repo, stdout, stderr and exit status are recorded.
+# Any later run of the same command against the same state receives a
+# copy of the 'memoized' recording instead.
+#
+# "The same state" is determined by computing a hash of the repository's
+# current operation ID, a manifest of the working copy (every path outside
+# the .jj and .git stores, with file content), the command line, whatever is
+# on stdin, and the environment a command's behaviour can depend on.
+#
+# A workspace with a dedicated worktree is never cached in either direction:
+# the backend records worktree paths absolutely, so such a state cannot be
+# copied elsewhere. Nor is a command whose stdin is a terminal or a pipe,
+# since its input cannot be read up front.
+#
+# TT_TEST_NO_CACHE=1 runs every command live; a suite run outside the runner
+# has no cache.
+# ---------------------------------------------------------------------------
+
+# Whether the current workspace can take part in the cache: a template copy
+# with no dedicated worktree, addressed by TT_REPO, from a working directory
+# the restore leaves intact, and at a single operation head.
+_harness_cache_ready() {
+  [[ -n "${_TT_TEST_CACHE:-}" && -z "${TT_TEST_NO_CACHE:-}" && -n "${REPO:-}" ]] || return 1
+  [[ "${TT_REPO:-$REPO}" == "$REPO" ]] || return 1
+  [[ "$PWD" == "$REPO" || "$PWD" != "$REPO"/* ]] || return 1
+  _harness_no_worktrees || return 1
+  [[ -n "$(_harness_op_head)" ]]
+}
+
+# Whether the virtual folder holds nothing but a HEAD link back to the repo.
+_harness_no_worktrees() {
+  local entry
+  for entry in "$VIRTUAL"/* "$VIRTUAL"/.[!.]* "$VIRTUAL"/..?*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    [[ "${entry##*/}" == 'HEAD' ]] || return 1
+  done
+  [[ "$VIRTUAL/HEAD" -ef "$REPO" ]]
+}
+
+# Reads stdin into _HARNESS_STDIN when it can be read without blocking (a
+# file, a here-string, /dev/null); returns 1 for a terminal or a pipe.
+_harness_read_stdin() {
+  _HARNESS_STDIN=''
+  [[ -t 0 ]] && return 1
+  [[ -p /dev/stdin ]] && return 1
+  _HARNESS_STDIN="$(</dev/stdin)" 2>/dev/null || _HARNESS_STDIN=''
+  return 0
+}
+
+# The repository's current operation ID, read from the operation store's
+# head directory; empty when there is not exactly one head.
+_harness_op_head() {
+  local entry head='' count=0
+  for entry in "$REPO/.jj/repo/op_heads/heads"/*; do
+    [[ -e "$entry" ]] || continue
+    head="${entry##*/}"
+    count=$(( count + 1 ))
+  done
+  [[ $count -eq 1 ]] && printf '%s' "$head"
+}
+
+# A manifest of the working copy: every entry outside the .jj and .git
+# stores, with regular files' content, so two workspaces whose manifests
+# agree hold the same files.
+_harness_manifest() {
+  __harness_manifest_dir "$REPO" ''
+}
+__harness_manifest_dir() {
+  local dir="$1" rel="$2" entry name
+  for entry in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    name="${entry##*/}"
+    if [[ -z "$rel" && ( "$name" == '.jj' || "$name" == '.git' ) ]]; then continue; fi
+    if [[ -L "$entry" ]]; then
+      printf 'L %s\n' "$rel$name"
+    elif [[ -d "$entry" ]]; then
+      __harness_manifest_dir "$entry" "$rel$name/"
+    elif [[ -f "$entry" ]]; then
+      printf 'F %s\n%s\n' "$rel$name" "$(<"$entry")"
+    fi
+  done
+}
+
+# _harness_restore DIR
+# Replaces the workspace with the state recorded in DIR. The repo directory
+# itself survives (it is the test's working directory); everything inside it
+# is replaced, and the two absolute symlinks are re-pointed at this copy.
+_harness_restore() {
+  local dir="$1" entry
+  local -a stale=()
+  for entry in "$REPO"/* "$REPO"/.[!.]* "$REPO"/..?*; do
+    [[ -e "$entry" || -L "$entry" ]] && stale+=("$entry")
+  done
+  if [[ ${#stale[@]} -gt 0 ]]; then
+    rm -rf "${stale[@]}" || return 1
+  fi
+  cp -R "$dir/repo/." "$REPO/" || return 1
+  ln -sfn "$VIRTUAL" "$REPO/.tt/workspace" || return 1
+  ln -sfn "$REPO" "$VIRTUAL/HEAD" || return 1
+}
+
+# _harness_relocate DIR TEXT
+# Prints TEXT with the recording test's repo, virtual folder and test root
+# (in that order, so the more specific paths win) replaced by this test's.
+_harness_relocate() {
+  local dir="$1" text="$2"
+  local their_repo their_virtual their_root
+  { read -r their_repo; read -r their_virtual; read -r their_root; } < "$dir/locations" || true
+  text="${text//"$their_repo"/$REPO}"
+  text="${text//"$their_virtual"/$VIRTUAL}"
+  text="${text//"$their_root"/$_TEST_ROOT}"
+  printf '%s' "$text"
+}
+
+# _harness_run_cached INPUT ARG...
+# Runs `tt ARG...` with INPUT on stdin through the cache: replayed when the
+# command has been recorded against this state, otherwise run live and
+# recorded. Writes the command's stdout and stderr to this function's own
+# (stderr first, then stdout: tt narrates on stderr and prints its result on
+# stdout last) and returns its exit status.
+_harness_run_cached() {
+  local input="$1"; shift
+  local material arg name
+  material="$(_harness_op_head)"$'\x1f'"$(_harness_manifest)"$'\x1f'
+  # Every TT_* setting except the ones naming this test's own locations, plus
+  # the editor and colour settings tt honours.
+  for name in $(compgen -A variable TT_) GIT_EDITOR VISUAL EDITOR NO_COLOR; do
+    case "$name" in TT_REPO|TT_TEST_ROOT|TT_TEST_NO_CACHE) continue ;; esac
+    material+="${name}=${!name:-}"$'\x1f'
+  done
+  material+="$input"
+  for arg in "$@"; do material+=$'\x1e'"$arg"; done
+  local key
+  key="$(printf '%s' "$material" | cksum)"
+  key="${key// /-}"
+  local dir="$_TT_TEST_CACHE/$key"
+
+  # Claiming the entry (an atomic mkdir) decides who runs the command: the
+  # claimant records it, and a test arriving while the recording is under
+  # way waits for it rather than running the same command itself, which
+  # would leave it with a history of its own that nothing later could match.
+  local out err rc root claimed=''
+  if mkdir "$dir" 2>/dev/null; then
+    claimed=1
+  else
+    local waited=0
+    while [[ ! -f "$dir/done" && ! -f "$dir/skip" && $waited -lt 600 ]]; do
+      sleep 0.1
+      waited=$(( waited + 1 ))
+    done
+    if [[ -f "$dir/done" && "$(<"$dir/material")" == "$material" ]] && _harness_restore "$dir"; then
+      out="$(<"$dir/stdout")"; out="$(_harness_relocate "$dir" "$out")"; out="${out%x}"
+      err="$(<"$dir/stderr")"; err="$(_harness_relocate "$dir" "$err")"; err="${err%x}"
+      rc="$(<"$dir/exit")"
+      printf '%s' "$err" >&2
+      printf '%s' "$out"
+      return "$rc"
+    fi
+  fi
+
+  # The command's exit status rides on the end of its captured stdout, so
+  # that trailing newlines survive the capture as well.
+  local err_file="$_TEST_ROOT/.stderr-$$"
+  out="$(TT_REPO="${TT_REPO:-$REPO}" "$TT" "$@" <<< "$input" 2>"$err_file"; printf 'x%d' "$?")"
+  rc="${out##*x}"
+  out="${out%x*}"
+  err=''
+  IFS= read -r -d '' err < "$err_file" || true
+  if [[ -n "$claimed" ]]; then
+    if _harness_no_worktrees && cp -R "$REPO" "$dir/repo" 2>/dev/null; then
+      printf '%s' "$material" > "$dir/material"
+      printf '%s\n%s\n%s' "$REPO" "$VIRTUAL" "$_TEST_ROOT" > "$dir/locations"
+      printf '%sx' "$out" > "$dir/stdout"
+      printf '%sx' "$err" > "$dir/stderr"
+      printf '%s' "$rc" > "$dir/exit"
+      : > "$dir/done"
+    else
+      : > "$dir/skip"
+    fi
+  fi
+  printf '%s' "$err" >&2
+  printf '%s' "$out"
+  return $rc
 }
 
 # ---------------------------------------------------------------------------
@@ -277,6 +617,142 @@ is_diff_empty() {
   [[ -z "$diff_output" ]]
 }
 
+# Read the repository's current operation ID without loading any working copy.
+# Unlike get_jj_op this records nothing, and it still answers when the
+# canonical workspace is stale — which is exactly when a test needs to prove
+# that a command wrote nothing.
+# Usage: get_jj_op_bare [REPO]
+get_jj_op_bare() {
+  local repo="${1:-$REPO}"
+  jj -R "$repo" --ignore-working-copy op log --no-graph -T id -n 1 2>/dev/null
+}
+
+# Print the workspace name the repository records for a worktree path.
+# Usage: get_workspace_name WORKTREE
+get_workspace_name() {
+  local worktree="$1"
+  local resolved
+  resolved="$(cd "$worktree" && pwd -P)" || return 1
+  local line name path
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    name="${line%%: *}"
+    path="${line#*: }"
+    [[ "$path" == "$resolved" ]] || continue
+    printf '%s\n' "$name"
+    return 0
+  done < <(jj -R "$REPO" --ignore-working-copy workspace list --no-pager \
+    -T 'name ++ ": " ++ root ++ "\n"' 2>/dev/null)
+  return 1
+}
+
+# Leave WORKTREE's on-disk files behind the commit they belong to, the way a
+# bare rewrite performed from another workspace does, so that the backend
+# refuses every command there until the worktree is refreshed.
+#
+# The rewrite addresses the target by workspace name from the canonical repo,
+# so it cannot be attributed to the target workspace and cannot update its
+# files. The resulting refusal is asserted rather than assumed: a backend that
+# stopped producing this state would otherwise silently disarm every test that
+# depends on it.
+#
+# Sets STALE_PRE_REWRITE_COMMIT to the commit the worktree's files are left
+# holding — the one the rewrite moved the graph off. Callers cannot capture it
+# themselves, since the marker snapshot below advances the working-copy commit.
+#
+# Only one marker path is rewritten, never the whole tree. A worktree's branch
+# is read from the task symlink recorded in its working-copy commit, so wiping
+# the tree would leave it on no branch at all / a different condition, and one
+# that quietly removes the worktree from the target list of commands like
+# tt worktree sync.
+# Usage: make_worktree_stale WORKTREE
+make_worktree_stale() {
+  local worktree="$1"
+  local name
+  name="$(get_workspace_name "$worktree")" || {
+    _log_fail "make_worktree_stale: '$worktree' is not a workspace of $REPO"
+    _record_fail "make_worktree_stale: unknown workspace $worktree"
+    return 1
+  }
+
+  # Give the working-copy commit a file of its own, snapshotting it so the
+  # workspace's recorded state is current: the staleness that follows is then
+  # caused by the rewrite below and nothing else.
+  local marker='.tt-stale-marker'
+  printf 'marker\n' > "$worktree/$marker"
+  jj -R "$worktree" log -r '@' --no-graph -T '' >/dev/null 2>&1 || true
+
+  STALE_PRE_REWRITE_COMMIT="$(jj -R "$worktree" --ignore-working-copy \
+    log -r '@' --no-graph -T 'commit_id' 2>/dev/null)"
+
+  # Bare rewrite of just that path out of the target's working-copy commit:
+  # the tree changes in the graph while the files on disk stay where they
+  # were, which is what the backend calls stale.
+  jj -R "$REPO" --ignore-working-copy restore --from 'root()' --into "${name}@" \
+    "$marker" >/dev/null 2>&1 || {
+    _log_fail "make_worktree_stale: could not rewrite the working-copy commit of $worktree"
+    _record_fail "make_worktree_stale: rewrite failed for $worktree"
+    return 1
+  }
+
+  if jj -R "$worktree" status >/dev/null 2>&1; then
+    _log_fail "make_worktree_stale: $worktree is still usable after the rewrite"
+    _record_fail "make_worktree_stale: $worktree did not become stale"
+    return 1
+  fi
+  return 0
+}
+
+# Build the state a canonical-guard refusal test acts on: a project, a task
+# beneath it, and that task checked out into its own dedicated worktree.
+# Sets STALE_PROJ_ID, STALE_TASK_ID and STALE_WORKTREE. Makes nothing stale,
+# so a test needing further setup can do it before calling
+# make_worktree_stale "$REPO" itself.
+# Usage: setup_guard_fixture [SLUG]
+setup_guard_fixture() {
+  local slug="${1:-guarded}"
+  STALE_PROJ_ID="$(create_project "proj-$slug" "Project")"
+  checkout_task "$STALE_PROJ_ID"
+  STALE_TASK_ID="$(create_task "$slug" "Task $slug")"
+  STALE_WORKTREE="$(create_task_worktree "$STALE_TASK_ID")"
+}
+
+# setup_guard_fixture followed by making the canonical workspace stale — the
+# starting state of a canonical-guard refusal test that needs no extra setup.
+# Usage: setup_stale_canonical [SLUG]
+setup_stale_canonical() {
+  setup_guard_fixture "$@"
+  make_worktree_stale "$REPO"
+}
+
+# Run a branch-writing command from WORKTREE with the canonical workspace
+# stale, and assert the standard refusal: non-zero exit, a message naming the
+# stale workspace and the command that recovers it, no history entry created,
+# and no operation recorded.
+#
+# The operation check is what proves the command wrote nothing at all, and it
+# is read bare — an ordinary read would be refused by the stale workspace it
+# is asking about.
+# Usage: assert_refuses_stale_canonical WORKTREE COMMAND...
+assert_refuses_stale_canonical() {
+  local worktree="$1"; shift
+  get_history_lines
+  local history_before="${#HISTORY_LINES[@]}"
+  local op_before
+  op_before="$(get_jj_op_bare)"
+
+  local output exit_code=0
+  output="$(run_tt_in_worktree "$worktree" "$@" </dev/null 2>&1)" || exit_code=$?
+
+  assert_failure "refused while the canonical workspace is stale" "$exit_code"
+  assert_contains "the refusal names the stale workspace" "$output" \
+    "Error: The workspace is stale: $REPO"
+  assert_contains "the refusal names the recovery command" "$output" \
+    "tt worktree refresh"
+  assert_history_count "no transaction was opened" "$history_before"
+  assert_eq "the repository was not written to" "$(get_jj_op_bare)" "$op_before"
+}
+
 # Create a plain jj commit in the current repo (does not advance any bookmarks).
 # Usage: jj_commit MESSAGE [REPO]
 jj_commit() {
@@ -336,7 +812,10 @@ get_all_task_bookmarks() {
 # Count the number of commits in a revset.
 # Usage: count_commits REVSET
 count_commits() {
-  jj -R "$REPO" log -r "$1" --no-graph -T '"x\n"' 2>/dev/null | wc -l | tr -d ' '
+  local marks
+  marks="$(jj -R "$REPO" log -r "$1" --no-graph -T '"x\n"' 2>/dev/null)"
+  marks="${marks//[!x]/}"
+  printf '%s' "${#marks}"
 }
 
 # Check if a revset contains any conflicts.
@@ -358,6 +837,19 @@ file_exists_at_rev() {
 # Usage: get_symlink_target PATH
 get_symlink_target() {
   readlink "$1" 2>/dev/null
+}
+
+# Print the target of the symlink recorded at the repo-root-relative PATH at
+# REV. Prints nothing and returns 1 when PATH is absent or not a symlink there.
+# Usage: get_symlink_target_at_rev REV PATH
+get_symlink_target_at_rev() {
+  local rev="$1" path="$2"
+  jj -R "$REPO" --ignore-working-copy diff --git --from 'root()' --to "$rev" \
+    -- "root-file:\"${path}\"" 2>/dev/null | awk '
+      /^new file mode 120000$/ { symlink = 1 }
+      symlink && !found && /^\+[^+]/ { found = 1; print substr($0, 2) }
+      END { exit(found ? 0 : 1) }
+    '
 }
 
 # ---------------------------------------------------------------------------
@@ -414,9 +906,46 @@ assert_neq() {
 }
 
 # assert_contains LABEL HAYSTACK NEEDLE
+# _harness_contains HAYSTACK NEEDLE
+# Fixed-string containment, as `grep -F` sees it: any line of NEEDLE present
+# in HAYSTACK. A single-line needle is a plain substring test.
+_harness_contains() {
+  local haystack="$1" needle="$2" part
+  if [[ "$needle" != *$'\n'* ]]; then
+    [[ "$haystack" == *"$needle"* ]]
+    return
+  fi
+  while IFS= read -r part || [[ -n "$part" ]]; do
+    [[ "$haystack" == *"$part"* ]] && return 0
+  done <<< "$needle"
+  return 1
+}
+
+# _harness_line_matches STRING ERE
+# Whether any line of STRING matches ERE, as `grep -E` sees it.
+_harness_line_matches() {
+  local string="$1" pattern="$2" line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ $pattern ]] && return 0
+  done <<< "$string"
+  return 1
+}
+
+# _harness_id_pattern PATTERN
+# Expands every %…% placeholder in PATTERN to the ERE for a task ID suffix.
+_harness_id_pattern() {
+  local pattern="$1"
+  while [[ "$pattern" == *%*%* ]]; do
+    local head="${pattern%%%*}" rest="${pattern#*%}"
+    rest="${rest#*%}"
+    pattern="${head}[a-z0-9-]+-[0-9a-f]{8}${rest}"
+  done
+  printf '%s' "$pattern"
+}
+
 assert_contains() {
   local label="$1" haystack="$2" needle="$3"
-  if printf '%s' "$haystack" | grep -qF -- "$needle"; then
+  if _harness_contains "$haystack" "$needle"; then
     _log_pass "$label"
     _record_pass
   else
@@ -429,7 +958,7 @@ assert_contains() {
 # assert_not_contains LABEL HAYSTACK NEEDLE
 assert_not_contains() {
   local label="$1" haystack="$2" needle="$3"
-  if ! printf '%s' "$haystack" | grep -qF -- "$needle"; then
+  if ! _harness_contains "$haystack" "$needle"; then
     _log_pass "$label"
     _record_pass
   else
@@ -444,8 +973,8 @@ assert_not_contains() {
 assert_matches() {
   local label="$1" string="$2" pattern="$3"
   local ere_pattern
-  ere_pattern="$(printf '%s' "$pattern" | sed 's/%[^%]*%/[a-z0-9-]+-[0-9a-f]{8}/g')"
-  if printf '%s' "$string" | grep -qE "$ere_pattern"; then
+  ere_pattern="$(_harness_id_pattern "$pattern")"
+  if _harness_line_matches "$string" "$ere_pattern"; then
     _log_pass "$label"
     _record_pass
   else
@@ -459,8 +988,8 @@ assert_matches() {
 assert_not_matches() {
   local label="$1" string="$2" pattern="$3"
   local ere_pattern
-  ere_pattern="$(printf '%s' "$pattern" | sed 's/%[^%]*%/[a-z0-9-]+-[0-9a-f]{8}/g')"
-  if ! printf '%s' "$string" | grep -qE "$ere_pattern"; then
+  ere_pattern="$(_harness_id_pattern "$pattern")"
+  if ! _harness_line_matches "$string" "$ere_pattern"; then
     _log_pass "$label"
     _record_pass
   else
@@ -755,20 +1284,38 @@ read_task_file() {
 
 # Extract a single-value frontmatter field.
 get_frontmatter_field() {
-  local content="$1" field="$2"
-  printf '%s' "$content" | sed -n "s/^${field}: *//p" | head -1
+  local content="$1" field="$2" line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$field:"* ]]; then
+      line="${line#"$field:"}"
+      printf '%s\n' "${line#"${line%%[! ]*}"}"
+      return 0
+    fi
+  done <<< "$content"
 }
 
 # Extract all values for a repeatable frontmatter field.
 get_frontmatter_field_all() {
-  local content="$1" field="$2"
-  printf '%s' "$content" | sed -n "s/^${field}: *//p"
+  local content="$1" field="$2" line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$field:"* ]]; then
+      line="${line#"$field:"}"
+      printf '%s\n' "${line#"${line%%[! ]*}"}"
+    fi
+  done <<< "$content"
 }
 
 # Extract the body (everything after the second ---).
 get_task_body() {
-  local content="$1"
-  printf '%s' "$content" | awk '/^---$/{n++; if(n==2){found=1; next}} found{print}'
+  local content="$1" line sep=0 found=''
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -n "$found" ]]; then
+      printf '%s\n' "$line"
+    elif [[ "$line" == '---' ]]; then
+      sep=$(( sep + 1 ))
+      [[ $sep -eq 2 ]] && found=1
+    fi
+  done <<< "$content"
 }
 
 # ---------------------------------------------------------------------------
@@ -799,7 +1346,9 @@ assert_task_title() {
     _record_fail "$label: could not read task file for '$task_id'"
     return
   }
-  actual="$(get_frontmatter_field "$content" "title" | sed 's/^"//;s/"$//')"
+  actual="$(get_frontmatter_field "$content" "title")"
+  actual="${actual#\"}"
+  actual="${actual%\"}"
   assert_eq "$label" "$actual" "$expected"
 }
 
@@ -961,7 +1510,8 @@ assert_context_file_not_exists() {
 
 # assert_context_count LABEL TASK_ID EXPECTED_COUNT [REV]
 assert_context_count() {
-  local label="$1" task_id="$2" expected="$3" rev="${4:-$task_id}"
+  local label="$1" task_id="$2" expected="$3"
+  local rev="${4:-$task_id}"
   assert_frontmatter_field_count "$label" "$task_id" "context" "$expected" "$rev"
 }
 
@@ -1025,35 +1575,64 @@ assert_frontmatter_order() {
 # ---------------------------------------------------------------------------
 # Current Task / Misc Assertions
 # ---------------------------------------------------------------------------
+#
+# Two different questions, and two sets of assertions for them:
+#
+#   Where does a working copy sit in the commit graph?  assert_wc_on_branch
+#   Which task does a worktree have checked out?        assert_task_symlink
+#
+# They agree in a healthy checkout and part company as soon as a branch write
+# moves a bookmark off the worktree's line: the working copy's nearest
+# bookmarked ancestor is then some outer branch, while the task it holds has
+# not changed. assert_current_task requires both, which is what a checkout
+# leaves behind.
 
-# assert_current_task LABEL EXPECTED_TASK_ID
+# Nearest bookmarked ancestor of WORKTREE's @ (default: $REPO), or empty when
+# nothing in its ancestry carries a bookmark.
+# Usage: branch=$(wc_branch [WORKTREE])
+wc_branch() {
+  local worktree="${1:-$REPO}"
+  local actual
+  actual="$(jj -R "$worktree" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
+    -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || true
+  printf '%s' "${actual%%,*}"
+}
+
+# assert_wc_on_branch LABEL EXPECTED_BOOKMARK [WORKTREE]
+assert_wc_on_branch() {
+  local label="$1" expected="$2" worktree="${3:-$REPO}"
+  assert_eq "$label" "$(wc_branch "$worktree")" "$expected"
+}
+
+# assert_wc_on_branch_matches LABEL EXPECTED_ERE_PATTERN [WORKTREE]
+assert_wc_on_branch_matches() {
+  local label="$1" pattern="$2" worktree="${3:-$REPO}"
+  assert_matches "$label" "$(wc_branch "$worktree")" "$pattern"
+}
+
+# The task WORKTREE (default: $REPO) has checked out, as recorded by the root
+# TASK.md symlink the task branch's fork commit plants there.
+# Usage: assert_task_symlink LABEL TASK_ID [WORKTREE]
+assert_task_symlink() {
+  local label="$1" task_id="$2" worktree="${3:-$REPO}"
+  assert_symlink "$label" "$worktree/TASK.md" ".tt/task/${task_id#*/}/TASK.md"
+}
+
+# The root TASK.md symlink recorded at REV points at TASK_ID's task file.
+# Usage: assert_task_symlink_at_rev LABEL REV TASK_ID
+assert_task_symlink_at_rev() {
+  local label="$1" rev="$2" task_id="$3"
+  assert_eq "$label" "$(get_symlink_target_at_rev "$rev" TASK.md)" \
+    ".tt/task/${task_id#*/}/TASK.md"
+}
+
+# Both halves of a checkout: WORKTREE records TASK_ID as the task it holds, and
+# its working copy is parked on that task's branch.
+# Usage: assert_current_task LABEL TASK_ID [WORKTREE]
 assert_current_task() {
-  local label="$1" expected="$2"
-  local actual
-  actual="$(jj -R "$REPO" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
-    -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || true
-  actual="${actual%%,*}"
-  assert_eq "$label" "$actual" "$expected"
-}
-
-# assert_current_task_matches LABEL EXPECTED_ERE_PATTERN
-assert_current_task_matches() {
-  local label="$1" pattern="$2"
-  local actual
-  actual="$(jj -R "$REPO" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
-    -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || true
-  actual="${actual%%,*}"
-  assert_matches "$label" "$actual" "$pattern"
-}
-
-# assert_on_main LABEL
-assert_on_main() {
-  local label="$1"
-  local actual
-  actual="$(jj -R "$REPO" log -r 'heads(ancestors(@) & bookmarks())' -n 1 --no-graph \
-    -T 'local_bookmarks.map(|b| b.name()).join(",")' 2>/dev/null)" || true
-  actual="${actual%%,*}"
-  assert_eq "$label" "$actual" "main"
+  local label="$1" task_id="$2" worktree="${3:-$REPO}"
+  assert_task_symlink "$label (checked-out task)" "$task_id" "$worktree"
+  assert_wc_on_branch "$label (working copy position)" "$task_id" "$worktree"
 }
 
 # ---------------------------------------------------------------------------
@@ -1373,7 +1952,7 @@ run_tests() {
   local -a all_tests=()
   while IFS= read -r fn; do
     all_tests+=("$fn")
-  done < <(declare -F | awk '{print $3}' | grep '^test_')
+  done < <(compgen -A function test_)
 
   # Apply --filter patterns if any are set.
   local -a tests=()

@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt worktree refresh — recover a stale workspace.
+#
+# Usage:
+#   refresh [<path>] [--root] [--force] [--repo PATH]
+#
+# A workspace goes stale when a rewrite performed elsewhere changes the commit
+# its on-disk files belong to. The backend then refuses every command in that
+# workspace that loads the working copy, and tt refuses to write to a branch
+# while the workspace it depends on is in that state. This command clears the
+# condition by updating the files on disk to the commit the repository now
+# records for them.
+#
+# Recovery is destructive and cannot be made otherwise: the backend cannot
+# capture a stale working copy, so uncommitted work in the target is replaced
+# by the recorded tree. That is why it is gated behind --force.
+#
+# Staleness is not the same thing as a worktree being behind its branch. A
+# worktree left on an older tip holds valid files and is brought forward with
+# `tt worktree sync`, which preserves uncommitted work. This command exists for
+# the case sync cannot handle, and is kept separate so one flag never
+# authorizes both.
+#
+# No transaction is opened. Refresh is a recovery operation, like
+# `tt workspace init`: a transactional refresh of a stale canonical workspace
+# could not roll itself back, and refresh has to stay usable while a stale
+# transaction lock is present.
+#
+# Options:
+#   <path>       Worktree to recover (default: the one containing the CWD)
+#   --root       Recover the canonical workspace instead
+#   --force      Perform the recovery; without it a stale target is only reported
+#   --repo PATH  Repository root (overrides TT_REPO; default: walk up from CWD).
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<path>] [--root] [--force] [--repo PATH]
+
+Recover a stale workspace — one whose files belong to a commit that has since
+been rewritten, which the version control backend refuses to work with.
+
+Uncommitted changes in the recovered workspace are LOST: a stale working copy
+cannot be captured before it is reset. To move a worktree forward onto new
+commits on its branch while keeping uncommitted work, use 'tt worktree sync'
+instead.
+
+Exactly one workspace is acted on; there is no --all.
+
+Arguments:
+  [<path>]       Worktree to recover (optional; defaults to the worktree
+                 containing the current working directory)
+
+Options:
+  --root         Recover the canonical workspace. Cannot be combined with <path>.
+  --force        Perform the recovery. Without it, a stale workspace is reported
+                 and nothing is changed.
+  --repo PATH    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
+
+Exits 0 without output when the target is not stale.
+
+Examples:
+  ${COMMAND_NAME:-$SCRIPT_NAME}                      # check the current worktree
+  ${COMMAND_NAME:-$SCRIPT_NAME} --force              # recover the current worktree
+  ${COMMAND_NAME:-$SCRIPT_NAME} --root --force       # recover the canonical workspace
+  ${COMMAND_NAME:-$SCRIPT_NAME} /path/to/wt --force  # recover a named worktree
+
+EOF
+}
+
+main() {
+  local worktree_path=''
+  local root=false
+  local force=false
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --root)
+        root=true
+        shift
+        ;;
+      --force)
+        force=true
+        shift
+        ;;
+      --repo)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        repo="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -*)
+        usage >&2; exit 1
+        ;;
+      *)
+        if [[ -z "$worktree_path" ]]; then
+          worktree_path="$1"
+          shift
+        else
+          usage >&2; exit 1
+        fi
+        ;;
+    esac
+  done
+
+  # --root names its own target, so a path alongside it is contradictory.
+  if [[ "$root" == true && -n "$worktree_path" ]]; then
+    _ui__log "Error: --root cannot be combined with a worktree path."
+    usage >&2
+    exit 1
+  fi
+
+  # Detect the current worktree from the CWD before the repository is
+  # resolved: --repo or TT_REPO would otherwise name a repository root that
+  # has nothing to do with where the user is standing.
+  if [[ "$root" != true && -z "$worktree_path" ]]; then
+    worktree_path="$(_worktree__find_current)" || {
+      _ui__log "Error: could not detect current worktree from working directory"
+      exit 1
+    }
+  fi
+
+  repo="$(_workspace__resolve_repo "$repo")"
+
+  local target
+  if [[ "$root" == true ]]; then
+    target="$(_workspace__resolve_canonical_repo "$repo")" || {
+      _ui__log "Error: could not resolve the canonical workspace for $repo"
+      exit 1
+    }
+  else
+    # Canonicalize so the path can be matched against the recorded workspace
+    # paths, which are themselves symlink-resolved.
+    target="$(_path__resolve_symlinks "$worktree_path" 2>/dev/null)" \
+      || target="$worktree_path"
+
+    _worktree__resolve_name "$repo" "$target" >/dev/null || {
+      _ui__log "Error: '$worktree_path' is not a worktree in this repository"
+      exit 1
+    }
+  fi
+
+  # --force bypasses detection entirely. A workspace can reach states tt
+  # cannot classify, and the command whose job is to get the user out of a
+  # broken workspace must not itself depend on reading that workspace.
+  if [[ "$force" == true ]]; then
+    _worktree__refresh "$target" || {
+      _ui__log "Error: Could not recover the workspace: $target"
+      exit 1
+    }
+    _ui__log "Refreshed $target"
+    exit 0
+  fi
+
+  local status=0
+  _worktree__check_stale "$repo" "$target" || status=$?
+  case "$status" in
+    1)
+      exit 0
+      ;;
+    0)
+      _worktree__report_stale "$target" "Use --force to recover it."
+      exit 1
+      ;;
+    *)
+      _worktree__report_indeterminate "$target"
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

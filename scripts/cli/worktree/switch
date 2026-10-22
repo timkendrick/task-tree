@@ -1,25 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
 # tt worktree switch — redirect the virtual project's HEAD symlink to an existing task worktree.
 #
 # Usage:
-#   switch [<worktree-path>] [--force] [--repo PATH]
+#   switch [<worktree-path>] [--repo PATH]
 #
 # Options:
 #   <worktree-path>      Path to the worktree to switch to (optional; defaults to current worktree)
-#   --force              Proceed even if the outgoing workspace has local changes.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<worktree-path>] [--force] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<worktree-path>] [--repo PATH]
 
 Redirect the virtual project's HEAD symlink to an existing task worktree.
 The worktree must already exist (run \`tt task checkout --worktree\` first).
@@ -30,27 +29,20 @@ Arguments:
                    containing the current working directory)
 
 Options:
-  --force               Proceed even if the outgoing workspace has local changes.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
   ${COMMAND_NAME:-$SCRIPT_NAME} /path/to/worktree
-  ${COMMAND_NAME:-$SCRIPT_NAME} /path/to/worktree --force
 
 EOF
 }
 
 main() {
   local worktree_path=''
-  local force=false
   local repo=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --force)
-        force=true
-        shift
-        ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
@@ -77,63 +69,55 @@ main() {
   # If no worktree path given, detect from CWD before resolving repo
   if [[ -z "$worktree_path" ]]; then
     local detected
-    detected="$(jj workspace root 2>/dev/null)" || {
-      log "Error: could not detect current worktree from working directory"
+    detected="$(_worktree__find_current)" || {
+      _ui__log "Error: could not detect current worktree from working directory"
       exit 1
     }
-    detected="$(resolve_path_symlinks "$detected" 2>/dev/null)" || detected="$detected"
+    detected="$(_path__resolve_symlinks "$detected" 2>/dev/null)" || detected="$detected"
     worktree_path="$detected"
   fi
 
-  repo="$(resolve_repo "$repo")"
+  repo="$(_workspace__resolve_repo "$repo")"
 
-  # Canonicalize the path for comparison with jj workspace list
+  # Canonicalize the path for comparison with the recorded worktree paths
   local canonical_worktree_path
-  canonical_worktree_path="$(resolve_path_symlinks "$worktree_path" 2>/dev/null)" || canonical_worktree_path="$worktree_path"
+  canonical_worktree_path="$(_path__resolve_symlinks "$worktree_path" 2>/dev/null)" || canonical_worktree_path="$worktree_path"
 
-  # Validate that the path is a valid jj workspace
+  # Validate that the path is a known worktree of this repository
   local ws_name
-  ws_name="$(resolve_workspace_name "$repo" "$canonical_worktree_path")" || {
-    log "Error: '$worktree_path' is not a jj workspace in this repository"
+  ws_name="$(_worktree__resolve_name "$repo" "$canonical_worktree_path")" || {
+    _ui__log "Error: '$worktree_path' is not a worktree in this repository"
     exit 1
   }
 
   # Resolve workspace dir via .tt/workspace symlink
   local workspace_dir
-  workspace_dir="$(get_workspace_dir "$repo")" || true
+  workspace_dir="$(_workspace__get_dir "$repo")" || true
 
   # Resolve task ID from the worktree (best-effort, for hooks/logging)
   local task_prefix project_prefix
-  task_prefix="$(get_task_prefix "$repo")"
-  project_prefix="$(get_project_prefix "$repo")"
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   local task_id
-  task_id="$(resolve_current_bookmark "$canonical_worktree_path" "$task_prefix" "$project_prefix")" || true
+  task_id="$(_task__resolve_current_branch "$canonical_worktree_path" "$task_prefix" "$project_prefix")" || true
 
   # Resolve outgoing context from HEAD symlink
   local outgoing_worktree previous_task_id
-  outgoing_worktree="$(get_active_worktree "$workspace_dir")" || outgoing_worktree="$repo"
+  outgoing_worktree="$(_workspace__get_active_worktree "$workspace_dir")" || outgoing_worktree="$repo"
 
-  # Resolve previous task ID from outgoing worktree
-  previous_task_id="$(resolve_current_bookmark "$repo" "$task_prefix" "$project_prefix")" || true
+  # Resolve previous task ID from the outgoing worktree — the one HEAD points
+  # at, which is what the switch moves away from and is not necessarily the
+  # worktree the command runs in.
+  previous_task_id="$(_task__resolve_current_branch "$outgoing_worktree" "$task_prefix" "$project_prefix")" || true
 
-  # Dirty check on outgoing worktree
-  if ! is_wc_clean "$outgoing_worktree"; then
-    if [[ "$force" != true ]]; then
-      log "Error: Outgoing workspace '$outgoing_worktree' has uncommitted changes."
-      log "  Commit or discard changes first, or use --force to proceed anyway."
-      exit 1
-    fi
-    log "Warning: Outgoing workspace has uncommitted changes (proceeding due to --force)."
-  fi
-
-  perform_workspace_switch "$repo" "${workspace_dir:-}" "${task_id:-}" \
+  _worktree__switch "$repo" "${workspace_dir:-}" "${task_id:-}" \
     "$canonical_worktree_path" "$outgoing_worktree" "$previous_task_id"
 
   if [[ -n "$task_id" ]]; then
-    log "Switched to $task_id"
+    _ui__log "Switched to $task_id"
   else
-    log "Switched to $worktree_path"
+    _ui__log "Switched to $worktree_path"
   fi
 }
 

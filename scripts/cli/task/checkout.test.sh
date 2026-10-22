@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # shellcheck source=../../harness/harness.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../harness/harness.sh"
+. "$(cd "${BASH_SOURCE[0]%/*}" && pwd)/../../harness/harness.sh"
 
 test_task_checkout__basic_checkout_of_todo_task() {
   setup_workspace "checkout-basic"
@@ -12,11 +12,32 @@ test_task_checkout__basic_checkout_of_todo_task() {
   assert_task_status "TODO before checkout" "$task_id" "TODO"
 
   output="" exit_code=0
-  output=$(checkout_task "$task_id") || exit_code=$?
+  output=$(run_tt task checkout "$task_id" 2>&1) || exit_code=$?
   assert_success "checkout succeeds" "$exit_code"
   assert_task_status "IN-PROGRESS after checkout" "$task_id" "IN-PROGRESS"
   assert_current_task "WC on task branch" "$task_id"
   assert_wc_clean "WC clean after checkout"
+  assert_commit_message_first_line "checkout commit message" "$task_id" \
+    "[tt:task:${task_id}:checkout] My Task"
+  assert_eq "checkout commit changes only the task file" \
+    "$(get_modified_files "$task_id")" ".tt/task/${task_id#*/}/TASK.md"
+  assert_not_contains "checkout does not report a symlink write" "$output" "Created TASK.md"
+}
+
+
+test_task_checkout__first_checkout_changes_only_the_status() {
+  setup_workspace "checkout-status-only"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task" "Body text") || true
+  local task_file=".tt/task/${task_id#*/}/TASK.md"
+  local before
+  before="$(read_file_at_rev "$task_id" "$task_file")"
+
+  checkout_task "$task_id" >/dev/null || true
+  assert_eq "task file differs only in its status" \
+    "$(read_file_at_rev "$task_id" "$task_file")" \
+    "${before/status: TODO/status: IN-PROGRESS}"
 }
 
 
@@ -43,8 +64,11 @@ test_task_checkout__dirty_wc_rejected() {
 
   edit_file "dirty.txt" "dirty"
   output="" exit_code=0
-  output=$(checkout_task "$task_id" 2>&1) || exit_code=$?
+  output=$(run_tt task checkout "$task_id" 2>&1) || exit_code=$?
   assert_failure "dirty WC rejected" "$exit_code"
+  assert_contains "error names the precondition" "$output" \
+    "Working copy has uncommitted changes"
+  assert_task_status "task untouched" "$task_id" "TODO"
 }
 
 
@@ -58,6 +82,56 @@ test_task_checkout__dirty_wc_with_force() {
   output="" exit_code=0
   output=$(run_tt task checkout "$task_id" --force 2>&1) || exit_code=$?
   assert_success "checkout --force succeeds" "$exit_code"
+  assert_contains "warns that --force overrode the precondition" "$output" \
+    "proceeding due to --force"
+  assert_task_status "task checked out" "$task_id" "IN-PROGRESS"
+  assert_file_not_on_branch "dirty file kept out of the checkout commit" "$task_id" "dirty.txt"
+  assert_eq "checkout commit changes only the task file" \
+    "$(get_modified_files "$task_id")" ".tt/task/${task_id#*/}/TASK.md"
+  assert_current_task "WC on task branch" "$task_id"
+}
+
+
+test_task_checkout__dirty_wc_on_the_task_with_force() {
+  setup_workspace "checkout-dirty-on-task-force"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+
+  # Park the working copy on the never-checked-out task itself, which it
+  # already records through the fork commit, then leave edits uncommitted.
+  jj -R "$REPO" new "$task_id" >/dev/null 2>&1
+  edit_file "dirty.txt" "dirty"
+  output="" exit_code=0
+  output=$(run_tt task checkout "$task_id" --force 2>&1) || exit_code=$?
+  assert_success "checkout --force succeeds" "$exit_code"
+  assert_task_status "task checked out" "$task_id" "IN-PROGRESS"
+  assert_file_not_on_branch "dirty file kept out of the checkout commit" "$task_id" "dirty.txt"
+  assert_eq "checkout commit changes only the task file" \
+    "$(get_modified_files "$task_id")" ".tt/task/${task_id#*/}/TASK.md"
+  assert_current_task "WC on task branch" "$task_id"
+}
+
+
+test_task_checkout__refuses_bookmark_on_working_copy() {
+  setup_workspace "checkout-bm-refusal"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+
+  # The checkout transaction snapshots the invoking worktree's working copy; a
+  # bookmark sitting on that commit would absorb whatever is uncommitted
+  # there, so any bookmark on @ is refused — including one that has nothing to
+  # do with either branch involved.
+  jj -R "$REPO" bookmark set unrelated -r '@' >/dev/null 2>&1
+
+  output="" exit_code=0
+  output=$(run_tt task checkout "$task_id" 2>&1) || exit_code=$?
+  assert_failure "bookmark on @ refused" "$exit_code"
+  assert_contains "error explains the refusal" "$output" "tip of bookmark"
+  assert_contains "error names the bookmark" "$output" "unrelated"
+  assert_task_status "task untouched" "$task_id" "TODO"
+  assert_no_pending_transaction "no transaction opened by a refusal"
 }
 
 
@@ -162,6 +236,46 @@ test_task_checkout__worktree_same_path_succeeds() {
   output="" exit_code=0
   output=$(run_tt task checkout "$task_id" --worktree="$worktree_path" 2>&1) || exit_code=$?
   assert_success "same path succeeds" "$exit_code"
+}
+
+
+test_task_checkout__worktree_does_not_reuse_the_canonical_repository() {
+  setup_workspace "co-worktree-not-canonical"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+  checkout_task "$task_id" >/dev/null || true
+  assert_current_task "the canonical repository holds the task" "$task_id"
+
+  local stdout_output exit_code=0
+  stdout_output=$(run_tt task checkout "$task_id" --worktree 2>/dev/null) || exit_code=$?
+  assert_success "checkout --worktree succeeds" "$exit_code"
+  assert_neq "the canonical repository is not reused" "$stdout_output" "$REPO"
+  local expected_path
+  expected_path="$(realpath "$VIRTUAL/$task_id" 2>/dev/null)" || expected_path="$VIRTUAL/$task_id"
+  assert_eq "a worktree is created at the conventional path" \
+    "$stdout_output" "$expected_path"
+  assert_eq "the worktree is registered under the task's name" \
+    "$(get_workspace_name "$expected_path")" "$task_id"
+}
+
+
+test_task_checkout__explicit_worktree_path_ignores_the_canonical_repository() {
+  setup_workspace "co-worktree-path-not-canonical"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "mytask" "My Task") || true
+  checkout_task "$task_id" >/dev/null || true
+  assert_current_task "the canonical repository holds the task" "$task_id"
+
+  local worktree_path="$VIRTUAL/custom-worktree"
+  local stdout_output exit_code=0
+  stdout_output=$(run_tt task checkout "$task_id" --worktree="$worktree_path" 2>/dev/null) \
+    || exit_code=$?
+  assert_success "checkout into an explicit path is not refused" "$exit_code"
+  assert_eq "the task is checked out at the explicit path" \
+    "$(realpath "$stdout_output")" "$(realpath "$worktree_path")"
+  assert_current_task "the explicit path holds the task" "$task_id" "$worktree_path"
 }
 
 
@@ -351,6 +465,14 @@ test_task_checkout__reopens_completed_task() {
   assert_neq "task bookmark advanced" "$(get_bookmark_commit "$task_id")" "$bm_before"
   assert_commit_message_first_line "reopen commit message" "$task_id" \
     "[tt:task:${task_id}:checkout] My Task"
+  local task_file=".tt/task/${task_id#*/}/TASK.md"
+  assert_eq "reopen commit changes only the task file" \
+    "$(get_modified_files "$task_id")" "$task_file"
+  local before
+  before="$(read_file_at_rev "$bm_before" "$task_file")"
+  assert_eq "reopen changes only the status" \
+    "$(read_file_at_rev "$task_id" "$task_file")" \
+    "${before/status: DONE/status: IN-PROGRESS}"
   assert_current_task "WC on task branch" "$task_id"
   assert_wc_clean "WC clean after reopen"
 }
@@ -470,5 +592,28 @@ test_task_checkout__help() {
   assert_required_usage_argument "argument: --repo" "$output" "--repo"
 }
 
+
+test_task_checkout__refuses_when_the_canonical_workspace_is_stale() {
+  setup_workspace "checkout-stale-canonical"
+  setup_stale_canonical "checkedout"
+
+  assert_refuses_stale_canonical "$STALE_WORKTREE" \
+    task checkout "$STALE_PROJ_ID"
+}
+
+test_task_checkout__refuses_a_stale_target_worktree() {
+  setup_workspace "checkout-stale-target"
+  setup_guard_fixture "targeted"
+  make_worktree_stale "$STALE_WORKTREE"
+
+  # Invoked from the canonical workspace, which is healthy: the refusal can
+  # only come from the existing target worktree.
+  local out exit_code=0
+  out=$(run_tt task checkout "$STALE_TASK_ID" --worktree 2>&1) || exit_code=$?
+  assert_failure "a stale target worktree is refused" "$exit_code"
+  assert_contains "the refusal names the target worktree" "$out" \
+    "Error: The workspace is stale: $STALE_WORKTREE"
+  assert_contains "the refusal names the recovery command" "$out" "tt worktree refresh"
+}
 
 run_tests "tt task checkout"
