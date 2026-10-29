@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # tt worktree sync — bring a worktree forward onto the head of its own branch.
 #
 # Usage:
-#   sync [<worktree-path>] [--all] [--repo PATH]
+#   sync [<worktree-path>] [--all] [--force] [--repo PATH]
 #
 # A write to a branch advances its bookmark without touching any working copy
 # other than the invoking one, so worktrees checked out on that branch are left
@@ -24,18 +24,21 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #   <worktree-path>      Worktree to synchronize (default: the one containing the CWD)
 #   --all                Synchronize every out-of-sync worktree in the repository
 #                        (plus the canonical repository when run from it)
+#   --force              Synchronize even when uncommitted changes touch task metadata
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD).
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<worktree-path>] [--all] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<worktree-path>] [--all] [--force] [--repo PATH]
 
 Bring a worktree up to date with advances to its branch head that were applied
 by operations in other worktrees.
 
-Any uncommitted work is rebased onto the updated branch head.
+Any uncommitted work is rebased onto the updated branch head. Refuses while
+uncommitted changes in a target worktree touch task metadata (.tt/task/ or the
+TASK.md symlink), since tt's own rewrites of those files can conflict with them.
 
 Arguments:
   [<worktree-path>]  Worktree to synchronize (optional; defaults to the worktree
@@ -47,6 +50,8 @@ Options:
                         continuing past failures and exiting non-zero if any
                         worktree could not be synchronized. Cannot be combined
                         with <worktree-path>.
+  --force               Synchronize even when uncommitted changes touch task
+                        metadata; conflicts are left in the working copy.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
@@ -125,12 +130,17 @@ sync_one() {
 main() {
   local worktree_path=''
   local all=false
+  local force=false
   local repo=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --all)
         all=true
+        shift
+        ;;
+      --force)
+        force=true
         shift
         ;;
       --repo)
@@ -225,6 +235,21 @@ main() {
   if [[ "$stale_targets" -gt 0 ]]; then
     _ui__log "Error: $stale_targets of ${#targets[@]} worktrees are stale; nothing was synchronized."
     exit 1
+  fi
+
+  # The move replays each target's uncommitted changes onto the branch head,
+  # so hand edits to task metadata could conflict with tt's own rewrites of
+  # the same files. Screened all-or-nothing for the same reason as staleness.
+  if [[ "$force" != true ]]; then
+    local modified_targets=0
+    for screened in "${targets[@]}"; do
+      _worktree__ensure_metadata_unmodified "$screened" "or use --force" \
+        || modified_targets=$((modified_targets + 1))
+    done
+    if [[ "$modified_targets" -gt 0 ]]; then
+      _ui__log "Error: $modified_targets of ${#targets[@]} worktrees have uncommitted changes to task metadata; nothing was synchronized."
+      exit 1
+    fi
   fi
 
   _history__begin_transaction "$repo"

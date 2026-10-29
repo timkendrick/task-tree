@@ -87,13 +87,20 @@ main() {
     task_file="$(_path__task_file "$suffix")"
   fi
 
-  # Precondition: the working-copy commit must not carry a bookmark
-  _worktree__ensure_working_copy "$repo" || exit 1
-  _worktree__ensure_canonical_current "$repo" || exit 1
-
   # Resolve the current worktree (where the user is running from); hooks run here
   local current_worktree
   current_worktree="$(_worktree__resolve_current "$repo")"
+
+  # Precondition: the working-copy commit must not carry a bookmark
+  _worktree__ensure_working_copy "$repo" || exit 1
+  _worktree__ensure_canonical_current "$repo" || exit 1
+  if [[ "$force" != true ]]; then
+    _worktree__ensure_metadata_unmodified "$current_worktree" "or use --force" || exit 1
+  fi
+  if [[ -z "$task_id_arg" ]]; then
+    _worktree__ensure_no_uncheckpointed_commits "$current_worktree" "$bookmark" \
+      "or pass the task ID explicitly to skip this check" || exit 1
+  fi
 
   # Read task metadata from bookmark
   local task_fields task_title task_status subtask_count subtask subtasks=() i
