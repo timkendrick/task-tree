@@ -234,4 +234,54 @@ test_task_complete__ancestor_write_leaves_the_worktree_on_its_task() {
     "$wt_parent_before"
 }
 
+
+# ---------------------------------------------------------------------------
+# Working-copy guards
+# ---------------------------------------------------------------------------
+
+test_task_complete__refuses_uncheckpointed_commits_for_the_current_task() {
+  setup_workspace "complete-guard-uncp"
+  setup_working_copy_guard_fixture
+  commit_uncheckpointed_work
+
+  assert_refuses_without_writing "implicit task" \
+    "has commits after the task bookmark '$GUARD_TASK_ID'" \
+    task complete
+  assert_refuses_without_writing "--force does not skip the check" \
+    "has commits after the task bookmark '$GUARD_TASK_ID'" \
+    task complete --force
+}
+
+test_task_complete__explicit_task_id_skips_the_uncheckpointed_commits_check() {
+  setup_workspace "complete-guard-uncp-explicit"
+  setup_working_copy_guard_fixture
+  commit_uncheckpointed_work
+
+  local exit_code=0
+  run_tt task complete "$GUARD_TASK_ID" >/dev/null 2>&1 || exit_code=$?
+  assert_success "explicit task ID proceeds" "$exit_code"
+  assert_task_status "task completed" "$GUARD_TASK_ID" "DONE"
+}
+
+test_task_complete__refuses_uncommitted_task_metadata_edits() {
+  setup_workspace "complete-guard-meta"
+  setup_working_copy_guard_fixture
+  edit_task_file "$GUARD_TASK_ID"
+
+  assert_refuses_without_writing "task file edited by hand" \
+    "has uncommitted changes to task metadata" \
+    task complete "$GUARD_TASK_ID"
+}
+
+test_task_complete__force_skips_the_task_metadata_check() {
+  setup_workspace "complete-guard-meta-force"
+  setup_working_copy_guard_fixture
+  edit_task_file "$GUARD_TASK_ID"
+
+  local exit_code=0
+  run_tt task complete --force >/dev/null 2>&1 || exit_code=$?
+  assert_success "--force proceeds" "$exit_code"
+  assert_task_status "task completed" "$GUARD_TASK_ID" "DONE"
+}
+
 run_tests "tt task complete"

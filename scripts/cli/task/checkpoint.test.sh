@@ -235,4 +235,32 @@ test_task_checkpoint__refuses_when_the_canonical_workspace_is_stale() {
     task checkpoint -m "should not be recorded"
 }
 
+
+# ---------------------------------------------------------------------------
+# Working-copy guards
+# ---------------------------------------------------------------------------
+
+test_task_checkpoint__refuses_uncommitted_task_metadata_edits() {
+  setup_workspace "checkpoint-guard-meta"
+  setup_working_copy_guard_fixture
+  edit_task_file "$GUARD_TASK_ID"
+  edit_file "$REPO/src.txt" "project work"
+
+  assert_refuses_without_writing "task file edited by hand" \
+    "has uncommitted changes to task metadata" \
+    task checkpoint -m "work"
+  assert_file_exists "the uncommitted work is kept" "$REPO/src.txt"
+}
+
+test_task_checkpoint__records_configuration_edits() {
+  setup_workspace "checkpoint-guard-config"
+  setup_working_copy_guard_fixture
+  append_file "$REPO/.tt/config.toml" "# tweak"
+
+  local exit_code=0
+  run_tt task checkpoint -m "Tweak config" >/dev/null 2>&1 || exit_code=$?
+  assert_success "configuration edits are not task metadata" "$exit_code"
+  assert_wc_clean "the edit was recorded"
+}
+
 run_tests "tt task checkpoint"
