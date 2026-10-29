@@ -60,6 +60,24 @@ test__path__metadata_exclusions__record_format() {
 }
 
 # ---------------------------------------------------------------------------
+# _path__check_is_task_metadata
+# ---------------------------------------------------------------------------
+
+test__path__check_is_task_metadata__classifies_paths() {
+  local path exit_code
+  for path in TASK.md .tt/task/foo-1234abcd/TASK.md .tt/task/foo-1234abcd/context/ctx-5678abcd.md; do
+    exit_code=0
+    _path__check_is_task_metadata "$path" || exit_code=$?
+    assert_success "'$path' is task metadata" "$exit_code"
+  done
+  for path in .tt/config.toml .tt/hooks/setup .tt/.gitignore README.md docs/TASK.md .tt/taskfile .tt/task; do
+    exit_code=0
+    _path__check_is_task_metadata "$path" || exit_code=$?
+    assert_failure "'$path' is not task metadata" "$exit_code"
+  done
+}
+
+# ---------------------------------------------------------------------------
 # _path__resolve_symlinks
 # ---------------------------------------------------------------------------
 

@@ -1184,6 +1184,36 @@ test__jj__check_working_copy_clean__dirty_working_copy() {
 }
 
 # ---------------------------------------------------------------------------
+# _jj__list_working_copy_changes
+# ---------------------------------------------------------------------------
+
+test__jj__list_working_copy_changes__clean_working_copy() {
+  setup_workspace
+  local out exit_code=0
+  out="$(_jj__list_working_copy_changes "$REPO")" || exit_code=$?
+  assert_success "listing succeeds" "$exit_code"
+  assert_output_empty "nothing listed for a clean working copy" "$out"
+}
+
+test__jj__list_working_copy_changes__lists_pending_edits() {
+  setup_workspace
+  edit_file "$REPO/README.md" "modified"
+  edit_file "$REPO/sub/new.txt" "added"
+  local out
+  out="$(_jj__list_working_copy_changes "$REPO")"
+  assert_eq "modified and unseen files listed, root-relative" "$out" \
+    "$(printf 'README.md\nsub/new.txt')"
+}
+
+test__jj__list_working_copy_changes__root_relative_from_a_subdirectory() {
+  setup_workspace
+  edit_file "$REPO/sub/new.txt" "added"
+  local out
+  out="$(cd "$REPO/sub" && _jj__list_working_copy_changes "$REPO")"
+  assert_eq "path is relative to the worktree root" "$out" "sub/new.txt"
+}
+
+# ---------------------------------------------------------------------------
 # Mutations (bare): _jj__commit_changeset
 # ---------------------------------------------------------------------------
 
