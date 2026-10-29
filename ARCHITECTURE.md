@@ -267,6 +267,7 @@ These take a **worktree root** and execute with the process working directory in
 | Operation | Purpose |
 | --- | --- |
 | `check_working_copy_clean` | Whether the working copy has pending changes |
+| `list_working_copy_changes` | Files the working copy changes relative to its parent |
 | `get_worktree_checkout_revision` | Commit ID a worktree's on-disk files were last updated to |
 | `get_working_copy_revision` | Change ID of the working-copy commit |
 | `get_working_copy_parent` | Commit ID of its parent |
