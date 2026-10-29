@@ -181,6 +181,22 @@ append_file() {
   printf '%s\n' "$content" >> "$path"
 }
 
+# Hand-edit a task's TASK.md in a working copy, leaving the change uncommitted.
+# Usage: edit_task_file TASK_ID [WORKTREE]
+edit_task_file() {
+  local task_id="$1" worktree="${2:-$REPO}"
+  append_file "$worktree/.tt/task/${task_id#*/}/TASK.md" "Hand-written note"
+}
+
+# Commit a change in a working copy with a plain VCS commit, leaving it past
+# the task bookmark (not checkpointed).
+# Usage: commit_uncheckpointed_work [WORKTREE]
+commit_uncheckpointed_work() {
+  local worktree="${1:-$REPO}"
+  edit_file "$worktree/uncheckpointed.txt" "work"
+  jj -R "$worktree" commit -m "Uncheckpointed work" >/dev/null 2>&1
+}
+
 # ---------------------------------------------------------------------------
 # Workflow Convenience Helpers
 # ---------------------------------------------------------------------------
