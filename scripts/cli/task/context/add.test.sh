@@ -245,4 +245,42 @@ test_task_context_add__ancestor_write_leaves_the_worktree_on_its_task() {
     "$wt_parent_before"
 }
 
+
+# ---------------------------------------------------------------------------
+# Working-copy guards
+# ---------------------------------------------------------------------------
+
+test_context_add__refuses_uncheckpointed_commits_for_the_current_task() {
+  setup_workspace "ctxadd-guard-uncp"
+  setup_working_copy_guard_fixture
+  commit_uncheckpointed_work
+
+  assert_refuses_without_writing "implicit task" \
+    "has commits after the task bookmark '$GUARD_TASK_ID'" \
+    task context add --title "Notes"
+}
+
+test_context_add__explicit_task_id_skips_the_uncheckpointed_commits_check() {
+  setup_workspace "ctxadd-guard-uncp-explicit"
+  setup_working_copy_guard_fixture
+  commit_uncheckpointed_work
+
+  local output exit_code=0
+  output=$(run_tt task context add "$GUARD_TASK_ID" --title "Notes" --slug "notes" <<< "Body" 2>&1) \
+    || exit_code=$?
+  assert_success "explicit task ID proceeds" "$exit_code"
+  assert_context_entry "context added" "$GUARD_TASK_ID" \
+    "$(printf '%s' "$output" | grep '^context/' | tail -1)"
+}
+
+test_context_add__refuses_uncommitted_task_metadata_edits() {
+  setup_workspace "ctxadd-guard-meta"
+  setup_working_copy_guard_fixture
+  edit_task_file "$GUARD_TASK_ID"
+
+  assert_refuses_without_writing "task file edited by hand" \
+    "has uncommitted changes to task metadata" \
+    task context add "$GUARD_TASK_ID" --title "Notes"
+}
+
 run_tests "tt task context add"

@@ -268,4 +268,51 @@ test_task_edit__ancestor_write_leaves_the_worktree_on_its_task() {
     "$wt_parent_before"
 }
 
+
+# ---------------------------------------------------------------------------
+# Working-copy guards
+# ---------------------------------------------------------------------------
+
+test_task_edit__refuses_uncheckpointed_commits_for_the_current_task() {
+  setup_workspace "edit-guard-uncp"
+  setup_working_copy_guard_fixture
+  commit_uncheckpointed_work
+
+  assert_refuses_without_writing "implicit task" \
+    "has commits after the task bookmark '$GUARD_TASK_ID'" \
+    task edit --title "Renamed"
+}
+
+test_task_edit__explicit_task_id_skips_the_uncheckpointed_commits_check() {
+  setup_workspace "edit-guard-uncp-explicit"
+  setup_working_copy_guard_fixture
+  commit_uncheckpointed_work
+
+  local exit_code=0
+  run_tt task edit "$GUARD_TASK_ID" --title "Renamed" <<< "" >/dev/null 2>&1 || exit_code=$?
+  assert_success "explicit task ID proceeds" "$exit_code"
+  assert_task_title "title updated" "$GUARD_TASK_ID" "Renamed"
+}
+
+test_task_edit__refuses_uncommitted_task_metadata_edits() {
+  setup_workspace "edit-guard-meta"
+  setup_working_copy_guard_fixture
+  edit_task_file "$GUARD_TASK_ID"
+
+  assert_refuses_without_writing "task file edited by hand" \
+    "has uncommitted changes to task metadata" \
+    task edit "$GUARD_TASK_ID" --title "Renamed"
+}
+
+test_task_edit__accepts_uncommitted_edits_outside_task_metadata() {
+  setup_workspace "edit-guard-unrelated"
+  setup_working_copy_guard_fixture
+  edit_file "$REPO/src.txt" "project work"
+
+  local exit_code=0
+  run_tt task edit --title "Renamed" <<< "" >/dev/null 2>&1 || exit_code=$?
+  assert_success "unrelated uncommitted edits are allowed" "$exit_code"
+  assert_file_exists "the edit is kept" "$REPO/src.txt"
+}
+
 run_tests "tt task edit"

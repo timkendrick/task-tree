@@ -76,6 +76,7 @@
 #     _jj__sort_commits_by_ancestry  — order commit IDs oldest first within a region
 #   Working copy (restricted):
 #     _jj__check_working_copy_clean  — whether the working copy has pending changes
+#     _jj__list_working_copy_changes — files the working copy changes relative to @-
 #     _jj__get_worktree_checkout_revision — commit a worktree's files were updated to
 #     _jj__get_working_copy_revision — change ID of @
 #     _jj__get_working_copy_parent   — commit ID of @-
@@ -747,6 +748,17 @@ _jj__check_working_copy_clean() {
   local result
   result="$(__jj__read "$worktree" log -r '@' --no-graph -T 'empty')" || return 1
   [[ "$result" == "true" ]]
+}
+
+# Usage: _jj__list_working_copy_changes WORKTREE
+# Prints the worktree-root-relative paths of the files the working copy at
+# WORKTREE changes relative to its parent (added, modified or deleted), one per
+# line. Pending on-disk edits are snapshotted first, so files the backend has
+# not yet seen are included. Returns jj's exit code.
+_jj__list_working_copy_changes() {
+  local worktree="$1"
+  # Diff from inside the worktree ($PWD) to ensure printed file paths are relative to its root
+  ( cd "$worktree" && __jj__read "$PWD" diff -r '@' --name-only )
 }
 
 # Usage: _jj__get_working_copy_revision WORKTREE

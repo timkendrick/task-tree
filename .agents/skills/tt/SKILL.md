@@ -46,15 +46,35 @@ Two rules govern how `tt` treats the working copy. Both are worth knowing before
 
 **Commands that write to a branch do not move the working copy.** They build the commit on the branch directly, leaving `@` exactly where it was and never absorbing uncommitted changes into what they commit. Only `tt task checkout`, `tt task checkpoint`, `tt workspace init`, `tt worktree sync` and `tt history undo` move a working copy at all. (`tt worktree switch` moves no working copy either — it only redirects the `HEAD` symlink.)
 
-A dirty working copy is therefore fine for most commands, including `tt task edit`, `tt task create`, `tt task complete`, `tt task delete`, `tt task reorder`, `tt task publish`, `tt task propagate`, `tt worktree switch` and the context commands. These still require a clean one:
+A dirty working copy is therefore fine for most commands, including `tt task edit`, `tt task create`, `tt task complete`, `tt task delete`, `tt task reorder`, `tt worktree switch` and the context commands. These still require a clean one:
 
 | Command | Condition |
 |---|---|
 | `tt task checkin` | Only when called without an explicit task ID |
+| `tt task publish`, `tt task propagate` | Only when called without an explicit project ID / `--from`, and unless `--force` |
 | `tt task move`, `tt task rename` | Always |
 | `tt task checkout` | Unless `--force`, or when creating a new worktree |
 | `tt worktree delete`, `tt history undo` | Unless `--force` |
 | `tt workspace init` | Always |
+
+**Never hand-edit task metadata.** `tt` alone writes the files under `.tt/task/` and the root `TASK.md` symlink. Every branch-writing command, `tt task checkpoint` included, refuses while uncommitted changes touch them:
+
+```
+Error: Worktree '<path>' has uncommitted changes to task metadata:
+  .tt/task/<slug>-<hex>/TASK.md
+  Discard these changes first, or use --force.
+```
+
+Use `tt task edit` and the context commands instead, and discard the hand edits (`jj restore .tt/task TASK.md`). `--force` bypasses the refusal where a command has it, but it can leave conflict markers in the working copy. `.tt/config.toml` and `.tt/hooks/` are not task metadata and may be edited freely.
+
+**Checkpoint before running commands on the current task.** Commits made with plain `jj commit` are not on the task branch until `tt task checkpoint` records them. Commands that default to the current task (`edit`, `complete`, `delete`, `context add`, `context delete`, `create` without `--parent`, `reorder` without a task ID or modifier, `propagate` without `--from`, `publish` and `checkin` without an ID) refuse while such commits exist:
+
+```
+Error: Worktree '<path>' has commits after the task bookmark '<task-id>'.
+  Checkpoint or discard these commits first, or pass the task ID explicitly to skip this check.
+```
+
+Run `tt task checkpoint` first. Passing the task ID explicitly skips the check, and the command then acts on the branch as it stands, without those commits. `--force` does not skip it.
 
 The corollary: a worktree sitting on a branch that some other command advanced is left on the old tip. It is usable, just **behind**. Commands report this by name after a write:
 
@@ -274,9 +294,9 @@ Redirect the virtual project's HEAD symlink to an existing worktree. The worktre
 
 #### `tt worktree sync`  (alias: `tt sync`)
 ```
-tt worktree sync [<worktree-path>] [--all]
+tt worktree sync [<worktree-path>] [--all] [--force]
 ```
-Bring a worktree forward onto the head of the branch it is checked out on, updating its files to match. Use it when a command reports that worktrees are out of sync: a branch write advances the bookmark without moving any working copy but the invoking one. Uncommitted changes in the target worktree are preserved. Defaults to the worktree containing the current directory; `--all` synchronizes every out-of-sync worktree in the repository, plus the canonical repository when run from it. Reports the files added, modified and removed. Fires no hooks — the checked-out task does not change.
+Bring a worktree forward onto the head of the branch it is checked out on, updating its files to match. Use it when a command reports that worktrees are out of sync: a branch write advances the bookmark without moving any working copy but the invoking one. Uncommitted changes in the target worktree are preserved. Defaults to the worktree containing the current directory; `--all` synchronizes every out-of-sync worktree in the repository, plus the canonical repository when run from it. Reports the files added, modified and removed. Fires no hooks — the checked-out task does not change. Refuses a worktree whose uncommitted changes touch task metadata unless `--force`; with `--all` that worktree is skipped and the rest are synchronized.
 
 #### `tt worktree refresh`  (alias: `tt refresh`)
 ```

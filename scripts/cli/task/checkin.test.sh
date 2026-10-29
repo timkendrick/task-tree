@@ -1144,4 +1144,59 @@ test_task_checkin__delete_refuses_a_stale_child_worktree() {
   assert_eq "nothing was written" "$(get_jj_op_bare)" "$before_op"
 }
 
+
+# ---------------------------------------------------------------------------
+# Working-copy guards
+# ---------------------------------------------------------------------------
+
+test_task_checkin__refuses_uncheckpointed_commits_for_the_current_task() {
+  setup_workspace "ci-guard-uncp"
+  setup_working_copy_guard_fixture
+  commit_uncheckpointed_work
+
+  assert_refuses_without_writing "implicit task" \
+    "or pass the task ID explicitly to skip this check" \
+    task checkin --context ""
+}
+
+test_task_checkin__explicit_task_id_skips_the_uncheckpointed_commits_check() {
+  setup_workspace "ci-guard-uncp-explicit"
+  setup_working_copy_guard_fixture
+  commit_uncheckpointed_work
+
+  local exit_code=0
+  run_tt task checkin "$GUARD_TASK_ID" --context "" >/dev/null 2>&1 || exit_code=$?
+  assert_success "explicit task ID proceeds" "$exit_code"
+}
+
+test_task_checkin__refuses_uncommitted_changes_for_the_current_task() {
+  setup_workspace "ci-guard-dirty"
+  setup_working_copy_guard_fixture
+  edit_file "$REPO/src.txt" "project work"
+
+  assert_refuses_without_writing "implicit task" \
+    "Worktree '$REPO' has uncommitted changes." \
+    task checkin --context ""
+}
+
+test_task_checkin__refuses_uncommitted_task_metadata_edits() {
+  setup_workspace "ci-guard-meta"
+  setup_working_copy_guard_fixture
+  edit_task_file "$GUARD_TASK_ID"
+
+  assert_refuses_without_writing "task file edited by hand" \
+    "has uncommitted changes to task metadata" \
+    task checkin "$GUARD_TASK_ID" --context ""
+}
+
+test_task_checkin__force_skips_the_task_metadata_check() {
+  setup_workspace "ci-guard-meta-force"
+  setup_working_copy_guard_fixture
+  edit_task_file "$GUARD_TASK_ID"
+
+  local exit_code=0
+  run_tt task checkin "$GUARD_TASK_ID" --context "" --force >/dev/null 2>&1 || exit_code=$?
+  assert_success "--force proceeds" "$exit_code"
+}
+
 run_tests "tt task checkin"

@@ -16,7 +16,8 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #
 # Options:
 #   <task-id>            Task to delete (default: current branch).
-#   --force              Skip DONE status check.
+#   --force              Skip the DONE status check and the check for uncommitted
+#                        changes to task metadata.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -31,7 +32,8 @@ Arguments:
   <task-id>             Task to delete (default: current branch).
 
 Options:
-  --force               Skip DONE status check.
+  --force               Skip the DONE status check and the check for uncommitted
+                        changes to task metadata.
   --repo PATH           Repository root (overrides TT_REPO; default: find .jj).
   -h, --help            Show this help.
 
@@ -232,6 +234,13 @@ main() {
   # Precondition: the working-copy commit must not carry a bookmark
   _worktree__ensure_working_copy "$repo" || exit 1
   _worktree__ensure_canonical_current "$repo" || exit 1
+  if [[ "$force" != true ]]; then
+    _worktree__ensure_metadata_unmodified "$current_worktree" "or use --force" || exit 1
+  fi
+  if [[ -z "$task_id_arg" ]]; then
+    _worktree__ensure_no_uncheckpointed_commits "$current_worktree" "$task_id" \
+      "or pass the task ID explicitly to skip this check" || exit 1
+  fi
 
   # Begin transaction (records before-op for undo)
   _history__begin_transaction "$repo"

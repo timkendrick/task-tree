@@ -36,8 +36,6 @@
 #   _task__list_files                — files recorded at a revision, under a prefix
 #   _task__format_range              — render a revision range in a named format
 #   _task__show_diff                 — Git-format diff of a range, minus exclusions
-#   _task__assert_bookmark_current   — exit unless the bookmark tracks all commits up to @-
-#   _task__check_bookmark_current    — test whether the bookmark tracks all commits up to @-
 #   _task__find_parent_branch        — parent branch listing a task as a subtask
 #   _task__find_parent_project       — nearest ancestor project branch
 #   _task__find_branch               — canonical branch for a task ("where to read" rule)
@@ -475,36 +473,6 @@ _task__show_diff() {
   local repo="$1" from="$2" to="$3"
   shift 3
   _repo__show_diff "$repo" "$from" "$to" "$@"
-}
-
-# Usage: _task__assert_bookmark_current REPO BOOKMARK
-# Exits 1 if there are any commits between BOOKMARK and the working-copy parent
-# (@-) that are not tracked by the bookmark. Used by commands that operate on
-# the implicit current branch to ensure all work has been checkpointed.
-#
-# Skip this check when the user passes an explicit task-id, as that constitutes
-# an intentional acknowledgement that the bookmark may be behind.
-_task__assert_bookmark_current() {
-  local repo="$1" bookmark="$2"
-  if ! _task__check_bookmark_current "$repo" "$bookmark"; then
-    _ui__log "Error: There are commits since the last checkpoint that are not tracked by the task bookmark."
-    _ui__log "  Run 'tt task checkpoint' to record them before checking in."
-    _ui__log "  Alternatively, pass the task ID explicitly to skip this check:"
-    _ui__log "    tt task checkin ${bookmark}"
-    exit 1
-  fi
-}
-
-# Usage: _task__check_bookmark_current REPO BOOKMARK
-# Returns 0 if there are no commits between BOOKMARK and the working-copy parent
-# (@-) that are not tracked by the bookmark. Returns 1 if commits exist.
-# A range that cannot be resolved counts as zero commits, so resolution
-# failures are treated as "current".
-_task__check_bookmark_current() {
-  local repo="$1" bookmark="$2"
-  local ahead_count
-  ahead_count="$(_repo__count_commits_in_range "$repo" "$bookmark" '@-')"
-  [[ "$ahead_count" -eq 0 ]]
 }
 
 # Usage: __task__list_subtasks REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
