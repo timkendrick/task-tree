@@ -434,4 +434,72 @@ test_worktree_sync__all_ignores_a_stale_worktree_that_is_not_behind() {
   assert_contains "the behind worktree was synced" "$out" "Synced $wt_ok"
 }
 
+
+# ---------------------------------------------------------------------------
+# Task-metadata guard
+# ---------------------------------------------------------------------------
+
+test_worktree_sync__refuses_uncommitted_task_metadata_edits() {
+  setup_workspace "sync-guard-meta"
+  local proj_id task_id wt
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null 2>&1 || true
+  task_id=$(create_task "my-task" "My Task") || true
+  wt=$(create_task_worktree "$task_id")
+  edit_task_file "$task_id" "$wt"
+  advance_branch "$task_id" "notes"
+  local parent_before
+  parent_before="$(worktree_parent "$wt")"
+
+  local out exit_code=0
+  out=$(run_tt worktree sync "$wt" 2>&1) || exit_code=$?
+  assert_failure "sync refuses" "$exit_code"
+  assert_contains "names the cause" "$out" "has uncommitted changes to task metadata"
+  assert_contains "offers --force" "$out" "or use --force"
+  assert_eq "the worktree has not moved" "$(worktree_parent "$wt")" "$parent_before"
+}
+
+test_worktree_sync__force_skips_the_task_metadata_check() {
+  setup_workspace "sync-guard-meta-force"
+  local proj_id task_id wt
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null 2>&1 || true
+  task_id=$(create_task "my-task" "My Task") || true
+  wt=$(create_task_worktree "$task_id")
+  edit_task_file "$task_id" "$wt"
+  advance_branch "$task_id" "notes"
+
+  local exit_code=0
+  run_tt worktree sync "$wt" --force >/dev/null 2>&1 || exit_code=$?
+  assert_success "--force proceeds" "$exit_code"
+  assert_eq "worktree now sits on the branch head" \
+    "$(worktree_parent "$wt")" "$(get_full_commit_id "$task_id")"
+  assert_contains "the hand edit is kept" "$(cat "$(task_dir "$wt" "$task_id")/TASK.md")" \
+    "Hand-written note"
+}
+
+test_worktree_sync__all_skips_worktrees_with_task_metadata_edits() {
+  setup_workspace "sync-guard-meta-all"
+  local proj_id task_a task_b wt_a wt_b
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null 2>&1 || true
+  task_a=$(create_task "task-a" "Task A") || true
+  wt_a=$(create_task_worktree "$task_a")
+  task_b=$(create_task "task-b" "Task B") || true
+  wt_b=$(create_task_worktree "$task_b")
+  edit_task_file "$task_a" "$wt_a"
+  advance_branch "$task_a" "notes-a"
+  advance_branch "$task_b" "notes-b"
+  local parent_a_before
+  parent_a_before="$(worktree_parent "$wt_a")"
+
+  local out exit_code=0
+  out=$(run_tt worktree sync --all 2>&1) || exit_code=$?
+  assert_failure "--all exits non-zero" "$exit_code"
+  assert_contains "names the refused worktree" "$out" "Worktree '$wt_a' has uncommitted changes to task metadata"
+  assert_eq "the refused worktree has not moved" "$(worktree_parent "$wt_a")" "$parent_a_before"
+  assert_eq "the other worktree was synced" \
+    "$(worktree_parent "$wt_b")" "$(get_full_commit_id "$task_b")"
+}
+
 run_tests "tt worktree sync"

@@ -262,4 +262,50 @@ test_task_context_delete__ancestor_write_leaves_the_worktree_on_its_task() {
     "$wt_parent_before"
 }
 
+
+# ---------------------------------------------------------------------------
+# Working-copy guards
+# ---------------------------------------------------------------------------
+
+# Adds a context file to the guarded task. Sets GUARD_CTX_ID.
+_add_guard_context() {
+  local output
+  output=$(run_tt task context add --title "Ctx" --slug "ctx" <<< "Body" 2>&1) || true
+  GUARD_CTX_ID=$(printf '%s' "$output" | grep '^context/' | tail -1)
+}
+
+test_context_delete__refuses_uncheckpointed_commits_for_the_current_task() {
+  setup_workspace "ctxdel-guard-uncp"
+  setup_working_copy_guard_fixture
+  _add_guard_context
+  commit_uncheckpointed_work
+
+  assert_refuses_without_writing "implicit task" \
+    "has commits after the task bookmark '$GUARD_TASK_ID'" \
+    task context delete "$GUARD_CTX_ID"
+}
+
+test_context_delete__explicit_task_id_skips_the_uncheckpointed_commits_check() {
+  setup_workspace "ctxdel-guard-uncp-explicit"
+  setup_working_copy_guard_fixture
+  _add_guard_context
+  commit_uncheckpointed_work
+
+  local exit_code=0
+  run_tt task context delete "$GUARD_CTX_ID" --task "$GUARD_TASK_ID" >/dev/null 2>&1 || exit_code=$?
+  assert_success "explicit task ID proceeds" "$exit_code"
+  assert_no_context_entry "context removed" "$GUARD_TASK_ID" "$GUARD_CTX_ID"
+}
+
+test_context_delete__refuses_uncommitted_task_metadata_edits() {
+  setup_workspace "ctxdel-guard-meta"
+  setup_working_copy_guard_fixture
+  _add_guard_context
+  edit_task_file "$GUARD_TASK_ID"
+
+  assert_refuses_without_writing "task file edited by hand" \
+    "has uncommitted changes to task metadata" \
+    task context delete "$GUARD_CTX_ID" --task "$GUARD_TASK_ID"
+}
+
 run_tests "tt task context delete"
