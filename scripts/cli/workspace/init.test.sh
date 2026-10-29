@@ -27,9 +27,10 @@ test_workspace_init__basic_initialization() {
   assert_contains "config has task_prefix" "$config" 'task_prefix = "task/"'
   assert_contains "config has project_prefix" "$config" 'project_prefix = "project/"'
 
-  gitignore="$(cat "$repo/.tt/.gitignore")"
-  assert_contains "gitignore has /history" "$gitignore" "/history"
-  assert_contains "gitignore has /workspace" "$gitignore" "/workspace"
+  gitignore=$'\n'"$(cat "$repo/.tt/.gitignore")"$'\n'
+  assert_contains "gitignore has /history" "$gitignore" $'\n/history\n'
+  assert_contains "gitignore has /history.lock" "$gitignore" $'\n/history.lock\n'
+  assert_contains "gitignore has /workspace" "$gitignore" $'\n/workspace\n'
 
   assert_symlink ".tt/workspace symlink" "$repo/.tt/workspace" "$virtual"
 

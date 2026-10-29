@@ -14,11 +14,23 @@
 # back to the canonical repo's .jj/repo directory. _repo__resolve_repository_root
 # follows that pointer so all workspaces share a single history file.
 #
+# History lock: <canonical-repo>/.tt/history.lock, a lock directory (see
+# lib/lock.sh) shared by every worktree. The in-progress entry is the
+# long-lived marker of a running transaction; the lock is short-lived and only
+# makes each read-check-write of the history file a single step, so two
+# commands starting together cannot both pass the in-progress check, and no
+# reader sees the file half-rewritten. Begin holds it around reading the
+# before-op, checking the last line and appending; commit and rollback hold it
+# around their rewrite of the file only. A lock left behind by a killed process
+# makes the next acquisition time out; `tt history unlock --force` removes it.
+#
 # Nesting: sub-commands invoked by a top-level command inherit TT_TRANSACTION_ID
 # via the environment. _history__begin_transaction is a no-op when TT_TRANSACTION_ID is
 # already set. The internal (non-exported) _TT_TRANSACTION_OWNER variable
-# stores the resolved history file path for the owning process; it is not
-# exported so sub-processes never inherit it (they are not the transaction owner).
+# stores the resolved history file path for the owning process, and
+# _TT_TRANSACTION_LOCK the resolved lock path; neither is exported, so
+# sub-processes never inherit them (they are not the transaction owner) and
+# never touch the lock their parent may be holding.
 #
 # Closing a transaction — by commit or by rollback — unsets TT_TRANSACTION_ID as
 # well as the ownership flag, so that a sub-command the owner runs afterwards
@@ -32,6 +44,9 @@
 #   _history__replace_last_line    — rewrite the file's last line when it matches
 #   _history__delete_lines         — rewrite the file without a given line
 #   _history__resolve_file         — path to the canonical .tt/history file
+#   _history__resolve_lock         — path to the canonical .tt/history.lock directory
+#   _history__acquire_lock         — take the history lock, reporting a timeout
+#   _history__release_lock         — give the history lock up
 #   _history__resolve_operation    — identifier of the repository's current operation
 #   _history__restore_operation    — return the repository to a recorded operation
 #   _history__begin_transaction    — record an in-progress entry and set the rollback trap
@@ -40,6 +55,9 @@
 #
 # Functions named with a double underscore (__history__*) are internal helpers
 # private to this module and not part of the public surface.
+
+# How long, in seconds, a command waits for the history lock before giving up.
+_TT_HISTORY_LOCK_TIMEOUT=5
 
 # Usage: _history__replace_last_line FILE EXPECTED NEW
 # Rewrites FILE so that its last line, when it is exactly EXPECTED, becomes
@@ -93,9 +111,47 @@ _history__init() {
 # Canonical repos return <repo>/.tt/history directly.
 _history__resolve_file() {
   local repo="$1"
+  __history__resolve_canonical_metadata "$repo" 'history'
+}
+
+# Usage: _history__resolve_lock REPO
+# Returns the path to the history lock directory for REPO. Resolved through the
+# canonical repo, as _history__resolve_file is, so every worktree shares one
+# lock.
+_history__resolve_lock() {
+  local repo="$1"
+  __history__resolve_canonical_metadata "$repo" 'history.lock'
+}
+
+# Usage: __history__resolve_canonical_metadata REPO SUBPATH
+# Returns the absolute path to SUBPATH within the tt metadata directory of
+# REPO's canonical repo.
+__history__resolve_canonical_metadata() {
+  local repo="$1" subpath="$2"
   local canonical_repo
   canonical_repo="$(_repo__resolve_repository_root "$repo")" || return 1
-  printf '%s/%s' "$canonical_repo" "$(_path__metadata 'history')"
+  printf '%s/%s' "$canonical_repo" "$(_path__metadata "$subpath")"
+}
+
+# Usage: _history__acquire_lock LOCK
+# Takes the history lock LOCK, waiting up to _TT_HISTORY_LOCK_TIMEOUT seconds
+# for another command to release it. On timeout, reports the lock directory and
+# the way to clear it, and returns 1.
+_history__acquire_lock() {
+  local lock="$1"
+  if ! _lock__acquire "$lock" "$_TT_HISTORY_LOCK_TIMEOUT"; then
+    _ui__log "Error: Timed out after ${_TT_HISTORY_LOCK_TIMEOUT}s waiting for the history lock: $lock"
+    _ui__log "  Another tt command may be holding it, or a killed one left it behind."
+    _ui__log "  To clear a leftover lock: tt history unlock --force"
+    return 1
+  fi
+}
+
+# Usage: _history__release_lock LOCK
+# Gives up the history lock LOCK.
+_history__release_lock() {
+  local lock="$1"
+  _lock__release "$lock"
 }
 
 # Usage: _history__resolve_operation REPO
@@ -127,8 +183,9 @@ _history__restore_operation() {
 
 # Usage: _history__begin_transaction REPO
 # Begins a tt transaction. No-op if TT_TRANSACTION_ID is already set (nested call).
-# Captures the current VCS operation ID, checks for in-progress transactions,
-# appends "<before-op-id>:" to .tt/history, exports TT_TRANSACTION_ID, sets the
+# Under the history lock, captures the current VCS operation ID, checks for
+# in-progress transactions and appends "<before-op-id>:" to .tt/history; then
+# releases the lock, exports TT_TRANSACTION_ID, sets the
 # abort trap (see __history__abort_transaction), and finally snapshots the
 # current worktree's working copy so pending on-disk changes are captured as
 # part of the transaction. The ordering is deliberate: the before-op ID is recorded
@@ -151,12 +208,16 @@ _history__begin_transaction() {
     return 0
   fi
 
-  local history_file
+  local history_file history_lock
   history_file="$(_history__resolve_file "$repo")" || exit 1
+  history_lock="$(_history__resolve_lock "$repo")" || exit 1
+
+  _history__acquire_lock "$history_lock" || exit 1
 
   # Capture current VCS operation ID
   local before_op
   before_op="$(_repo__get_operation_id "$repo")" || {
+    _history__release_lock "$history_lock"
     _ui__log "Error: Could not read the VCS operation ID to begin transaction"
     exit 1
   }
@@ -169,6 +230,7 @@ _history__begin_transaction() {
     if [[ -n "$last_line" ]]; then
       local last_after="${last_line#*:}"
       if [[ -z "$last_after" ]]; then
+        _history__release_lock "$history_lock"
         _ui__log "Error: Another tt command is in progress (incomplete transaction)."
         _ui__log "  To revert a crashed process: tt history undo --force"
         _ui__log "  Or to keep the current state: tt history unlock --force"
@@ -178,7 +240,13 @@ _history__begin_transaction() {
   fi
 
   # Append in-progress entry to history log
-  printf '%s:\n' "$before_op" >> "$history_file"
+  printf '%s:\n' "$before_op" >> "$history_file" || {
+    _history__release_lock "$history_lock"
+    _ui__log "Error: Could not record the transaction in $history_file"
+    exit 1
+  }
+
+  _history__release_lock "$history_lock"
 
   # Export for sub-commands (nested _history__begin_transaction calls will be no-ops)
   export TT_TRANSACTION_ID="$before_op"
@@ -187,6 +255,7 @@ _history__begin_transaction() {
   # avoid re-resolving at commit/rollback time, which may fail if the worktree has
   # been deleted by then (e.g. worktree delete).
   _TT_TRANSACTION_OWNER="$history_file"
+  _TT_TRANSACTION_LOCK="$history_lock"
 
   # Auto-rollback on any exit that does not pass through the commit
   trap '__history__abort_transaction "'"$repo"'"' ERR EXIT
@@ -201,8 +270,10 @@ _history__begin_transaction() {
 }
 
 # Usage: _history__commit_transaction REPO
-# Finalizes the transaction by writing the after-op-id into .tt/history.
-# No-op when called from a nested sub-command (not the transaction owner).
+# Finalizes the transaction by writing the after-op-id into .tt/history, under
+# the history lock. No-op when called from a nested sub-command (not the
+# transaction owner). When the lock cannot be taken, reports it and exits 1,
+# which rolls the transaction back through the abort trap.
 _history__commit_transaction() {
   local repo="$1"
   # Only the owning process commits the transaction
@@ -211,6 +282,7 @@ _history__commit_transaction() {
   fi
 
   local history_file="${_TT_TRANSACTION_OWNER}"
+  local history_lock="${_TT_TRANSACTION_LOCK}"
   local before_op="${TT_TRANSACTION_ID}"
 
   # Derive canonical repo from the history file path (walk up from .tt/ to find .jj/).
@@ -230,12 +302,19 @@ _history__commit_transaction() {
   }
 
   # Replace the last line (in-progress: "<before>:") with the completed entry ("<before>:<after>")
-  _history__replace_last_line "$history_file" "${before_op}:" "${before_op}:${after_op}"
+  _history__acquire_lock "$history_lock" || exit 1
+  if ! _history__replace_last_line "$history_file" "${before_op}:" "${before_op}:${after_op}"; then
+    _history__release_lock "$history_lock"
+    _ui__log "Error: Could not record the transaction's completion in $history_file"
+    exit 1
+  fi
+  _history__release_lock "$history_lock"
 
   # The transaction is closed: clear the abort trap, and with it every trace
   # that would make a later sub-command believe it is running inside one.
   trap - ERR EXIT
   unset _TT_TRANSACTION_OWNER
+  unset _TT_TRANSACTION_LOCK
   unset TT_TRANSACTION_ID
 }
 
@@ -272,7 +351,10 @@ __history__abort_transaction() {
 
 # Usage: _history__rollback_transaction REPO
 # Rolls back the transaction by restoring the VCS to the before-op state and
-# removing the in-progress line from .tt/history.
+# removing the in-progress line from .tt/history. Only the removal is done
+# under the history lock; when the lock cannot be taken, the timeout is
+# reported and the in-progress line is kept, locking the repository as a
+# failed restore does (below).
 # No-op when called from a nested sub-command (not the transaction owner).
 #
 # When the restore itself fails, the in-progress line is KEPT rather than
@@ -308,6 +390,7 @@ _history__rollback_transaction() {
   fi
 
   local history_file="${_TT_TRANSACTION_OWNER}"
+  local history_lock="${_TT_TRANSACTION_LOCK}"
 
   # Derive canonical repo from the history file path (walk up from .tt/ to find .jj/).
   local canonical_repo
@@ -368,6 +451,7 @@ _history__rollback_transaction() {
     # only the history entry survives, which is what makes the damage visible.
     trap - ERR EXIT
     unset _TT_TRANSACTION_OWNER
+    unset _TT_TRANSACTION_LOCK
     unset TT_TRANSACTION_ID
     return 0
   fi
@@ -399,14 +483,23 @@ _history__rollback_transaction() {
     rm -rf "$preserve_dir"
   fi
 
-  # Remove the in-progress line from history
+  # Remove the in-progress line from history. When the lock cannot be taken
+  # the line is kept, and the repository stays locked until it is cleared.
   if [[ -f "$history_file" ]]; then
-    _history__delete_lines "$history_file" "${before_op}:"
+    if _history__acquire_lock "$history_lock"; then
+      _history__delete_lines "$history_file" "${before_op}:" || \
+        _ui__log "Warning: Could not remove the in-progress entry from $history_file"
+      _history__release_lock "$history_lock"
+    else
+      _ui__log "  The repository was restored, but the transaction is still recorded,"
+      _ui__log "  so the next tt command will refuse until it is cleared."
+    fi
   fi
 
   # The transaction is closed: clear the abort trap, and with it every trace
   # that would make a later sub-command believe it is running inside one.
   trap - ERR EXIT
   unset _TT_TRANSACTION_OWNER
+  unset _TT_TRANSACTION_LOCK
   unset TT_TRANSACTION_ID
 }
