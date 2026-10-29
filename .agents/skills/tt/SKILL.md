@@ -113,6 +113,8 @@ Error: Could not restore the VCS operation state.
 
 Recover with `tt history undo --force` to retry the revert, or `tt history unlock --force` once you have fixed the repository by hand. `tt history undo` restores from whichever worktree you run it in, so run it from a healthy one.
 
+A killed `tt` process can also leave a stuck history lock, `.tt/history.lock`. Every later command then fails with `Error: Timed out after 5s waiting for the history lock`. `tt history unlock --force` also removes a stuck history lock.
+
 The workspace named in the refusal is most often the canonical repository root rather than the worktree you are standing in. That is deliberate: it is the workspace a failed command's rollback restores from, and in a repository driven from task worktrees nobody is standing in it, so it can sit stale unnoticed. Recover it with `tt worktree refresh --root --force` and re-run the command.
 
 ### Task commands

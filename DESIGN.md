@@ -303,6 +303,8 @@ Any other value — including `INFO` or `VERBOSE` — leaves narration off.
   - If the history file is empty: exits 0 silently (no-op).
   - If the history file does not exist: exits 1 with an error message.
   - If there is an in-progress transaction and `--force` is not given: exits 1 with a message.
+  - If a history lock (`.tt/history.lock`, left behind by a killed `tt` process) is present and `--force` is not given: exits 1 with a message naming the lock.
+  - With `--force` and a history lock present: removes the lock and reports its removal, whether or not there is an in-progress transaction.
   - With `--force`: completes the transaction entry by writing `<before-op-id>:<current-op-id>` (where `<current-op-id>` is the current jj operation ID) — this marks the history as clean without changing the jj repository state.
 
   **Contrast with `tt history undo --force`:** `undo --force` reverts the jj repository to the state before the crashed command ran. Use `unlock --force` when you want to keep the current jj state and just unblock future `tt` commands.
@@ -311,7 +313,7 @@ Any other value — including `INFO` or `VERBOSE` — leaves narration off.
 
 ### 5.3 Workspace
 
-- **`tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]`** — Initialize a task-tree project. Creates the virtual workspace directory, `.tt/config.toml` (with optional task prefix and project prefix), `.tt/.gitignore` (containing `/history` and `/workspace`), an empty `.tt/history` transaction log, a `.tt/workspace` symlink pointing to the virtual project directory, and a `HEAD` symlink in the virtual directory that initially points to the repo and is later updated to the most recently checked-out task workspace (serving as a quick link to the current development context). Creates a `[tt:workspace:init] Create workspace` commit in the jj repository (`.tt/config.toml` and `.tt/.gitignore` are committed; `.tt/history` and `.tt/workspace` are gitignored). Requires a clean working directory; aborts if `.tt` exists in the repo root as a non-directory entry (use `--force` to remove it). Unlike the branch-writing commands it does **not** refuse when the working-copy commit carries a bookmark: it advances no bookmark, and the clean-working-copy requirement means the commit holds precisely the workspace files it just wrote — while a freshly created repository commonly leaves its default bookmark sitting on the working-copy commit. With `--force`, also allows overwriting files in an already-populated virtual folder. See §9 step 1, §6.2 (HEAD symlink and `.tt/workspace`), and §6.12 (transaction history).
+- **`tt workspace init <path-to-repo> <path-to-virtual-project-folder> [--task-prefix <prefix>] [--project-prefix <prefix>] [--force]`** — Initialize a task-tree project. Creates the virtual workspace directory, `.tt/config.toml` (with optional task prefix and project prefix), `.tt/.gitignore` (containing `/history`, `/history.lock` and `/workspace`), an empty `.tt/history` transaction log, a `.tt/workspace` symlink pointing to the virtual project directory, and a `HEAD` symlink in the virtual directory that initially points to the repo and is later updated to the most recently checked-out task workspace (serving as a quick link to the current development context). Creates a `[tt:workspace:init] Create workspace` commit in the jj repository (`.tt/config.toml` and `.tt/.gitignore` are committed; `.tt/history`, the `.tt/history.lock` history lock and `.tt/workspace` are gitignored). Requires a clean working directory; aborts if `.tt` exists in the repo root as a non-directory entry (use `--force` to remove it). Unlike the branch-writing commands it does **not** refuse when the working-copy commit carries a bookmark: it advances no bookmark, and the clean-working-copy requirement means the commit holds precisely the workspace files it just wrote — while a freshly created repository commonly leaves its default bookmark sitting on the working-copy commit. With `--force`, also allows overwriting files in an already-populated virtual folder. See §9 step 1, §6.2 (HEAD symlink and `.tt/workspace`), and §6.12 (transaction history).
 
 - **`tt workspace root [--repo PATH]`** — Print the virtual workspace directory path. Resolves and prints the path that the `.tt/workspace` symlink points to — the virtual project directory configured by `tt workspace init`. Exits with an error if the workspace has not been initialised (no `.tt/workspace` symlink present). See §5.0.
 
@@ -1027,13 +1029,46 @@ Every mutating `tt` command records a **transaction** in `.tt/history` so that `
 - `<after-op-id>` — the jj operation ID captured immediately after all changes completed successfully.
 - An **in-progress transaction** has an empty `<after-op-id>` (the line ends with `:`): `<before-op-id>:`
 
-**Tracking:** `.tt/.gitignore` (containing `/history` and `/workspace`) is committed by `tt workspace init` so that the history log and workspace symlink are never tracked by jj. The log accumulates indefinitely (unlimited retention).
+**Tracking:** `.tt/.gitignore` (containing `/history`, `/history.lock` and `/workspace`) is committed by `tt workspace init` so that jj does not track the history log, the history lock (§6.12.2) or the workspace symlink. The log accumulates indefinitely (unlimited retention).
 
-#### 6.12.2 Transaction lifecycle
+#### 6.12.2 History lock
+
+Each read-check-write of `.tt/history` runs under a short-lived lock. Without it, two commands that start at the same time can both read the last line, both see no in-progress entry, and both append one. A rewrite of the file also truncates it first, so a concurrent reader can see an empty file.
+
+**Two markers with different jobs:**
+
+- The in-progress entry (`<before-op-id>:`) is the long-lived marker. It records that a transaction is running, for the whole duration of the command.
+- The history lock is short-lived. It makes each read-check-write of the history file a single atomic step.
+
+**Mechanism:** the lock is a directory, `.tt/history.lock`, in the canonical repository root. Every worktree resolves the same path, so all worktrees share one lock. A command takes the lock by creating the directory. Directory creation is atomic: it either succeeds or fails because the directory exists. A command that finds the lock held retries every 0.1s. It gives up after 5 seconds. The timeout is fixed and not configurable.
+
+**What holds the lock:**
+
+- Transaction begin: reading the before-op ID, checking the last line, and appending the in-progress entry. Begin releases the lock before it snapshots the working copy.
+- Transaction commit: rewriting the in-progress entry as a completed one.
+- Transaction rollback: removing the in-progress entry. The VCS restore runs outside the lock.
+- `tt history undo`: the whole sequence of reading the last entry, restoring the repository and rewriting the history. A transaction that began in between would otherwise have its own entry removed. The restore can take a while, so a command started during an undo can wait, and on a large repository it can reach the timeout.
+- `tt history unlock`: its rewrite of the in-progress entry.
+
+Nested sub-commands do not touch the lock. Their begin, commit and rollback calls return early, so they cannot deadlock against the parent command.
+
+**Timeout:** a command that cannot take the lock fails with an error that names the lock directory:
+
+```
+Error: Timed out after 5s waiting for the history lock: <repo>/.tt/history.lock
+  Another tt command may be holding it, or a killed one left it behind.
+  To clear a leftover lock: tt history unlock --force
+```
+
+A timeout in transaction commit fails the command, which rolls the transaction back. A timeout in rollback happens after the restore: the repository is restored but the in-progress entry stays, so the next command refuses until `tt history unlock --force` clears it.
+
+**Leftover locks:** a process killed while it holds the lock leaves the directory behind. Every later command then times out. `tt history unlock --force` removes the leftover lock (§6.12.5).
+
+#### 6.12.3 Transaction lifecycle
 
 The transaction API is implemented in `scripts/cli/lib/history.sh` as three operations:
 
-- **Begin** — Called at the start of a mutating command, before the first VCS operation. Captures the current VCS operation ID as `<before-op-id>`, appends `<before-op-id>:` (in-progress) to `.tt/history`, exports `TT_TRANSACTION_ID=<before-op-id>`, marks this process as the transaction owner, and sets an `ERR` trap to roll back on failure. It then **snapshots the invoking worktree**, capturing any pending on-disk changes into that worktree's own working-copy commit. The snapshot deliberately runs *after* the before-op ID is recorded, so undoing the transaction also reverts the snapshot and the user's uncommitted work is restored as it was.
+- **Begin** — Called at the start of a mutating command, before the first VCS operation. Under the history lock (§6.12.2), captures the current VCS operation ID as `<before-op-id>`, checks for an in-progress entry, and appends `<before-op-id>:` (in-progress) to `.tt/history`. It then releases the lock, exports `TT_TRANSACTION_ID=<before-op-id>`, marks this process as the transaction owner, and sets an `ERR` trap to roll back on failure. It then **snapshots the invoking worktree**, capturing any pending on-disk changes into that worktree's own working-copy commit. The snapshot deliberately runs *after* the before-op ID is recorded, so undoing the transaction also reverts the snapshot and the user's uncommitted work is restored as it was.
 
   **Nested sub-commands:** When a top-level command delegates to a sub-command (e.g. `tt task create --checkout` calling `tt task checkout` internally), the sub-command inherits `TT_TRANSACTION_ID` via the environment and its begin call returns immediately (no-op). Ownership is recorded in a variable that is *not* exported, so the sub-command's commit and rollback calls are also no-ops — only the top-level command owns the transaction.
 
@@ -1057,13 +1092,15 @@ Error: Another tt command is in progress (incomplete transaction).
 
 Running `tt history undo --force` reverts the stale in-progress transaction. Alternatively, `tt history unlock --force` clears the lock without reverting the repository state — use this when the jj repository is already in an acceptable state and you simply want to unblock future `tt` commands.
 
-#### 6.12.3 Reverting a transaction
+A killed command can also leave the history lock behind (§6.12.2). Later commands then fail with the lock timeout error instead. `tt history unlock --force` removes a leftover lock as well as completing a stale in-progress entry.
+
+#### 6.12.4 Reverting a transaction
 
 `tt history undo [--force] [--repo PATH]` reverts the jj repository to the state before the most recently recorded `tt` command.
 
 **Behavior:**
 
-1. Read the last line of `.tt/history`.
+1. Take the history lock (§6.12.2) and read the last line of `.tt/history`. The lock is held until step 7 completes.
 2. Run safety checks (all bypassed by `--force`):
    - Last line has a non-empty `<after-op-id>` (no in-progress transaction).
    - Current jj operation ID equals `<after-op-id>` (no out-of-band modifications).
@@ -1080,16 +1117,19 @@ Running `tt history undo --force` reverts the stale in-progress transaction. Alt
 
 **`tt history undo` is not itself transactional:** The undo command does not write to `.tt/history`. This means you cannot "undo the undo" via `tt history undo`; use `jj op restore <after-op-id>` from the logged output instead.
 
-#### 6.12.4 `tt history unlock` command
+#### 6.12.5 `tt history unlock` command
 
 `tt history unlock [--force] [--repo PATH]` clears a stale in-progress transaction from `.tt/history` without reverting the jj repository state.
 
 **Behavior:**
 
 1. If the history file does not exist: exit 1 with an error message.
-2. If the history file is empty or the last entry has a non-empty `<after-op-id>`: exit 0 silently (no-op).
-3. If the last entry has an empty `<after-op-id>` (in-progress) and `--force` is not given: exit 1 with a message directing the user to use `--force` or `tt history undo --force`.
-4. With `--force` and an in-progress entry: capture the current jj operation ID and replace the last line `<before-op-id>:` with `<before-op-id>:<current-op-id>`. The jj repository state is **not** modified.
+2. If a history lock (§6.12.2) is present and `--force` is not given: exit 1 with a message naming the lock directory.
+3. With `--force` and a history lock present: remove the lock and report its removal. The command removes the lock without waiting for it, because a leftover lock never gets released. This step runs whether or not the history has an in-progress entry.
+4. Take the history lock for the remaining steps.
+5. If the history file is empty or the last entry has a non-empty `<after-op-id>`: exit 0 (no-op).
+6. If the last entry has an empty `<after-op-id>` (in-progress) and `--force` is not given: exit 1 with a message directing the user to use `--force` or `tt history undo --force`.
+7. With `--force` and an in-progress entry: capture the current jj operation ID and replace the last line `<before-op-id>:` with `<before-op-id>:<current-op-id>`. The jj repository state is **not** modified.
 
 **Result:** The transaction entry's `<after-op-id>` reflects the actual current jj operation, accurately representing the state of the repository at the time the lock was cleared. Subsequent `tt` commands will no longer see an in-progress entry and will start normally.
 
