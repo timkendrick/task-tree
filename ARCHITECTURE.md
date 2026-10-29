@@ -524,6 +524,28 @@ Recovery is `tt worktree refresh`, which is destructive by nature: the backend c
 stale working copy, so uncommitted work there is replaced by the recorded tree. That is why no
 command recovers a workspace implicitly.
 
+### 6.5 Working-copy guards
+
+Reattachment (§6.1) and sync (§6.3) carry a working copy's uncommitted changes onto a new tip. That
+is safe for the user's own files, but not for the files tt rewrites itself, and it says nothing about
+commits the working copy sits on that the branch does not reach. Four guards in `lib/worktree.sh`
+cover these cases. Commands call them in their precondition block, before the transaction opens:
+
+- `_worktree__ensure_metadata_unmodified` refuses while uncommitted changes touch task metadata, the
+  set `_path__check_is_task_metadata` defines (`.tt/task/**` and the root `TASK.md` symlink).
+  Replaying hand edits over tt's own rewrite of those files would leave the working copy conflicted
+  while the command reports success. Every branch-writing command applies it, as does `tt worktree
+  sync` for each target.
+- `_worktree__ensure_no_uncheckpointed_commits` refuses while commits lie between the branch tip and
+  `@-`. A write builds on the tip, so those commits would drop out of the working copy's ancestry.
+  Commands apply it only when the branch is the implicit current task; an explicit ID means "the
+  branch as it stands".
+- `_worktree__ensure_clean` refuses any uncommitted change, and `_worktree__ensure_checkpointed`
+  combines it with the previous guard.
+
+Each guard names the worktree and takes the caller's alternatives clause (such as `or use --force`),
+so every command reports the same condition the same way.
+
 ## 7. Working-copy-bound commands
 
 Three commands legitimately require a working copy, and only they may reach the restricted

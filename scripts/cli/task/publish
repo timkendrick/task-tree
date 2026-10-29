@@ -19,7 +19,8 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #                           not a terminal). An empty message cancels the publish.
 #   --changelog             Append a change summary to the commit message.
 #   --changelog-depth <n>   Levels of subtask to summarize (requires --changelog).
-#   --force                 Proceed even if conflicts occur.
+#   --force                 Proceed even if conflicts occur, or despite uncommitted
+#                           changes (including changes to task metadata).
 #   --repo PATH             Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   --workspace-dir PATH    Virtual project dir.
 
@@ -51,7 +52,8 @@ Options:
                             branch to the commit message.
   --changelog-depth <n>     Levels of subtask to summarize (requires --changelog;
                             default: every level).
-  --force                   Proceed despite conflicts.
+  --force                   Proceed despite conflicts, uncommitted changes, or
+                            uncommitted changes to task metadata.
   --repo PATH               Repository root (overrides TT_REPO; default: find .jj).
   --workspace-dir PATH      Virtual project dir.
   -h, --help                Show this help.
