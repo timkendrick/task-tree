@@ -346,7 +346,9 @@ main() {
   project_prefix="$(_workspace__get_project_prefix "$repo")"
 
   # Resolve default task_id if not provided
+  local task_id_inferred=false
   if [[ -z "$task_id" ]]; then
+    task_id_inferred=true
     task_id="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
     if [[ -z "$task_id" ]]; then
       _ui__log "Error: Not on a task or project branch."
@@ -368,6 +370,15 @@ main() {
   # Precondition: the working-copy commit must not carry a bookmark
   _worktree__ensure_working_copy "$repo" || exit 1
   _worktree__ensure_canonical_current "$repo" || exit 1
+  local current_worktree
+  current_worktree="$(_worktree__resolve_current "$repo")"
+  _worktree__ensure_metadata_unmodified "$current_worktree" || exit 1
+  # Tidy mode writes the current task's own branch, so commits past its
+  # bookmark would drop out of the working copy's ancestry.
+  if [[ -z "$modifier" && "$task_id_inferred" == true ]]; then
+    _worktree__ensure_no_uncheckpointed_commits "$current_worktree" "$task_id" \
+      "or pass the task ID explicitly to skip this check" || exit 1
+  fi
 
   if [[ -n "$modifier" ]]; then
     reorder_subtask "$repo" "$task_id" "$modifier" "$sibling_id" \

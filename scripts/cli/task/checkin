@@ -202,18 +202,18 @@ main() {
   local task_id="$child_bookmark"
 
   # --- Same-branch preconditions (implicit current branch only) ---
-  # Checking in the branch the invoking worktree sits on requires everything
-  # in that worktree to be recorded first: a clean working copy (no pending
-  # edits that would silently be left out of the checkin) and a bookmark that
-  # tracks every commit up to @-. Both are skipped when <task-id> was passed
-  # explicitly — the checkin then targets a branch as it stands, and the
-  # invoking worktree's state is not part of what is being merged.
+  # Checking in the branch the invoking worktree sits on requires the branch
+  # to hold everything in that worktree first: no commits past the bookmark
+  # and no pending edits, either of which would silently be left out of the
+  # checkin. Both are skipped when <task-id> was passed explicitly — the
+  # checkin then targets a branch as it stands, and the invoking worktree's
+  # state is not part of what is being merged.
   if [[ -z "$task_id_arg" ]]; then
-    if ! _worktree__check_clean "$current_worktree"; then
-      _ui__log "Error: Working copy has uncommitted changes. Commit or discard first."
-      exit 1
-    fi
-    _task__assert_bookmark_current "$current_worktree" "$child_bookmark"
+    _worktree__ensure_checkpointed "$current_worktree" "$child_bookmark" \
+      "or pass the task ID explicitly to skip this check" || exit 1
+  fi
+  if [[ "$force" != true ]]; then
+    _worktree__ensure_metadata_unmodified "$current_worktree" "or use --force" || exit 1
   fi
 
   # --- Record and validate the child branch's worktrees (--delete cleanup) ---
@@ -251,16 +251,8 @@ main() {
       # working copy is exactly what a stale worktree refuses.
       _worktree__ensure_worktree_current "$repo" "$child_worktree" || exit 1
       if [[ "$force" != true ]]; then
-        if ! _task__check_bookmark_current "$child_worktree" "$child_bookmark"; then
-          _ui__log "Error: Worktree '$child_worktree' has commits after the task bookmark '$child_bookmark'."
-          _ui__log "  Checkpoint or discard these commits first, pass --retain-worktree to keep the worktree, or use --force."
-          exit 1
-        fi
-        if ! _worktree__check_clean "$child_worktree"; then
-          _ui__log "Error: Worktree '$child_worktree' has uncommitted changes."
-          _ui__log "  Commit or discard changes first, pass --retain-worktree to keep the worktree, or use --force."
-          exit 1
-        fi
+        _worktree__ensure_checkpointed "$child_worktree" "$child_bookmark" \
+          "pass --retain-worktree to keep the worktree, or use --force" || exit 1
         _worktree__ensure_not_in_use "$child_worktree" \
           "pass --retain-worktree to keep the worktree, or use --force" || exit 1
       else
