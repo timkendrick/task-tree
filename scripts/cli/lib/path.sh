@@ -10,6 +10,7 @@
 #   _path__task_dir               — canonical directory path for a task
 #   _path__task_context           — canonical path to a context file
 #   _path__metadata_exclusions    — tt-metadata paths that diffs should exclude
+#   _path__check_is_task_metadata — whether a path is a file tt rewrites on task branches
 #   _path__resolve_symlinks       — canonicalize a directory path (pwd -P)
 #   _path__dirname             — directory part of a path, without a process
 #   _path__make_absolute_symlink  — create/replace a symlink with an absolute target
@@ -49,6 +50,16 @@ _path__task_root() {
 # <kind> is 'dir' or 'file'. Backends translate these into their own path syntax.
 _path__metadata_exclusions() {
   printf 'dir\t%s\nfile\t%s\n' "$TT_METADATA_DIR" "$TT_TASK_SYMLINK_FILENAME"
+}
+
+# Usage: _path__check_is_task_metadata PATH
+# Returns 0 when the repo-relative PATH is one of the files tt itself rewrites
+# on task branches: anything under the task root (task and context files) or
+# the repo-root task symlink. Other tt metadata, such as the configuration and
+# hooks, is edited by hand and does not count.
+_path__check_is_task_metadata() {
+  local path="$1"
+  [[ "$path" == "$TT_TASK_SYMLINK_FILENAME" || "$path" == "$TT_TASK_ROOT_DIR/"* ]]
 }
 
 # Usage: _path__task_file SUFFIX

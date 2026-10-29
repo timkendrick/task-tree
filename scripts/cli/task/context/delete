@@ -117,6 +117,13 @@ main() {
   # Precondition: the working-copy commit must not carry a bookmark
   _worktree__ensure_working_copy "$repo" || exit 1
   _worktree__ensure_canonical_current "$repo" || exit 1
+  local current_worktree
+  current_worktree="$(_worktree__resolve_current "$repo")"
+  _worktree__ensure_metadata_unmodified "$current_worktree" || exit 1
+  if [[ -z "$task_id_arg" ]]; then
+    _worktree__ensure_no_uncheckpointed_commits "$current_worktree" "$branch" \
+      "or pass the task ID explicitly to skip this check" || exit 1
+  fi
 
   # Read the task's context IDs from its own branch, so tasks that are not
   # checked out anywhere can still be edited.

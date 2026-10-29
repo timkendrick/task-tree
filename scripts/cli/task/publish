@@ -19,7 +19,8 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #                           not a terminal). An empty message cancels the publish.
 #   --changelog             Append a change summary to the commit message.
 #   --changelog-depth <n>   Levels of subtask to summarize (requires --changelog).
-#   --force                 Proceed even if conflicts occur.
+#   --force                 Proceed even if conflicts occur, or despite uncommitted
+#                           changes (including changes to task metadata).
 #   --repo PATH             Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   --workspace-dir PATH    Virtual project dir.
 
@@ -51,7 +52,8 @@ Options:
                             branch to the commit message.
   --changelog-depth <n>     Levels of subtask to summarize (requires --changelog;
                             default: every level).
-  --force                   Proceed despite conflicts.
+  --force                   Proceed despite conflicts, uncommitted changes, or
+                            uncommitted changes to task metadata.
   --repo PATH               Repository root (overrides TT_REPO; default: find .jj).
   --workspace-dir PATH      Virtual project dir.
   -h, --help                Show this help.
@@ -200,9 +202,24 @@ main() {
     exit 1
   fi
 
-  # No clean-working-copy precondition: publish writes nothing through any
-  # working copy and validates no unmerged range, so uncommitted changes in
-  # the invoking worktree are simply left alone.
+  # --- Working-copy preconditions ---
+  # Checked before the message prompt, so a refusal costs no typing.
+  local current_worktree
+  current_worktree="$(_worktree__resolve_current "$repo")"
+  if [[ "$force" != true ]]; then
+    _worktree__ensure_metadata_unmodified "$current_worktree" "or use --force" || exit 1
+  fi
+  # Publishing the branch the invoking worktree sits on delivers the branch as
+  # it stands, so work not yet checkpointed on it would be left out. Skipped
+  # when <project-id> was passed explicitly.
+  if [[ -z "$project_id_arg" ]]; then
+    _worktree__ensure_no_uncheckpointed_commits "$current_worktree" "$child_bookmark" \
+      "or pass the project ID explicitly to skip this check" || exit 1
+    if [[ "$force" != true ]]; then
+      _worktree__ensure_clean "$current_worktree" \
+        "pass the project ID explicitly, or use --force" || exit 1
+    fi
+  fi
 
   # --- Read task title from project branch ---
   local task_title

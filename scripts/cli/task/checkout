@@ -35,7 +35,8 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #                        is used.
 #   --rebase             Rebase the task onto its parent's tip before checking out.
 #   --merge              Merge the parent's tip into the task before checking out.
-#   --force              Proceed even if the target workspace has local changes.
+#   --force              Proceed even if the target workspace has local changes, or
+#                        uncommitted changes touch task metadata.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -61,7 +62,8 @@ Options:
                         checking out. Not valid for project branches.
   --merge               Merge the parent's current tip into the task before
                         checking out. Not valid for project branches.
-  --force               Proceed even if the target workspace has local changes.
+  --force               Proceed even if the target workspace has local changes, or
+                        uncommitted changes touch task metadata.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
@@ -285,6 +287,9 @@ main() {
   # absorbing whatever is uncommitted there into the branch it names.
   _worktree__ensure_working_copy "$repo" || exit 1
   _worktree__ensure_canonical_current "$repo" || exit 1
+  if [[ "$force" != true ]]; then
+    _worktree__ensure_metadata_unmodified "$current_worktree" "or use --force" || exit 1
+  fi
 
   # Begin transaction (records before-op for undo)
   _history__begin_transaction "$repo"

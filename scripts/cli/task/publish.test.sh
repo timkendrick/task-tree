@@ -447,4 +447,81 @@ test_task_publish__refuses_when_the_canonical_workspace_is_stale() {
     task publish "$STALE_PROJ_ID" --target main -m "publish"
 }
 
+
+# ---------------------------------------------------------------------------
+# Working-copy guards
+# ---------------------------------------------------------------------------
+
+# A project with checkpointed work, checked out in the canonical repository.
+# Sets GUARD_PROJ_ID.
+_setup_publish_guard_fixture() {
+  GUARD_PROJ_ID=$(create_project "proj" "Project") || true
+  checkout_task "$GUARD_PROJ_ID" >/dev/null || true
+  edit_file "$REPO/src/main.sh" "echo hello"
+  checkpoint_task "Work" >/dev/null || true
+}
+
+test_task_publish__refuses_uncheckpointed_commits_on_the_implicit_project() {
+  setup_workspace "pub-guard-uncp"
+  _setup_publish_guard_fixture
+  commit_uncheckpointed_work
+
+  assert_refuses_without_writing "implicit project, even with --force" \
+    "has commits after the task bookmark '$GUARD_PROJ_ID'" \
+    task publish --target main -m "Ship it" --force
+}
+
+test_task_publish__refuses_uncommitted_changes_on_the_implicit_project() {
+  setup_workspace "pub-guard-dirty"
+  _setup_publish_guard_fixture
+  edit_file "$REPO/src.txt" "project work"
+
+  assert_refuses_without_writing "implicit project" \
+    "Commit or discard changes first, pass the project ID explicitly, or use --force." \
+    task publish --target main -m "Ship it"
+}
+
+test_task_publish__force_skips_the_uncommitted_changes_check() {
+  setup_workspace "pub-guard-dirty-force"
+  _setup_publish_guard_fixture
+  edit_file "$REPO/src.txt" "project work"
+
+  local exit_code=0
+  run_tt task publish --target main -m "Ship it" --force >/dev/null 2>&1 || exit_code=$?
+  assert_success "--force proceeds" "$exit_code"
+  assert_is_ancestor "main carries the project" "$GUARD_PROJ_ID" "main"
+}
+
+test_task_publish__explicit_project_id_skips_the_implicit_project_checks() {
+  setup_workspace "pub-guard-explicit"
+  _setup_publish_guard_fixture
+  commit_uncheckpointed_work
+  edit_file "$REPO/src.txt" "project work"
+
+  local exit_code=0
+  run_tt task publish "$GUARD_PROJ_ID" --target main -m "Ship it" >/dev/null 2>&1 || exit_code=$?
+  assert_success "explicit project ID proceeds" "$exit_code"
+  assert_is_ancestor "main carries the project" "$GUARD_PROJ_ID" "main"
+}
+
+test_task_publish__refuses_uncommitted_task_metadata_edits() {
+  setup_workspace "pub-guard-meta"
+  _setup_publish_guard_fixture
+  edit_task_file "$GUARD_PROJ_ID"
+
+  assert_refuses_without_writing "task file edited by hand" \
+    "has uncommitted changes to task metadata" \
+    task publish "$GUARD_PROJ_ID" --target main -m "Ship it"
+}
+
+test_task_publish__force_skips_the_task_metadata_check() {
+  setup_workspace "pub-guard-meta-force"
+  _setup_publish_guard_fixture
+  edit_task_file "$GUARD_PROJ_ID"
+
+  local exit_code=0
+  run_tt task publish "$GUARD_PROJ_ID" --target main -m "Ship it" --force >/dev/null 2>&1 || exit_code=$?
+  assert_success "--force proceeds" "$exit_code"
+}
+
 run_tests "tt task publish"

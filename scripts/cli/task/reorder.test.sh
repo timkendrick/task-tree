@@ -677,4 +677,60 @@ test_task_reorder__tidy_ancestor_write_leaves_the_worktree_on_its_task() {
     "$wt_parent_before"
 }
 
+
+# ---------------------------------------------------------------------------
+# Working-copy guards
+# ---------------------------------------------------------------------------
+
+# setup_working_copy_guard_fixture plus two subtasks under the guarded task.
+# Sets GUARD_SUB_B to the second.
+_setup_reorder_guard_fixture() {
+  setup_working_copy_guard_fixture
+  create_task "sa" "Sub A" >/dev/null || true
+  GUARD_SUB_B=$(create_task "sb" "Sub B") || true
+}
+
+test_task_reorder__tidy_refuses_uncheckpointed_commits_for_the_current_task() {
+  setup_workspace "reorder-guard-uncp"
+  _setup_reorder_guard_fixture
+  commit_uncheckpointed_work
+
+  assert_refuses_without_writing "implicit task" \
+    "has commits after the task bookmark '$GUARD_TASK_ID'" \
+    task reorder
+}
+
+test_task_reorder__tidy_with_explicit_task_id_skips_the_uncheckpointed_commits_check() {
+  setup_workspace "reorder-guard-uncp-explicit"
+  _setup_reorder_guard_fixture
+  commit_uncheckpointed_work
+
+  local exit_code=0
+  run_tt task reorder "$GUARD_TASK_ID" >/dev/null 2>&1 || exit_code=$?
+  assert_success "explicit task ID proceeds" "$exit_code"
+}
+
+test_task_reorder__modifier_skips_the_uncheckpointed_commits_check() {
+  setup_workspace "reorder-guard-uncp-modifier"
+  setup_working_copy_guard_fixture
+  checkout_task "$GUARD_PROJ_ID" || true
+  create_task "sibling" "Sibling" >/dev/null || true
+  checkout_task "$GUARD_TASK_ID" || true
+  commit_uncheckpointed_work
+
+  local exit_code=0
+  run_tt task reorder --down >/dev/null 2>&1 || exit_code=$?
+  assert_success "a reorder within the parent proceeds" "$exit_code"
+}
+
+test_task_reorder__refuses_uncommitted_task_metadata_edits() {
+  setup_workspace "reorder-guard-meta"
+  _setup_reorder_guard_fixture
+  edit_task_file "$GUARD_TASK_ID"
+
+  assert_refuses_without_writing "task file edited by hand" \
+    "has uncommitted changes to task metadata" \
+    task reorder "$GUARD_SUB_B" --up
+}
+
 run_tests "tt task reorder"
