@@ -1,6 +1,6 @@
 ---
 title: "Serialize concurrent writes to the transaction history"
-status: TODO
+status: IN-PROGRESS
 created: 2026-10-29T17:47:43Z
 updated: 2026-10-29T17:47:43Z
 ---
