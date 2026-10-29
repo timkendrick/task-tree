@@ -9,7 +9,7 @@ subtask: [ ] task/tt-workspace-doctor-fe9143d1
 subtask: [ ] task/zsh-completions-0538e4f5
 subtask: [ ] task/tt-task-prune-9a1ce601
 subtask: [ ] task/completed-task-file-location-253f710e
-subtask: [ ] task/implicit-bookmark-check-4f5404cf
+subtask: [x] task/implicit-bookmark-check-4f5404cf
 subtask: [ ] task/rename-anonymous-task-id-arguments-2509eae4
 subtask: [ ] task/tt-history-truncate-b37bc2e3
 subtask: [x] task/tt-worktree-prune-2c7055f6
