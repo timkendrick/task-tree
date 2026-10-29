@@ -62,19 +62,28 @@ Examples:
 EOF
 }
 
-# Usage: sync_one REPO WORKTREE
+# Usage: sync_one REPO WORKTREE FORCE
 # Synchronizes one worktree and reports the outcome on stderr: either that it
 # was already up to date, or the branch it moved along, the commits it moved
 # between, and every file the move touched. Returns non-zero when the sync
 # itself failed, having reported why.
+#
+# Unless FORCE is true, a worktree whose uncommitted changes touch task
+# metadata is refused: the move replays those changes onto the branch head,
+# where they could conflict with tt's own rewrites of the same files. Like any
+# other per-target failure, the refusal leaves the worktree where it was.
 sync_one() {
-  local repo="$1" worktree="$2"
+  local repo="$1" worktree="$2" force="$3"
 
   # Defensive: the screening below ran before the transaction opened, so a
   # worktree could have gone stale between then and its turn here. Reports the
   # same refusal as the screening — which check caught it is not the user's
   # concern — and is counted by the per-target failure accounting.
   _worktree__ensure_worktree_current "$repo" "$worktree" || return 1
+
+  if [[ "$force" != true ]]; then
+    _worktree__ensure_metadata_unmodified "$worktree" "or use --force" || return 1
+  fi
 
   local record
   record="$(_worktree__sync "$repo" "$worktree")" || {
@@ -237,21 +246,6 @@ main() {
     exit 1
   fi
 
-  # The move replays each target's uncommitted changes onto the branch head,
-  # so hand edits to task metadata could conflict with tt's own rewrites of
-  # the same files. Screened all-or-nothing for the same reason as staleness.
-  if [[ "$force" != true ]]; then
-    local modified_targets=0
-    for screened in "${targets[@]}"; do
-      _worktree__ensure_metadata_unmodified "$screened" "or use --force" \
-        || modified_targets=$((modified_targets + 1))
-    done
-    if [[ "$modified_targets" -gt 0 ]]; then
-      _ui__log "Error: $modified_targets of ${#targets[@]} worktrees have uncommitted changes to task metadata; nothing was synchronized."
-      exit 1
-    fi
-  fi
-
   _history__begin_transaction "$repo"
 
   local failures=0 target
@@ -259,11 +253,11 @@ main() {
     if [[ "$all" == true ]]; then
       # Every worktree is attempted: one that cannot be synchronized must not
       # strand the others still sitting behind their branch.
-      sync_one "$repo" "$target" || failures=$((failures + 1))
+      sync_one "$repo" "$target" "$force" || failures=$((failures + 1))
     else
       # A single named target has nothing to continue past, so a failure aborts
       # the command and the transaction rolls back.
-      sync_one "$repo" "$target"
+      sync_one "$repo" "$target" "$force"
     fi
   done
 
