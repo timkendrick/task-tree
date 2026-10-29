@@ -73,6 +73,7 @@ test__history__transaction__begin_commit_round_trip() {
   assert_eq "before-op captured at begin" "$(history_before_op "$entry")" "$before_op"
   assert_eq "after-op is the current jj op" "$(history_after_op "$entry")" "$(get_jj_op)"
   assert_no_pending_transaction "entry is completed (non-empty after-op)"
+  assert_file_not_exists "the history lock is released" "$REPO/.tt/history.lock"
 }
 
 test__history__transaction__begin_refuses_in_progress() {
@@ -93,6 +94,56 @@ test__history__transaction__begin_refuses_in_progress() {
   assert_history_count "no new entry appended" 1
 }
 
+test__history__transaction__concurrent_begins_admit_one() {
+  setup_workspace "history-concurrent"
+
+  # Each command holds its transaction open long enough for the other to reach
+  # its in-progress check while it is still running.
+  local body='
+    _history__begin_transaction "$1"
+    sleep 3
+    _history__commit_transaction "$1"
+  '
+  local out_a="$_TEST_ROOT/concurrent-a.txt" out_b="$_TEST_ROOT/concurrent-b.txt"
+  local pid_a pid_b status_a=0 status_b=0
+  run_command "$REPO" "$body" >"$out_a" 2>&1 &
+  pid_a=$!
+  run_command "$REPO" "$body" >"$out_b" 2>&1 &
+  pid_b=$!
+  wait "$pid_a" || status_a=$?
+  wait "$pid_b" || status_b=$?
+
+  assert_eq "exactly one command succeeds" \
+    "$(( (status_a == 0) + (status_b == 0) ))" "1"
+  local refused_output
+  if [[ "$status_a" -eq 0 ]]; then
+    refused_output="$(<"$out_b")"
+  else
+    refused_output="$(<"$out_a")"
+  fi
+  assert_contains "the other refuses on the in-progress entry" "$refused_output" \
+    "Error: Another tt command is in progress (incomplete transaction)."
+  assert_history_count "only the successful command is recorded" 1
+  assert_no_pending_transaction "the recorded entry is completed"
+  assert_file_not_exists "the history lock is released" "$REPO/.tt/history.lock"
+}
+
+test__history__transaction__begin_times_out_on_held_lock() {
+  setup_workspace "history-begin-lock-held"
+  mkdir "$REPO/.tt/history.lock"
+
+  local out exit_code=0
+  out="$( (unset TT_TRANSACTION_ID; _history__begin_transaction "$REPO") 2>&1 )" || exit_code=$?
+  assert_exit_code "begin aborts when the lock is held" 1 "$exit_code"
+  assert_contains "error reports the timeout" "$out" \
+    "Error: Timed out after 5s waiting for the history lock:"
+  assert_contains "error names the lock directory" "$out" ".tt/history.lock"
+  assert_contains "suggests unlock --force" "$out" \
+    "To clear a leftover lock: tt history unlock --force"
+  assert_history_count "no entry appended" 0
+  assert_file_exists "the held lock is left in place" "$REPO/.tt/history.lock"
+}
+
 test__history__transaction__rollback_restores_op_and_removes_entry() {
   setup_workspace "history-rollback"
 
@@ -109,6 +160,7 @@ test__history__transaction__rollback_restores_op_and_removes_entry() {
   assert_not_contains "rolled-back commit is gone from the op state" \
     "$descriptions" "history txn rollback"
   assert_history_count "in-progress line removed from history" 0
+  assert_file_not_exists "the history lock is released" "$REPO/.tt/history.lock"
 }
 
 test__history__transaction__failed_exit_rolls_back() {

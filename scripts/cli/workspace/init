@@ -221,9 +221,10 @@ task_prefix = "${task_prefix}"
 project_prefix = "${project_prefix}"
 TOML
 
-  # Write .tt/.gitignore to ignore the transaction history log and workspace symlink
+  # Write .tt/.gitignore to ignore the transaction history log, its lock and
+  # the workspace symlink
   local gitignore_file="$repo_abs/$(_path__metadata '.gitignore')"
-  printf '/history\n/workspace\n' > "$gitignore_file"
+  printf '/history\n/history.lock\n/workspace\n' > "$gitignore_file"
 
   # Create empty transaction history log (ignored via .tt/.gitignore)
   _history__init "$repo_abs"
