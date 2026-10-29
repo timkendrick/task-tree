@@ -12,6 +12,11 @@
 #   _worktree__resolve_repository_root — canonical repository root
 #   _worktree__resolve_repository_path — canonical repository root, symlink-resolved
 #   _worktree__check_clean      — whether a worktree has no uncommitted changes
+#   _worktree__ensure_clean     — refuse to proceed while a worktree has uncommitted changes
+#   _worktree__ensure_metadata_unmodified — refuse while uncommitted changes touch task metadata
+#   _worktree__check_uncheckpointed_commits — whether a worktree has commits past its branch tip
+#   _worktree__ensure_no_uncheckpointed_commits — refuse while a worktree has commits past its branch tip
+#   _worktree__ensure_checkpointed — refuse unless a branch holds everything in a worktree
 #   _worktree__check_stale      — whether a worktree's files match the commit it records
 #   _worktree__check_exists     — whether a worktree already lives at a path
 #   _worktree__create           — add a workspace at a path, started on a revision
@@ -260,6 +265,115 @@ _worktree__resolve_repository_path() {
 _worktree__check_clean() {
   local worktree="$1"
   _repo__check_working_copy_clean "$worktree"
+}
+
+# Usage: _worktree__ensure_clean WORKTREE [ALTERNATIVES]
+#
+# Guards a precondition that everything in WORKTREE is committed: returns 0
+# when its working copy has no uncommitted changes, and reports a refusal
+# naming WORKTREE on stderr and returns 1 otherwise. ALTERNATIVES is the clause
+# that follows the remedy, such as "or use --force" in "Commit or discard
+# changes first, or use --force."; when empty, the remedy stands alone.
+_worktree__ensure_clean() {
+  local worktree="$1" alternatives="${2:-}"
+  _worktree__check_clean "$worktree" && return 0
+  _ui__log "Error: Worktree '$worktree' has uncommitted changes."
+  _ui__log "  Commit or discard changes first$(__worktree__format_alternatives "$alternatives")"
+  return 1
+}
+
+# Usage: _worktree__ensure_metadata_unmodified WORKTREE [ALTERNATIVES]
+#
+# Guards the files tt rewrites on task branches (_path__check_is_task_metadata)
+# against hand edits pending in WORKTREE's working copy. A branch write that
+# reattaches the working copy, or a sync that moves it, replays those edits on
+# top of tt's own rewrite of the same files, and overlapping changes leave the
+# working copy conflicted without the command failing. Returns 0 when no
+# uncommitted change touches task metadata; otherwise reports a refusal naming
+# WORKTREE and every offending path on stderr and returns 1. ALTERNATIVES is as
+# for _worktree__ensure_clean.
+#
+# A working copy whose changes cannot be listed refuses rather than passing:
+# the caller is about to replay whatever those changes are.
+_worktree__ensure_metadata_unmodified() {
+  local worktree="$1" alternatives="${2:-}"
+  local changes
+  if ! changes="$(_repo__list_working_copy_changes "$worktree")"; then
+    _ui__log "Error: Cannot list the uncommitted changes in worktree '$worktree'."
+    return 1
+  fi
+  local path
+  local -a modified=()
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    _path__check_is_task_metadata "$path" && modified+=("$path")
+  done <<< "$changes"
+  [[ ${#modified[@]} -eq 0 ]] && return 0
+  _ui__log "Error: Worktree '$worktree' has uncommitted changes to task metadata:"
+  for path in "${modified[@]}"; do
+    _ui__log "  $path"
+  done
+  _ui__log "  Discard these changes first$(__worktree__format_alternatives "$alternatives")"
+  return 1
+}
+
+# Usage: _worktree__check_uncheckpointed_commits WORKTREE BRANCH
+#
+# Returns 0 when WORKTREE's working copy sits above commits that BRANCH does
+# not reach — commits made since the last tt write to BRANCH (typically with
+# a plain VCS commit) that no checkpoint has yet recorded on the branch:
+#
+#   @        working copy
+#   o  C2    uncheckpointed
+#   o  C1    uncheckpointed
+#   o  BRANCH
+#
+# A branch write builds on the branch tip, so these commits drop out of the
+# working copy's ancestry when the working copy is reattached to the new tip.
+# Returns 1 when there are none, including when the range cannot be resolved.
+_worktree__check_uncheckpointed_commits() {
+  local worktree="$1" branch="$2"
+  local count
+  count="$(_repo__count_commits_in_range "$worktree" "$branch" '@-')"
+  [[ "$count" -gt 0 ]]
+}
+
+# Usage: _worktree__ensure_no_uncheckpointed_commits WORKTREE BRANCH [ALTERNATIVES]
+#
+# Guards against uncheckpointed commits (_worktree__check_uncheckpointed_commits):
+# returns 0 when there are none, and reports a refusal naming WORKTREE and
+# BRANCH on stderr and returns 1 otherwise. ALTERNATIVES is as for
+# _worktree__ensure_clean.
+_worktree__ensure_no_uncheckpointed_commits() {
+  local worktree="$1" branch="$2" alternatives="${3:-}"
+  _worktree__check_uncheckpointed_commits "$worktree" "$branch" || return 0
+  _ui__log "Error: Worktree '$worktree' has commits after the task bookmark '$branch'."
+  _ui__log "  Checkpoint or discard these commits first$(__worktree__format_alternatives "$alternatives")"
+  return 1
+}
+
+# Usage: _worktree__ensure_checkpointed WORKTREE BRANCH [ALTERNATIVES]
+#
+# Guards a precondition that BRANCH holds everything in WORKTREE: no
+# uncheckpointed commits above the branch tip and no uncommitted changes.
+# Reports the first violation found (see the two guards it combines) and
+# returns 1, or returns 0 when both hold.
+_worktree__ensure_checkpointed() {
+  local worktree="$1" branch="$2" alternatives="${3:-}"
+  _worktree__ensure_no_uncheckpointed_commits "$worktree" "$branch" "$alternatives" \
+    && _worktree__ensure_clean "$worktree" "$alternatives"
+}
+
+# Usage: __worktree__format_alternatives ALTERNATIVES
+# Prints the sentence ending that follows a refusal's remedy: ", ALTERNATIVES."
+# when ALTERNATIVES is given, or "." alone otherwise.
+__worktree__format_alternatives() {
+  local alternatives="$1"
+  if [[ -n "$alternatives" ]]; then
+    printf ', %s.' "$alternatives"
+  else
+    printf '.'
+  fi
 }
 
 # Usage: _worktree__check_stale REPO WORKTREE
