@@ -440,7 +440,8 @@ _harness_op_head() {
 
 # A manifest of the working copy: every entry outside the .jj and .git
 # stores, with regular files' content, so two workspaces whose manifests
-# agree hold the same files.
+# agree hold the same files. Directories are listed too, so that an empty one
+# (such as a lock directory) distinguishes one state from another.
 _harness_manifest() {
   __harness_manifest_dir "$REPO" ''
 }
@@ -453,6 +454,7 @@ __harness_manifest_dir() {
     if [[ -L "$entry" ]]; then
       printf 'L %s\n' "$rel$name"
     elif [[ -d "$entry" ]]; then
+      printf 'D %s\n' "$rel$name"
       __harness_manifest_dir "$entry" "$rel$name/"
     elif [[ -f "$entry" ]]; then
       printf 'F %s\n%s\n' "$rel$name" "$(<"$entry")"

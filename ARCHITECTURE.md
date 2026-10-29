@@ -19,7 +19,7 @@ lib/vcs/jj.sh                  backend implementation (_jj__*) — the only plac
                                or `git` is invoked
 ```
 
-Utility modules — `ui`, `string`, `format`, `path`, `frontmatter`, `commit`, `hook` — sit beside the
+Utility modules — `ui`, `string`, `format`, `path`, `frontmatter`, `commit`, `hook`, `lock` — sit beside the
 facades. They are callable from any tier and perform no VCS access of their own.
 
 | Tier | May call | May not call |
@@ -48,6 +48,7 @@ directives, in dependency order:
 | `frontmatter.sh` | Frontmatter parsing (fields, counted lists, body), block formatting and in-place field rewriting |
 | `commit.sh` | `[tt:<ns>:<id>:<op>]` commit message construction and parsing |
 | `hook.sh` | Hook discovery, environment and the blocking/non-blocking exit contract |
+| `lock.sh` | Short-lived `mkdir`-based mutual-exclusion locks |
 | `repo.sh` | The backend-neutral VCS interface and the backend contract |
 | `vcs/jj.sh` | The jj backend — the only caller of `jj` and `git` |
 | `history.sh` | The `.tt/history` transaction log; begin, commit, rollback |

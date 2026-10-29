@@ -140,6 +140,52 @@ test_history_unlock__jj_state_unchanged_after_force() {
 }
 
 
+test_history_unlock__force_removes_leftover_lock_without_transaction() {
+  setup_workspace "unlock-lock-only"
+  create_project "proj" "Project" >/dev/null 2>&1
+  mkdir "$REPO/.tt/history.lock"
+
+  local output="" exit_code=0
+  output=$(run_tt history unlock --force 2>&1) || exit_code=$?
+  assert_success "unlock --force succeeds" "$exit_code"
+  assert_contains "reports the removed lock" "$output" "Removed leftover history lock:"
+  assert_contains "names the lock directory" "$output" ".tt/history.lock"
+  assert_file_not_exists "lock removed" "$REPO/.tt/history.lock"
+  assert_no_pending_transaction "history still has no pending transaction"
+}
+
+
+test_history_unlock__force_removes_leftover_lock_with_transaction() {
+  setup_workspace "unlock-lock-and-txn"
+  create_project "proj" "Project" >/dev/null 2>&1
+  inject_pending_transaction >/dev/null
+  mkdir "$REPO/.tt/history.lock"
+
+  local output="" exit_code=0
+  output=$(run_tt history unlock --force 2>&1) || exit_code=$?
+  assert_success "unlock --force succeeds" "$exit_code"
+  assert_contains "reports the removed lock" "$output" "Removed leftover history lock:"
+  assert_contains "reports the cleared transaction" "$output" "Unlocked: in-progress transaction cleared"
+  assert_file_not_exists "lock removed" "$REPO/.tt/history.lock"
+  assert_no_pending_transaction "no pending transaction after unlock --force"
+}
+
+
+test_history_unlock__leftover_lock_without_force_exits_error() {
+  setup_workspace "unlock-lock-no-force"
+  create_project "proj" "Project" >/dev/null 2>&1
+  mkdir "$REPO/.tt/history.lock"
+
+  local output="" exit_code=0
+  output=$(run_tt history unlock 2>&1) || exit_code=$?
+  assert_failure "unlock exits 1 without --force" "$exit_code"
+  assert_contains "reports the lock" "$output" "Error: History lock present:"
+  assert_contains "names the lock directory" "$output" ".tt/history.lock"
+  assert_contains "error mentions --force" "$output" "--force"
+  assert_file_exists "lock left in place" "$REPO/.tt/history.lock"
+}
+
+
 test_history_unlock__help() {
   setup_workspace "unlock-help"
   local output="" exit_code=0

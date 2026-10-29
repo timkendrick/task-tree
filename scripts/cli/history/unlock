@@ -12,8 +12,12 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #   tt history unlock [--force] [--repo PATH]
 #
 # Options:
-#   --force   Required if the history is mid-transaction. Without it, exits 1.
+#   --force   Required if the history is mid-transaction or a history lock
+#             (.tt/history.lock) was left behind. Without it, exits 1.
 #   --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
+#
+# With --force, a leftover history lock is removed rather than waited for: this
+# command is how a lock abandoned by a killed process is cleared.
 #
 # If there is no in-progress transaction, exits silently with code 0 (no-op).
 # If the history file does not exist, exits 1 with an error message.
@@ -36,17 +40,20 @@ the repository is already in an acceptable state.
 
 If there is no in-progress transaction, this command exits 0 silently (no-op).
 
+A history lock (.tt/history.lock) left behind by a killed tt process blocks
+every later command. With --force it is removed; without, it is reported.
+
 To revert the repository to the state before the crashed command instead,
 use: tt history undo --force
 
 Options:
-  --force   Required to clear an in-progress transaction. Without it,
-            exits 1 if the history is mid-transaction.
+  --force   Required to clear an in-progress transaction or a leftover
+            history lock. Without it, exits 1 if either is present.
   --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
   tt history unlock           # check for stale lock (no-op if clean)
-  tt history unlock --force   # clear stale in-progress transaction
+  tt history unlock --force   # clear stale in-progress transaction and lock
 
 EOF
 }
@@ -81,8 +88,9 @@ main() {
 
   repo="$(_workspace__resolve_repo "$repo")"
 
-  local history_file
+  local history_file history_lock
   history_file="$(_history__resolve_file "$repo")" || exit 1
+  history_lock="$(_history__resolve_lock "$repo")" || exit 1
 
   # History file must exist (workspace must be initialized)
   if [[ ! -f "$history_file" ]]; then
@@ -90,6 +98,22 @@ main() {
     _ui__log "  Has the workspace been initialized? Run: tt workspace init"
     exit 1
   fi
+
+  # A leftover lock is removed rather than waited for: waiting on it would
+  # time out, and clearing it is what this command is for.
+  if [[ -e "$history_lock" ]]; then
+    if [[ "$force" != true ]]; then
+      _ui__log "Error: History lock present: $history_lock"
+      _ui__log "  Another tt command may be running, or a killed one left it behind."
+      _ui__log "  Use --force to remove it."
+      exit 1
+    fi
+    _history__release_lock "$history_lock"
+    _ui__log "Removed leftover history lock: $history_lock"
+  fi
+
+  _history__acquire_lock "$history_lock" || exit 1
+  trap '_history__release_lock "'"$history_lock"'"' EXIT
 
   # Empty history → nothing to unlock
   if [[ ! -s "$history_file" ]]; then
