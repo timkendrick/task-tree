@@ -166,7 +166,6 @@ subtask: [ ] task/propagate-rebase-stale-merge-parent-d2bd7ef2
 subtask: [ ] task/filesystem-based-subtask-context-relations-1123316e
 subtask: [ ] task/task-attachments-references-77e7a81d
 subtask: [x] task/tt-sync-broken-pipe-2c829c37
-subtask: [ ] task/ensure-no-uncheckpointed-changes-27ef7e6d
 subtask: [x] task/tt-task-propagate-branch-task-file-errors-ee9f5c1b
 subtask: [x] task/task-frontmatter-field-helpers-2e49ca70
 subtask: [x] task/tt-task-prompt-checked-in-task-861409c5
