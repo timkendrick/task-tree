@@ -181,6 +181,22 @@ append_file() {
   printf '%s\n' "$content" >> "$path"
 }
 
+# Hand-edit a task's TASK.md in a working copy, leaving the change uncommitted.
+# Usage: edit_task_file TASK_ID [WORKTREE]
+edit_task_file() {
+  local task_id="$1" worktree="${2:-$REPO}"
+  append_file "$worktree/.tt/task/${task_id#*/}/TASK.md" "Hand-written note"
+}
+
+# Commit a change in a working copy with a plain VCS commit, leaving it past
+# the task bookmark (not checkpointed).
+# Usage: commit_uncheckpointed_work [WORKTREE]
+commit_uncheckpointed_work() {
+  local worktree="${1:-$REPO}"
+  edit_file "$worktree/uncheckpointed.txt" "work"
+  jj -R "$worktree" commit -m "Uncheckpointed work" >/dev/null 2>&1
+}
+
 # ---------------------------------------------------------------------------
 # Workflow Convenience Helpers
 # ---------------------------------------------------------------------------
@@ -751,6 +767,45 @@ assert_refuses_stale_canonical() {
     "tt worktree refresh"
   assert_history_count "no transaction was opened" "$history_before"
   assert_eq "the repository was not written to" "$(get_jj_op_bare)" "$op_before"
+}
+
+# Build the state a working-copy guard test acts on: a project and a task
+# beneath it, with the task checked out in the canonical repository. Sets
+# GUARD_PROJ_ID and GUARD_TASK_ID.
+# Usage: setup_working_copy_guard_fixture
+setup_working_copy_guard_fixture() {
+  GUARD_PROJ_ID="$(create_project "proj" "Project")" || true
+  checkout_task "$GUARD_PROJ_ID" || true
+  GUARD_TASK_ID="$(create_task "guarded" "Guarded")" || true
+  checkout_task "$GUARD_TASK_ID" || true
+}
+
+# Run a tt command and assert that a working-copy guard refused it before
+# anything was written: non-zero exit, EXPECTED in the output, no history entry
+# created, and no bookmark moved. (The guard may record a snapshot of the
+# working copy, so the operation log itself is not compared.)
+# Usage: assert_refuses_without_writing LABEL EXPECTED COMMAND...
+assert_refuses_without_writing() {
+  local label="$1" expected="$2"; shift 2
+  get_history_lines
+  local history_before="${#HISTORY_LINES[@]}"
+  local bookmarks_before
+  bookmarks_before="$(__harness_bookmark_targets)"
+
+  local output exit_code=0
+  output="$(run_tt "$@" </dev/null 2>&1)" || exit_code=$?
+
+  assert_failure "$label: refused" "$exit_code"
+  assert_contains "$label: names the cause" "$output" "$expected"
+  assert_history_count "$label: no transaction was opened" "$history_before"
+  assert_eq "$label: no bookmark moved" "$(__harness_bookmark_targets)" "$bookmarks_before"
+}
+
+# Prints one "<bookmark> <commit-id>" line per local bookmark, without
+# snapshotting the working copy.
+__harness_bookmark_targets() {
+  jj -R "$REPO" --ignore-working-copy bookmark list \
+    -T 'name ++ " " ++ normal_target.commit_id() ++ "\n"' 2>/dev/null
 }
 
 # Create a plain jj commit in the current repo (does not advance any bookmarks).

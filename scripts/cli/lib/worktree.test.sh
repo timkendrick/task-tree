@@ -229,6 +229,184 @@ test__worktree__ensure_working_copy__accepts_wc_above_bookmark() {
 }
 
 # ---------------------------------------------------------------------------
+# _worktree__ensure_clean
+# ---------------------------------------------------------------------------
+
+test__worktree__ensure_clean__accepts_a_clean_worktree() {
+  setup_workspace "wt-ensure-clean-ok"
+  local exit_code=0
+  _worktree__ensure_clean "$REPO" "or use --force" || exit_code=$?
+  assert_success "clean worktree accepted" "$exit_code"
+}
+
+test__worktree__ensure_clean__refuses_a_dirty_worktree() {
+  setup_workspace "wt-ensure-clean-dirty"
+  edit_file "$REPO/dirty.txt" "pending"
+
+  local out exit_code=0
+  out="$(_worktree__ensure_clean "$REPO" "or use --force" 2>&1)" || exit_code=$?
+  assert_failure "dirty worktree refused" "$exit_code"
+  assert_eq "refusal names the worktree and the alternatives" "$out" \
+    "$(printf "Error: Worktree '%s' has uncommitted changes.\n  Commit or discard changes first, or use --force." "$REPO")"
+}
+
+test__worktree__ensure_clean__remedy_stands_alone_without_alternatives() {
+  setup_workspace "wt-ensure-clean-noalt"
+  edit_file "$REPO/dirty.txt" "pending"
+
+  local out
+  out="$(_worktree__ensure_clean "$REPO" 2>&1)" || true
+  assert_contains "remedy ends the sentence" "$out" "  Commit or discard changes first."
+}
+
+# ---------------------------------------------------------------------------
+# _worktree__ensure_metadata_unmodified
+# ---------------------------------------------------------------------------
+
+test__worktree__ensure_metadata_unmodified__accepts_unrelated_edits() {
+  setup_workspace "wt-meta-unrelated"
+  _fixture_feature_checkout
+  edit_file "$REPO/src.txt" "project work"
+
+  local exit_code=0
+  _worktree__ensure_metadata_unmodified "$REPO" || exit_code=$?
+  assert_success "edits outside task metadata accepted" "$exit_code"
+}
+
+test__worktree__ensure_metadata_unmodified__accepts_config_and_hook_edits() {
+  setup_workspace "wt-meta-config"
+  _fixture_feature_checkout
+  append_file "$REPO/.tt/config.toml" "# tweak"
+  edit_file "$REPO/.tt/hooks/post-checkout" "#!/usr/bin/env bash"
+
+  local exit_code=0
+  _worktree__ensure_metadata_unmodified "$REPO" || exit_code=$?
+  assert_success "configuration and hooks are not task metadata" "$exit_code"
+}
+
+test__worktree__ensure_metadata_unmodified__refuses_task_file_edits() {
+  setup_workspace "wt-meta-task"
+  _fixture_feature_checkout
+  edit_task_file "$FEATURE"
+  edit_file "$REPO/src.txt" "project work"
+
+  local out exit_code=0
+  out="$(_worktree__ensure_metadata_unmodified "$REPO" "or use --force" 2>&1)" || exit_code=$?
+  assert_failure "task file edit refused" "$exit_code"
+  assert_eq "refusal lists only the task metadata paths" "$out" \
+    "$(printf "Error: Worktree '%s' has uncommitted changes to task metadata:\n  .tt/task/%s/TASK.md\n  Discard these changes first, or use --force." \
+      "$REPO" "${FEATURE#*/}")"
+}
+
+test__worktree__ensure_metadata_unmodified__refuses_task_symlink_edits() {
+  setup_workspace "wt-meta-symlink"
+  _fixture_feature_checkout
+  rm "$REPO/TASK.md"
+  ln -s ".tt/task/elsewhere/TASK.md" "$REPO/TASK.md"
+
+  local out exit_code=0
+  out="$(_worktree__ensure_metadata_unmodified "$REPO" 2>&1)" || exit_code=$?
+  assert_failure "retargeted task symlink refused" "$exit_code"
+  assert_contains "names the symlink" "$out" "  TASK.md"
+  assert_contains "remedy stands alone without alternatives" "$out" "  Discard these changes first."
+}
+
+test__worktree__ensure_metadata_unmodified__refuses_new_context_files() {
+  setup_workspace "wt-meta-new"
+  _fixture_feature_checkout
+  edit_file "$REPO/.tt/task/${FEATURE#*/}/context/hand-made-1234abcd.md" "notes"
+
+  local exit_code=0
+  _worktree__ensure_metadata_unmodified "$REPO" 2>/dev/null || exit_code=$?
+  assert_failure "a file the backend has not yet seen is refused" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# _worktree__check_uncheckpointed_commits / _worktree__ensure_no_uncheckpointed_commits
+# ---------------------------------------------------------------------------
+
+test__worktree__check_uncheckpointed_commits__none_after_checkpoint() {
+  setup_workspace "wt-uncp-none"
+  _fixture_feature_checkout
+  edit_file "$REPO/pending.txt" "uncommitted only"
+
+  local exit_code=0
+  _worktree__check_uncheckpointed_commits "$REPO" "$FEATURE" || exit_code=$?
+  assert_failure "uncommitted edits alone are not uncheckpointed commits" "$exit_code"
+}
+
+test__worktree__check_uncheckpointed_commits__detects_plain_commits() {
+  setup_workspace "wt-uncp-some"
+  _fixture_feature_checkout
+  commit_uncheckpointed_work
+
+  local exit_code=0
+  _worktree__check_uncheckpointed_commits "$REPO" "$FEATURE" || exit_code=$?
+  assert_success "a commit past the bookmark is detected" "$exit_code"
+}
+
+test__worktree__check_uncheckpointed_commits__detects_empty_commits() {
+  setup_workspace "wt-uncp-empty"
+  _fixture_feature_checkout
+  jj -R "$REPO" new >/dev/null 2>&1
+
+  local exit_code=0
+  _worktree__check_uncheckpointed_commits "$REPO" "$FEATURE" || exit_code=$?
+  assert_success "an empty commit past the bookmark is detected" "$exit_code"
+}
+
+test__worktree__ensure_no_uncheckpointed_commits__refusal() {
+  setup_workspace "wt-uncp-refuse"
+  _fixture_feature_checkout
+  commit_uncheckpointed_work
+
+  local out exit_code=0
+  out="$(_worktree__ensure_no_uncheckpointed_commits "$REPO" "$FEATURE" \
+    "or pass the task ID explicitly to skip this check" 2>&1)" || exit_code=$?
+  assert_failure "refuses" "$exit_code"
+  assert_eq "refusal names the worktree, the bookmark and the alternatives" "$out" \
+    "$(printf "Error: Worktree '%s' has commits after the task bookmark '%s'.\n  Checkpoint or discard these commits first, or pass the task ID explicitly to skip this check." \
+      "$REPO" "$FEATURE")"
+}
+
+# ---------------------------------------------------------------------------
+# _worktree__ensure_checkpointed
+# ---------------------------------------------------------------------------
+
+test__worktree__ensure_checkpointed__accepts_a_checkpointed_worktree() {
+  setup_workspace "wt-cp-ok"
+  _fixture_feature_checkout
+
+  local exit_code=0
+  _worktree__ensure_checkpointed "$REPO" "$FEATURE" || exit_code=$?
+  assert_success "accepted" "$exit_code"
+}
+
+test__worktree__ensure_checkpointed__refuses_uncommitted_changes() {
+  setup_workspace "wt-cp-dirty"
+  _fixture_feature_checkout
+  edit_file "$REPO/pending.txt" "uncommitted"
+
+  local out exit_code=0
+  out="$(_worktree__ensure_checkpointed "$REPO" "$FEATURE" 2>&1)" || exit_code=$?
+  assert_failure "refuses" "$exit_code"
+  assert_contains "reports the uncommitted changes" "$out" "has uncommitted changes."
+}
+
+test__worktree__ensure_checkpointed__reports_uncheckpointed_commits_first() {
+  setup_workspace "wt-cp-both"
+  _fixture_feature_checkout
+  commit_uncheckpointed_work
+  edit_file "$REPO/pending.txt" "uncommitted"
+
+  local out exit_code=0
+  out="$(_worktree__ensure_checkpointed "$REPO" "$FEATURE" 2>&1)" || exit_code=$?
+  assert_failure "refuses" "$exit_code"
+  assert_contains "reports the uncheckpointed commits" "$out" "has commits after the task bookmark"
+  assert_not_contains "reports one violation only" "$out" "has uncommitted changes"
+}
+
+# ---------------------------------------------------------------------------
 # _worktree__ensure_worktree_current
 # ---------------------------------------------------------------------------
 

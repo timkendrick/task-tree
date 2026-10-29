@@ -789,4 +789,81 @@ test_task_propagate__refuses_when_the_canonical_workspace_is_stale() {
     task propagate --from "$STALE_PROJ_ID"
 }
 
+
+# ---------------------------------------------------------------------------
+# Working-copy guards
+# ---------------------------------------------------------------------------
+
+# setup_working_copy_guard_fixture plus a child under the guarded task, with the
+# guarded task checked out again. Sets GUARD_CHILD_ID.
+_setup_propagate_guard_fixture() {
+  setup_working_copy_guard_fixture
+  GUARD_CHILD_ID=$(create_task "child" "Child") || true
+  edit_file "$REPO/parent.txt" "parent work"
+  checkpoint_task "Parent work" >/dev/null 2>&1 || true
+}
+
+test_task_propagate__refuses_uncheckpointed_commits_on_the_implicit_source() {
+  setup_workspace "prop-guard-uncp"
+  _setup_propagate_guard_fixture
+  commit_uncheckpointed_work
+
+  assert_refuses_without_writing "implicit source, even with --force" \
+    "has commits after the task bookmark '$GUARD_TASK_ID'" \
+    task propagate --force
+}
+
+test_task_propagate__refuses_uncommitted_changes_on_the_implicit_source() {
+  setup_workspace "prop-guard-dirty"
+  _setup_propagate_guard_fixture
+  edit_file "$REPO/src.txt" "project work"
+
+  assert_refuses_without_writing "implicit source" \
+    "Commit or discard changes first, pass --from explicitly, or use --force." \
+    task propagate
+}
+
+test_task_propagate__force_skips_the_uncommitted_changes_check() {
+  setup_workspace "prop-guard-dirty-force"
+  _setup_propagate_guard_fixture
+  edit_file "$REPO/src.txt" "project work"
+
+  local exit_code=0
+  run_tt task propagate --force >/dev/null 2>&1 || exit_code=$?
+  assert_success "--force proceeds" "$exit_code"
+  assert_is_ancestor "child carries the parent's work" "$GUARD_TASK_ID" "$GUARD_CHILD_ID"
+}
+
+test_task_propagate__explicit_source_skips_the_implicit_source_checks() {
+  setup_workspace "prop-guard-explicit"
+  _setup_propagate_guard_fixture
+  commit_uncheckpointed_work
+  edit_file "$REPO/src.txt" "project work"
+
+  local exit_code=0
+  run_tt task propagate --from "$GUARD_TASK_ID" >/dev/null 2>&1 || exit_code=$?
+  assert_success "explicit --from proceeds" "$exit_code"
+  assert_is_ancestor "child carries the parent's work" "$GUARD_TASK_ID" "$GUARD_CHILD_ID"
+}
+
+test_task_propagate__refuses_uncommitted_task_metadata_edits() {
+  setup_workspace "prop-guard-meta"
+  _setup_propagate_guard_fixture
+  edit_task_file "$GUARD_TASK_ID"
+
+  assert_refuses_without_writing "task file edited by hand" \
+    "has uncommitted changes to task metadata" \
+    task propagate --from "$GUARD_TASK_ID"
+}
+
+test_task_propagate__force_skips_the_task_metadata_check() {
+  setup_workspace "prop-guard-meta-force"
+  _setup_propagate_guard_fixture
+  edit_task_file "$GUARD_TASK_ID"
+
+  local exit_code=0
+  run_tt task propagate --from "$GUARD_TASK_ID" --force >/dev/null 2>&1 || exit_code=$?
+  assert_success "--force proceeds" "$exit_code"
+}
+
 run_tests "tt task propagate"

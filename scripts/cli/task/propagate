@@ -29,7 +29,8 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #   --rebase          Rebase descendants onto parent tip (default)
 #   --merge           Merge parent tip into each descendant branch
 #   --shallow         Update direct children only (do not recurse into grandchildren)
-#   --force           Proceed even if conflicts occur after rebase/merge
+#   --force           Proceed even if conflicts occur after rebase/merge, the working
+#                     copy has uncommitted changes, or they touch task metadata
 #   --dry-run         Show what would be done without making changes
 #   --repo PATH       Repository root (overrides TT_REPO; default: walk up to find .jj)
 
@@ -54,7 +55,8 @@ Options:
   --rebase          Rebase descendants onto parent tip (default)
   --merge           Merge parent tip into descendants instead of rebasing
   --shallow         Update direct children only (no recursive propagation)
-  --force           Proceed even if conflicts occur
+  --force           Proceed even if conflicts occur, the working copy has
+                    uncommitted changes, or they touch task metadata
   --dry-run         Show planned changes without applying them
   --repo PATH       Repository root (overrides TT_REPO; default: find .jj)
 
@@ -466,6 +468,21 @@ main() {
     # Precondition: the working-copy commit must not carry a bookmark
     _worktree__ensure_working_copy "$repo" || exit 1
     _worktree__ensure_canonical_current "$repo" || exit 1
+    local current_worktree
+    current_worktree="$(_worktree__resolve_current "$repo")"
+    if [[ "$force" != true ]]; then
+      _worktree__ensure_metadata_unmodified "$current_worktree" "or use --force" || exit 1
+    fi
+    # Propagating the branch the invoking worktree sits on carries the branch
+    # as it stands, so work not yet checkpointed on it would be left out.
+    if [[ -z "$from" ]]; then
+      _worktree__ensure_no_uncheckpointed_commits "$current_worktree" "$from_bookmark" \
+        "or pass --from explicitly to skip this check" || exit 1
+      if [[ "$force" != true ]]; then
+        _worktree__ensure_clean "$current_worktree" \
+          "pass --from explicitly, or use --force" || exit 1
+      fi
+    fi
     _history__begin_transaction "$repo"
   fi
 

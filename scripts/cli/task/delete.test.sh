@@ -255,4 +255,52 @@ test_task_delete__ancestor_write_leaves_the_worktree_on_its_task() {
     "$wt_parent_before"
 }
 
+
+# ---------------------------------------------------------------------------
+# Working-copy guards
+# ---------------------------------------------------------------------------
+
+test_task_delete__refuses_uncheckpointed_commits_for_the_current_task() {
+  setup_workspace "delete-guard-uncp"
+  setup_working_copy_guard_fixture
+  commit_uncheckpointed_work
+
+  assert_refuses_without_writing "implicit task, even with --force" \
+    "has commits after the task bookmark '$GUARD_TASK_ID'" \
+    task delete --force
+}
+
+test_task_delete__explicit_task_id_skips_the_uncheckpointed_commits_check() {
+  setup_workspace "delete-guard-uncp-explicit"
+  setup_working_copy_guard_fixture
+  commit_uncheckpointed_work
+
+  local exit_code=0
+  run_tt task delete "$GUARD_TASK_ID" --force >/dev/null 2>&1 || exit_code=$?
+  assert_success "explicit task ID proceeds" "$exit_code"
+  assert_subtask_count "task removed from parent" "$GUARD_PROJ_ID" 0
+}
+
+test_task_delete__refuses_uncommitted_task_metadata_edits() {
+  setup_workspace "delete-guard-meta"
+  setup_working_copy_guard_fixture
+  complete_task >/dev/null 2>&1 || true
+  edit_task_file "$GUARD_TASK_ID"
+
+  assert_refuses_without_writing "task file edited by hand" \
+    "has uncommitted changes to task metadata" \
+    task delete "$GUARD_TASK_ID"
+}
+
+test_task_delete__force_skips_the_task_metadata_check() {
+  setup_workspace "delete-guard-meta-force"
+  setup_working_copy_guard_fixture
+  edit_task_file "$GUARD_TASK_ID"
+
+  local exit_code=0
+  run_tt task delete "$GUARD_TASK_ID" --force >/dev/null 2>&1 || exit_code=$?
+  assert_success "--force proceeds" "$exit_code"
+  assert_subtask_count "task removed from parent" "$GUARD_PROJ_ID" 0
+}
+
 run_tests "tt task delete"

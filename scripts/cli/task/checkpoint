@@ -123,6 +123,10 @@ main() {
   local current_worktree
   current_worktree="$(_worktree__resolve_current "$repo")"
 
+  # Precondition: task metadata is written by tt alone, so a checkpoint must not
+  # record hand edits to it.
+  _worktree__ensure_metadata_unmodified "$current_worktree" || exit 1
+
   # Read task title from task file frontmatter
   local task_title
   task_title="$(_task__read_title "$repo" "$bookmark" "$bookmark" "$task_prefix" "$project_prefix")" \
