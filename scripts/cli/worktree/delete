@@ -132,19 +132,12 @@ main() {
       fi
 
       # Bookmark must be up to date (no commits after bookmark)
-      if ! _task__check_bookmark_current "$canonical_worktree_path" "$task_id"; then
-        _ui__log "Error: Worktree has commits after the task bookmark '$task_id'."
-        _ui__log "  Checkpoint or discard these commits first, or use --force."
-        exit 1
-      fi
+      _worktree__ensure_no_uncheckpointed_commits "$canonical_worktree_path" "$task_id" \
+        "or use --force" || exit 1
     fi
 
     # Worktree must be clean (no uncommitted changes)
-    if ! _worktree__check_clean "$canonical_worktree_path"; then
-      _ui__log "Error: Worktree '$worktree_path' has uncommitted changes."
-      _ui__log "  Commit or discard changes first, or use --force."
-      exit 1
-    fi
+    _worktree__ensure_clean "$canonical_worktree_path" "or use --force" || exit 1
 
     # No other process may be using the worktree's files
     _worktree__ensure_not_in_use "$canonical_worktree_path" "or use --force" || exit 1

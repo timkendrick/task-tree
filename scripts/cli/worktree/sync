@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # tt worktree sync — bring a worktree forward onto the head of its own branch.
 #
 # Usage:
-#   sync [<worktree-path>] [--all] [--repo PATH]
+#   sync [<worktree-path>] [--all] [--force] [--repo PATH]
 #
 # A write to a branch advances its bookmark without touching any working copy
 # other than the invoking one, so worktrees checked out on that branch are left
@@ -24,18 +24,21 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #   <worktree-path>      Worktree to synchronize (default: the one containing the CWD)
 #   --all                Synchronize every out-of-sync worktree in the repository
 #                        (plus the canonical repository when run from it)
+#   --force              Synchronize even when uncommitted changes touch task metadata
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD).
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<worktree-path>] [--all] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [<worktree-path>] [--all] [--force] [--repo PATH]
 
 Bring a worktree up to date with advances to its branch head that were applied
 by operations in other worktrees.
 
-Any uncommitted work is rebased onto the updated branch head.
+Any uncommitted work is rebased onto the updated branch head. Refuses while
+uncommitted changes in a target worktree touch task metadata (.tt/task/ or the
+TASK.md symlink), since tt's own rewrites of those files can conflict with them.
 
 Arguments:
   [<worktree-path>]  Worktree to synchronize (optional; defaults to the worktree
@@ -47,6 +50,8 @@ Options:
                         continuing past failures and exiting non-zero if any
                         worktree could not be synchronized. Cannot be combined
                         with <worktree-path>.
+  --force               Synchronize even when uncommitted changes touch task
+                        metadata; conflicts are left in the working copy.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
@@ -57,19 +62,28 @@ Examples:
 EOF
 }
 
-# Usage: sync_one REPO WORKTREE
+# Usage: sync_one REPO WORKTREE FORCE
 # Synchronizes one worktree and reports the outcome on stderr: either that it
 # was already up to date, or the branch it moved along, the commits it moved
 # between, and every file the move touched. Returns non-zero when the sync
 # itself failed, having reported why.
+#
+# Unless FORCE is true, a worktree whose uncommitted changes touch task
+# metadata is refused: the move replays those changes onto the branch head,
+# where they could conflict with tt's own rewrites of the same files. Like any
+# other per-target failure, the refusal leaves the worktree where it was.
 sync_one() {
-  local repo="$1" worktree="$2"
+  local repo="$1" worktree="$2" force="$3"
 
   # Defensive: the screening below ran before the transaction opened, so a
   # worktree could have gone stale between then and its turn here. Reports the
   # same refusal as the screening — which check caught it is not the user's
   # concern — and is counted by the per-target failure accounting.
   _worktree__ensure_worktree_current "$repo" "$worktree" || return 1
+
+  if [[ "$force" != true ]]; then
+    _worktree__ensure_metadata_unmodified "$worktree" "or use --force" || return 1
+  fi
 
   local record
   record="$(_worktree__sync "$repo" "$worktree")" || {
@@ -125,12 +139,17 @@ sync_one() {
 main() {
   local worktree_path=''
   local all=false
+  local force=false
   local repo=''
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --all)
         all=true
+        shift
+        ;;
+      --force)
+        force=true
         shift
         ;;
       --repo)
@@ -234,11 +253,11 @@ main() {
     if [[ "$all" == true ]]; then
       # Every worktree is attempted: one that cannot be synchronized must not
       # strand the others still sitting behind their branch.
-      sync_one "$repo" "$target" || failures=$((failures + 1))
+      sync_one "$repo" "$target" "$force" || failures=$((failures + 1))
     else
       # A single named target has nothing to continue past, so a failure aborts
       # the command and the transaction rolls back.
-      sync_one "$repo" "$target"
+      sync_one "$repo" "$target" "$force"
     fi
   done
 

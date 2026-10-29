@@ -386,4 +386,41 @@ test_task_create__ancestor_write_leaves_the_worktree_on_its_task() {
     "$wt_parent_before"
 }
 
+
+# ---------------------------------------------------------------------------
+# Working-copy guards
+# ---------------------------------------------------------------------------
+
+test_task_create__refuses_uncheckpointed_commits_on_the_implicit_parent() {
+  setup_workspace "create-guard-uncp"
+  setup_working_copy_guard_fixture
+  commit_uncheckpointed_work
+
+  assert_refuses_without_writing "implicit parent" \
+    "or pass --parent explicitly to skip this check" \
+    task create --slug "child" --title "Child"
+}
+
+test_task_create__explicit_parent_skips_the_uncheckpointed_commits_check() {
+  setup_workspace "create-guard-uncp-explicit"
+  setup_working_copy_guard_fixture
+  commit_uncheckpointed_work
+
+  local exit_code=0
+  run_tt task create --parent "$GUARD_TASK_ID" --slug "child" --title "Child" \
+    <<< "" >/dev/null 2>&1 || exit_code=$?
+  assert_success "explicit parent proceeds" "$exit_code"
+  assert_subtask_count "child added" "$GUARD_TASK_ID" 1
+}
+
+test_task_create__refuses_uncommitted_task_metadata_edits() {
+  setup_workspace "create-guard-meta"
+  setup_working_copy_guard_fixture
+  edit_task_file "$GUARD_TASK_ID"
+
+  assert_refuses_without_writing "task file edited by hand" \
+    "has uncommitted changes to task metadata" \
+    task create --parent "$GUARD_TASK_ID" --slug "child" --title "Child"
+}
+
 run_tests "tt task create"

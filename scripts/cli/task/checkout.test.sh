@@ -616,4 +616,34 @@ test_task_checkout__refuses_a_stale_target_worktree() {
   assert_contains "the refusal names the recovery command" "$out" "tt worktree refresh"
 }
 
+
+# ---------------------------------------------------------------------------
+# Working-copy guards
+# ---------------------------------------------------------------------------
+
+test_task_checkout__refuses_uncommitted_task_metadata_edits() {
+  setup_workspace "co-guard-meta"
+  setup_working_copy_guard_fixture
+  local other
+  other=$(create_task_under "$GUARD_PROJ_ID" "other" "Other") || true
+  edit_task_file "$GUARD_TASK_ID"
+
+  assert_refuses_without_writing "task file edited by hand" \
+    "has uncommitted changes to task metadata" \
+    task checkout "$other" --worktree
+}
+
+test_task_checkout__force_skips_the_task_metadata_check() {
+  setup_workspace "co-guard-meta-force"
+  setup_working_copy_guard_fixture
+  local other
+  other=$(create_task_under "$GUARD_PROJ_ID" "other" "Other") || true
+  edit_task_file "$GUARD_TASK_ID"
+
+  local exit_code=0
+  run_tt task checkout "$other" --worktree --force >/dev/null 2>&1 || exit_code=$?
+  assert_success "--force proceeds" "$exit_code"
+  assert_task_status "other task checked out" "$other" "IN-PROGRESS"
+}
+
 run_tests "tt task checkout"

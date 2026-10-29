@@ -60,6 +60,7 @@ _repo__sort_commits_by_ancestry()  { _jj__sort_commits_by_ancestry "$@"; }
 
 # --- Working copy (restricted: worktree-level callers only) ---
 _repo__check_working_copy_clean()  { _jj__check_working_copy_clean "$@"; }
+_repo__list_working_copy_changes() { _jj__list_working_copy_changes "$@"; }
 _repo__get_worktree_checkout_revision() { _jj__get_worktree_checkout_revision "$@"; }
 _repo__get_working_copy_revision() { _jj__get_working_copy_revision "$@"; }
 _repo__get_working_copy_parent()   { _jj__get_working_copy_parent "$@"; }

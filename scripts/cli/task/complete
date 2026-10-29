@@ -12,7 +12,8 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #
 # Options:
 #   <task-id>            Task ID to complete. Default: current task.
-#   --force              Proceed even if not all subtasks are checked off.
+#   --force              Proceed even if not all subtasks are checked off, or
+#                        uncommitted changes touch task metadata.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -25,7 +26,8 @@ Mark the current task (or a given task) as DONE.
 
 Options:
   <task-id>             Task ID to complete (default: current task).
-  --force               Proceed even if subtasks are not all complete.
+  --force               Proceed even if subtasks are not all complete, or
+                        uncommitted changes touch task metadata.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 EOF
@@ -87,13 +89,20 @@ main() {
     task_file="$(_path__task_file "$suffix")"
   fi
 
-  # Precondition: the working-copy commit must not carry a bookmark
-  _worktree__ensure_working_copy "$repo" || exit 1
-  _worktree__ensure_canonical_current "$repo" || exit 1
-
   # Resolve the current worktree (where the user is running from); hooks run here
   local current_worktree
   current_worktree="$(_worktree__resolve_current "$repo")"
+
+  # Precondition: the working-copy commit must not carry a bookmark
+  _worktree__ensure_working_copy "$repo" || exit 1
+  _worktree__ensure_canonical_current "$repo" || exit 1
+  if [[ "$force" != true ]]; then
+    _worktree__ensure_metadata_unmodified "$current_worktree" "or use --force" || exit 1
+  fi
+  if [[ -z "$task_id_arg" ]]; then
+    _worktree__ensure_no_uncheckpointed_commits "$current_worktree" "$bookmark" \
+      "or pass the task ID explicitly to skip this check" || exit 1
+  fi
 
   # Read task metadata from bookmark
   local task_fields task_title task_status subtask_count subtask subtasks=() i
