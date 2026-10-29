@@ -12,7 +12,8 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 #
 # Options:
 #   <task-id>            Task ID to complete. Default: current task.
-#   --force              Proceed even if not all subtasks are checked off.
+#   --force              Proceed even if not all subtasks are checked off, or
+#                        uncommitted changes touch task metadata.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 readonly SCRIPT_NAME="${0##*/}"
@@ -25,7 +26,8 @@ Mark the current task (or a given task) as DONE.
 
 Options:
   <task-id>             Task ID to complete (default: current task).
-  --force               Proceed even if subtasks are not all complete.
+  --force               Proceed even if subtasks are not all complete, or
+                        uncommitted changes touch task metadata.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 EOF
