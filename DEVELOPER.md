@@ -16,7 +16,7 @@ lib/vcs/jj.sh                  backend implementation (_jj__*) — the only plac
                                or `git` is invoked
 ```
 
-Utility modules — `ui`, `string`, `format`, `path`, `frontmatter`, `commit`, `hook` — sit beside the
+Utility modules — `ui`, `string`, `format`, `path`, `frontmatter`, `commit`, `hook`, `lock` — sit beside the
 facades and perform no VCS access. `lib/common.sh` is the single entry point every command sources;
 it contains nothing but `source` directives.
 
