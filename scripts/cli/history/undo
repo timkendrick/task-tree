@@ -80,11 +80,23 @@ main() {
 
   repo="$(_workspace__resolve_repo "$repo")"
 
-  local history_file
+  local history_file history_lock
   history_file="$(_history__resolve_file "$repo")" || exit 1
+  history_lock="$(_history__resolve_lock "$repo")" || exit 1
 
-  # Check history file exists and has at least one entry
-  if [[ ! -f "$history_file" ]] || [[ ! -s "$history_file" ]]; then
+  if [[ ! -f "$history_file" ]]; then
+    _ui__log "Nothing to undo: tt history is empty."
+    exit 1
+  fi
+
+  # Hold the history lock from reading the last entry until the history has
+  # been rewritten: a transaction beginning in between would otherwise append
+  # the line the rewrite removes.
+  _history__acquire_lock "$history_lock" || exit 1
+  trap '_history__release_lock "'"$history_lock"'"' EXIT
+
+  # Check history file has at least one entry
+  if [[ ! -s "$history_file" ]]; then
     _ui__log "Nothing to undo: tt history is empty."
     exit 1
   fi
