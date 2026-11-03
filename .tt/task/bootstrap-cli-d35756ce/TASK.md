@@ -171,6 +171,7 @@ subtask: [x] task/task-frontmatter-field-helpers-2e49ca70
 subtask: [x] task/tt-task-prompt-checked-in-task-861409c5
 subtask: [x] task/history-lock-0ec875c3
 subtask: [ ] task/replace-propagate-merge-with-rebase-ab380733
+subtask: [ ] task/tt-task-subtask-list-5193cbc5
 ---
 Implement shell script implementations of all `tt` CLI commands
 
