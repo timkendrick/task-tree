@@ -319,6 +319,100 @@ test__task__find_parent_project_in__detects_a_cycle() {
     "Error: Cycle in the task hierarchy at 'task/a-00000002'."
 }
 
+test__task__find_branch_commit_in__reads_the_bookmark_target() {
+  local listing output exit_code=0
+  listing="$(_listing 'project/p-00000001' 'task/a-00000002=')"
+  assert_eq "commit of a bookmark" \
+    "$(_task__find_branch_commit_in "$listing" project/p-00000001)" c-project/p-00000001
+  output="$(_task__find_branch_commit_in "$listing" task/a-00000002)" || exit_code=$?
+  assert_exit_code "conflicted bookmark" "$exit_code" 1
+  exit_code=0
+  output="$(_task__find_branch_commit_in "$listing" task/b-00000003)" || exit_code=$?
+  assert_exit_code "missing bookmark" "$exit_code" 1
+}
+
+test__task__read_summaries_in__reads_each_task_from_its_canonical_branch() {
+  setup_workspace "read-summaries"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  merged=$(create_task "merged" "Merged Task") || true
+  checkout_task "$merged" || true
+  checkin_task --complete >/dev/null || true
+  checkout_task "$proj_id" || true
+  ongoing=$(create_task "ongoing" "Ongoing Task") || true
+  pending=$(create_task "pending" "Pending Task") || true
+  jj -R "$REPO" bookmark delete "$merged" "$pending" >/dev/null 2>&1
+
+  local task_prefix project_prefix listing
+  task_prefix="$(_workspace__get_task_prefix "$REPO")"
+  project_prefix="$(_workspace__get_project_prefix "$REPO")"
+  listing="$(_task__list_branch_records "$REPO" "$task_prefix" "$project_prefix")"
+  assert_eq "one row per ID, in input order" \
+    "$(printf '%s\n' "$pending" "$ongoing" "$merged" not-a-task \
+      | _task__read_summaries_in "$listing" "$REPO" "$task_prefix" "$project_prefix")" \
+    "$(printf '%s\t\t\n%s\tTODO\tOngoing Task\n%s\tDONE\tMerged Task\nnot-a-task\t\t\n' \
+      "$pending" "$ongoing" "$merged")"
+  assert_output_empty "no IDs, no output" \
+    "$(_task__read_summaries_in "$listing" "$REPO" "$task_prefix" "$project_prefix" < /dev/null)"
+}
+
+test__task__read_context_titles__one_line_per_context() {
+  setup_workspace "context-titles"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Task") || true
+  checkout_task "$task_id" || true
+  echo "First body" | run_tt task context add --title "First" --slug "one" >/dev/null 2>&1 || true
+  echo "Second body" | run_tt task context add --title "Second" --slug "two" >/dev/null 2>&1 || true
+
+  local task_prefix project_prefix contexts commit
+  task_prefix="$(_workspace__get_task_prefix "$REPO")"
+  project_prefix="$(_workspace__get_project_prefix "$REPO")"
+  contexts="$(_task__read_fields "$REPO" "$task_id" "$task_id" "$task_prefix" "$project_prefix" \
+    'context[]' | tail -n +2)"
+  commit="$(get_full_commit_id "$task_id")"
+  assert_eq "the fixture has two contexts" "$(printf '%s\n' "$contexts" | wc -l | tr -d ' ')" 2
+  assert_eq "titles in order, empty for a missing context" \
+    "$(printf '%s\n' "$contexts" context/missing-00000000 \
+      | _task__read_context_titles "$REPO" "$commit" "$task_id" "$task_prefix" "$project_prefix")" \
+    "$(printf 'First\nSecond\n\n')"
+}
+
+test__task__parse_subtask_entries__classifies_each_entry() {
+  assert_eq "entries and malformed values in order" \
+    "$(printf '%s\n' '[x] task/a-00000001 Title' 'not-an-entry' '' '[-]task/b-00000002' \
+      | _task__parse_subtask_entries)" \
+    "$(printf 'entry\t[x]\ttask/a-00000001\nmalformed\tnot-an-entry\nmalformed\t\nentry\t[-]\ttask/b-00000002\n')"
+}
+
+# Writer: adds a malformed subtask entry to the staged task file at the path
+# passed as its second argument.
+_writer_malformed_subtask_entry() {
+  local stage="$1" path="$2"
+  awk '/^status:/ { print; print "subtask: not-an-entry"; next } { print }' \
+    "$stage/$path" > "$stage/$path.tmp"
+  mv "$stage/$path.tmp" "$stage/$path"
+}
+
+test__task__build_index__warns_about_malformed_subtask_entries() {
+  setup_workspace "index-malformed"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Task") || true
+  local proj_file
+  proj_file="$(_task__resolve_file "$proj_id" "$(_workspace__get_task_prefix "$REPO")" \
+    "$(_workspace__get_project_prefix "$REPO")")"
+  _task__commit_on_branch "$REPO" "$proj_id" "malformed entry" \
+    --modify "$proj_file" -- _writer_malformed_subtask_entry "$proj_file" >/dev/null
+
+  local index err="$_TEST_ROOT/index-err.txt"
+  index="$(_build_index 2>"$err")"
+  assert_eq "one warning names the entry and the task" "$(cat "$err")" \
+    "Warning: Ignoring a malformed subtask entry 'not-an-entry' in the task file of '$proj_id'."
+  assert_eq "well-formed entry kept" "$(_index_subtasks "$index" "$proj_id")" "[ ] $task_id"
+  assert_not_contains "no malformed rows in the index" "$index" "not-an-entry"
+}
+
 # ---------------------------------------------------------------------------
 # _task__get_range_context / _task__resolve_range
 # ---------------------------------------------------------------------------

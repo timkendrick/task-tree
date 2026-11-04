@@ -213,4 +213,24 @@ test_task_tree__help() {
 }
 
 
+
+test_task_tree__warns_about_malformed_subtask_entries() {
+  setup_workspace "task_tree-malformed"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  child=$(create_task "child" "Child Task") || true
+  local file="$REPO/.tt/task/${proj_id#project/}/TASK.md"
+  awk '/^subtask: / { print "subtask: not-an-entry" } { print }' "$file" > "$file.tmp"
+  mv "$file.tmp" "$file"
+  jj -R "$REPO" commit -m "malformed entry" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set "$proj_id" -r '@-' >/dev/null 2>&1
+
+  local err="$_TEST_ROOT/task_tree-err.txt" output="" exit_code=0
+  output=$(run_tt task tree 2>"$err") || exit_code=$?
+  assert_success "tree succeeds" "$exit_code"
+  assert_contains "well-formed subtask listed" "$output" "$child"
+  assert_eq "warning names the entry and the task" "$(cat "$err")" \
+    "Warning: Ignoring a malformed subtask entry 'not-an-entry' in the task file of '$proj_id'."
+}
+
 run_tests "tt task tree"

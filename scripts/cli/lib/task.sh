@@ -42,6 +42,10 @@
 #   _task__find_parent_branch_in     — _task__find_parent_branch over a prebuilt listing
 #   _task__find_parent_project_in    — _task__find_parent_project over a prebuilt listing
 #   _task__find_branch_in            — _task__find_branch over a prebuilt listing
+#   _task__find_branch_commit_in     — commit a bookmark in a prebuilt listing points at
+#   _task__read_summaries_in         — status and title of many tasks, in one batch
+#   _task__read_context_titles       — titles of many context files, in one batch
+#   _task__parse_subtask_entries     — checkbox and subtask ID of many raw subtask entries
 #   _task__build_index               — every task with its record and subtask entries
 #   _task__get_range_context         — task id + parent bookmark + upper bound
 #   _task__resolve_range             — parent bookmark + upper bound only
@@ -510,6 +514,9 @@ _task__parse_subtask_entry() {
 #       file was read and '-' otherwise.
 #   entry<TAB>ID<TAB>COMMIT<TAB>CHECKBOX<TAB>SUBTASK_ID
 #       one row per well-formed subtask entry of that file, in file order.
+#   malformed<TAB>ID<TAB>COMMIT<TAB>RAW
+#       one row per subtask entry of that file without a well-formed checkbox
+#       and ID. Tabs and carriage returns in RAW become spaces.
 # The _task__find_*_in lookups answer questions about this listing without
 # further VCS access. Returns 1 when the repository cannot be read.
 _task__list_branch_records() {
@@ -564,20 +571,165 @@ _task__find_parent_project_in() {
   __task__query_branch_records project "$2" "$3" <<< "$1"
 }
 
+# Usage: _task__find_branch_commit_in LISTING BRANCH
+# Prints the commit that BRANCH, a bookmark in LISTING
+# (_task__list_branch_records), points at. Returns 1 (nothing printed) when
+# BRANCH is not in LISTING or is conflicted.
+_task__find_branch_commit_in() {
+  __task__query_branch_records commit "$2" <<< "$1"
+}
+
+# Usage: _task__read_summaries_in LISTING REPO TASK_PREFIX PROJECT_PREFIX < IDS
+# Prints one "ID<TAB>STATUS<TAB>TITLE" line for each line of IDS, in order,
+# read from the canonical branch _task__find_branch_in picks for ID. STATUS
+# and TITLE are empty when ID has no canonical branch or its file cannot be
+# read there. Tabs and carriage returns in values become spaces. Files that
+# LISTING already holds are not read again, and the rest are read in one
+# batch. Returns 1 when the batch read fails.
+_task__read_summaries_in() {
+  local listing="$1" repo="$2" task_prefix="$3" project_prefix="$4"
+  local wants='' id
+  while IFS= read -r id; do
+    wants+="want"$'\t'"$id"$'\n'
+  done
+  [[ -n "$wants" ]] || return 0
+
+  local table="$listing"$'\n'"$wants" requests records
+  requests="$(__task__resolve_summaries plan <<< "$table")"
+  if [[ -n "$requests" ]]; then
+    records="$(__task__read_index_records "$repo" "$task_prefix" "$project_prefix" \
+      "$requests")" || return 1
+    table+="$records"$'\n'
+  fi
+  __task__resolve_summaries format <<< "$table"
+}
+
+# The canonical branch rule of _task__find_branch_in, for the awk programs
+# that read a listing. canonical(id) returns the branch, or "" when there is
+# none. It needs the owners, owner_count, tip, entry_count, entry_checkbox and
+# entry_subtask arrays that __TASK__LISTING_RULES_AWK fills.
+__TASK__CANONICAL_AWK='
+  function canonical(id,    i, n, owner) {
+    for (i = 1; i <= owner_count; i++) {
+      owner = owners[i]
+      if (!(owner in entry_count)) continue
+      for (n = 1; n <= entry_count[owner]; n++) {
+        if (entry_subtask[owner, n] == id && entry_checkbox[owner, n] == "[x]") return owner
+      }
+    }
+    if ((id in tip) && tip[id] != "") return id
+    return ""
+  }
+'
+
+# Awk rules that load a listing (_task__list_branch_records) into the arrays
+# __TASK__CANONICAL_AWK reads. Entries are keyed by owner, since a listing
+# reads each owner at its own tip only.
+__TASK__LISTING_RULES_AWK='
+  $1 == "bookmark" { owners[++owner_count] = $2; tip[$2] = $3; next }
+  $1 == "entry" {
+    n = ++entry_count[$2]
+    entry_checkbox[$2, n] = $4
+    entry_subtask[$2, n] = $5
+    next
+  }
+'
+
+# Usage: __task__resolve_summaries MODE < TABLE
+# TABLE holds a listing (_task__list_branch_records), "want<TAB>ID" rows, and
+# read rows (__task__read_index_records) for files the listing lacks. MODE
+# 'plan' prints one "ID<TAB>COMMIT" line for each wanted file TABLE does not
+# hold yet. MODE 'format' prints the rows of _task__read_summaries_in.
+__task__resolve_summaries() {
+  awk -v mode="$1" '
+    BEGIN { FS = "\t" }
+    '"$__TASK__LISTING_RULES_AWK"'
+    $1 == "want" { wants[++want_count] = $2; next }
+    $1 == "read" {
+      key = $2 SUBSEP $3
+      found[key] = ($4 == "+"); status[key] = $5; title[key] = $6
+      next
+    }
+    '"$__TASK__CANONICAL_AWK"'
+    END {
+      for (w = 1; w <= want_count; w++) {
+        id = wants[w]
+        branch = canonical(id)
+        key = id SUBSEP (branch == "" ? "" : tip[branch])
+        if (mode == "plan") {
+          if (branch != "" && !(key in found) && !(key in planned)) {
+            planned[key] = 1
+            print id "\t" tip[branch]
+          }
+          continue
+        }
+        if (branch != "" && (key in found) && found[key]) {
+          print id "\t" status[key] "\t" title[key]
+        } else {
+          print id "\t\t"
+        }
+      }
+    }
+  '
+}
+
+# Usage: _task__read_context_titles REPO COMMIT TASK_ID TASK_PREFIX PROJECT_PREFIX < CTX_IDS
+# Prints the decoded title of each context of TASK_ID named on a non-empty
+# line of CTX_IDS, one line each and in order, as recorded at COMMIT, a full
+# commit ID. The line is empty when the context file cannot be read or has no
+# title. Reads every file in one batch. Returns 1 when the batch read fails.
+_task__read_context_titles() {
+  local repo="$1" commit="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
+  local ctx_id path paths='' count=0
+  while IFS= read -r ctx_id; do
+    [[ -n "$ctx_id" ]] || continue
+    path="$(_task__resolve_context_file "$task_id" "$ctx_id" \
+      "$task_prefix" "$project_prefix")" || path=''
+    paths+="$commit"$'\t'"$path"$'\n'
+    count=$(( count + 1 ))
+  done
+  (( count > 0 )) || return 0
+
+  local record i=0
+  while IFS= read -r -d '' record; do
+    i=$(( i + 1 ))
+    if [[ "$record" == +* ]]; then
+      _frontmatter__parse_values "${record:1}" title
+    else
+      printf '\n'
+    fi
+  done < <(printf '%s' "$paths" | _repo__read_files_at_revisions "$repo")
+  [[ $i -eq $count ]]
+}
+
+# Usage: _task__parse_subtask_entries < ENTRIES
+# Parses each line of ENTRIES as a raw 'subtask:' entry value, as read with
+# _task__read_fields ... 'subtask[]', and prints one row per line, in order:
+#   entry<TAB>CHECKBOX<TAB>SUBTASK_ID   for a well-formed entry, as
+#                                       _task__parse_subtask_entry
+#   malformed<TAB>RAW                   for any other entry
+# Performs no VCS access.
+_task__parse_subtask_entries() {
+  local entry
+  while IFS= read -r entry; do
+    if [[ "$entry" =~ $__TASK__SUBTASK_ENTRY ]]; then
+      printf 'entry\t[%s]\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    else
+      printf 'malformed\t%s\n' "$entry"
+    fi
+  done
+}
+
 # Usage: __task__query_branch_records MODE TASK_ID [PROJECT_PREFIX] < LISTING
 # Answers one lookup about LISTING, the output of _task__list_branch_records.
 # MODE 'parent' implements _task__find_parent_branch_in, 'branch'
-# _task__find_branch_in and 'project' _task__find_parent_project_in.
+# _task__find_branch_in, 'commit' _task__find_branch_commit_in and 'project'
+# _task__find_parent_project_in.
 __task__query_branch_records() {
   awk -v mode="$1" -v target="$2" -v project_prefix="${3:-}" '
     BEGIN { FS = "\t" }
-    $1 == "bookmark" { owners[++owner_count] = $2; tip[$2] = $3; next }
-    $1 == "entry" {
-      n = ++entry_count[$2]
-      entry_checkbox[$2, n] = $4
-      entry_subtask[$2, n] = $5
-      next
-    }
+    '"$__TASK__LISTING_RULES_AWK"'
+    '"$__TASK__CANONICAL_AWK"'
 
     # Sets parent to the owner that lists id and returns 0. Returns 1 when no
     # owner lists id, and 2 (setting error) when several do.
@@ -613,21 +765,15 @@ __task__query_branch_records() {
         exit 0
       }
       if (mode == "branch") {
-        for (i = 1; i <= owner_count; i++) {
-          owner = owners[i]
-          if (!(owner in entry_count)) continue
-          for (n = 1; n <= entry_count[owner]; n++) {
-            if (entry_subtask[owner, n] == target && entry_checkbox[owner, n] == "[x]") {
-              printf "%s", owner
-              exit 0
-            }
-          }
-        }
-        if ((target in tip) && tip[target] != "") {
-          printf "%s", target
-          exit 0
-        }
-        exit 1
+        branch = canonical(target)
+        if (branch == "") exit 1
+        printf "%s", branch
+        exit 0
+      }
+      if (mode == "commit") {
+        if (!(target in tip) || tip[target] == "") exit 1
+        printf "%s", tip[target]
+        exit 0
       }
       # Every owner in the listing matches a task or project ID pattern, so
       # the project prefix alone identifies a project.
@@ -1054,8 +1200,9 @@ _task__full_range_span_empty() {
 #   subtask<TAB>ID<TAB>CHECKBOX<TAB>SUBTASK_ID
 #       one row per well-formed subtask entry of a readable record, in file
 #       order, after the row of the task that lists it.
-# Logs a warning for each task whose record cannot be read. Returns 1 when the
-# repository cannot be read.
+# Logs a warning for each task whose record cannot be read, and for each
+# subtask entry of a record that has no well-formed checkbox and ID. Returns 1
+# when the repository cannot be read.
 #
 # The task files are read in a few batches: one for the bookmark tips, one for
 # the records whose source is another task's tip, and one more for each level
@@ -1078,6 +1225,11 @@ _task__build_index() {
 
   local row rest id kind has_branch path source
   while IFS= read -r row; do
+    if [[ "$row" == malformed$'\t'* ]]; then
+      rest="${row#malformed$'\t'}"
+      _ui__log "Warning: Ignoring a malformed subtask entry '${rest#*$'\t'}' in the task file of '${rest%%$'\t'*}'."
+      continue
+    fi
     if [[ "$row" != task$'\t'* ]]; then
       printf '%s\n' "$row"
       continue
@@ -1111,9 +1263,13 @@ _task__build_index() {
 #                                     (FOUND is '+' when the file was read)
 #   entry<TAB>ID<TAB>COMMIT<TAB>CHECKBOX<TAB>SUBTASK_ID
 #                                     a subtask entry of that file
+#   malformed<TAB>ID<TAB>COMMIT<TAB>RAW
+#                                     a subtask entry of that file without a
+#                                     well-formed checkbox and ID
 # MODE 'plan' prints one "ID<TAB>COMMIT" line for each source that TABLE does
 # not cover yet. MODE 'format' prints the task and subtask rows of
-# _task__build_index, without the KIND field.
+# _task__build_index, without the KIND field, each followed by one
+# "malformed<TAB>ID<TAB>RAW" row per malformed entry of the record.
 __task__resolve_index() {
   awk -v mode="$1" '
     BEGIN { FS = "\t" }
@@ -1127,6 +1283,11 @@ __task__resolve_index() {
       key = $2 SUBSEP $3
       n = ++entry_count[key]
       entry_checkbox[key, n] = $4; entry_subtask[key, n] = $5
+      next
+    }
+    $1 == "malformed" {
+      key = $2 SUBSEP $3
+      malformed[key, ++malformed_count[key]] = $4
       next
     }
 
@@ -1185,6 +1346,10 @@ __task__resolve_index() {
           printf "subtask\t%s\t%s\t%s\n", id, entry_checkbox[key, n], \
             entry_subtask[key, n]
         }
+        if (!(key in malformed_count)) continue
+        for (n = 1; n <= malformed_count[key]; n++) {
+          printf "malformed\t%s\t%s\n", id, malformed[key, n]
+        }
       }
     }
   '
@@ -1192,7 +1357,8 @@ __task__resolve_index() {
 
 # Usage: __task__read_index_records REPO TASK_PREFIX PROJECT_PREFIX REQUESTS
 # Reads the task file of each "ID<TAB>COMMIT" line of REQUESTS at COMMIT, in
-# one batch, and prints the read and entry rows __task__resolve_index takes.
+# one batch, and prints the read, entry and malformed rows
+# __task__resolve_index takes.
 # Returns 1 when the batch read fails.
 __task__read_index_records() {
   local repo="$1" task_prefix="$2" project_prefix="$3" requests="$4"
@@ -1222,9 +1388,12 @@ __task__read_index_records() {
       printf 'read\t%s\t%s\t+\t%s\t%s\n' "$id" "$commit" "$status" "$title"
       for (( j = 0; j < subtask_count; j++ )); do
         IFS= read -r subtask
-        [[ "$subtask" =~ $__TASK__SUBTASK_ENTRY ]] || continue
-        printf 'entry\t%s\t%s\t[%s]\t%s\n' "$id" "$commit" \
-          "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+        if [[ "$subtask" =~ $__TASK__SUBTASK_ENTRY ]]; then
+          printf 'entry\t%s\t%s\t[%s]\t%s\n' "$id" "$commit" \
+            "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+        else
+          printf 'malformed\t%s\t%s\t%s\n' "$id" "$commit" "${subtask//[$'\t\r']/ }"
+        fi
       done
     } <<< "$fields" || true
   done < <(printf '%s' "$paths" | _repo__read_files_at_revisions "$repo")
