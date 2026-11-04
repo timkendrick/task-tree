@@ -1380,6 +1380,52 @@ _writer_title_subtask_entries() {
   printf '%s' "$out" > "$stage/$path"
 }
 
+# Writer: replaces the project file at the path passed as its second argument
+# and adds task files, giving this tree with a cycle back to the project and
+# to task a:
+#   project -> a, b;  a -> c, b;  b -> d;  d -> a, project
+_writer_descendant_tree() {
+  local stage="$1" proj_file="$2" proj_id="$3"
+  _write_task_file "$stage/$proj_file" "$proj_id" task/a-0000000a task/b-0000000b
+  _write_task_file "$stage/.tt/task/a-0000000a/TASK.md" task/c-0000000c task/b-0000000b
+  _write_task_file "$stage/.tt/task/b-0000000b/TASK.md" task/d-0000000d
+  _write_task_file "$stage/.tt/task/c-0000000c/TASK.md"
+  _write_task_file "$stage/.tt/task/d-0000000d/TASK.md" task/a-0000000a "$proj_id"
+}
+
+# Usage: _write_task_file PATH [SUBTASK_ID]...
+_write_task_file() {
+  local path="$1" id
+  shift
+  mkdir -p "${path%/*}"
+  {
+    printf -- '---\ntitle: Task\nstatus: TODO\n'
+    for id in "$@"; do printf 'subtask: [ ] %s\n' "$id"; done
+    printf -- '---\n'
+  } > "$path"
+}
+
+test__task__collect_descendant_dirs__breadth_first_without_repeats() {
+  setup_workspace "descendant-dirs"
+  proj_id=$(create_project "proj" "Project") || true
+
+  local task_prefix project_prefix proj_file
+  task_prefix="$(_workspace__get_task_prefix "$REPO")"
+  project_prefix="$(_workspace__get_project_prefix "$REPO")"
+  proj_file="$(_task__resolve_file "$proj_id" "$task_prefix" "$project_prefix")"
+  _task__commit_on_branch "$REPO" "$proj_id" "descendant tree" \
+    -- _writer_descendant_tree "$proj_file" "$proj_id" >/dev/null
+
+  assert_eq "each descendant once, level by level, in entry order" \
+    "$(_task__collect_descendant_dirs "$REPO" "$proj_id" "$proj_id" \
+      "$task_prefix" "$project_prefix")" \
+    "$(printf '.tt/task/%s\n' a-0000000a b-0000000b c-0000000c d-0000000d)"
+  assert_eq "a subtree reads the same branch" \
+    "$(_task__collect_descendant_dirs "$REPO" "$proj_id" task/b-0000000b \
+      "$task_prefix" "$project_prefix")" \
+    "$(printf '.tt/task/%s\n' d-0000000d a-0000000a "${proj_id#project/}" c-0000000c)"
+}
+
 test__task__subtask_lookups__ignore_trailing_entry_titles() {
   setup_workspace "subtask-lookups-titled"
   proj_id=$(create_project "proj" "Project") || true
@@ -1395,8 +1441,9 @@ test__task__subtask_lookups__ignore_trailing_entry_titles() {
   assert_contains "the fixture titles the subtask entry" \
     "$(_task__read_file "$REPO" "$proj_id" "$proj_file")" "subtask: [ ] $child_id Child title"
 
-  assert_eq "__task__list_subtasks drops the title after the ID" \
-    "$(__task__list_subtasks "$REPO" "$proj_id" "$proj_id" "$task_prefix" "$project_prefix")" \
+  assert_eq "the listing drops the title after the ID" \
+    "$(_task__list_branch_records "$REPO" "$task_prefix" "$project_prefix" \
+      | awk -F'\t' -v owner="$proj_id" '$1 == "entry" && $2 == owner { print $4 "\t" $5 }')" \
     "[ ]"$'\t'"$child_id"
   assert_eq "the parent is found through a titled entry" \
     "$(_task__find_parent_branch "$REPO" "$child_id" "$task_prefix" "$project_prefix")" \

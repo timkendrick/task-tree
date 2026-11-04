@@ -471,24 +471,6 @@ _task__show_diff() {
   _repo__show_diff "$repo" "$from" "$to" "$@"
 }
 
-# Usage: __task__list_subtasks REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
-# Prints one "CHECKBOX<TAB>SUBTASK_ID" line per well-formed subtask entry of
-# TASK_ID's task file at REV, in file order. CHECKBOX is "[ ]", "[-]" or "[x]";
-# any title after the subtask ID is dropped. Returns 1 (nothing printed) when
-# the task file cannot be read.
-__task__list_subtasks() {
-  local fields
-  fields="$(_task__read_fields "$1" "$2" "$3" "$4" "$5" 'subtask[]')" || return 1
-  local subtask_count subtask i
-  { IFS= read -r subtask_count
-    for (( i = 0; i < subtask_count; i++ )); do
-      IFS= read -r subtask
-      [[ "$subtask" =~ $__TASK__SUBTASK_ENTRY ]] || continue
-      printf '[%s]\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
-    done
-  } <<< "$fields" || true
-}
-
 # The shape of a raw 'subtask:' entry: a checkbox, then the subtask ID, then
 # anything else (such as a title). Group 1 is the checkbox state, group 2 the ID.
 __TASK__SUBTASK_ENTRY='^\[([ x-])\][[:space:]]*([^[:space:]]+)'
@@ -2171,42 +2153,28 @@ _task__find_for_revision() {
 # Does not output the task's own directory (the caller already handles that).
 _task__collect_descendant_dirs() {
   local repo="$1" branch="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
+  local commit
+  commit="$(_task__resolve_revision "$repo" "$branch")" || return 0
 
-  # BFS queue (bash array)
-  local -a queue=("$task_id")
-  local -a visited=("$task_id")
-
-  while [[ ${#queue[@]} -gt 0 ]]; do
-    local current="${queue[0]}"
-    queue=("${queue[@]:1}")      # shift
-
-    local subtasks
-    subtasks="$(__task__list_subtasks "$repo" "$branch" "$current" \
-      "$task_prefix" "$project_prefix")" || continue
-
-    # Follow every subtask (any checkbox state)
-    local _checkbox subtask_id
-    while IFS=$'\t' read -r _checkbox subtask_id; do
-      [[ -z "$subtask_id" ]] && continue
-      # Skip if already visited (cycle guard)
-      local already=false
-      local v
-      for v in "${visited[@]}"; do
-        [[ "$v" == "$subtask_id" ]] && { already=true; break; }
-      done
-      "$already" && continue
-
-      visited+=("$subtask_id")
-
-      # Emit directory for this descendant
-      local sub_suffix
-      sub_suffix="$(_task__resolve_suffix "$subtask_id" "$task_prefix" "$project_prefix")" || continue
+  # One batch read per tree level, in breadth-first order.
+  local visited=$'\n'"$task_id"$'\n'
+  local level="$task_id"$'\t'"$commit"$'\n'
+  local records next kind _owner _commit _checkbox subtask_id sub_suffix
+  while [[ -n "$level" ]]; do
+    records="$(__task__read_index_records "$repo" "$task_prefix" "$project_prefix" \
+      "$level")" || return 1
+    next=''
+    while IFS=$'\t' read -r kind _owner _commit _checkbox subtask_id; do
+      [[ "$kind" == entry && -n "$subtask_id" ]] || continue
+      [[ "$visited" == *$'\n'"$subtask_id"$'\n'* ]] && continue
+      visited+="$subtask_id"$'\n'
+      sub_suffix="$(_task__resolve_suffix "$subtask_id" "$task_prefix" "$project_prefix")" \
+        || continue
       _path__task_dir "$sub_suffix"
       printf '\n'
-
-      # Enqueue for further traversal
-      queue+=("$subtask_id")
-    done <<< "$subtasks"
+      next+="$subtask_id"$'\t'"$commit"$'\n'
+    done <<< "$records"
+    level="$next"
   done
 }
 
