@@ -422,11 +422,11 @@ Any other value — including `INFO` or `VERBOSE` — leaves narration off.
 
 - **`tt task changelog [--task <task-id>] [--all] [--since <revision>] [--depth <n>] [--repo PATH]`** — Summarize the work checked into a task branch since a reference commit: the tasks checked into it, as a tree, followed by the checkpoints recorded directly on it, as a flat list. `--task` defaults to the current task; the branch is always reported up to its bookmark, never beyond. The reference commit is the most recent common ancestor of the branch and `--since`, which defaults to the branch's parent branch. `--depth` limits how many levels of subtask are reported (`0` reports checkpoints only, `1` adds the tasks checked into the branch, `2` also adds the tasks checked into those, and so on); without it every level is reported. With `--all`, gathers first-parent records from every connected component of the task's complete range (see §6.15) instead of walking from a single reference commit, deduplicates them by immutable commit ID, then applies the same tree/checkpoint rendering, grouping and depth limit; `--since`, when given, excludes records already reachable from that revision rather than changing the starting point. `--all` is not supported for project branches. Exits with an error if the task cannot be located, the branch is not a task or project branch, the revision cannot be resolved, there is no common ancestor, no parent branch exists and no `--since` was given, or `--depth` is not a non-negative integer. Writes nothing to stdout when no work was checked in since the reference commit. See §6.14. No hooks.
 
-- **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step. No hooks.
+- **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step, or if the walk under `--project` returns to a task it already visited. No hooks.
 
 - **`tt task find --revision <revision> [--repo PATH]`** — Print the task or project branch that a revision belongs to. `<revision>` is any revision expression the version-control system accepts, and must resolve to exactly one commit. The answer is read from the `TASK.md` symlink that commit records (see §6.2), mapped to the task or project branch it names — the same lookup that makes a task current in a worktree. Every commit on a task's own line, from its fork commit onward, resolves to that task (§4.3). The `[tt:task:<task-id>:create]` commit on the parent branch resolves to the parent. Exits with code 1, printing an error message to stderr, if the revision does not resolve, resolves to no commits or several, records no task symlink, or records a task whose branch no longer exists. No hooks.
 
-- **`tt task show [<task-id>] [--expand-context]`** — Show the metadata and direct child tasks of the current task (default) or the given task. Reads from the correct branch per the "where to read" rule (§7.1 / Appendix A step 3): merged tasks are read from the parent branch that received the checkin; ongoing tasks are read from their own branch. Output format: lowercase header block (`task`, `status`, `title`; and `parent` if the task has a parent), followed by a subtasks section, a context section (listing context file titles and IDs), and a body section, all always present and separated by `---` dividers. With `--expand-context`, additionally prints each context file after the body section, in the form `tt task context get` prints it. Output to stdout only. No hooks.
+- **`tt task show [<task-id>] [--expand-context]`** — Show the metadata and direct child tasks of the current task (default) or the given task. Reads from the correct branch per the "where to read" rule (§7.1 / Appendix A step 3): merged tasks are read from the parent branch that received the checkin; ongoing tasks are read from their own branch. Output format: lowercase header block (`task`, `status`, `title`; and `parent` if the task has a parent), followed by a subtasks section, a context section (listing context file titles and IDs), and a body section, all always present and separated by `---` dividers. Subtask entries without a well-formed checkbox and ID are skipped, with a warning on stderr. With `--expand-context`, additionally prints each context file after the body section, in the form `tt task context get` prints it. Output to stdout only. No hooks.
 
 - **`tt task prompt [<task-id>] [--message <text>] [--repo PATH]`** — Emit a self-contained LLM implementation prompt for a task to stdout. Reads the task file from the task's branch (defaulting to the current task if no `<task-id>` is given) and outputs: a mini frontmatter block (`task:` and a quoted `title:`), the task body, a `---` separator, any associated context files (each with its own `context:` / quoted `title:` / `---` block and body), and a section listing common `tt` introspection commands, followed by a closing `---` separator. With `--message <text>`, the verbatim message text is appended after the closing separator. `--repo PATH` overrides the repository root. No VCS writes; no hooks.
 
@@ -1156,9 +1156,11 @@ The second rule applies repeatedly, so the index is the closure of the bookmarks
 - A task marked `[x]` in the task file at a bookmarked task's own tip is read from that tip.
 - A task marked `[x]` in the task file of a task without a bookmark is read from that task's source.
 - Any other task is read from its own bookmark.
-- When several task files mark a task `[x]`, the first in bookmark order wins.
+- When several task files mark a task `[x]`, the first in bookmark order wins. Bookmark order is alphabetical.
 
 A task that has no source, or whose file is absent at its source, is **unreadable**. It still exists. Its status is unknown, `tt task tree` shows it as `[?]`, and the index logs a warning naming it.
+
+A `subtask:` entry without a well-formed checkbox and ID is **malformed**. The index skips it and logs a warning naming the entry and the task whose file holds it. It warns only about the copy of the file it reads from the task's source.
 
 **Worked example.** Suppose a repository has these task files and bookmarks:
 
@@ -1183,6 +1185,14 @@ task/o           bookmark; no task lists it
 4. Repeat step 3 while it discovers new tasks without a bookmark. Each repetition handles one more level of such tasks, so it rarely runs more than once.
 
 Each file is read and parsed once per source, so the work grows linearly with the number of tasks.
+
+**Single-task lookups.** Most commands need one fact about one task rather than the whole index:
+
+- its **parent**: the bookmarked task whose own file lists it in a `subtask:` entry, with any checkbox;
+- its **canonical branch**: the first bookmark whose own file marks it `[x]`, or else its own bookmark;
+- its nearest **ancestor project**: the first project reached by following parents.
+
+These lookups use only steps 1 and 2 above, the **bookmark listing**. A command that needs several lookups builds the listing once and answers each lookup from it. For example, `tt task show` builds one listing for the task, its parent, and every subtask. It then reads the subtask files that the listing does not hold in one more batch. Lookups scan bookmarks in the same alphabetical order as the index, so both agree when several files list a task. They do not warn about unreadable files or malformed entries.
 
 **Filters.** The index carries each task's ID, kind (task or project), whether it has a bookmark, its file path, its source, status and title, and its `subtask:` entries in file order. Commands select from it with per-row conditions, so a new filter adds one condition rather than another traversal. For example, `tt task list --type` and `--status` are one condition each.
 
@@ -1438,7 +1448,7 @@ Multiple tasks can be checked out simultaneously; the symlinked HEAD worktree fa
    - **Merged (done):** Some task or project branch **B** has an owner task file whose frontmatter contains `subtask: [x] <T>`. That branch B is the parent task's branch (the one that received the checkin). → The **canonical branch** for T is **B**.
    - **Not merged (ongoing):** No branch's owner task file contains `subtask: [x] <T>`. → The **canonical branch** for T is **T's own branch**.
    - **Deleted:** Task was removed via `tt task delete`; no branch contains a `subtask:` entry for T. → T is not discovered and does not appear in the todo list.
-   - Implementation: the task index (§6.13) reads the owner task file of every task and project branch once, in one batch, and derives the canonical branch of every task from those files. It also covers tasks whose own bookmark is gone.
+   - Implementation: the task index (§6.13) reads the owner task file of every task and project branch once, in one batch, and derives the canonical branch of every task from those files. It also covers tasks whose own bookmark is gone. Commands that look up the canonical branch of a single task use the same batch read (§6.13, single-task lookups). When several branches mark T `[x]`, the first in alphabetical order wins.
 
    Once the canonical branch is determined, the task file path is derived from T's ID: strip the task or project prefix from the ID to get `<slug>-<hex>`, then read `.tt/task/<slug>-<hex>/TASK.md` on the canonical branch. Task metadata (title, status, subtask list) is read exclusively from this file. Task titles are never stored inline in `subtask:` entries; they are always looked up from the task file on the canonical branch.
 
