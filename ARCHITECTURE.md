@@ -52,7 +52,7 @@ directives, in dependency order:
 | `repo.sh` | The backend-neutral VCS interface and the backend contract |
 | `vcs/jj.sh` | The jj backend — the only caller of `jj` and `git` |
 | `history.sh` | The `.tt/history` transaction log; begin, commit, rollback |
-| `task.sh` | The task model: branch classification, task and context file resolution and field reads, task field writes in canonical order, current-task resolution, parent lookup, task ranges, staged writes onto branches |
+| `task.sh` | The task model: branch classification, task and context file resolution and field reads, the task index, task field writes in canonical order, current-task resolution, parent lookup, task ranges, staged writes onto branches |
 | `workspace.sh` | Repository resolution, `.tt/config.toml`, the workspace directory and `HEAD` symlinks |
 | `worktree.sh` | The worktree model: lifecycle, working-copy invariants, reattachment, sync, out-of-sync reporting |
 

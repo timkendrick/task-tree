@@ -173,6 +173,12 @@ tt task tree [--focus] [--project <project-id>] [--all] [--detached]
 ```
 Print the project todo list. `--focus` shows only the current task and its ancestors/context.
 
+#### `tt task list`  (alias: `tt list`)
+```
+tt task list [--all] [--repo PATH]
+```
+Print the ID of every task and project that is not `DONE`, one per line, sorted. `--all` includes completed tasks. Pipe it to a picker to choose a task, e.g. `tt task checkout "$(tt task list | fzf)"`.
+
 #### `tt task current`
 ```
 tt task current
