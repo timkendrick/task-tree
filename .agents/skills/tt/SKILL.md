@@ -175,9 +175,9 @@ Print the project todo list. `--focus` shows only the current task and its ances
 
 #### `tt task list`  (alias: `tt list`)
 ```
-tt task list [--all] [--repo PATH]
+tt task list [--type <type>]... [--status <status>]... [--quiet] [--repo PATH]
 ```
-Print the ID of every task and project that is not `DONE`, one per line, sorted. `--all` includes completed tasks. Pipe it to a picker to choose a task, e.g. `tt task checkout "$(tt task list | fzf)"`.
+List every task and project as a table of `ID`, `TYPE`, `STATUS` and `TITLE`, sorted by ID, with `*` marking the current task. `--type` takes `project` or `task`. `--status` takes `TODO`, `IN-PROGRESS`, `DONE`, or `''` for tasks without a status, ignoring case and hyphens. Repeat an option to match any of its values; combine options to require all of them. `--quiet` prints IDs only. Pipe it to a picker to choose a task, e.g. `tt task checkout "$(tt list --status todo --status in-progress --quiet | fzf)"`.
 
 #### `tt task current`
 ```
