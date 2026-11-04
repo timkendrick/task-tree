@@ -1,6 +1,6 @@
 ---
 title: "Implement `tt task list` CLI command"
-status: IN-PROGRESS
+status: DONE
 created: 2026-09-25T16:47:06Z
 updated: 2026-09-25T16:47:06Z
 ---
