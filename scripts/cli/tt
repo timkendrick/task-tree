@@ -87,6 +87,7 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} complete     →  tt task complete
   ${SCRIPT_NAME} delete       →  tt task delete
   ${SCRIPT_NAME} tree         →  tt task tree
+  ${SCRIPT_NAME} list         →  tt task list
   ${SCRIPT_NAME} rename       →  tt task rename
   ${SCRIPT_NAME} move         →  tt task move
   ${SCRIPT_NAME} add-context  →  tt task context add
@@ -137,6 +138,7 @@ main() {
     complete)    set -- task     complete     "${@:2}" ;;
     delete)      set -- task     delete       "${@:2}" ;;
     tree)        set -- task     tree         "${@:2}" ;;
+    list)        set -- task     list         "${@:2}" ;;
     rename)      set -- task     rename       "${@:2}" ;;
     move)        set -- task     move         "${@:2}" ;;
     reorder)     set -- task     reorder      "${@:2}" ;;
