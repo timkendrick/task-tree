@@ -97,7 +97,6 @@
 #     _jj__abandon_commit            — abandon a revision, rebasing descendants onto its parents
 #   Bookmarks:
 #     _jj__set_bookmark              — move a bookmark to an explicit revision
-#     _jj__list_bookmark_names       — all local bookmark names
 #     _jj__list_bookmark_targets     — every local bookmark with its target commit ID
 #     _jj__list_bookmarks_at         — local bookmark names at a revision
 #     _jj__check_bookmark_exists     — whether a local bookmark exists
@@ -1311,15 +1310,6 @@ _jj__set_bookmark() {
   fi
   __jj__write "$repo" --ignore-working-copy bookmark set "$name" -r "$rev" \
     "${extra_flags[@]+"${extra_flags[@]}"}"
-}
-
-# Usage: _jj__list_bookmark_names REPO
-# Prints one local bookmark name per line (blank lines may appear and should
-# be skipped by callers). Returns jj's exit code.
-_jj__list_bookmark_names() {
-  local repo="$1"
-  __jj__read "$repo" --ignore-working-copy log -r 'bookmarks()' \
-    -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' --no-graph
 }
 
 # Usage: _jj__list_bookmark_targets REPO
