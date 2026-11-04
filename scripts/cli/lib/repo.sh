@@ -84,6 +84,7 @@ _repo__abandon_commit()            { _jj__abandon_commit "$@"; }
 # --- Bookmarks ---
 _repo__set_bookmark()              { _jj__set_bookmark "$@"; }
 _repo__list_bookmark_names()       { _jj__list_bookmark_names "$@"; }
+_repo__list_bookmark_targets()     { _jj__list_bookmark_targets "$@"; }
 _repo__list_bookmarks_at()         { _jj__list_bookmarks_at "$@"; }
 _repo__check_bookmark_exists()     { _jj__check_bookmark_exists "$@"; }
 _repo__rename_bookmark()           { _jj__rename_bookmark "$@"; }
@@ -98,6 +99,7 @@ _repo__get_worktree_revision()     { _jj__get_worktree_revision "$@"; }
 
 # --- Files ---
 _repo__read_file_at_revision()     { _jj__read_file_at_revision "$@"; }
+_repo__read_files_at_revisions()   { _jj__read_files_at_revisions "$@"; }
 _repo__read_symlink_at_revision()  { _jj__read_symlink_at_revision "$@"; }
 _repo__read_file_at_operation()    { _jj__read_file_at_operation "$@"; }
 _repo__check_file_exists_at_revision() { _jj__check_file_exists_at_revision "$@"; }
