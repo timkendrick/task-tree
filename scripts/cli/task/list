@@ -66,12 +66,12 @@ main() {
     exit 1
   }
 
-  # Task rows: task, ID, KIND, HAS_BRANCH, SOURCE, STATUS, TITLE.
+  # Task rows: task, ID, KIND, HAS_BRANCH, PATH, SOURCE, STATUS, TITLE.
   # Each filter option adds one condition that skips the rows it excludes.
   printf '%s\n' "$index" | awk -v include_done="$include_done" '
     BEGIN { FS = "\t" }
     $1 != "task" { next }
-    !include_done && $6 == "DONE" { next }
+    !include_done && $7 == "DONE" { next }
     { print $2 }
   ' | LC_ALL=C sort
 }
