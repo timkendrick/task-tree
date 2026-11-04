@@ -212,6 +212,7 @@ Signatures, argument conventions and return values are documented on the backend
 | --- | --- |
 | `set_bookmark` | Move a bookmark to an **explicit** revision |
 | `list_bookmark_names` | Every local bookmark name |
+| `list_bookmark_targets` | Every local bookmark with its target commit |
 | `list_bookmarks_at` | Bookmark names at a revision |
 | `check_bookmark_exists` | Whether a bookmark exists |
 | `rename_bookmark` | Rename a bookmark |
@@ -225,6 +226,7 @@ can depend on the working copy happening to sit where a previous step left it.
 | Operation | Purpose |
 | --- | --- |
 | `read_file_at_revision` | File content at a revision |
+| `read_files_at_revisions` | Content of many files at many revisions, in one pass |
 | `read_symlink_at_revision` | Symlink target at a revision |
 | `read_file_at_operation` | File content at an operation and revision |
 | `check_file_exists_at_revision` | Whether a file exists at a revision |
