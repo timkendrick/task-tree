@@ -158,7 +158,6 @@ subtask: [x] task/tt-prompt-omit-summary-line-1ba84f08
 subtask: [x] task/tt-task-list-b2d8f237
 subtask: [x] task/prevent-deleting-in-use-worktree-cef2718e
 subtask: [x] task/tt-switch-skip-dirty-check-ad6b460c
-subtask: [ ] task/tt-show-subtask-performance-e02e7594
 subtask: [x] task/tt-checkpoint-non-interactive-message-7dbc8406
 subtask: [x] task/ancestor-branch-write-moves-worktree-fb5b1ff6
 subtask: [x] task/propagate-resume-commit-task-symlink-cbfb7b79
