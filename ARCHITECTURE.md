@@ -52,7 +52,7 @@ directives, in dependency order:
 | `repo.sh` | The backend-neutral VCS interface and the backend contract |
 | `vcs/jj.sh` | The jj backend — the only caller of `jj` and `git` |
 | `history.sh` | The `.tt/history` transaction log; begin, commit, rollback |
-| `task.sh` | The task model: branch classification, task and context file resolution and field reads, task field writes in canonical order, current-task resolution, parent lookup, task ranges, staged writes onto branches |
+| `task.sh` | The task model: branch classification, task and context file resolution and field reads, the task index, task field writes in canonical order, current-task resolution, parent and canonical-branch lookups from a batched bookmark listing, task ranges, staged writes onto branches |
 | `workspace.sh` | Repository resolution, `.tt/config.toml`, the workspace directory and `HEAD` symlinks |
 | `worktree.sh` | The worktree model: lifecycle, working-copy invariants, reattachment, sync, out-of-sync reporting |
 
@@ -211,7 +211,7 @@ Signatures, argument conventions and return values are documented on the backend
 | Operation | Purpose |
 | --- | --- |
 | `set_bookmark` | Move a bookmark to an **explicit** revision |
-| `list_bookmark_names` | Every local bookmark name |
+| `list_bookmark_targets` | Every local bookmark with its target commit |
 | `list_bookmarks_at` | Bookmark names at a revision |
 | `check_bookmark_exists` | Whether a bookmark exists |
 | `rename_bookmark` | Rename a bookmark |
@@ -225,6 +225,7 @@ can depend on the working copy happening to sit where a previous step left it.
 | Operation | Purpose |
 | --- | --- |
 | `read_file_at_revision` | File content at a revision |
+| `read_files_at_revisions` | Content of many files at many revisions, in one pass |
 | `read_symlink_at_revision` | Symlink target at a revision |
 | `read_file_at_operation` | File content at an operation and revision |
 | `check_file_exists_at_revision` | Whether a file exists at a revision |

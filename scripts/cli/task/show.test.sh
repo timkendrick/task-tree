@@ -96,6 +96,84 @@ test_task_show__task_with_subtasks() {
 }
 
 
+# Rewrite the subtask entries of the project file checked out in $REPO with
+# the awk PROGRAM, and record the result on PROJ_ID.
+# Usage: _edit_project_entries PROJ_ID PROGRAM
+_edit_project_entries() {
+  local proj_id="$1" program="$2"
+  local file="$REPO/.tt/task/${proj_id#project/}/TASK.md"
+  awk "$program" "$file" > "$file.tmp"
+  mv "$file.tmp" "$file"
+  jj -R "$REPO" commit -m "edit subtask entries" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set "$proj_id" -r '@-' >/dev/null 2>&1
+}
+
+test_task_show__subtask_status_and_title_from_canonical_branch() {
+  setup_workspace "show-sub-status"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  done_id=$(create_task "done" "Done Task") || true
+  checkout_task "$done_id" >/dev/null || true
+  checkin_task --complete >/dev/null || true
+  checkout_task "$proj_id" >/dev/null || true
+  todo_id=$(create_task "todo" "Todo Task") || true
+  # The merged task is read from the project's copy of its file.
+  jj -R "$REPO" bookmark delete "$done_id" >/dev/null 2>&1
+
+  output="" exit_code=0
+  output=$(run_tt task show "$proj_id" 2>&1) || exit_code=$?
+  assert_success "show succeeds" "$exit_code"
+  assert_contains "subtasks in entry order with status and title" "$output" \
+    "$(printf 'Subtasks:\n- [x] %s  Done Task\n- [ ] %s  Todo Task\n' "$done_id" "$todo_id")"
+}
+
+test_task_show__titled_subtask_entry_resolves() {
+  setup_workspace "show-titled-entry"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  child=$(create_task "child" "Child Task") || true
+  _edit_project_entries "$proj_id" '/^subtask: / { $0 = $0 " Entry title" } { print }'
+
+  output="" exit_code=0
+  output=$(run_tt task show "$proj_id" 2>&1) || exit_code=$?
+  assert_success "show succeeds" "$exit_code"
+  assert_contains "the fixture titles the entry" \
+    "$(cat "$REPO/.tt/task/${proj_id#project/}/TASK.md")" "subtask: [ ] $child Entry title"
+  assert_contains "title read from the subtask file" "$output" "- [ ] $child  Child Task"
+  assert_not_contains "entry title not shown" "$output" "Entry title"
+}
+
+test_task_show__malformed_subtask_entry_skipped_with_warning() {
+  setup_workspace "show-malformed-entry"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  child=$(create_task "child" "Child Task") || true
+  _edit_project_entries "$proj_id" '/^subtask: / { print "subtask: not-an-entry" } { print }'
+
+  local err="$_TEST_ROOT/show-err.txt" output="" exit_code=0
+  output=$(run_tt task show "$proj_id" 2>"$err") || exit_code=$?
+  assert_success "show succeeds" "$exit_code"
+  assert_contains "well-formed entry listed" "$output" "- [ ] $child  Child Task"
+  assert_not_contains "malformed entry not listed" "$output" "not-an-entry"
+  assert_eq "warning names the entry and the task" "$(cat "$err")" \
+    "Warning: Ignoring a malformed subtask entry 'not-an-entry' in the task file of '$proj_id'."
+}
+
+test_task_show__only_malformed_subtask_entries() {
+  setup_workspace "show-only-malformed"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  child=$(create_task "child" "Child Task") || true
+  _edit_project_entries "$proj_id" '/^subtask: / { $0 = "subtask: not-an-entry" } { print }'
+
+  output="" exit_code=0
+  output=$(run_tt task show "$proj_id" 2>/dev/null) || exit_code=$?
+  assert_success "show succeeds" "$exit_code"
+  assert_contains "no subtasks message" "$output" "[No subtasks]"
+  assert_not_contains "no subtasks heading" "$output" "Subtasks:"
+}
+
+
 test_task_show__untitled_subtask_on_one_line() {
   setup_workspace "show-untitled-sub"
   proj_id=$(create_project "proj" "Project") || true
@@ -150,6 +228,7 @@ test_task_show__task_with_context() {
   output=$(run_tt task show 2>&1) || exit_code=$?
   assert_success "show with context" "$exit_code"
   assert_contains "context in output" "$output" "context/ctx-"
+  assert_matches "context title before its ID" "$output" '^- My Ctx \(context/%x%\)$'
 }
 
 

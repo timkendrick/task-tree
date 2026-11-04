@@ -29,6 +29,391 @@ test__task__write_stub__has_placeholder_title() {
 }
 
 # ---------------------------------------------------------------------------
+# _task__build_index
+# ---------------------------------------------------------------------------
+
+# Build the task index of $REPO. Usage: _build_index
+_build_index() {
+  _task__build_index "$REPO" "$(_workspace__get_task_prefix "$REPO")" \
+    "$(_workspace__get_project_prefix "$REPO")"
+}
+
+# Print FIELD (1-based, after the row type) of the task row for ID in INDEX.
+# Usage: _index_task_field INDEX ID FIELD
+_index_task_field() {
+  printf '%s\n' "$1" | awk -F'\t' -v id="$2" -v field="$3" \
+    '$1 == "task" && $2 == id { print $(field + 1) }'
+}
+
+# Print the "CHECKBOX SUBTASK_ID" subtask rows of ID in INDEX, one per line.
+# Usage: _index_subtasks INDEX ID
+_index_subtasks() {
+  printf '%s\n' "$1" | awk -F'\t' -v id="$2" \
+    '$1 == "subtask" && $2 == id { print $3 " " $4 }'
+}
+
+test__task__build_index__lists_bookmarked_tasks_with_records() {
+  setup_workspace "index-basic"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_a=$(create_task "a" "Task A") || true
+  checkout_task "$proj_id" || true
+  task_b=$(create_task "b" "Task B") || true
+
+  local index exit_code=0
+  index="$(_build_index 2>/dev/null)" || exit_code=$?
+  assert_success "index builds" "$exit_code"
+  assert_eq "project kind" "$(_index_task_field "$index" "$proj_id" 2)" "project"
+  assert_eq "task kind" "$(_index_task_field "$index" "$task_a" 2)" "task"
+  assert_eq "project has a branch" "$(_index_task_field "$index" "$proj_id" 3)" "1"
+  assert_eq "task file path" "$(_index_task_field "$index" "$task_a" 4)" \
+    ".tt/task/${task_a#*/}/TASK.md"
+  assert_eq "task source is its own tip" "$(_index_task_field "$index" "$task_a" 5)" \
+    "$(get_full_commit_id "$task_a")"
+  assert_eq "task status" "$(_index_task_field "$index" "$task_a" 6)" "TODO"
+  assert_eq "task title" "$(_index_task_field "$index" "$task_b" 7)" "Task B"
+  assert_eq "subtasks in file order" "$(_index_subtasks "$index" "$proj_id")" \
+    "$(printf '[ ] %s\n[ ] %s' "$task_a" "$task_b")"
+}
+
+test__task__build_index__reads_checked_in_task_from_parent() {
+  setup_workspace "index-merged"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Original Title") || true
+  checkout_task "$task_id" || true
+  checkin_task --complete >/dev/null || true
+  run_tt task edit "$task_id" --title "Edited On Own Branch" >/dev/null 2>&1 || true
+
+  local index
+  index="$(_build_index 2>/dev/null)"
+  assert_eq "source is the parent tip" "$(_index_task_field "$index" "$task_id" 5)" \
+    "$(get_full_commit_id "$proj_id")"
+  assert_eq "title from the parent copy" "$(_index_task_field "$index" "$task_id" 7)" \
+    "Original Title"
+  assert_eq "status from the parent copy" "$(_index_task_field "$index" "$task_id" 6)" \
+    "DONE"
+}
+
+test__task__build_index__includes_subtasks_without_a_bookmark() {
+  setup_workspace "index-no-bookmark"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  merged=$(create_task "merged" "Merged Task") || true
+  checkout_task "$merged" || true
+  checkin_task --complete >/dev/null || true
+  checkout_task "$proj_id" || true
+  pending=$(create_task "pending" "Pending Task") || true
+  jj -R "$REPO" bookmark delete "$merged" "$pending" >/dev/null 2>&1
+
+  local index err
+  err="$_TEST_ROOT/index-err.txt"
+  index="$(_build_index 2>"$err")"
+  assert_eq "merged task has no branch" "$(_index_task_field "$index" "$merged" 3)" "0"
+  assert_eq "merged task read from the parent" "$(_index_task_field "$index" "$merged" 7)" \
+    "Merged Task"
+  assert_eq "pending task listed" "$(_index_task_field "$index" "$pending" 2)" "task"
+  assert_eq "pending task unreadable" "$(_index_task_field "$index" "$pending" 5)" ""
+  assert_contains "unreadable task warned" "$(cat "$err")" \
+    "Warning: Cannot read the task file of '$pending'."
+  assert_not_contains "readable task not warned" "$(cat "$err")" "'$merged'"
+}
+
+test__task__build_index__includes_orphaned_bookmarks() {
+  setup_workspace "index-orphan"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Orphan") || true
+  _task__commit_on_branch "$REPO" "$proj_id" "drop subtask" \
+    --modify ".tt/task/${proj_id#*/}/TASK.md" -- _writer_drop_subtasks >/dev/null
+
+  local index
+  index="$(_build_index 2>/dev/null)"
+  assert_output_empty "project lists no subtasks" "$(_index_subtasks "$index" "$proj_id")"
+  assert_eq "orphan listed" "$(_index_task_field "$index" "$task_id" 7)" "Orphan"
+}
+
+# Writer: removes every subtask entry from the staged project file.
+_writer_drop_subtasks() {
+  local file
+  file="$(printf '%s\n' "$1"/.tt/task/*/TASK.md)"
+  grep -v '^subtask:' "$file" > "$file.tmp"
+  mv "$file.tmp" "$file"
+}
+
+# ---------------------------------------------------------------------------
+# _task__list_branch_records and the _task__find_*_in lookups
+# ---------------------------------------------------------------------------
+
+test__task__list_branch_records__reads_every_bookmark_tip() {
+  setup_workspace "branch-records"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Task") || true
+  jj -R "$REPO" bookmark create not-a-task -r @ >/dev/null 2>&1
+
+  local listing proj_commit task_commit
+  listing="$(_task__list_branch_records "$REPO" "$(_workspace__get_task_prefix "$REPO")" \
+    "$(_workspace__get_project_prefix "$REPO")")"
+  proj_commit="$(get_full_commit_id "$proj_id")"
+  task_commit="$(get_full_commit_id "$task_id")"
+  assert_eq "bookmark rows in alphabetical order" \
+    "$(printf '%s\n' "$listing" | awk -F'\t' '$1 == "bookmark"')" \
+    "$(printf 'bookmark\t%s\t%s\n' "$proj_id" "$proj_commit" "$task_id" "$task_commit")"
+  assert_contains "project file read at its tip" "$listing" \
+    "read"$'\t'"$proj_id"$'\t'"$proj_commit"$'\t+\t'
+  assert_contains "task file read at its tip" "$listing" \
+    "read"$'\t'"$task_id"$'\t'"$task_commit"$'\t+\tTODO\tTask'
+  assert_contains "subtask entry of the project" "$listing" \
+    "entry"$'\t'"$proj_id"$'\t'"$proj_commit"$'\t[ ]\t'"$task_id"
+  assert_not_contains "other bookmarks skipped" "$listing" "not-a-task"
+}
+
+test__task__find_lookups__wrappers_use_the_repository() {
+  setup_workspace "find-wrappers"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Task") || true
+
+  local task_prefix project_prefix
+  task_prefix="$(_workspace__get_task_prefix "$REPO")"
+  project_prefix="$(_workspace__get_project_prefix "$REPO")"
+  assert_eq "parent branch" \
+    "$(_task__find_parent_branch "$REPO" "$task_id" "$task_prefix" "$project_prefix")" "$proj_id"
+  assert_eq "ongoing task read from its own branch" \
+    "$(_task__find_branch "$REPO" "$task_id" "$task_prefix" "$project_prefix")" "$task_id"
+  assert_eq "parent project" \
+    "$(_task__find_parent_project "$REPO" "$task_id" "$task_prefix" "$project_prefix")" "$proj_id"
+}
+
+# Print a listing in the format of _task__list_branch_records. Each argument
+# is "OWNER" for a bookmark without entries, "OWNER=" for a conflicted
+# bookmark, or "OWNER:CHECKBOX:SUBTASK_ID[,CHECKBOX:SUBTASK_ID]..." for a
+# bookmark whose file lists those entries. CHECKBOX is ' ', '-' or 'x'.
+# Usage: _listing SPEC...
+_listing() {
+  local spec owner entries entry commit
+  for spec in "$@"; do
+    owner="${spec%%[:=]*}"
+    commit="c-$owner"
+    [[ "$spec" == *= ]] && commit=''
+    printf 'bookmark\t%s\t%s\n' "$owner" "$commit"
+  done
+  for spec in "$@"; do
+    [[ "$spec" == *= ]] && continue
+    owner="${spec%%:*}"
+    printf 'read\t%s\tc-%s\t+\tTODO\t%s\n' "$owner" "$owner" "$owner"
+    [[ "$spec" == *:* ]] || continue
+    entries="${spec#*:}"
+    while [[ -n "$entries" ]]; do
+      entry="${entries%%,*}"
+      printf 'entry\t%s\tc-%s\t[%s]\t%s\n' "$owner" "$owner" "${entry%%:*}" "${entry#*:}"
+      [[ "$entries" == *,* ]] && entries="${entries#*,}" || entries=''
+    done
+  done
+}
+
+test__task__find_parent_branch_in__one_parent() {
+  local listing output exit_code=0
+  listing="$(_listing 'project/p-00000001: :task/a-00000002' 'task/a-00000002')"
+  output="$(_task__find_parent_branch_in "$listing" task/a-00000002)" || exit_code=$?
+  assert_success "parent found" "$exit_code"
+  assert_eq "parent printed" "$output" project/p-00000001
+}
+
+test__task__find_parent_branch_in__any_checkbox() {
+  local listing
+  listing="$(_listing 'project/p-00000001:x:task/a-00000002,-:task/b-00000003')"
+  assert_eq "parent of a merged task" \
+    "$(_task__find_parent_branch_in "$listing" task/a-00000002)" project/p-00000001
+  assert_eq "parent of an in-progress task" \
+    "$(_task__find_parent_branch_in "$listing" task/b-00000003)" project/p-00000001
+}
+
+test__task__find_parent_branch_in__no_parent() {
+  local listing output exit_code=0
+  listing="$(_listing 'project/p-00000001' 'task/a-00000002:x:task/a-00000002')"
+  output="$(_task__find_parent_branch_in "$listing" task/a-00000002 2>&1)" || exit_code=$?
+  assert_exit_code "no parent, and the task's own file does not count" "$exit_code" 1
+  assert_output_empty "nothing printed" "$output"
+}
+
+test__task__find_parent_branch_in__multiple_parents() {
+  local listing output exit_code=0 err="$_TEST_ROOT/parents-err.txt"
+  listing="$(_listing 'project/p-00000001: :task/a-00000002' \
+    'project/q-00000003:x:task/a-00000002' 'task/b-00000004: :task/a-00000002')"
+  output="$(_task__find_parent_branch_in "$listing" task/a-00000002 2>"$err")" || exit_code=$?
+  assert_exit_code "multiple parents" "$exit_code" 2
+  assert_output_empty "nothing printed" "$output"
+  assert_eq "error names the first two parents in bookmark order" "$(cat "$err")" \
+    "Error: Multiple parent branches found for 'task/a-00000002': 'project/p-00000001' and 'project/q-00000003'."
+}
+
+test__task__find_branch_in__merged_task_read_from_first_marking_owner() {
+  local listing
+  listing="$(_listing 'project/p-00000001: :task/a-00000002' \
+    'project/q-00000003:x:task/a-00000002' 'task/a-00000002' \
+    'task/b-00000004:x:task/a-00000002')"
+  assert_eq "first owner marking the task [x]" \
+    "$(_task__find_branch_in "$listing" task/a-00000002)" project/q-00000003
+}
+
+test__task__find_branch_in__ongoing_task_read_from_its_bookmark() {
+  local listing
+  listing="$(_listing 'project/p-00000001:-:task/a-00000002' 'task/a-00000002')"
+  assert_eq "own bookmark" "$(_task__find_branch_in "$listing" task/a-00000002)" \
+    task/a-00000002
+}
+
+test__task__find_branch_in__without_a_usable_bookmark() {
+  local listing output exit_code=0
+  listing="$(_listing 'project/p-00000001: :task/a-00000002,-:task/b-00000003' \
+    'task/b-00000003=')"
+  output="$(_task__find_branch_in "$listing" task/a-00000002)" || exit_code=$?
+  assert_exit_code "deleted bookmark" "$exit_code" 1
+  assert_output_empty "nothing printed for a deleted bookmark" "$output"
+
+  exit_code=0
+  output="$(_task__find_branch_in "$listing" task/b-00000003)" || exit_code=$?
+  assert_exit_code "conflicted bookmark" "$exit_code" 1
+  assert_output_empty "nothing printed for a conflicted bookmark" "$output"
+}
+
+test__task__find_parent_project_in__walks_to_the_nearest_project() {
+  local listing
+  listing="$(_listing 'project/p-00000001: :task/a-00000002' \
+    'task/a-00000002: :task/b-00000003' 'task/b-00000003: :task/c-00000004' \
+    'task/c-00000004')"
+  assert_eq "grandparent project" \
+    "$(_task__find_parent_project_in "$listing" task/c-00000004 project/)" project/p-00000001
+  assert_eq "parent project" \
+    "$(_task__find_parent_project_in "$listing" task/a-00000002 project/)" project/p-00000001
+}
+
+test__task__find_parent_project_in__propagates_lookup_failures() {
+  local listing output exit_code=0 err="$_TEST_ROOT/project-err.txt"
+  listing="$(_listing 'task/a-00000002: :task/b-00000003' 'task/b-00000003')"
+  output="$(_task__find_parent_project_in "$listing" task/b-00000003 project/ 2>&1)" \
+    || exit_code=$?
+  assert_exit_code "no ancestor project" "$exit_code" 1
+  assert_output_empty "nothing printed without a project" "$output"
+
+  listing="$(_listing 'project/p-00000001: :task/a-00000002' \
+    'project/q-00000003: :task/a-00000002' 'task/a-00000002: :task/b-00000003')"
+  exit_code=0
+  output="$(_task__find_parent_project_in "$listing" task/b-00000003 project/ 2>"$err")" \
+    || exit_code=$?
+  assert_exit_code "multiple parents at a higher level" "$exit_code" 2
+  assert_contains "error names the ambiguous task" "$(cat "$err")" \
+    "Multiple parent branches found for 'task/a-00000002'"
+}
+
+test__task__find_parent_project_in__detects_a_cycle() {
+  local listing output exit_code=0 err="$_TEST_ROOT/cycle-err.txt"
+  listing="$(_listing 'task/a-00000002: :task/b-00000003' 'task/b-00000003: :task/a-00000002')"
+  output="$(_task__find_parent_project_in "$listing" task/a-00000002 project/ 2>"$err")" \
+    || exit_code=$?
+  assert_exit_code "cycle" "$exit_code" 2
+  assert_output_empty "nothing printed" "$output"
+  assert_eq "error names the revisited task" "$(cat "$err")" \
+    "Error: Cycle in the task hierarchy at 'task/a-00000002'."
+}
+
+test__task__find_branch_commit_in__reads_the_bookmark_target() {
+  local listing output exit_code=0
+  listing="$(_listing 'project/p-00000001' 'task/a-00000002=')"
+  assert_eq "commit of a bookmark" \
+    "$(_task__find_branch_commit_in "$listing" project/p-00000001)" c-project/p-00000001
+  output="$(_task__find_branch_commit_in "$listing" task/a-00000002)" || exit_code=$?
+  assert_exit_code "conflicted bookmark" "$exit_code" 1
+  exit_code=0
+  output="$(_task__find_branch_commit_in "$listing" task/b-00000003)" || exit_code=$?
+  assert_exit_code "missing bookmark" "$exit_code" 1
+}
+
+test__task__read_summaries_in__reads_each_task_from_its_canonical_branch() {
+  setup_workspace "read-summaries"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  merged=$(create_task "merged" "Merged Task") || true
+  checkout_task "$merged" || true
+  checkin_task --complete >/dev/null || true
+  checkout_task "$proj_id" || true
+  ongoing=$(create_task "ongoing" "Ongoing Task") || true
+  pending=$(create_task "pending" "Pending Task") || true
+  jj -R "$REPO" bookmark delete "$merged" "$pending" >/dev/null 2>&1
+
+  local task_prefix project_prefix listing
+  task_prefix="$(_workspace__get_task_prefix "$REPO")"
+  project_prefix="$(_workspace__get_project_prefix "$REPO")"
+  listing="$(_task__list_branch_records "$REPO" "$task_prefix" "$project_prefix")"
+  assert_eq "one row per ID, in input order" \
+    "$(printf '%s\n' "$pending" "$ongoing" "$merged" not-a-task \
+      | _task__read_summaries_in "$listing" "$REPO" "$task_prefix" "$project_prefix")" \
+    "$(printf '%s\t\t\n%s\tTODO\tOngoing Task\n%s\tDONE\tMerged Task\nnot-a-task\t\t\n' \
+      "$pending" "$ongoing" "$merged")"
+  assert_output_empty "no IDs, no output" \
+    "$(_task__read_summaries_in "$listing" "$REPO" "$task_prefix" "$project_prefix" < /dev/null)"
+}
+
+test__task__read_context_titles__one_line_per_context() {
+  setup_workspace "context-titles"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Task") || true
+  checkout_task "$task_id" || true
+  echo "First body" | run_tt task context add --title "First" --slug "one" >/dev/null 2>&1 || true
+  echo "Second body" | run_tt task context add --title "Second" --slug "two" >/dev/null 2>&1 || true
+
+  local task_prefix project_prefix contexts commit
+  task_prefix="$(_workspace__get_task_prefix "$REPO")"
+  project_prefix="$(_workspace__get_project_prefix "$REPO")"
+  contexts="$(_task__read_fields "$REPO" "$task_id" "$task_id" "$task_prefix" "$project_prefix" \
+    'context[]' | tail -n +2)"
+  commit="$(get_full_commit_id "$task_id")"
+  assert_eq "the fixture has two contexts" "$(printf '%s\n' "$contexts" | wc -l | tr -d ' ')" 2
+  assert_eq "titles in order, empty for a missing context" \
+    "$(printf '%s\n' "$contexts" context/missing-00000000 \
+      | _task__read_context_titles "$REPO" "$commit" "$task_id" "$task_prefix" "$project_prefix")" \
+    "$(printf 'First\nSecond\n\n')"
+}
+
+test__task__parse_subtask_entries__classifies_each_entry() {
+  assert_eq "entries and malformed values in order" \
+    "$(printf '%s\n' '[x] task/a-00000001 Title' 'not-an-entry' '' '[-]task/b-00000002' \
+      | _task__parse_subtask_entries)" \
+    "$(printf 'entry\t[x]\ttask/a-00000001\nmalformed\tnot-an-entry\nmalformed\t\nentry\t[-]\ttask/b-00000002\n')"
+}
+
+# Writer: adds a malformed subtask entry to the staged task file at the path
+# passed as its second argument.
+_writer_malformed_subtask_entry() {
+  local stage="$1" path="$2"
+  awk '/^status:/ { print; print "subtask: not-an-entry"; next } { print }' \
+    "$stage/$path" > "$stage/$path.tmp"
+  mv "$stage/$path.tmp" "$stage/$path"
+}
+
+test__task__build_index__warns_about_malformed_subtask_entries() {
+  setup_workspace "index-malformed"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Task") || true
+  local proj_file
+  proj_file="$(_task__resolve_file "$proj_id" "$(_workspace__get_task_prefix "$REPO")" \
+    "$(_workspace__get_project_prefix "$REPO")")"
+  _task__commit_on_branch "$REPO" "$proj_id" "malformed entry" \
+    --modify "$proj_file" -- _writer_malformed_subtask_entry "$proj_file" >/dev/null
+
+  local index err="$_TEST_ROOT/index-err.txt"
+  index="$(_build_index 2>"$err")"
+  assert_eq "one warning names the entry and the task" "$(cat "$err")" \
+    "Warning: Ignoring a malformed subtask entry 'not-an-entry' in the task file of '$proj_id'."
+  assert_eq "well-formed entry kept" "$(_index_subtasks "$index" "$proj_id")" "[ ] $task_id"
+  assert_not_contains "no malformed rows in the index" "$index" "not-an-entry"
+}
+
+# ---------------------------------------------------------------------------
 # _task__get_range_context / _task__resolve_range
 # ---------------------------------------------------------------------------
 
@@ -995,6 +1380,52 @@ _writer_title_subtask_entries() {
   printf '%s' "$out" > "$stage/$path"
 }
 
+# Writer: replaces the project file at the path passed as its second argument
+# and adds task files, giving this tree with a cycle back to the project and
+# to task a:
+#   project -> a, b;  a -> c, b;  b -> d;  d -> a, project
+_writer_descendant_tree() {
+  local stage="$1" proj_file="$2" proj_id="$3"
+  _write_task_file "$stage/$proj_file" "$proj_id" task/a-0000000a task/b-0000000b
+  _write_task_file "$stage/.tt/task/a-0000000a/TASK.md" task/c-0000000c task/b-0000000b
+  _write_task_file "$stage/.tt/task/b-0000000b/TASK.md" task/d-0000000d
+  _write_task_file "$stage/.tt/task/c-0000000c/TASK.md"
+  _write_task_file "$stage/.tt/task/d-0000000d/TASK.md" task/a-0000000a "$proj_id"
+}
+
+# Usage: _write_task_file PATH [SUBTASK_ID]...
+_write_task_file() {
+  local path="$1" id
+  shift
+  mkdir -p "${path%/*}"
+  {
+    printf -- '---\ntitle: Task\nstatus: TODO\n'
+    for id in "$@"; do printf 'subtask: [ ] %s\n' "$id"; done
+    printf -- '---\n'
+  } > "$path"
+}
+
+test__task__collect_descendant_dirs__breadth_first_without_repeats() {
+  setup_workspace "descendant-dirs"
+  proj_id=$(create_project "proj" "Project") || true
+
+  local task_prefix project_prefix proj_file
+  task_prefix="$(_workspace__get_task_prefix "$REPO")"
+  project_prefix="$(_workspace__get_project_prefix "$REPO")"
+  proj_file="$(_task__resolve_file "$proj_id" "$task_prefix" "$project_prefix")"
+  _task__commit_on_branch "$REPO" "$proj_id" "descendant tree" \
+    -- _writer_descendant_tree "$proj_file" "$proj_id" >/dev/null
+
+  assert_eq "each descendant once, level by level, in entry order" \
+    "$(_task__collect_descendant_dirs "$REPO" "$proj_id" "$proj_id" \
+      "$task_prefix" "$project_prefix")" \
+    "$(printf '.tt/task/%s\n' a-0000000a b-0000000b c-0000000c d-0000000d)"
+  assert_eq "a subtree reads the same branch" \
+    "$(_task__collect_descendant_dirs "$REPO" "$proj_id" task/b-0000000b \
+      "$task_prefix" "$project_prefix")" \
+    "$(printf '.tt/task/%s\n' d-0000000d a-0000000a "${proj_id#project/}" c-0000000c)"
+}
+
 test__task__subtask_lookups__ignore_trailing_entry_titles() {
   setup_workspace "subtask-lookups-titled"
   proj_id=$(create_project "proj" "Project") || true
@@ -1010,8 +1441,9 @@ test__task__subtask_lookups__ignore_trailing_entry_titles() {
   assert_contains "the fixture titles the subtask entry" \
     "$(_task__read_file "$REPO" "$proj_id" "$proj_file")" "subtask: [ ] $child_id Child title"
 
-  assert_eq "__task__list_subtasks drops the title after the ID" \
-    "$(__task__list_subtasks "$REPO" "$proj_id" "$proj_id" "$task_prefix" "$project_prefix")" \
+  assert_eq "the listing drops the title after the ID" \
+    "$(_task__list_branch_records "$REPO" "$task_prefix" "$project_prefix" \
+      | awk -F'\t' -v owner="$proj_id" '$1 == "entry" && $2 == owner { print $4 "\t" $5 }')" \
     "[ ]"$'\t'"$child_id"
   assert_eq "the parent is found through a titled entry" \
     "$(_task__find_parent_branch "$REPO" "$child_id" "$task_prefix" "$project_prefix")" \
