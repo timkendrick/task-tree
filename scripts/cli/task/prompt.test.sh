@@ -129,6 +129,20 @@ test_task_prompt__task_title_is_quoted() {
     $'---\ntask: '"$task_id"$'\ntitle: "Say \\"hi\\""\n---'
 }
 
+test_task_prompt__task_title_with_newline_round_trips() {
+  setup_workspace "prompt-title-newline"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" $'Line one\nline two') || true
+  checkout_task "$task_id" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task prompt 2>&1) || exit_code=$?
+  assert_success "prompt succeeds" "$exit_code"
+  assert_contains "the newline is quoted as written" "$output" \
+    $'---\ntask: '"$task_id"$'\ntitle: "Line one\\nline two"\n---'
+}
+
 test_task_prompt__context_title_is_quoted() {
   setup_workspace "prompt-ctx-quoted"
   proj_id=$(create_project "proj" "Project") || true

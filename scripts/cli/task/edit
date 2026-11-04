@@ -139,6 +139,7 @@ main() {
     IFS= read -r -d '' current_body
   } <<< "$fields" || true
   current_body="${current_body%$'\n'}"
+  current_title="$(_frontmatter__decode "$current_title")"
 
   # A task file without a created timestamp (old format) gets one now
   local new_created=''
@@ -232,7 +233,7 @@ main() {
   _history__begin_transaction "$repo"
 
   _task__commit_on_branch "$repo" "$bookmark" \
-    "$(_commit__format_message "task" "edit" "$bookmark" "$final_title")" \
+    "$(_commit__format_title_message "task" "edit" "$bookmark" "$final_title")" \
     --modify "$task_file" -- task_edit_writer >/dev/null
 
   # Commit transaction (records after-op for undo)

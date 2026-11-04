@@ -283,7 +283,7 @@ main() {
   # the delivery branch. .tt/config.toml is kept (workspace configuration).
   local handoff_commit
   handoff_commit="$(_task__commit_handoff "$repo" "$child_bookmark" \
-    "$(_commit__format_message "task" "handoff" "$task_id" "$task_title")" \
+    "$(_commit__format_title_message "task" "handoff" "$task_id" "$task_title")" \
     --delete "$TT_TASK_SYMLINK_FILENAME" \
     --delete-prefix "$(_path__task_root)" \
     -- publish_handoff_writer)"

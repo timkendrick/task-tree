@@ -166,6 +166,7 @@ main() {
     _ui__log "Error: Could not read context file '$ctx_file' from branch '$branch'."
     exit 1
   }
+  ctx_title="$(_frontmatter__decode "$ctx_title")"
 
   if [[ -z "$ctx_title" ]]; then
     ctx_title="(untitled)"
@@ -189,7 +190,7 @@ main() {
   _history__begin_transaction "$repo"
 
   _task__commit_on_branch "$repo" "$branch" \
-    "$(_commit__format_message "task" "context:delete" "$branch" "$ctx_title")" \
+    "$(_commit__format_title_message "task" "context:delete" "$branch" "$ctx_title")" \
     --modify "$task_file" --delete "$ctx_file" -- ctx_delete_writer >/dev/null
 
   # Commit transaction (records after-op for undo)
