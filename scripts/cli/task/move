@@ -222,7 +222,7 @@ main() {
 
   _ui__log "Updating old parent: $old_parent"
   _task__commit_on_branch "$repo" "$old_parent" \
-    "$(_commit__format_message "task" "remove" "$task_id" "$task_title")" \
+    "$(_commit__format_title_message "task" "remove" "$task_id" "$task_title")" \
     --modify "$old_parent_task_file" \
     --delete-prefix "$task_dir" \
     -- move_old_parent_writer >/dev/null
@@ -253,7 +253,7 @@ main() {
 
   _ui__log "Updating new parent: $new_parent_id"
   _task__commit_on_branch "$repo" "$new_parent_id" \
-    "$(_commit__format_message "task" "move" "$task_id" "$task_title")" \
+    "$(_commit__format_title_message "task" "move" "$task_id" "$task_title")" \
     --modify "$new_parent_task_file" ${stub_copy[@]+"${stub_copy[@]}"} \
     -- move_new_parent_writer >/dev/null
 

@@ -10,6 +10,17 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
+# _string__to_single_line
+# ---------------------------------------------------------------------------
+
+test__string__to_single_line__replaces_breaks_and_tabs() {
+  assert_eq "newline, carriage return and tab become spaces" \
+    "$(_string__to_single_line $'a\nb\rc\td')" "a b c d"
+  assert_eq "text on one line is unchanged" \
+    "$(_string__to_single_line 'one line, no tabs')" "one line, no tabs"
+}
+
+# ---------------------------------------------------------------------------
 # _string__first_line
 # ---------------------------------------------------------------------------
 

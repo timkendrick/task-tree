@@ -441,7 +441,7 @@ main() {
   start_parentless_branch() {
     local first_commit
     first_commit="$(_task__commit_detached "$repo" "$parent_rev" \
-      "$(_commit__format_message "task" "new" "$task_id" "$title")" \
+      "$(_commit__format_title_message "task" "new" "$task_id" "$title")" \
       -- new_branch_writer)"
     _task__start_branch "$repo" "$task_id" "$first_commit" \
       "${start_branch_flags[@]+"${start_branch_flags[@]}"}"
@@ -459,7 +459,7 @@ main() {
         "$title" "TODO" "$stub_ts" "$updated" "$body" ${labels[@]+"${labels[@]}"}
     }
     _task__commit_on_branch "$repo" "$task_id" \
-      "$(_commit__format_message "task" "edit" "$task_id" "$title")" \
+      "$(_commit__format_title_message "task" "edit" "$task_id" "$title")" \
       --modify "$task_file" -- metadata_writer >/dev/null
     _worktree__report_unsynced "$repo" "$task_id"
   }
@@ -479,7 +479,7 @@ main() {
     }
     local parent_tip
     parent_tip="$(_task__commit_on_branch "$repo" "$parent_bookmark" \
-      "$(_commit__format_message "task" "create" "$task_id" "$title")" \
+      "$(_commit__format_title_message "task" "create" "$task_id" "$title")" \
       --modify "$parent_task_file" -- create_parent_writer)"
     _ui__log "Created task file: $task_file"
     _ui__log "Added subtask to parent: $parent_task_file"

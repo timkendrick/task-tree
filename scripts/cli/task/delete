@@ -179,6 +179,7 @@ main() {
     exit 1
   }
   { IFS= read -r task_title; IFS= read -r task_status; } <<< "$task_fields" || true
+  task_title="$(_frontmatter__decode "$task_title")"
 
   # Precondition: top-level task must be DONE (skip with --force)
   if [[ "$force" != true ]] && [[ "$task_status" != "DONE" ]]; then
@@ -263,7 +264,7 @@ main() {
   # Commit the subtask-entry removal and directory deletions onto the parent
   # branch in a single commit
   _task__commit_on_branch "$repo" "$parent_bookmark" \
-    "$(_commit__format_message "task" "delete" "$task_id" "$task_title")" \
+    "$(_commit__format_title_message "task" "delete" "$task_id" "$task_title")" \
     --modify "$parent_task_file" \
     "${delete_flags[@]}" \
     -- delete_parent_writer >/dev/null

@@ -140,10 +140,63 @@ test__frontmatter__parse_values__argument_order_and_absent_fields() {
 test__frontmatter__parse_values__decodes_quoted_and_keeps_unquoted() {
   local content
   content="$(printf '%s\n' '---' 'title: "a \"q\" \\ b\nc"' 'status: IN-PROGRESS' '---')"
-  assert_eq "a quoted title with escapes is decoded" \
-    "$(_frontmatter__parse_values "$content" title)" $'a "q" \\ b\nc'
+  assert_eq "a quoted title is decoded, then line-encoded" \
+    "$(_frontmatter__parse_values "$content" title)" 'a "q" \\ b\nc'
+  assert_eq "the line decodes to the title" \
+    "$(_frontmatter__decode "$(_frontmatter__parse_values "$content" title)")" \
+    $'a "q" \\ b\nc'
   assert_eq "an unquoted status is printed unchanged" \
     "$(_frontmatter__parse_values "$content" status)" "IN-PROGRESS"
+}
+
+test__frontmatter__parse_values__quoted_newline_keeps_later_fields_aligned() {
+  local content title status label_count label
+  content="$(printf '%s\n' '---' 'title: "Line one\nline two"' 'status: TODO' \
+    'label: bug' '---')"
+  assert_eq "one line per single-valued field" \
+    "$(_frontmatter__parse_values "$content" title status 'label[]')" \
+    $'Line one\\nline two\nTODO\n1\nbug'
+  { IFS= read -r title; IFS= read -r status; IFS= read -r label_count
+    IFS= read -r label
+  } <<< "$(_frontmatter__parse_values "$content" title status 'label[]')" || true
+  assert_eq "the title decodes to two lines" \
+    "$(_frontmatter__decode "$title")" $'Line one\nline two'
+  assert_eq "the status is not shifted" "$status" 'TODO'
+  assert_eq "the label count is not shifted" "$label_count" '1'
+  assert_eq "the label is not shifted" "$label" 'bug'
+}
+
+test__frontmatter__parse_values__newline_and_backslash_n_stay_distinct() {
+  local newline backslash_n
+  newline="$(printf '%s\n' '---' 'title: "a\nb"' '---')"
+  backslash_n="$(printf '%s\n' '---' 'title: "a\\nb"' '---')"
+  assert_eq "a newline is encoded as \\n" \
+    "$(_frontmatter__parse_values "$newline" title)" 'a\nb'
+  assert_eq "a backslash before n is encoded as \\\\n" \
+    "$(_frontmatter__parse_values "$backslash_n" title)" 'a\\nb'
+  assert_eq "the newline decodes back" \
+    "$(_frontmatter__decode "$(_frontmatter__parse_values "$newline" title)")" $'a\nb'
+  assert_eq "the backslash and n decode back" \
+    "$(_frontmatter__decode "$(_frontmatter__parse_values "$backslash_n" title)")" 'a\nb'
+}
+
+test__frontmatter__decode__inverts_the_line_encoding() {
+  assert_eq "a line without a backslash is unchanged" \
+    "$(_frontmatter__decode 'plain: "text"')" 'plain: "text"'
+  assert_eq "\\\\ and \\n are decoded" \
+    "$(_frontmatter__decode 'a\\b\nc\\\\n')" $'a\\b\nc\\\\n'
+  assert_eq "any other backslash is kept" \
+    "$(_frontmatter__decode 'a\tb\')" 'a\tb\'
+}
+
+test__frontmatter__decode__round_trips_quoted_values() {
+  local value content
+  for value in 'plain' 'Say "hi"' 'back\slash' 'literal \n' $'two\nlines' $'tab\there' \
+    $'trailing\\\nnewline after backslash'; do
+    content="$(_frontmatter__format_block title "$(_frontmatter__quote "$value")")"
+    assert_eq "round trip: $value" \
+      "$(_frontmatter__decode "$(_frontmatter__parse_values "$content" title)")" "$value"
+  done
 }
 
 test__frontmatter__parse_values__first_occurrence_and_body_ignored() {

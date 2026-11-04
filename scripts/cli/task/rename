@@ -173,7 +173,7 @@ main() {
   [[ -n "$task_title" ]] || task_title="($old_id)"
 
   local rename_message
-  rename_message="$(_commit__format_message "task" "rename" "$new_id" "$task_title")"
+  rename_message="$(_commit__format_title_message "task" "rename" "$new_id" "$task_title")"
 
   # ---------------------------------------------------------------------------
   # Determine the region of history the rename has to rewrite: the commit that
