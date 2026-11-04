@@ -3,6 +3,7 @@
 #
 # Public surface:
 #   _ui__log               — print diagnostic output to stderr
+#   _ui__check_color       — test whether stdout accepts ANSI color sequences
 #   _ui__check_log_level   — test whether a given log level is active
 #   _ui__log_command       — trace a command line to stderr, shell-quoted
 #   _ui__run_command       — run a command, tracing it when its level is active
@@ -13,12 +14,16 @@
 #   _UI__LOG_LEVEL_OFF / _INFO / _VERBOSE — diagnostic log levels
 #   _UI__OUTPUT_CAPTURE / _QUIET          — _ui__run_command output policies
 #
-# This module is also the designated home for NO_COLOR/color handling. No
-# command currently emits ANSI escape sequences, so that surface is
-# intentionally empty for now.
+# This module is also the designated home for NO_COLOR/color handling.
 
 _ui__log() {
   printf '%s\n' "$*" >&2
+}
+
+# Usage: _ui__check_color
+# Returns 0 when stdout is a terminal and NO_COLOR is unset or empty.
+_ui__check_color() {
+  [[ -t 1 && -z "${NO_COLOR:-}" ]]
 }
 
 # ---------------------------------------------------------------------------
