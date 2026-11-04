@@ -1018,23 +1018,8 @@ test__jj__set_bookmark__backwards_move_requires_flag() {
 }
 
 # ---------------------------------------------------------------------------
-# _jj__list_bookmark_names / _jj__list_bookmarks_at / _jj__check_bookmark_exists
+# _jj__list_bookmarks_at / _jj__check_bookmark_exists
 # ---------------------------------------------------------------------------
-
-test__jj__list_bookmark_names__lists_local_bookmarks() {
-  setup_workspace
-  _fixture_linear_history
-  local names
-  names="$(_jj__list_bookmark_names "$REPO")"
-  assert_contains "main listed" "$names" "main"
-  assert_contains "feature listed" "$names" "feature"
-
-  local plain exit_code=0
-  plain="$(mktemp -d)"
-  trap 'rm -rf "$plain"' RETURN
-  _jj__list_bookmark_names "$plain" >/dev/null || exit_code=$?
-  assert_failure "non-repository rejected" "$exit_code"
-}
 
 test__jj__list_bookmarks_at__names_at_revision() {
   setup_workspace
@@ -1597,7 +1582,7 @@ test__jj__commit_changeset__leaves_no_trace() {
   assert_not_contains "no temporary git ref survives" \
     "$(git --git-dir="$REPO/.git" for-each-ref)" "tt-tmp-"
   assert_not_contains "no stray jj bookmark survives" \
-    "$(_jj__list_bookmark_names "$REPO")" "tt-tmp-"
+    "$(_jj__list_bookmark_targets "$REPO")" "tt-tmp-"
   assert_output_empty "scratch directory removed" \
     "$(find "$scratch_root" -mindepth 1)"
   local ec=0

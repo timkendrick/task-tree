@@ -38,6 +38,10 @@
 #   _task__find_parent_branch        — parent branch listing a task as a subtask
 #   _task__find_parent_project       — nearest ancestor project branch
 #   _task__find_branch               — canonical branch for a task ("where to read" rule)
+#   _task__list_branch_records       — every task bookmark with its own-tip record, in one batch
+#   _task__find_parent_branch_in     — _task__find_parent_branch over a prebuilt listing
+#   _task__find_parent_project_in    — _task__find_parent_project over a prebuilt listing
+#   _task__find_branch_in            — _task__find_branch over a prebuilt listing
 #   _task__build_index               — every task with its record and subtask entries
 #   _task__get_range_context         — task id + parent bookmark + upper bound
 #   _task__resolve_range             — parent bookmark + upper bound only

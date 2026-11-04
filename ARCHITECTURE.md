@@ -211,7 +211,6 @@ Signatures, argument conventions and return values are documented on the backend
 | Operation | Purpose |
 | --- | --- |
 | `set_bookmark` | Move a bookmark to an **explicit** revision |
-| `list_bookmark_names` | Every local bookmark name |
 | `list_bookmark_targets` | Every local bookmark with its target commit |
 | `list_bookmarks_at` | Bookmark names at a revision |
 | `check_bookmark_exists` | Whether a bookmark exists |
