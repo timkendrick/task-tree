@@ -5,15 +5,15 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt task tree — Generate and print the project todo list (bootstrap)
+# tt task tree — Print the project todo list (bootstrap)
 #
 # Full list: tasks grouped by project; optional filtering.
 # Focused list: current task and its ancestors only.
 #
 # Usage:
-#   list [--project <project-id>]... [--detached]     # selected projects, +detached if --detached
-#   list [--all]                                     # all projects + detached
-#   list --focus                                     # current task chain only
+#   tree [--project <project-id>]... [--detached]     # selected projects, +detached if --detached
+#   tree [--all]                                     # all projects + detached
+#   tree --focus                                     # current task chain only
 #
 # Options:
 #   --project ID    Filter to specific project(s) (repeatable)
@@ -49,213 +49,173 @@ Examples:
 EOF
 }
 
+# Usage: layout_tree MODE CURRENT PROJECTS SHOW_DETACHED < INDEX
+# Walks the task index (_task__build_index) and prints the todo list layout,
+# one record per line with fields separated by the unit separator (<US>,
+# \037):
+#   task<US>DEPTH<US>ID<US>PATH<US>STATUS<US>TITLE   one task line, in display order
+#   heading<US>TEXT                                  a section heading
+#   message<US>TEXT                                  a diagnostic for stderr
+# MODE 'full' shows the projects named in PROJECTS (space-separated; all
+# bookmarked projects when empty), then the orphaned tasks when SHOW_DETACHED
+# is 1. An orphaned task is a bookmarked task that no bookmarked project
+# reaches through subtask entries. MODE 'focus' shows the chain of ancestors of CURRENT, then CURRENT
+# with all of its descendants.
+layout_tree() {
+  awk -v mode="$1" -v current="$2" -v project_filter="$3" -v show_detached="$4" '
+    BEGIN { FS = "\t"; US = "\037" }
+    $1 == "task" {
+      order[++task_count] = $2
+      kind[$2] = $3; has_branch[$2] = $4; path[$2] = $5
+      status[$2] = $7; title[$2] = $8
+      next
+    }
+    $1 == "subtask" {
+      n = ++child_count[$2]
+      child[$2, n] = $4
+      if (!($4 in parent)) parent[$4] = $2
+      next
+    }
 
-# Usage: format_metadata TITLE STATUS
-# Prints "CHECKBOX|TITLE" for a task's decoded title and status. An empty status
-# (e.g. the task file could not be read at any revision) renders as [?].
-format_metadata() {
-  local title="$1" status="$2"
-  title="${title#"${title%%[![:space:]]*}"}"
-  title="${title%"${title##*[![:space:]]}"}"
-  [[ -z "$title" ]] && title='(no title)'
-  printf '%s|%s' "$(_format__status_checkbox "$status")" "$title"
-}
+    function emit(id, depth) {
+      print "task" US depth US id US path[id] US status[id] US title[id]
+      shown[id] = 1
+    }
 
-# Usage: format_subtask_entries < ENTRIES
-# Reads raw subtask entries, one per line, and outputs one line per
-# well-formed entry: CHECKBOX|TASK_ID|TITLE
-format_subtask_entries() {
-  awk '
-    /^\[[ x\-]\]/ {
-      cb = substr($0, 1, 3)
-      rest = substr($0, 4)
-      sub(/^[ \t]+/, "", rest)
-      id = rest
-      sub(/[ \t].*$/, "", id)
-      title = rest
-      sub(/^[^ \t]+[ \t]*/, "", title)
-      if (title == "") title = "(no title)"
-      print cb "|" id "|" title
+    # Prints the subtree of id. A subtask that is already on the path from the
+    # root is skipped, so a cycle in the subtask entries cannot recurse forever.
+    # With a focus chain, only the chain member is followed above its last
+    # element.
+    function emit_subtree(id, depth,   n, subtask) {
+      emit(id, depth)
+      on_path[id] = 1
+      for (n = 1; n <= child_count[id]; n++) {
+        subtask = child[id, n]
+        if (subtask in on_path) continue
+        if (depth + 1 < chain_length && subtask != chain[depth + 2]) continue
+        emit_subtree(subtask, depth + 1)
+      }
+      delete on_path[id]
+    }
+
+    function mark_reachable(id,   n) {
+      if (id in reachable) return
+      reachable[id] = 1
+      for (n = 1; n <= child_count[id]; n++) mark_reachable(child[id, n])
+    }
+
+    function is_bookmarked_project(id) {
+      return (id in kind) && kind[id] == "project" && has_branch[id] == 1
+    }
+
+    function layout_focus(   id, length_up, i) {
+      id = current
+      ancestors[1] = id
+      length_up = 1
+      on_chain[id] = 1
+      while (id in parent) {
+        id = parent[id]
+        if (id in on_chain) {
+          print "message" US "Warning: Cycle detected in task hierarchy at '\''" id "'\''; stopping ancestor walk."
+          break
+        }
+        on_chain[id] = 1
+        ancestors[++length_up] = id
+      }
+      chain_length = length_up
+      for (i = 1; i <= length_up; i++) chain[i] = ancestors[length_up - i + 1]
+      emit_subtree(chain[1], 0)
+    }
+
+    function layout_full(   i, id, project_count, orphan_count, wanted, wanted_count) {
+      chain_length = 0
+      if (project_filter != "") {
+        wanted_count = split(project_filter, wanted, " ")
+        for (i = 1; i <= wanted_count; i++) {
+          if (is_bookmarked_project(wanted[i])) projects[++project_count] = wanted[i]
+        }
+        if (project_count == 0) {
+          print "message" US "No matching projects found."
+          return
+        }
+      } else {
+        for (i = 1; i <= task_count; i++) {
+          if (is_bookmarked_project(order[i])) projects[++project_count] = order[i]
+        }
+        if (project_count == 0) {
+          print "message" US "No projects found."
+          return
+        }
+      }
+      for (i = 1; i <= project_count; i++) emit_subtree(projects[i], 0)
+      if (!show_detached) return
+
+      for (i = 1; i <= task_count; i++) {
+        if (is_bookmarked_project(order[i])) mark_reachable(order[i])
+      }
+      for (i = 1; i <= task_count; i++) {
+        id = order[i]
+        if (kind[id] == "task" && has_branch[id] == 1 && !(id in reachable)) {
+          orphans[++orphan_count] = id
+        }
+      }
+      if (orphan_count == 0) return
+      print "heading" US "Orphaned tasks:"
+      # An orphan that another task lists appears in that task subtree, so
+      # only unlisted orphans start a subtree. Orphans that list each other in
+      # a cycle have no such root, and start one each in turn.
+      for (i = 1; i <= orphan_count; i++) {
+        if (!(orphans[i] in parent)) emit_subtree(orphans[i], 0)
+      }
+      for (i = 1; i <= orphan_count; i++) {
+        if (!(orphans[i] in shown)) emit_subtree(orphans[i], 0)
+      }
+    }
+
+    END {
+      if (mode == "focus") layout_focus()
+      else layout_full()
     }
   '
 }
 
-# Usage: read_subtask_entries REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
-# Outputs one CHECKBOX|TASK_ID|TITLE line per subtask entry of TASK_ID's task
-# file at REV. Returns 1 (nothing printed) when the file cannot be read.
-read_subtask_entries() {
-  local fields
-  fields="$(_task__read_fields "$1" "$2" "$3" "$4" "$5" 'subtask[]')" || return 1
-  local subtask_count subtask subtasks=() i
-  { IFS= read -r subtask_count
-    for (( i = 0; i < subtask_count; i++ )); do
-      IFS= read -r subtask; subtasks+=("$subtask")
-    done
-  } <<< "$fields" || true
-  printf '%s\n' ${subtasks[@]+"${subtasks[@]}"} | format_subtask_entries
-}
-
-# Emit a single task line. INDENT is spaces (e.g. "" or "   ").
-# Optional 5th arg: current_task_id — when matches task_id, wrap link and title in **bold**.
-emit_task_line() {
-  local indent="$1"
-  local checkbox="$2"
-  local task_id="$3"
-  local title="$4"
-  local current_task_id="${5:-}"
-  local task_prefix="$6"
-  local project_prefix="$7"
-  local suffix
-  suffix="$(_task__resolve_suffix "$task_id" "$task_prefix" "$project_prefix")" || suffix="$task_id"
-  local task_path
-  task_path="$(_path__task_file "$suffix")"
-  if [[ -n "$current_task_id" && "$task_id" == "$current_task_id" ]]; then
-    printf '%s- %s **[%s](%s) %s**\n' "$indent" "$checkbox" "$task_id" "$task_path" "$title"
-  else
-    printf '%s- %s [%s](%s) %s\n' "$indent" "$checkbox" "$task_id" "$task_path" "$title"
-  fi
-}
-
-# Recursively emit task tree.
-# Optional: focus_chain (newline-sep root..current), focus_index (0-based).
-# When focus_chain is set, only recurses into the child matching chain[focus_index+1];
-# at the leaf (current task), recurses into all children.
-emit_tree() {
-  local repo="$1"
-  local branch="$2"
-  local task_id="$3"
-  local indent="$4"
-  local task_prefix="$5"
-  local project_prefix="$6"
-  local merged_map="$7"  # newline-sep "TASK_ID:BRANCH"
-  local current_task_id="${8:-}"
-  local focus_chain="${9:-}"
-  local focus_index="${10:-0}"
-
-  local source_branch="$branch"
-  local merged_line
-  merged_line="$(_string__first_line "$(printf '%s' "$merged_map" | grep -E "^${task_id}:" || true)")"
-  if [[ -n "$merged_line" ]]; then
-    source_branch="${merged_line#*:}"
-  fi
-
-  local fields title='' status='' subtask_count=0 subtask subtasks=() i
-  fields="$(_task__read_fields "$repo" "$source_branch" "$task_id" \
-    "$task_prefix" "$project_prefix" title status 'subtask[]')" || fields=''
-  { IFS= read -r title; IFS= read -r status; IFS= read -r subtask_count
-    for (( i = 0; i < subtask_count; i++ )); do
-      IFS= read -r subtask; subtasks+=("$subtask")
-    done
-  } <<< "$fields" || true
-
-  local checkbox meta
-  meta="$(format_metadata "$title" "$status")"
-  checkbox="${meta%%|*}"
-  title="${meta#*|}"
-
-  emit_task_line "$indent" "$checkbox" "$task_id" "$title" "$current_task_id" "$task_prefix" "$project_prefix"
-
-  local child_indent="${indent}   "
-  local subs_output
-  subs_output="$(printf '%s\n' ${subtasks[@]+"${subtasks[@]}"} | format_subtask_entries)"
-
-  local next_in_chain=''
-  local chain_count=0
-  if [[ -n "$focus_chain" ]]; then
-    chain_count="$(printf '%s' "$focus_chain" | grep -c . 2>/dev/null || true)"
-    if [[ "$((focus_index + 1))" -lt "$chain_count" ]]; then
-      next_in_chain="$(printf '%s' "$focus_chain" | sed -n "$((focus_index + 2))p")"
-    fi
-  fi
-
-  while IFS='|' read -r _ sub_id _; do
-    [[ -z "$sub_id" ]] && continue
-    if [[ -n "$focus_chain" ]]; then
-      if [[ -n "$next_in_chain" ]]; then
-        [[ "$sub_id" != "$next_in_chain" ]] && continue
-      fi
-    fi
-    local child_branch="$sub_id"
-    local child_merged
-    child_merged="$(_string__first_line "$(printf '%s' "$merged_map" | grep -E "^${sub_id}:" || true)")"
-    [[ -n "$child_merged" ]] && child_branch="${child_merged#*:}"
-    emit_tree "$repo" "$child_branch" "$sub_id" "$child_indent" "$task_prefix" "$project_prefix" "$merged_map" "$current_task_id" "$focus_chain" "$((focus_index + 1))"
-  done <<< "$subs_output" || true
-}
-
-# Usage: build_subtask_index REPO BRANCHES TASK_PREFIX PROJECT_PREFIX
-# Reads each branch's own task file exactly once and emits one line per
-# subtask: entry found, in branch order:
-#   CHILD_ID<TAB>CHECKBOX<TAB>OWNER_BRANCH
-build_subtask_index() {
-  local repo="$1" branches="$2" task_prefix="$3" project_prefix="$4"
-  local branch entries
-  for branch in $branches; do
-    [[ -z "$branch" ]] && continue
-    entries="$(read_subtask_entries "$repo" "$branch" "$branch" \
-      "$task_prefix" "$project_prefix")" || continue
-    while IFS='|' read -r cb id _title; do
-      [[ -z "$id" ]] && continue
-      printf '%s\t%s\t%s\n' "$id" "$cb" "$branch"
-    done <<< "$entries"
+# Usage: render_tree CURRENT < LAYOUT
+# Prints the todo list markdown for the records layout_tree prints. The line of
+# task CURRENT is bold.
+render_tree() {
+  local current="$1"
+  local record type fields depth id path status title indent checkbox i
+  while IFS= read -r record; do
+    type="${record%%$'\037'*}"
+    fields="${record#*$'\037'}"
+    case "$type" in
+      message)
+        _ui__log "$fields"
+        ;;
+      heading)
+        printf '\n%s\n\n' "$fields"
+        ;;
+      task)
+        IFS=$'\037' read -r depth id path status title <<< "$fields"
+        indent=''
+        for (( i = 0; i < depth; i++ )); do indent+='   '; done
+        checkbox="$(_format__status_checkbox "$status")"
+        title="${title#"${title%%[![:space:]]*}"}"
+        title="${title%"${title##*[![:space:]]}"}"
+        [[ -n "$title" ]] || title='(no title)'
+        if [[ "$id" == "$current" ]]; then
+          printf '%s- %s **[%s](%s) %s**\n' "$indent" "$checkbox" "$id" "$path" "$title"
+        else
+          printf '%s- %s [%s](%s) %s\n' "$indent" "$checkbox" "$id" "$path" "$title"
+        fi
+        ;;
+    esac
   done
-}
-
-# Usage: merged_map_from_index SUBTASK_INDEX
-# Checked-in tasks only: the branch they were merged into is authoritative.
-# Outputs newline-separated "TASK_ID:BRANCH", first owning branch wins.
-merged_map_from_index() {
-  printf '%s\n' "$1" | awk -F'\t' '$2 == "[x]" && !seen[$1]++ { print $1 ":" $3 }'
-}
-
-# Usage: parent_map_from_index SUBTASK_INDEX
-# Any checkbox state: child -> owning parent branch, for the focus chain walk.
-# Outputs newline-separated "TASK_ID<TAB>PARENT_BRANCH", first owning branch wins.
-parent_map_from_index() {
-  printf '%s\n' "$1" | awk -F'\t' '!seen[$1]++ { print $1 "\t" $3 }'
-}
-
-# Collect all task IDs reachable from the given roots (project branches).
-collect_task_ids() {
-  local repo="$1"
-  local roots="$2"
-  local seen=""
-  local to_visit="$roots"
-  local merged_map="$3"
-  local task_prefix="$4"
-  local project_prefix="$5"
-
-  while [[ -n "$to_visit" ]]; do
-    local current
-    current="$(_string__first_line "$to_visit")"
-    to_visit="$(printf '%s' "$to_visit" | tail -n +2)"
-    [[ -z "$current" ]] && continue
-    if printf '%s' "$seen" | grep -qFx "$current"; then
-      continue
-    fi
-    seen="${seen}${current}"$'\n'
-
-    local source_branch="$current"
-    local merged_line
-    merged_line="$(_string__first_line "$(printf '%s' "$merged_map" | grep -E "^${current}:" || true)")"
-    [[ -n "$merged_line" ]] && source_branch="${merged_line#*:}"
-
-    _task__resolve_file "$current" "$task_prefix" "$project_prefix" >/dev/null || continue
-    local entries subs
-    entries="$(read_subtask_entries "$repo" "$source_branch" "$current" \
-      "$task_prefix" "$project_prefix")" || entries=''
-    subs="$(printf '%s\n' "$entries" | cut -d'|' -f2)"
-    for sub in $subs; do
-      [[ -z "$sub" ]] && continue
-      to_visit="${to_visit}${sub}"$'\n'
-    done
-  done
-  printf '%s' "$seen"
 }
 
 main() {
   local -a filter_projects=()
-  local show_detached=false
+  local show_detached=0
   local show_all=false
   local focus=false
   local repo=''
@@ -268,7 +228,7 @@ main() {
         shift 2
         ;;
       --detached)
-        show_detached=true
+        show_detached=1
         shift
         ;;
       --all)
@@ -300,30 +260,6 @@ main() {
   task_prefix="$(_workspace__get_task_prefix "$repo")"
   project_prefix="$(_workspace__get_project_prefix "$repo")"
 
-  local all_bookmarks
-  all_bookmarks="$(_task__list_branch_names "$repo")" || true
-  local project_branches=''
-  local task_branches=''
-  while IFS= read -r b; do
-    [[ -z "$b" ]] && continue
-    if _task__check_is_project_branch "$b" "$project_prefix"; then
-      project_branches="${project_branches}${b}"$'\n'
-    elif _task__check_is_task_branch "$b" "$task_prefix"; then
-      task_branches="${task_branches}${b}"$'\n'
-    fi
-  done <<< "$all_bookmarks" || true
-  project_branches="$(printf '%s' "$project_branches" | sort -u)"
-  task_branches="$(printf '%s' "$task_branches" | sort -u)"
-  local all_task_project_branches="${project_branches}"$'\n'"${task_branches}"
-
-  # Index every branch's subtask: entries once, then derive both maps from it.
-  # This replaces per-task-ID scans over every branch, which were quadratic.
-  local subtask_index merged_map parent_map
-  subtask_index="$(build_subtask_index "$repo" "$all_task_project_branches" \
-    "$task_prefix" "$project_prefix")"
-  merged_map="$(merged_map_from_index "$subtask_index")"
-  parent_map="$(parent_map_from_index "$subtask_index")"
-
   local current_bookmark
   current_bookmark="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")"
   local current_task_id=''
@@ -331,97 +267,35 @@ main() {
     current_task_id="$current_bookmark"
   fi
 
+  local mode='full'
   if [[ "$focus" == true ]]; then
     if [[ -z "$current_bookmark" ]]; then
       _ui__log "Error: Not on a task or project branch. Cannot show focused list."
       exit 1
     fi
-    if ! _task__check_is_task_branch "$current_bookmark" "$task_prefix" && ! _task__check_is_project_branch "$current_bookmark" "$project_prefix"; then
+    if [[ -z "$current_task_id" ]]; then
       _ui__log "Error: Current branch '$current_bookmark' is not a task or project branch. Cannot show focused list."
       exit 1
     fi
-
-    # Walk up parent chain
-    local chain="$current_bookmark"
-    local current="$current_bookmark"
-    while true; do
-      local parent
-      parent="$(printf '%s' "$parent_map" | awk -F'\t' -v id="$current" \
-        '$1 == id { print $2; exit }')"
-      [[ -z "$parent" ]] && break
-      # Guard against a cycle in malformed subtask metadata.
-      if printf '%s' "$chain" | grep -qFx "$parent"; then
-        _ui__log "Warning: Cycle detected in task hierarchy at '$parent'; stopping ancestor walk."
-        break
-      fi
-      chain="${parent}"$'\n'"${chain}"
-      current="$parent"
-    done
-
-    local root
-    root="$(_string__first_line "$chain")"
-    emit_tree "$repo" "$root" "$root" "" "$task_prefix" "$project_prefix" "$merged_map" "$current_task_id" "$chain" "0"
-    exit 0
+    mode='focus'
   fi
 
-  # Full list
-  local projects_to_show=''
+  local index
+  index="$(_task__build_index "$repo" "$task_prefix" "$project_prefix")" || {
+    _ui__log "Error: Cannot read the task index."
+    exit 1
+  }
+
+  local project_filter=''
   if [[ ${#filter_projects[@]} -gt 0 ]]; then
-    for p in "${filter_projects[@]}"; do
-      if printf '%s' "$project_branches" | grep -qx "$p"; then
-        projects_to_show="${projects_to_show}${p}"$'\n'
-      fi
-    done
+    project_filter="${filter_projects[*]}"
   elif [[ "$show_all" == true ]]; then
-    projects_to_show="$project_branches"
-    show_detached=true
-  else
-    projects_to_show="$project_branches"
+    show_detached=1
   fi
 
-  if [[ -z "$projects_to_show" ]] && [[ ${#filter_projects[@]} -eq 0 ]]; then
-    _ui__log "No projects found."
-    exit 0
-  fi
-
-  if [[ -z "$projects_to_show" ]] && [[ ${#filter_projects[@]} -gt 0 ]]; then
-    _ui__log "No matching projects found."
-    exit 0
-  fi
-
-  local reachable_ids=''
-  for p in $projects_to_show; do
-    [[ -z "$p" ]] && continue
-    reachable_ids="${reachable_ids}${p}"$'\n'
-  done
-  reachable_ids="$(collect_task_ids "$repo" "$projects_to_show" "$merged_map" \
-    "$task_prefix" "$project_prefix")"
-
-  for p in $projects_to_show; do
-    [[ -z "$p" ]] && continue
-    emit_tree "$repo" "$p" "$p" "" "$task_prefix" "$project_prefix" "$merged_map" "$current_task_id"
-  done
-
-  if [[ "$show_detached" == true ]]; then
-    local orphaned=''
-    for tb in $task_branches; do
-      [[ -z "$tb" ]] && continue
-      if ! printf '%s' "$reachable_ids" | grep -qx "$tb"; then
-        orphaned="${orphaned}${tb}"$'\n'
-      fi
-    done
-    if [[ -n "$orphaned" ]]; then
-      printf '\nOrphaned tasks:\n\n'
-      for o in $orphaned; do
-        [[ -z "$o" ]] && continue
-        local o_merged
-        o_merged="$(_string__first_line "$(printf '%s' "$merged_map" | grep -E "^${o}:" || true)")"
-        o_merged="${o_merged#*:}"
-        [[ -z "$o_merged" ]] && o_merged="$o"
-        emit_tree "$repo" "$o_merged" "$o" "" "$task_prefix" "$project_prefix" "$merged_map" "$current_task_id"
-      done
-    fi
-  fi
+  printf '%s\n' "$index" \
+    | layout_tree "$mode" "$current_task_id" "$project_filter" "$show_detached" \
+    | render_tree "$current_task_id"
 }
 
 main "$@"

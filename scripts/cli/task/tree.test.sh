@@ -119,6 +119,86 @@ test_task_tree__focus_with_no_current_branch_fails() {
 }
 
 
+test_task_tree__checked_in_task_read_from_parent() {
+  setup_workspace "tree-merged"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Original Title") || true
+  checkout_task "$task_id" || true
+  checkin_task --complete >/dev/null || true
+  checkout_task "$proj_id" || true
+  run_tt task edit "$task_id" --title "Edited On Own Branch" >/dev/null 2>&1 || true
+
+  output=""
+  output=$(run_tt task tree 2>&1) || true
+  assert_contains "title from the parent copy" "$output" \
+    "   - [x] [$task_id](.tt/task/${task_id#*/}/TASK.md) Original Title"
+  assert_not_contains "own branch title not shown" "$output" "Edited On Own Branch"
+}
+
+
+test_task_tree__orphaned_subtree_shown_once() {
+  setup_workspace "tree-orphans"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  parent_id=$(create_task "parent" "Orphan Parent") || true
+  checkout_task "$parent_id" || true
+  child_id=$(create_task "child" "Orphan Child") || true
+  checkout_task "$proj_id" || true
+  other_proj=$(create_project "other" "Other Project") || true
+  jj -R "$REPO" bookmark delete "$proj_id" >/dev/null 2>&1
+
+  output=""
+  output=$(run_tt task tree 2>/dev/null) || true
+  assert_not_contains "orphans hidden by default" "$output" "Orphan Parent"
+
+  output=$(run_tt task tree --all 2>/dev/null) || true
+  assert_contains "orphan section" "$output" "Orphaned tasks:"
+  assert_contains "unlisted orphan starts a subtree" "$output" \
+    "$(printf -- '- [ ] [%s](.tt/task/%s/TASK.md) Orphan Parent\n   - [ ] [%s](.tt/task/%s/TASK.md) Orphan Child' \
+      "$parent_id" "${parent_id#*/}" "$child_id" "${child_id#*/}")"
+  assert_eq "listed orphan shown once" \
+    "$(printf '%s\n' "$output" | grep -c "Orphan Child")" "1"
+}
+
+
+test_task_tree__project_filter_keeps_other_projects_tasks_out_of_orphans() {
+  setup_workspace "tree-filter-detached"
+  proj_a=$(create_project "a" "Proj A") || true
+  proj_b=$(create_project "b" "Proj B") || true
+  checkout_task "$proj_b" || true
+  task_b=$(create_task "tb" "Task Under B") || true
+
+  output=""
+  output=$(run_tt task tree --project "$proj_a" --detached 2>/dev/null) || true
+  assert_contains "proj A shown" "$output" "Proj A"
+  assert_not_contains "task under B is not an orphan" "$output" "Task Under B"
+  assert_not_contains "no orphan section" "$output" "Orphaned tasks:"
+}
+
+
+test_task_tree__focus_hides_siblings_and_shows_descendants() {
+  setup_workspace "tree-focus-nested"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  sibling=$(create_task "sibling" "Sibling Task") || true
+  checkout_task "$proj_id" || true
+  current=$(create_task "current" "Current Task") || true
+  checkout_task "$current" || true
+  child=$(create_task "child" "Child Task") || true
+  checkout_task "$current" || true
+
+  output="" exit_code=0
+  output=$(run_tt task tree --focus 2>/dev/null) || exit_code=$?
+  assert_success "focus succeeds" "$exit_code"
+  assert_not_contains "sibling hidden" "$output" "Sibling Task"
+  assert_eq "chain with current bold and its subtree" "$output" "$(printf '%s\n' \
+    "- [-] [$proj_id](.tt/task/${proj_id#*/}/TASK.md) Project" \
+    "   - [-] **[$current](.tt/task/${current#*/}/TASK.md) Current Task**" \
+    "      - [ ] [$child](.tt/task/${child#*/}/TASK.md) Child Task")"
+}
+
+
 test_task_tree__help() {
   setup_workspace "tree-help"
   output="" exit_code=0

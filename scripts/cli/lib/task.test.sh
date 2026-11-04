@@ -66,10 +66,12 @@ test__task__build_index__lists_bookmarked_tasks_with_records() {
   assert_eq "project kind" "$(_index_task_field "$index" "$proj_id" 2)" "project"
   assert_eq "task kind" "$(_index_task_field "$index" "$task_a" 2)" "task"
   assert_eq "project has a branch" "$(_index_task_field "$index" "$proj_id" 3)" "1"
-  assert_eq "task source is its own tip" "$(_index_task_field "$index" "$task_a" 4)" \
+  assert_eq "task file path" "$(_index_task_field "$index" "$task_a" 4)" \
+    ".tt/task/${task_a#*/}/TASK.md"
+  assert_eq "task source is its own tip" "$(_index_task_field "$index" "$task_a" 5)" \
     "$(get_full_commit_id "$task_a")"
-  assert_eq "task status" "$(_index_task_field "$index" "$task_a" 5)" "TODO"
-  assert_eq "task title" "$(_index_task_field "$index" "$task_b" 6)" "Task B"
+  assert_eq "task status" "$(_index_task_field "$index" "$task_a" 6)" "TODO"
+  assert_eq "task title" "$(_index_task_field "$index" "$task_b" 7)" "Task B"
   assert_eq "subtasks in file order" "$(_index_subtasks "$index" "$proj_id")" \
     "$(printf '[ ] %s\n[ ] %s' "$task_a" "$task_b")"
 }
@@ -85,11 +87,11 @@ test__task__build_index__reads_checked_in_task_from_parent() {
 
   local index
   index="$(_build_index 2>/dev/null)"
-  assert_eq "source is the parent tip" "$(_index_task_field "$index" "$task_id" 4)" \
+  assert_eq "source is the parent tip" "$(_index_task_field "$index" "$task_id" 5)" \
     "$(get_full_commit_id "$proj_id")"
-  assert_eq "title from the parent copy" "$(_index_task_field "$index" "$task_id" 6)" \
+  assert_eq "title from the parent copy" "$(_index_task_field "$index" "$task_id" 7)" \
     "Original Title"
-  assert_eq "status from the parent copy" "$(_index_task_field "$index" "$task_id" 5)" \
+  assert_eq "status from the parent copy" "$(_index_task_field "$index" "$task_id" 6)" \
     "DONE"
 }
 
@@ -108,10 +110,10 @@ test__task__build_index__includes_subtasks_without_a_bookmark() {
   err="$_TEST_ROOT/index-err.txt"
   index="$(_build_index 2>"$err")"
   assert_eq "merged task has no branch" "$(_index_task_field "$index" "$merged" 3)" "0"
-  assert_eq "merged task read from the parent" "$(_index_task_field "$index" "$merged" 6)" \
+  assert_eq "merged task read from the parent" "$(_index_task_field "$index" "$merged" 7)" \
     "Merged Task"
   assert_eq "pending task listed" "$(_index_task_field "$index" "$pending" 2)" "task"
-  assert_eq "pending task unreadable" "$(_index_task_field "$index" "$pending" 4)" ""
+  assert_eq "pending task unreadable" "$(_index_task_field "$index" "$pending" 5)" ""
   assert_contains "unreadable task warned" "$(cat "$err")" \
     "Warning: Cannot read the task file of '$pending'."
   assert_not_contains "readable task not warned" "$(cat "$err")" "'$merged'"
@@ -128,7 +130,7 @@ test__task__build_index__includes_orphaned_bookmarks() {
   local index
   index="$(_build_index 2>/dev/null)"
   assert_output_empty "project lists no subtasks" "$(_index_subtasks "$index" "$proj_id")"
-  assert_eq "orphan listed" "$(_index_task_field "$index" "$task_id" 6)" "Orphan"
+  assert_eq "orphan listed" "$(_index_task_field "$index" "$task_id" 7)" "Orphan"
 }
 
 # Writer: removes every subtask entry from the staged project file.

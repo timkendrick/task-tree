@@ -967,13 +967,15 @@ _task__find_branch() {
 # When several files mark a task [x], the first in bookmark order wins.
 #
 # Prints tab-separated rows. Fields may be empty, so split on single tabs:
-#   task<TAB>ID<TAB>KIND<TAB>HAS_BRANCH<TAB>SOURCE<TAB>STATUS<TAB>TITLE
+#   task<TAB>ID<TAB>KIND<TAB>HAS_BRANCH<TAB>PATH<TAB>SOURCE<TAB>STATUS<TAB>TITLE
 #       one row per task, bookmarked tasks first in bookmark order, then the
 #       rest in discovery order. KIND is 'project', 'task' or 'other' (an ID
 #       that matches neither pattern). HAS_BRANCH is 1 when the task has its
-#       own bookmark and 0 otherwise. SOURCE is the commit ID the record was
-#       read from. SOURCE, STATUS and TITLE are empty when the record cannot
-#       be read. Tabs and carriage returns in values become spaces.
+#       own bookmark and 0 otherwise. PATH is the repo-relative task file path
+#       (for KIND 'other', the path the ID itself would name). SOURCE is the
+#       commit ID the record was read from. SOURCE, STATUS and TITLE are empty
+#       when the record cannot be read. Tabs and carriage returns in values
+#       become spaces.
 #   subtask<TAB>ID<TAB>CHECKBOX<TAB>SUBTASK_ID
 #       one row per well-formed subtask entry of a readable record, in file
 #       order, after the row of the task that lists it.
@@ -1005,7 +1007,7 @@ _task__build_index() {
     requests="$(__task__resolve_index plan <<< "$table")"
   done
 
-  local row rest id kind source
+  local row rest id kind has_branch path source
   while IFS= read -r row; do
     if [[ "$row" != task$'\t'* ]]; then
       printf '%s\n' "$row"
@@ -1014,6 +1016,8 @@ _task__build_index() {
     rest="${row#task$'\t'}"
     id="${rest%%$'\t'*}"
     rest="${rest#*$'\t'}"
+    has_branch="${rest%%$'\t'*}"
+    rest="${rest#*$'\t'}"
     if _task__check_is_project_branch "$id" "$project_prefix"; then
       kind='project'
     elif _task__check_is_task_branch "$id" "$task_prefix"; then
@@ -1021,9 +1025,10 @@ _task__build_index() {
     else
       kind='other'
     fi
-    printf 'task\t%s\t%s\t%s\n' "$id" "$kind" "$rest"
-    source="${rest#*$'\t'}"
-    source="${source%%$'\t'*}"
+    path="$(_task__resolve_file "$id" "$task_prefix" "$project_prefix")" \
+      || path="$(_path__task_file "$id")"
+    printf 'task\t%s\t%s\t%s\t%s\t%s\n' "$id" "$kind" "$has_branch" "$path" "$rest"
+    source="${rest%%$'\t'*}"
     [[ -n "$source" ]] || _ui__log "Warning: Cannot read the task file of '$id'."
   done < <(__task__resolve_index format <<< "$table")
 }
