@@ -74,7 +74,7 @@ Some `tt worktree` commands accept the canonical repository explicitly. `tt work
 
 ### 4.1 Project to-do list
 
-The project to-do list is a nested markdown listing of all tasks, grouped by project. Orphaned tasks (not reachable from any project's subtree) are excluded by default; with **`--detached`**, they are listed under a separate section: `Orphaned tasks:`. Within each section, the task tree is shown as nested bullets. Each bullet contains the following, separated by spaces:
+The project to-do list is a nested markdown listing of all tasks, grouped by project. Orphaned tasks (task bookmarks that no project bookmark reaches through `subtask:` entries) are excluded by default; with **`--detached`**, they are listed under a separate section: `Orphaned tasks:`. In that section, an orphaned task that another task lists appears only inside that task's subtree. Within each section, the task tree is shown as nested bullets. Each bullet contains the following, separated by spaces:
 
 - A GFM checkbox: To-do `[ ]`, In progress `[-]`, Done `[x]`, Unknown `[?]`. An 'unknown' status denotes a task whose task file either cannot be retrieved on any candidate branch, or whose task file has no parseable `status:` field.
 - A Markdown relative link to the task file, labeled by the machine-readable branch name
@@ -243,6 +243,7 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt complete` | `tt task complete` |
 | `tt delete` | `tt task delete` |
 | `tt tree` | `tt task tree` |
+| `tt list` | `tt task list` |
 | `tt add-context` | `tt task context add` |
 | `tt get-context` | `tt task context get` |
 | `tt list-context` | `tt task context list` |
@@ -251,7 +252,6 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt revset` | `tt task revset` |
 | `tt diff` | `tt task diff` |
 | `tt changelog` | `tt task changelog` |
-| `tt select` | `tt task select` |
 | `tt edit` | `tt task edit` |
 | `tt prompt` | `tt task prompt` |
 | `tt move` | `tt task move` |
@@ -408,9 +408,11 @@ Any other value — including `INFO` or `VERBOSE` — leaves narration off.
 
 - **`tt task context delete <context-id> [--task <task-id>] [--repo PATH]`** — Delete a context file from the specified task (default: current task). Removes the context file from the repository and removes the corresponding `context:` entry from the task's frontmatter. Creates a commit: `[tt:task:<task-id>:context:delete] <context-title>` and advances the task bookmark. The target task need not be checked out: the commit is made directly on the task branch and the caller's working copy is left unchanged (see §6.1.2). Exits with code 1 if the context ID is not registered on the task. Applies the "where to read" rule (§7.1 / Appendix A step 3). No hooks. Refuses while uncommitted changes touch task metadata; when `--task` is omitted, also refuses while the worktree has commits past the task bookmark (see §6.17).
 
-- **`tt task tree [--project <project-id>]... [--detached] | [--all]`** — Generate and print the full project todo list to stdout. Tasks are grouped by project; orphaned tasks are excluded by default. Optional `--project`, `--detached` and `--all` filter which sections are shown. Output format is the markdown described in §4.1. See §7.1 and Appendix A.
+- **`tt task list [--all] [--repo PATH]`** — Print the ID of every active task and project to stdout, one per line, sorted bytewise. A task is active unless its status is `DONE`; a task whose file cannot be read counts as active. With `--all`, completed tasks are included too. The set of tasks is the task index (§6.13). Prints nothing, and exits 0, when no task matches. Combine with a picker to choose a task interactively, e.g. `tt task checkout "$(tt task list | fzf)"`. No hooks.
 
-- **`tt task tree --focus`** — Generate and print the focused todo list (current task and its direct ancestors only) in the same markdown format. See §7.2 and Appendix A.
+- **`tt task tree [--project <project-id>]... [--detached] | [--all]`** — Generate and print the full project todo list to stdout. Tasks are grouped by project; orphaned tasks are excluded by default. Optional `--project`, `--detached` and `--all` filter which sections are shown. Output format is the markdown described in §4.1. The tasks come from the task index (§6.13). See §7.1 and Appendix A.
+
+- **`tt task tree --focus`** — Generate and print the focused todo list (the current task with its descendants, and its direct ancestors without their other subtasks) in the same markdown format. See §7.2 and Appendix A.
 
 - **`tt task current`** — Print the current task or project branch name to stdout. Exits with 1 if the working copy is not on a task or project branch. No hooks.
 
@@ -423,8 +425,6 @@ Any other value — including `INFO` or `VERBOSE` — leaves narration off.
 - **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step. No hooks.
 
 - **`tt task find --revision <revision> [--repo PATH]`** — Print the task or project branch that a revision belongs to. `<revision>` is any revision expression the version-control system accepts, and must resolve to exactly one commit. The answer is read from the `TASK.md` symlink that commit records (see §6.2), mapped to the task or project branch it names — the same lookup that makes a task current in a worktree. Every commit on a task's own line, from its fork commit onward, resolves to that task (§4.3). The `[tt:task:<task-id>:create]` commit on the parent branch resolves to the parent. Exits with code 1, printing an error message to stderr, if the revision does not resolve, resolves to no commits or several, records no task symlink, or records a task whose branch no longer exists. No hooks.
-
-- **`tt task select`** — Interactively select an active (non-completed) task or project. Lists all task and project bookmarks, excludes DONE tasks, sorts alphabetically, and pipes the list to a picker (see §6.13). The selected task ID is printed to stdout. Exits with code 1 if no active tasks are found, if the picker fails, or if the picker's output is not one of the offered options. No hooks.
 
 - **`tt task show [<task-id>] [--expand-context]`** — Show the metadata and direct child tasks of the current task (default) or the given task. Reads from the correct branch per the "where to read" rule (§7.1 / Appendix A step 3): merged tasks are read from the parent branch that received the checkin; ongoing tasks are read from their own branch. Output format: lowercase header block (`task`, `status`, `title`; and `parent` if the task has a parent), followed by a subtasks section, a context section (listing context file titles and IDs), and a body section, all always present and separated by `---` dividers. With `--expand-context`, additionally prints each context file after the body section, in the form `tt task context get` prints it. Output to stdout only. No hooks.
 
@@ -1137,29 +1137,54 @@ A killed command can also leave the history lock behind (§6.12.2). Later comman
 
 ---
 
-### 6.13 Interactive selection (`tt task select`)
+### 6.13 Task index
 
-`tt task select` does not implement a picker UI itself. It builds the candidate list, then delegates the choice to a **picker command** via a shared `select_value` helper.
+Commands that act on every task in the repository share one view of it: the **task index**. `tt task list` and `tt task tree` both build it. The index answers two questions:
 
-**Picker contract.** A picker reads newline-separated options from **stdin**, presents them to the user however it likes (using **stderr** for any UI output), and writes **exactly one** of the offered options to **stdout**. This is the same contract for the built-in picker and for user-supplied ones.
+- Which tasks exist?
+- Where is each task's file read from?
 
-**Picker selection.** If `$TT_SELECT` is set and non-empty, its value is run as a shell command line via `sh -c "$TT_SELECT"` (so pipes, arguments and quoting all work, e.g. `TT_SELECT='fzf --height 40%'`). Otherwise the built-in picker is used.
+**Which tasks exist.** A task exists when either of these holds:
 
-**Built-in picker.** Deliberately minimal, built from POSIX tools. It renders the option list to stderr and reads a single line from `/dev/tty`:
+- It has a task or project bookmark.
+- The task file of a task that exists lists it in a `subtask:` entry.
+
+The second rule applies repeatedly, so the index is the closure of the bookmarks under `subtask:` entries. `tt task delete` removes both the bookmark and the parent's `subtask:` entry, so a deleted task does not exist.
+
+**Where to read.** Each task has one **source**: the revision its task file is read from. The rule matches §7.1 / Appendix A step 3, extended to tasks without a bookmark:
+
+- A task marked `[x]` in the task file at a bookmarked task's own tip is read from that tip.
+- A task marked `[x]` in the task file of a task without a bookmark is read from that task's source.
+- Any other task is read from its own bookmark.
+- When several task files mark a task `[x]`, the first in bookmark order wins.
+
+A task that has no source, or whose file is absent at its source, is **unreadable**. It still exists. Its status is unknown, `tt task tree` shows it as `[?]`, and the index logs a warning naming it.
+
+**Worked example.** Suppose a repository has these task files and bookmarks:
 
 ```
-Select an option:
-
-task/foo
-task/bar
-task/baz
-
-> 
+project/p        bookmark; subtask: [x] task/a, [ ] task/b
+├── task/a       no bookmark (removed by hand); file present on project/p
+├── task/b       bookmark; subtask: [ ] task/c
+│   └── task/c   bookmark
+task/o           bookmark; no task lists it
 ```
 
-The user types the desired option in full. The built-in picker requires an openable `/dev/tty`; if there is no controlling terminal it prints an error naming `TT_SELECT` and exits 1. Note that only the built-in picker requires a terminal — a custom `TT_SELECT` command may run headlessly.
+- `project/p`, `task/b`, `task/c` and `task/o` exist because they have bookmarks.
+- `task/a` exists because `project/p` lists it. It is marked `[x]`, so it is read from the tip of `project/p`.
+- `task/o` exists but no project reaches it, so `tt task tree` lists it only under `--detached`.
+- If `project/p` listed `[ ] task/a` instead, `task/a` would have no source. It would exist but be unreadable.
 
-**Validation.** Whichever picker is used, its stdout must match one of the offered options **exactly**. Anything else — a prefix, a decorated line, empty output — is an error (`Error: invalid selection: <value>`, exit 1). A picker command that itself exits non-zero is also an error. Selection with no options provided is an error (`Error: no options provided`).
+**Cost.** Starting one process per task file is the dominant cost in a repository with many tasks. The index therefore reads task files in batches, each served by a fixed number of processes:
+
+1. List every bookmark together with the commit it points at.
+2. Read every bookmarked task's file at its own tip.
+3. Work out the source of every task, and read the files whose source differs from what step 2 read.
+4. Repeat step 3 while it discovers new tasks without a bookmark. Each repetition handles one more level of such tasks, so it rarely runs more than once.
+
+Each file is read and parsed once per source, so the work grows linearly with the number of tasks.
+
+**Filters.** The index carries each task's ID, kind (task or project), whether it has a bookmark, its file path, its source, status and title, and its `subtask:` entries in file order. Commands select from it with per-row conditions, so a new filter (by status, project or label, say) adds one condition rather than another traversal.
 
 ### 6.14 Changelog (`tt task changelog`)
 
@@ -1321,13 +1346,13 @@ The guards live in `lib/worktree.sh` (`_worktree__ensure_metadata_unmodified`, `
 
 ### 7.1 Full list (summary)
 
-To generate the overall todo list, the tool: (1) enumerates project branches (names matching `<project_prefix><slug>-<hex>`); (2) for each project P, traverses its subtree by reading P's task file and following `subtask:` entries recursively, discovering tasks via top-down traversal; (3) for each discovered task T, determines where to read T's file — **merged** tasks (where a parent branch's owner task file contains `subtask: [x] <T> ...`) are read from that parent branch; **ongoing** tasks are read from T's own branch; tasks deleted via `tt task delete` have no `subtask:` entry and are not discovered; (4) if `--detached` is present, enumerates all task branches and identifies orphaned tasks (not reachable from any project's subtree), adding them to a detached section; (5) filters sections by `--project`/`--detached` if present; (6) walks the tree depth-first, outputting checkbox, link, and title per task in the format of §4.1.
+To generate the overall todo list, the tool: (1) builds the task index (§6.13), which reads every task's file once from the branch the "where to read" rule picks — **merged** tasks (where a parent branch's owner task file contains `subtask: [x] <T> ...`) are read from that parent branch; **ongoing** tasks are read from T's own branch; tasks deleted via `tt task delete` have no `subtask:` entry and are not discovered; (2) takes the project branches (names matching `<project_prefix><slug>-<hex>`) as section roots; (3) for each project P, follows `subtask:` entries recursively; (4) if `--detached` is present, identifies orphaned tasks (task branches that no project branch reaches), adding them to a detached section; (5) filters sections by `--project`/`--detached` if present; (6) walks the tree depth-first, outputting checkbox, link, and title per task in the format of §4.1.
 
 The full step-by-step algorithm is in **Appendix A**.
 
 ### 7.2 Focused list (summary)
 
-The focused list shows the current task and its direct ancestors only. The tool resolves the current branch to a task branch T, walks backwards via the frontmatter-defined parent chain to the top-level task, loads each task's file using the same "where to read" rule as the full list (§7.1 / Appendix A), and emits markdown in the same format for this subset with hierarchy preserved.
+The focused list shows the current task, its direct ancestors, and its descendants. The tool resolves the current branch to a task branch T, builds the task index (§6.13), walks backwards via the frontmatter-defined parent chain to the top-level task, loads each task's file using the same "where to read" rule as the full list (§7.1 / Appendix A), and emits markdown in the same format for this subset with hierarchy preserved.
 
 The detailed steps are in **Appendix A**.
 
@@ -1413,15 +1438,15 @@ Multiple tasks can be checked out simultaneously; the symlinked HEAD worktree fa
    - **Merged (done):** Some task or project branch **B** has an owner task file whose frontmatter contains `subtask: [x] <T>`. That branch B is the parent task's branch (the one that received the checkin). → The **canonical branch** for T is **B**.
    - **Not merged (ongoing):** No branch's owner task file contains `subtask: [x] <T>`. → The **canonical branch** for T is **T's own branch**.
    - **Deleted:** Task was removed via `tt task delete`; no branch contains a `subtask:` entry for T. → T is not discovered and does not appear in the todo list.
-   - Implementation: for each task T, scan all task and project branches B; on B, read the owner task file. If any such file contains `subtask: [x] <T>`, then T is merged and the canonical branch for T is B; otherwise the canonical branch for T is T's own branch.
+   - Implementation: the task index (§6.13) reads the owner task file of every task and project branch once, in one batch, and derives the canonical branch of every task from those files. It also covers tasks whose own bookmark is gone.
 
    Once the canonical branch is determined, the task file path is derived from T's ID: strip the task or project prefix from the ID to get `<slug>-<hex>`, then read `.tt/task/<slug>-<hex>/TASK.md` on the canonical branch. Task metadata (title, status, subtask list) is read exclusively from this file. Task titles are never stored inline in `subtask:` entries; they are always looked up from the task file on the canonical branch.
 
 4. **Orphan detection (when `--detached` is present)**
 
    - Enumerate all task branches (names matching `<task_prefix><slug>-<hex>`).
-   - Compute the set of task IDs reachable from any project's subtree (from step 2).
-   - Orphaned tasks = task branches whose ID is not in that set. These are added as a flat list to the "Tasks with no project (detached)" section.
+   - Compute the set of task IDs reachable from any project branch's subtree, whichever projects `--project` selects.
+   - Orphaned tasks = task branches whose ID is not in that set. They are added to the `Orphaned tasks:` section. An orphaned task that no other task lists starts a subtree there; an orphaned task that another task lists appears only inside that task's subtree. Orphans that list each other in a cycle each start a subtree in turn.
 
 5. **Filter sections and build output**
 
@@ -1430,10 +1455,10 @@ Multiple tasks can be checked out simultaneously; the symlinked HEAD worktree fa
 
 6. **Emit the markdown**
 
-   - For each project section to be output, emit the project task as an unindented bullet entry, then recurse into each child's children. Under the detached section, each orphaned task is a top-level bullet nested under the detached section header (they have no parent in the discovered tree). Sibling order is always the order of `subtask:` entries in the parent task file.
+   - For each project section to be output, emit the project task as an unindented bullet entry, then recurse into each child's children. Under the detached section, each orphaned task that starts a subtree is a top-level bullet. Sibling order is always the order of `subtask:` entries in the parent task file. A `subtask:` entry that names a task already on the path from the section root is skipped, so a cycle cannot recurse forever.
    - For each task line, output: checkbox from status (`[ ]` / `[-]` / `[x]`, or `[?]` when the task file is unreadable or has no parseable `status:`); link `[<prefix><slug>-<hex>](.tt/task/<slug>-<hex>/TASK.md)`; title (read from `title:` in the task file on the canonical branch, as determined in step 3, falling back to `(no title)`). Indentation reflects hierarchy.
 
-**End-to-end summary:** Enumerate project branches → for each project traverse subtree via `subtask:` entries → for each discovered task T find where to read T's file (merged vs ongoing) → if `--detached`, find orphaned task branches and add to detached section → filter sections by `--project`/`--detached` → for each section emit header and walk tree depth-first (checkbox + link + title per task) → output markdown.
+**End-to-end summary:** Build the task index (every task, read from where the merged vs ongoing rule says) → take project branches as section roots → for each project traverse subtree via `subtask:` entries → if `--detached`, find orphaned task branches and add to detached section → filter sections by `--project`/`--detached` → for each section emit header and walk tree depth-first (checkbox + link + title per task) → output markdown.
 
 ### A.2 Generating the focused todo list for the current task
 
@@ -1441,8 +1466,8 @@ Multiple tasks can be checked out simultaneously; the symlinked HEAD worktree fa
 
 1. **Resolve current task:** From the current branch, determine the task or project branch **T** (e.g. current branch is a task branch or project branch, or the branch name identifies the entity).
 2. **Walk to project:** From **T**, walk backwards via the frontmatter-defined parent chain (the task or project that lists this one in `subtask:`) to the top-level task. If **T** is already a project, the path is just **T**. Otherwise collect the path: **T**, its parent task, and so on up to the project.
-3. **Load task files:** For each task on this path, choose where to read its task file using the same rule as the full algorithm (merged = some branch's owner task file has `subtask: [x] <T>` → read from that branch; else read from task branch). Load child order from each task's `subtask:` list.
-4. **Order and emit:** Order and emit markdown in the same format as the full list, but only for this subset of tasks. Indentation and hierarchy are preserved for the focused slice.
+3. **Load task files:** Take each task's file from the task index (§6.13), which applies the same rule as the full algorithm (merged = some branch's owner task file has `subtask: [x] <T>` → read from that branch; else read from task branch). Load child order from each task's `subtask:` list.
+4. **Order and emit:** Order and emit markdown in the same format as the full list, for the ancestors of **T** and for **T** with all of its descendants. Siblings of the tasks on the path are left out. Indentation and hierarchy are preserved for the focused slice.
 
 **Output:** Same markdown format as the full todo list. Useful for establishing context without pulling in the entire project tree.
 
