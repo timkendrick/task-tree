@@ -79,6 +79,12 @@ main() {
   #               branch that received the checkin, so branch != task_id.
   local branch task_file task_id
 
+  local listing
+  listing="$(_task__list_branch_records "$repo" "$task_prefix" "$project_prefix")" || {
+    _ui__log "Error: Cannot read the task branches."
+    exit 1
+  }
+
   if [[ -z "$task_id_arg" ]]; then
     # No task-id: use current branch
     { read -r task_file; read -r branch; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
@@ -91,10 +97,10 @@ main() {
   else
     task_id="$task_id_arg"
     # Explicit task-id: find its canonical branch via "where to read" rule.
-    # For a merged/completed task _task__find_branch returns the parent
+    # For a merged/completed task _task__find_branch_in returns the parent
     # branch (the one that received the checkin).  The task *file path* is
     # always derived from task_id_arg, not from the canonical branch.
-    if ! branch="$(_task__find_branch "$repo" "$task_id_arg" "$task_prefix" "$project_prefix")"; then
+    if ! branch="$(_task__find_branch_in "$listing" "$task_id_arg")"; then
       _ui__log "Error: Could not locate branch for task '$task_id_arg'."
       exit 1
     fi
@@ -137,7 +143,7 @@ main() {
   # grandparent (which is what we'd get if we searched for the parent of the
   # already-merged parent branch).
   local parent_branch
-  parent_branch="$(_task__find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix" 2>/dev/null)" || parent_branch=""
+  parent_branch="$(_task__find_parent_branch_in "$listing" "$task_id" 2>/dev/null)" || parent_branch=""
 
   # --- Print header block ---
   local -a header=(task "$task_id")
@@ -147,20 +153,31 @@ main() {
   _format__aligned_block "${header[@]}"
 
   # --- Print subtasks section ---
-  printf '\n'
+  local subtask_ids='' row kind
   if [[ -n "$subtasks" ]]; then
-    printf 'Subtasks:\n'
-    while IFS= read -r line; do
-      [[ -z "$line" ]] && continue
-      local checkbox subtask_id subtask_status subtask_title=""
-      subtask_id="${line:4}"
-      local subtask_branch
-      if subtask_branch="$(_task__find_branch "$repo" "$subtask_id" "$task_prefix" "$project_prefix" 2>/dev/null)"; then
-        local subtask_fields
-        subtask_fields="$(_task__read_fields "$repo" "$subtask_branch" "$subtask_id" \
-          "$task_prefix" "$project_prefix" status title)" || subtask_fields=''
-        { IFS= read -r subtask_status; IFS= read -r subtask_title; } <<< "$subtask_fields" || true
+    while IFS=$'\t' read -r kind row; do
+      if [[ "$kind" == malformed ]]; then
+        _ui__log "Warning: Ignoring a malformed subtask entry '$row' in the task file of '$task_id'."
+        continue
       fi
+      subtask_ids+="${row#*$'\t'}"$'\n'
+    done < <(printf '%s\n' "$subtasks" | _task__parse_subtask_entries)
+  fi
+
+  printf '\n'
+  if [[ -n "$subtask_ids" ]]; then
+    local summaries
+    summaries="$(printf '%s' "$subtask_ids" \
+      | _task__read_summaries_in "$listing" "$repo" "$task_prefix" "$project_prefix")" \
+      || summaries=''
+    printf 'Subtasks:\n'
+    local subtask_id subtask_status subtask_title checkbox
+    while IFS= read -r row; do
+      [[ -n "$row" ]] || continue
+      subtask_id="${row%%$'\t'*}"
+      row="${row#*$'\t'}"
+      subtask_status="${row%%$'\t'*}"
+      subtask_title="${row#*$'\t'}"
       [[ -z "$subtask_status" ]] && subtask_status="TODO"
       checkbox="$(_format__status_checkbox "$subtask_status")"
       if [[ -n "$subtask_title" ]]; then
@@ -168,7 +185,7 @@ main() {
       else
         printf -- '- %s %s\n' "$checkbox" "$subtask_id"
       fi
-    done <<< "$subtasks"
+    done <<< "$summaries"
   else
     printf '[No subtasks]\n'
   fi
@@ -178,18 +195,24 @@ main() {
   # --- Print context section ---
   printf '\n'
   if [[ -n "$contexts" ]]; then
+    local branch_commit ctx_titles=''
+    branch_commit="$(_task__find_branch_commit_in "$listing" "$branch")" \
+      || branch_commit="$(_task__resolve_revision "$repo" "$branch")" || branch_commit=''
+    if [[ -n "$branch_commit" ]]; then
+      ctx_titles="$(printf '%s\n' "$contexts" | _task__read_context_titles "$repo" \
+        "$branch_commit" "$task_id" "$task_prefix" "$project_prefix")" || ctx_titles=''
+    fi
     printf 'Context:\n'
+    local ctx_id ctx_title
     while IFS= read -r ctx_id; do
       [[ -z "$ctx_id" ]] && continue
-      local ctx_title
-      ctx_title="$(_task__read_context_fields "$repo" "$branch" "$task_id" "$ctx_id" \
-        "$task_prefix" "$project_prefix" title)" || ctx_title=''
+      IFS= read -r ctx_title <&3 || ctx_title=''
       if [[ -n "$ctx_title" ]]; then
         printf -- '- %s (%s)\n' "$ctx_title" "$ctx_id"
       else
         printf -- '- %s\n' "$ctx_id"
       fi
-    done <<< "$contexts"
+    done <<< "$contexts" 3<<< "$ctx_titles"
   else
     printf '[No context files]\n'
   fi

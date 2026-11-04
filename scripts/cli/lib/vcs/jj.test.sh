@@ -217,6 +217,92 @@ test__jj__read_file_at_revision__absent_file_fails() {
 }
 
 # ---------------------------------------------------------------------------
+# _jj__read_files_at_revisions
+# ---------------------------------------------------------------------------
+
+# Print the record markers _jj__read_files_at_revisions emits for REQUESTS,
+# one per line. Usage: _read_record_markers REQUESTS
+_read_record_markers() {
+  local record
+  while IFS= read -r -d '' record; do
+    printf '%s\n' "${record:0:1}"
+  done < <(printf '%s' "$1" | _jj__read_files_at_revisions "$REPO")
+}
+
+# Print the content of the record at INDEX (0-based) among the records
+# _jj__read_files_at_revisions emits for REQUESTS, without its marker.
+# Usage: _read_record_content REQUESTS INDEX
+_read_record_content() {
+  local record i=0
+  while IFS= read -r -d '' record; do
+    if [[ $i -eq $2 ]]; then
+      printf '%s' "${record:1}"
+      return 0
+    fi
+    i=$(( i + 1 ))
+  done < <(printf '%s' "$1" | _jj__read_files_at_revisions "$REPO")
+  return 1
+}
+
+test__jj__read_files_at_revisions__reads_files_at_each_commit() {
+  setup_workspace
+  _fixture_linear_history
+  local requests
+  requests="$(printf '%s\t%s\n' "$FIRST_COMMIT" one.txt "$SECOND_COMMIT" two.txt \
+    "$SECOND_COMMIT" one.txt)"$'\n'
+  assert_eq "one record per request" "$(_read_record_markers "$requests")" \
+    "$(printf '+\n+\n+')"
+  assert_eq "first file content" "$(_read_record_content "$requests" 0)" "one"
+  assert_eq "second file content" "$(_read_record_content "$requests" 1)" "two"
+  assert_eq "inherited file content" "$(_read_record_content "$requests" 2)" "one"
+}
+
+test__jj__read_files_at_revisions__preserves_content_bytes() {
+  setup_workspace
+  printf 'no newline' > bare.txt
+  printf 'two\n\n' > trailing.txt
+  : > empty.txt
+  jj -R "$REPO" commit -m "edge files" >/dev/null 2>&1
+  local commit
+  commit="$(get_full_commit_id '@-')"
+  local requests
+  requests="$(printf "%s\t%s\n" "$commit" bare.txt "$commit" trailing.txt \
+    "$commit" empty.txt)"$'\n'
+  local bare trailing empty
+  bare="$(_read_record_content "$requests" 0; printf '.')"
+  trailing="$(_read_record_content "$requests" 1; printf '.')"
+  empty="$(_read_record_content "$requests" 2; printf '.')"
+  assert_eq "content without a final newline" "$bare" "no newline."
+  assert_eq "trailing newlines kept" "$trailing" "$(printf 'two\n\n.')"
+  assert_eq "empty file" "$empty" "."
+}
+
+test__jj__read_files_at_revisions__reports_unreadable_requests_in_order() {
+  setup_workspace
+  _fixture_linear_history
+  mkdir -p dir
+  edit_file dir/inner.txt "inner"
+  jj -R "$REPO" commit -m "directory" >/dev/null 2>&1
+  local commit
+  commit="$(get_full_commit_id '@-')"
+  local requests
+  requests="$(printf '%s\t%s\n' "$commit" missing.txt feature one.txt \
+    "$commit" dir "$commit" '' "$commit" two.txt)"$'\n'
+  assert_eq "unreadable requests keep their place" \
+    "$(_read_record_markers "$requests")" "$(printf -- '-\n-\n-\n-\n+')"
+  assert_eq "readable request after unreadable ones" \
+    "$(_read_record_content "$requests" 4)" "two"
+}
+
+test__jj__read_files_at_revisions__empty_input_prints_nothing() {
+  setup_workspace
+  local out exit_code=0
+  out="$(_jj__read_files_at_revisions "$REPO" < /dev/null)" || exit_code=$?
+  assert_success "empty input succeeds" "$exit_code"
+  assert_output_empty "no records" "$out"
+}
+
+# ---------------------------------------------------------------------------
 # _jj__get_operation_id
 # ---------------------------------------------------------------------------
 
@@ -932,23 +1018,8 @@ test__jj__set_bookmark__backwards_move_requires_flag() {
 }
 
 # ---------------------------------------------------------------------------
-# _jj__list_bookmark_names / _jj__list_bookmarks_at / _jj__check_bookmark_exists
+# _jj__list_bookmarks_at / _jj__check_bookmark_exists
 # ---------------------------------------------------------------------------
-
-test__jj__list_bookmark_names__lists_local_bookmarks() {
-  setup_workspace
-  _fixture_linear_history
-  local names
-  names="$(_jj__list_bookmark_names "$REPO")"
-  assert_contains "main listed" "$names" "main"
-  assert_contains "feature listed" "$names" "feature"
-
-  local plain exit_code=0
-  plain="$(mktemp -d)"
-  trap 'rm -rf "$plain"' RETURN
-  _jj__list_bookmark_names "$plain" >/dev/null || exit_code=$?
-  assert_failure "non-repository rejected" "$exit_code"
-}
 
 test__jj__list_bookmarks_at__names_at_revision() {
   setup_workspace
@@ -964,6 +1035,22 @@ test__jj__list_bookmarks_at__names_at_revision() {
   exit_code=0
   _jj__list_bookmarks_at "$REPO" no-such-bookmark >/dev/null || exit_code=$?
   assert_failure "absent revision rejected" "$exit_code"
+}
+
+test__jj__list_bookmark_targets__pairs_names_with_commits() {
+  setup_workspace
+  _fixture_linear_history
+  local targets
+  targets="$(_jj__list_bookmark_targets "$REPO")"
+  assert_contains "feature paired with its commit" "$targets" \
+    "$(printf 'feature\t%s' "$SECOND_COMMIT")"
+  assert_contains "main listed" "$targets" "$(printf 'main\t')"
+
+  local plain exit_code=0
+  plain="$(mktemp -d)"
+  trap 'rm -rf "$plain"' RETURN
+  _jj__list_bookmark_targets "$plain" >/dev/null || exit_code=$?
+  assert_failure "non-repository rejected" "$exit_code"
 }
 
 test__jj__check_bookmark_exists__present_and_absent() {
@@ -1495,7 +1582,7 @@ test__jj__commit_changeset__leaves_no_trace() {
   assert_not_contains "no temporary git ref survives" \
     "$(git --git-dir="$REPO/.git" for-each-ref)" "tt-tmp-"
   assert_not_contains "no stray jj bookmark survives" \
-    "$(_jj__list_bookmark_names "$REPO")" "tt-tmp-"
+    "$(_jj__list_bookmark_targets "$REPO")" "tt-tmp-"
   assert_output_empty "scratch directory removed" \
     "$(find "$scratch_root" -mindepth 1)"
   local ec=0
