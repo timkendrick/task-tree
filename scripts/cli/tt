@@ -145,7 +145,6 @@ main() {
     revset)      set -- task     revset       "${@:2}" ;;
     diff)        set -- task     diff         "${@:2}" ;;
     changelog)   set -- task     changelog    "${@:2}" ;;
-    select)      set -- task     select       "${@:2}" ;;
     add-context)  set -- task     context add   "${@:2}" ;;
     get-context)  set -- task     context get   "${@:2}" ;;
     list-context) set -- task     context list  "${@:2}" ;;

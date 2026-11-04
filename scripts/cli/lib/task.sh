@@ -11,7 +11,6 @@
 #   _task__check_is_project_branch   — bookmark name matches the project ID pattern
 #   _task__check_branch_exists       — bookmark resolves to a revision
 #   _task__check_revision_exists     — arbitrary revision expression resolves
-#   _task__list_branch_names         — every bookmark name in the repository
 #   _task__resolve_revision          — immutable commit ID of a revision
 #   _task__resolve_change            — stable change ID of a revision
 #   _task__delete_branch             — delete a task/project bookmark
@@ -119,18 +118,6 @@ _task__check_branch_exists() {
 _task__check_revision_exists() {
   local repo="$1" rev="$2"
   _repo__check_revision_exists "$repo" "$rev"
-}
-
-# Usage: _task__list_branch_names REPO
-# Prints every bookmark name in REPO, one per line, unsorted and unfiltered —
-# task branches, project branches and any other bookmark alike. Callers filter
-# to the ones they care about with _task__check_is_task_branch /
-# _task__check_is_project_branch. Documented pass-through to
-# _repo__list_bookmark_names so commands can enumerate the task tree's branches
-# without reaching into the VCS layer.
-_task__list_branch_names() {
-  local repo="$1"
-  _repo__list_bookmark_names "$repo"
 }
 
 # Usage: _task__resolve_revision REPO REV

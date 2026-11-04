@@ -8,8 +8,6 @@
 #   _ui__run_command       — run a command, tracing it when its level is active
 #   _ui__prompt_raw        — open an editor on a template, return raw content
 #   _ui__prompt            — open an editor on a template, return cleaned content
-#   _ui__select_raw        — built-in minimal picker (renders to stderr, reads /dev/tty)
-#   _ui__select            — interactive selection from newline-separated options
 #
 # Public constants:
 #   _UI__LOG_LEVEL_OFF / _INFO / _VERBOSE — diagnostic log levels
@@ -145,72 +143,4 @@ _ui__prompt() {
   # trim leading/trailing blank lines
   msg="$(printf '%s' "$msg" | awk 'NF{found=1} found{print}')"
   printf '%s' "$msg"
-}
-
-# Usage: _ui__select_raw OPTION...
-# Renders the built-in minimal picker UI to stderr and reads one line from
-# /dev/tty. The raw reply is printed to stdout (validation is the caller's job).
-# Returns 1 if no interactive terminal is available or the read fails.
-_ui__select_raw() {
-  # /dev/tty exists as a device node even without a controlling terminal, so
-  # test that it can actually be opened rather than relying on [[ -e ]].
-  # Redirections are applied left to right, so stderr must be silenced *before*
-  # the /dev/tty open is attempted or bash reports the failure itself.
-  if ! : 2>/dev/null </dev/tty; then
-    echo "Error: no interactive terminal available (set TT_SELECT to use a custom picker)" >&2
-    return 1
-  fi
-
-  {
-    printf 'Select an option:\n\n'
-    printf '%s\n' "$@"
-    printf '\n> '
-  } >&2
-
-  local reply
-  IFS= read -r reply </dev/tty || return 1
-  printf '%s\n' "$reply"
-}
-
-# Usage: printf '%s\n' item... | _ui__select
-# Reads newline-separated options from stdin, presents a picker, and writes the
-# selected option to stdout.
-#
-# When TT_SELECT is set it is run via `sh -c` as the picker: it receives the
-# options on stdin and must write exactly one of them to stdout. Otherwise the
-# built-in picker (_ui__select_raw) is used.
-#
-# Returns 1 if no options were provided, if the picker fails, or if the picker's
-# output does not exactly match one of the provided options.
-_ui__select() {
-  local options=() line
-  while IFS= read -r line; do
-    [[ -n "$line" ]] && options+=("$line")
-  done
-
-  if [[ ${#options[@]} -eq 0 ]]; then
-    echo "Error: no options provided" >&2
-    return 1
-  fi
-
-  local choice
-  if [[ -n "${TT_SELECT:-}" ]]; then
-    choice="$(printf '%s\n' "${options[@]}" | sh -c "$TT_SELECT")" || {
-      echo "Error: picker command failed: $TT_SELECT" >&2
-      return 1
-    }
-  else
-    choice="$(_ui__select_raw "${options[@]}")" || return 1
-  fi
-
-  local option
-  for option in "${options[@]}"; do
-    if [[ "$option" == "$choice" ]]; then
-      printf '%s\n' "$choice"
-      return 0
-    fi
-  done
-
-  echo "Error: invalid selection: $choice" >&2
-  return 1
 }
