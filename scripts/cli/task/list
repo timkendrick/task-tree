@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task list — List the tasks and projects in the repository.
+#
+# Usage:
+#   list [--type TYPE]... [--status STATUS]... [--quiet] [--repo PATH] [-h|--help]
+#
+# Options:
+#   --type TYPE        Only list tasks of TYPE: project or task. Repeatable.
+#   --status STATUS    Only list tasks with STATUS: TODO, IN-PROGRESS, DONE or ''. Repeatable.
+#   --quiet            Print task IDs only, one per line; no header or table.
+#   --repo PATH        Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
+#   -h, --help         Show this help.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--type TYPE]... [--status STATUS]... [--quiet] [--repo PATH]
+
+List every task and project in the repository as a table, sorted by ID.
+
+Output columns:
+  (marker)  *  marks the current task
+  ID        task or project ID
+  TYPE      project, task, or other for a malformed subtask ID
+  STATUS    status field of the task file, or (none)
+  TITLE     title field of the task file
+
+Options:
+  --type TYPE        Only list tasks of TYPE: project or task. Repeatable; a
+                     task matches when its type equals any given TYPE.
+  --status STATUS    Only list tasks with STATUS: TODO, IN-PROGRESS, DONE, or
+                     '' for tasks without a status. Repeatable; a task matches
+                     when its status equals any given STATUS. Case-insensitive,
+                     and the hyphen is optional.
+  --quiet            Print task IDs only (one per line); no header or table.
+  --repo PATH        Repository root (overrides TT_REPO; default: find .jj).
+  -h, --help         Show this help.
+
+A task must match every option given.
+
+Examples:
+  ${COMMAND_NAME:-$SCRIPT_NAME}                                 # every task
+  ${COMMAND_NAME:-$SCRIPT_NAME} --type project                  # projects only
+  ${COMMAND_NAME:-$SCRIPT_NAME} --status todo --status in-progress
+  tt task checkout "\$(tt list --status todo --status in-progress --quiet | fzf)"
+
+EOF
+}
+
+# Usage: normalize_status STATUS
+# Prints STATUS uppercased with hyphens removed.
+normalize_status() {
+  printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | tr -d '-'
+}
+
+main() {
+  local types='' statuses=''
+  local filter_type=0 filter_status=0
+  local quiet=0
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --type)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        case "$2" in
+          project|task) ;;
+          *)
+            _ui__log "Error: Invalid type '$2'. Expected one of: project, task."
+            usage >&2; exit 1 ;;
+        esac
+        types+="=$2,"; filter_type=1; shift 2 ;;
+      --status)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        local status
+        status="$(normalize_status "$2")"
+        case "$status" in
+          TODO|INPROGRESS|DONE|'') ;;
+          *)
+            _ui__log "Error: Invalid status '$2'. Expected one of: TODO, IN-PROGRESS, DONE, ''."
+            usage >&2; exit 1 ;;
+        esac
+        statuses+="=$status,"; filter_status=1; shift 2 ;;
+      --quiet)
+        quiet=1; shift ;;
+      --repo)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *)
+        usage >&2; exit 1 ;;
+    esac
+  done
+
+  repo="$(_workspace__resolve_repo "$repo")"
+
+  local task_prefix project_prefix
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
+
+  local index
+  index="$(_task__build_index "$repo" "$task_prefix" "$project_prefix")" || {
+    _ui__log "Error: Cannot read the task index."
+    exit 1
+  }
+
+  local current=''
+  if (( ! quiet )); then
+    current="$(_task__resolve_current_branch "$repo" "$task_prefix" "$project_prefix")" || current=''
+  fi
+
+  # Task rows: task, ID, KIND, HAS_BRANCH, PATH, SOURCE, STATUS, TITLE.
+  # Each filter option adds one condition that skips the rows it excludes.
+  # Output rows: MARKER, ID, TYPE, STATUS, TITLE.
+  local rows
+  rows="$(printf '%s\n' "$index" | awk \
+    -v filter_type="$filter_type" -v types="$types" \
+    -v filter_status="$filter_status" -v statuses="$statuses" \
+    -v current="$current" '
+    function add_values(list, set,    n, i, values) {
+      n = split(list, values, ",")
+      for (i = 1; i <= n; i++) {
+        if (values[i] != "") set[substr(values[i], 2)] = 1
+      }
+    }
+    function normalize(status,    value) {
+      value = toupper(status)
+      gsub(/-/, "", value)
+      return value
+    }
+    BEGIN {
+      FS = "\t"
+      add_values(types, wanted_type)
+      add_values(statuses, wanted_status)
+    }
+    $1 != "task" { next }
+    filter_type && !($3 in wanted_type) { next }
+    filter_status && !(normalize($7) in wanted_status) { next }
+    {
+      print ($2 == current ? "*" : "") "\t" $2 "\t" $3 "\t" ($7 == "" ? "(none)" : $7) "\t" $8
+    }
+  ' | LC_ALL=C sort -t "$(printf '\t')" -k2,2)"
+
+  if (( quiet )); then
+    [[ -n "$rows" ]] || return 0
+    printf '%s\n' "$rows" | cut -f2
+    return 0
+  fi
+
+  {
+    printf '\tID\tTYPE\tSTATUS\tTITLE\n'
+    [[ -z "$rows" ]] || printf '%s\n' "$rows"
+  } | _format__table --marker
+}
+
+main "$@"

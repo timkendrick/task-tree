@@ -91,108 +91,46 @@ main() {
   local current_ws_root
   current_ws_root="$(_worktree__resolve_current "$repo")" || current_ws_root=""
 
-  # Parse into parallel arrays
-  local -a ws_names=()
-  local -a ws_paths=()
-  local -a ws_task_ids=()
-  local -a ws_is_current=()
-
   local ws_data
   ws_data="$(_worktree__list "$repo")" || ws_data=''
 
+  local rows=''
+  local names=''
   while IFS=$'\t' read -r ws_name ws_path task_id; do
     [[ -z "$ws_name" ]] && continue
 
-    # Normalize path: if empty, use (none)
     if [[ -z "$ws_path" ]]; then
       ws_path='(none)'
     fi
 
-    # Normalize task_id: if empty, use (none)
     if [[ -z "$task_id" ]]; then
       task_id='(none)'
     fi
 
-    # Apply --task filter
     if [[ -n "$task_filter" && "$task_id" != "$task_filter" ]]; then
       continue
     fi
 
-    # Abbreviate $HOME in path
     local display_path="$ws_path"
     if [[ "$ws_path" != '(none)' ]]; then
       display_path="${ws_path/#$HOME/~}"
     fi
 
-    # Is this the current worktree?
-    local is_current=false
+    local flag=''
     if [[ -n "$current_ws_root" && "$ws_path" == "$current_ws_root" ]]; then
-      is_current=true
+      flag='*'
     fi
 
-    ws_names+=("$ws_name")
-    ws_paths+=("$display_path")
-    ws_task_ids+=("$task_id")
-    ws_is_current+=("$is_current")
+    names+="$ws_name"$'\n'
+    rows+="$flag"$'\t'"$ws_name"$'\t'"$task_id"$'\t'"$display_path"$'\n'
   done <<< "$ws_data"
 
-  # --quiet mode: print worktree names only, one per line
   if [[ "$quiet" == true ]]; then
-    for (( i=0; i<${#ws_names[@]}; i++ )); do
-      printf '%s\n' "${ws_names[$i]}"
-    done
+    printf '%s' "$names"
     return 0
   fi
 
-  # Compute column widths (max of header and each row value)
-  local header_name="NAME" header_task="TASK ID" header_path="PATH"
-  local max_name=${#header_name}
-  local max_task=${#header_task}
-  local max_path=${#header_path}
-
-  local i
-  for (( i=0; i<${#ws_names[@]}; i++ )); do
-    local n=${#ws_names[$i]}
-    local t=${#ws_task_ids[$i]}
-    local p=${#ws_paths[$i]}
-    (( n > max_name )) && max_name=$n
-    (( t > max_task )) && max_task=$t
-    (( p > max_path )) && max_path=$p
-  done
-
-  # ANSI bold (only when stdout is a TTY)
-  local BOLD='' RESET=''
-  if [[ -t 1 ]]; then
-    BOLD=$'\033[1m'
-    RESET=$'\033[0m'
-  fi
-
-  # Print header (marker column is 2 chars wide)
-  printf '  %-*s  %-*s  %s\n' \
-    "$max_name" "$header_name" \
-    "$max_task" "$header_task" \
-    "$header_path"
-
-  # Print rows
-  for (( i=0; i<${#ws_names[@]}; i++ )); do
-    local marker='  '
-    if [[ "${ws_is_current[$i]}" == true ]]; then
-      marker='* '
-      printf '%b%s%-*s  %-*s  %s%b\n' \
-        "$BOLD" \
-        "$marker" \
-        "$max_name" "${ws_names[$i]}" \
-        "$max_task" "${ws_task_ids[$i]}" \
-        "${ws_paths[$i]}" \
-        "$RESET"
-    else
-      printf '%s%-*s  %-*s  %s\n' \
-        "$marker" \
-        "$max_name" "${ws_names[$i]}" \
-        "$max_task" "${ws_task_ids[$i]}" \
-        "${ws_paths[$i]}"
-    fi
-  done
+  printf '\tNAME\tTASK ID\tPATH\n%s' "$rows" | _format__table --marker
 }
 
 main "$@"

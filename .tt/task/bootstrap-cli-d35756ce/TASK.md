@@ -155,7 +155,7 @@ subtask: [ ] task/parallel-runner-hangs-on-crashed-test-c77d2074
 subtask: [x] task/tt-task-find-506a2320
 subtask: [ ] task/move-task-md-into-tt-directory-1c1a89f7
 subtask: [x] task/tt-prompt-omit-summary-line-1ba84f08
-subtask: [ ] task/tt-task-list-b2d8f237
+subtask: [x] task/tt-task-list-b2d8f237
 subtask: [x] task/prevent-deleting-in-use-worktree-cef2718e
 subtask: [x] task/tt-switch-skip-dirty-check-ad6b460c
 subtask: [ ] task/tt-show-subtask-performance-e02e7594
