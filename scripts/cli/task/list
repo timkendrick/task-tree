@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task list — Print the IDs of the tasks and projects in the repository.
+#
+# Usage:
+#   list [--all] [--repo PATH] [-h|--help]
+#
+# Options:
+#   --all              Include completed (DONE) tasks.
+#   --repo PATH        Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
+#   -h, --help         Show this help.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--all] [--repo PATH]
+
+Print the ID of every active (not DONE) task and project, one per line,
+sorted. A task whose file cannot be read counts as active.
+
+Options:
+  --all              Include completed (DONE) tasks.
+  --repo PATH        Repository root (overrides TT_REPO; default: find .jj).
+  -h, --help         Show this help.
+
+Examples:
+  ${COMMAND_NAME:-$SCRIPT_NAME}                          # active tasks
+  ${COMMAND_NAME:-$SCRIPT_NAME} --all                    # every task
+  tt task checkout "\$(${COMMAND_NAME:-$SCRIPT_NAME} | fzf)"   # pick a task to check out
+
+EOF
+}
+
+main() {
+  local include_done=0
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all)
+        include_done=1; shift ;;
+      --repo)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *)
+        usage >&2; exit 1 ;;
+    esac
+  done
+
+  repo="$(_workspace__resolve_repo "$repo")"
+
+  local task_prefix project_prefix
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
+
+  local index
+  index="$(_task__build_index "$repo" "$task_prefix" "$project_prefix")" || {
+    _ui__log "Error: Cannot read the task index."
+    exit 1
+  }
+
+  # Task rows: task, ID, KIND, HAS_BRANCH, SOURCE, STATUS, TITLE.
+  # Each filter option adds one condition that skips the rows it excludes.
+  printf '%s\n' "$index" | awk -v include_done="$include_done" '
+    BEGIN { FS = "\t" }
+    $1 != "task" { next }
+    !include_done && $6 == "DONE" { next }
+    { print $2 }
+  ' | LC_ALL=C sort
+}
+
+main "$@"
