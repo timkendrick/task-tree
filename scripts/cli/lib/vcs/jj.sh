@@ -97,7 +97,7 @@
 #     _jj__abandon_commit            — abandon a revision, rebasing descendants onto its parents
 #   Bookmarks:
 #     _jj__set_bookmark              — move a bookmark to an explicit revision
-#     _jj__list_bookmark_names       — all local bookmark names
+#     _jj__list_bookmark_targets     — every local bookmark with its target commit ID
 #     _jj__list_bookmarks_at         — local bookmark names at a revision
 #     _jj__check_bookmark_exists     — whether a local bookmark exists
 #     _jj__rename_bookmark           — rename a bookmark
@@ -110,6 +110,7 @@
 #     _jj__get_worktree_revision     — commit ID of a workspace's working-copy commit
 #   Files:
 #     _jj__read_file_at_revision     — file content at a revision
+#     _jj__read_files_at_revisions   — content of many files at many revisions, in one pass
 #     _jj__read_symlink_at_revision  — symlink target at a revision
 #     _jj__read_file_at_operation    — file content at an operation + revision
 #     _jj__check_file_exists_at_revision — whether a file exists at a revision
@@ -941,16 +942,8 @@ _jj__commit_changeset() {
     shift 4
   done
   _jj__check_backend_supported "$repo" || return $?
-  local canonical_repo
-  canonical_repo="$(_jj__resolve_repository_root "$repo")" || return 1
-  # git_target names the backing Git directory relative to the store directory
-  # itself (NOT relative to .jj/repo), and may in turn be a relative path, so
-  # canonicalize from inside the store directory.
-  local store_dir="$canonical_repo/.jj/repo/store"
-  local git_target='' git_dir
-  read -r git_target < "$store_dir/git_target" 2>/dev/null || :
-  [[ -n "$git_target" ]] || return 1
-  git_dir="$(cd "$store_dir" 2>/dev/null && cd "$git_target" 2>/dev/null && pwd -P)" || return 1
+  local git_dir
+  git_dir="$(__jj__resolve_git_dir "$repo")" || return 1
   # A full commit ID needs no resolution: fast-import verifies it names a
   # commit in the store, which is the same guarantee the backend query gives.
   local parent_commit
@@ -1096,6 +1089,23 @@ _jj__commit_changeset() {
     __jj__write_internal "$repo" --ignore-working-copy git import || exit 1
     printf '%s\n' "$commit"
   )
+}
+
+# Usage: __jj__resolve_git_dir REPO
+# Prints the absolute path of the Git directory that backs REPO's store.
+# Returns 1 (nothing printed) when the store records no Git directory.
+__jj__resolve_git_dir() {
+  local repo="$1"
+  local canonical_repo
+  canonical_repo="$(_jj__resolve_repository_root "$repo")" || return 1
+  # git_target names the backing Git directory relative to the store directory
+  # itself (NOT relative to .jj/repo), and may in turn be a relative path, so
+  # canonicalize from inside the store directory.
+  local store_dir="$canonical_repo/.jj/repo/store"
+  local git_target=''
+  read -r git_target < "$store_dir/git_target" 2>/dev/null || :
+  [[ -n "$git_target" ]] || return 1
+  (cd "$store_dir" 2>/dev/null && cd "$git_target" 2>/dev/null && pwd -P)
 }
 
 # Usage: __jj__list_stage_entries DIR
@@ -1302,13 +1312,15 @@ _jj__set_bookmark() {
     "${extra_flags[@]+"${extra_flags[@]}"}"
 }
 
-# Usage: _jj__list_bookmark_names REPO
-# Prints one local bookmark name per line (blank lines may appear and should
-# be skipped by callers). Returns jj's exit code.
-_jj__list_bookmark_names() {
+# Usage: _jj__list_bookmark_targets REPO
+# Prints one "NAME<TAB>COMMIT" line per local bookmark, where COMMIT is the
+# full ID of the commit the bookmark points at. COMMIT is empty when the
+# bookmark is conflicted and so points at no single commit. Returns jj's exit
+# code.
+_jj__list_bookmark_targets() {
   local repo="$1"
-  __jj__read "$repo" --ignore-working-copy log -r 'bookmarks()' \
-    -T 'local_bookmarks.map(|b| b.name()).join("\n") ++ "\n"' --no-graph
+  __jj__read "$repo" --ignore-working-copy bookmark list -T \
+    'if(!remote && present, name ++ "\t" ++ if(normal_target, normal_target.commit_id()) ++ "\n")'
 }
 
 # Usage: _jj__list_bookmarks_at REPO REV
@@ -1422,6 +1434,64 @@ _jj__get_worktree_revision() {
 _jj__read_file_at_revision() {
   local repo="$1" rev="$2" path="$3"
   __jj__read "$repo" --ignore-working-copy file show -r "$rev" -- "root:$path"
+}
+
+__JJ__NULL_OBJECT_ID='0000000000000000000000000000000000000000'
+
+# Usage: _jj__read_files_at_revisions REPO < REQUESTS
+# Reads many files in one pass. REQUESTS holds one "COMMIT<TAB>PATH" line per
+# file, where COMMIT is a full commit ID and PATH is repo-root-relative. Prints
+# one NUL-terminated record per request, in request order:
+#   +CONTENT   the file content, when PATH names a file at COMMIT (a symlink
+#              yields its target)
+#   -          when COMMIT is not a full commit ID, or PATH names no file there
+# Files that contain NUL bytes are not supported. Returns 1 when the store
+# cannot be read.
+#
+# The backing Git store answers all requests with a fixed number of processes,
+# whatever the number of requests.
+_jj__read_files_at_revisions() {
+  local repo="$1"
+  _jj__check_backend_supported "$repo" || return $?
+  local git_dir
+  git_dir="$(__jj__resolve_git_dir "$repo")" || return 1
+  # Every request gets a reply in order. A request that does not name a file
+  # becomes a query for the null object ID, which git reports as missing.
+  local commit path
+  while IFS=$'\t' read -r commit path; do
+    if _jj__check_is_canonical_commit_id "$commit" && [[ -n "$path" ]]; then
+      printf '%s:%s\n' "$commit" "$path"
+    else
+      printf '%s\n' "$__JJ__NULL_OBJECT_ID"
+    fi
+  done \
+    | __jj__git --git-dir="$git_dir" cat-file --batch-check='%(objecttype) %(objectname)' \
+    | awk -v null="$__JJ__NULL_OBJECT_ID" '{ print ($1 == "blob" && NF == 2) ? $2 : null }' \
+    | __jj__git --git-dir="$git_dir" cat-file --batch \
+    | __jj__frame_batch_records
+}
+
+# Usage: __jj__frame_batch_records < CAT_FILE_BATCH_OUTPUT
+# Converts `git cat-file --batch` output for blobs into the records
+# _jj__read_files_at_revisions prints. Each found blob arrives as an
+# "OID blob SIZE" header line, SIZE bytes of content and a newline. Any other
+# line reports a missing object.
+__jj__frame_batch_records() {
+  # The C locale makes length() and substr() count bytes, as SIZE does.
+  LC_ALL=C awk '
+    remaining > 0 {
+      content = content $0 "\n"
+      remaining -= length($0) + 1
+      if (remaining <= 0) printf "+%s%c", substr(content, 1, size), 0
+      next
+    }
+    NF == 3 && $2 == "blob" && $3 ~ /^[0-9]+$/ {
+      size = $3 + 0; content = ""
+      remaining = size + 1
+      next
+    }
+    { printf "-%c", 0 }
+  '
 }
 
 # Usage: _jj__read_symlink_at_revision REPO REV PATH

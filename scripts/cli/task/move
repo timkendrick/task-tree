@@ -134,9 +134,15 @@ main() {
     exit 1
   fi
 
+  local listing
+  listing="$(_task__list_branch_records "$repo" "$task_prefix" "$project_prefix")" || {
+    _ui__log "Error: Cannot read the task branches."
+    exit 1
+  }
+
   # Find old parent
   local old_parent='' find_parent_exit=0
-  old_parent="$(_task__find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" || find_parent_exit=$?
+  old_parent="$(_task__find_parent_branch_in "$listing" "$task_id")" || find_parent_exit=$?
   if [[ $find_parent_exit -eq 1 ]]; then
     _ui__log "Error: No parent found for '$task_id'. Cannot move a parentless task."
     exit 1
@@ -155,7 +161,7 @@ main() {
   while true; do
     local p_exit=0
     local p=''
-    p="$(_task__find_parent_branch "$repo" "$cursor" "$task_prefix" "$project_prefix")" || p_exit=$?
+    p="$(_task__find_parent_branch_in "$listing" "$cursor")" || p_exit=$?
     if [[ $p_exit -ne 0 ]]; then
       break  # reached a root without finding task_id — no cycle
     fi
