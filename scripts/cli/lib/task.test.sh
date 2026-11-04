@@ -142,6 +142,184 @@ _writer_drop_subtasks() {
 }
 
 # ---------------------------------------------------------------------------
+# _task__list_branch_records and the _task__find_*_in lookups
+# ---------------------------------------------------------------------------
+
+test__task__list_branch_records__reads_every_bookmark_tip() {
+  setup_workspace "branch-records"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Task") || true
+  jj -R "$REPO" bookmark create not-a-task -r @ >/dev/null 2>&1
+
+  local listing proj_commit task_commit
+  listing="$(_task__list_branch_records "$REPO" "$(_workspace__get_task_prefix "$REPO")" \
+    "$(_workspace__get_project_prefix "$REPO")")"
+  proj_commit="$(get_full_commit_id "$proj_id")"
+  task_commit="$(get_full_commit_id "$task_id")"
+  assert_eq "bookmark rows in alphabetical order" \
+    "$(printf '%s\n' "$listing" | awk -F'\t' '$1 == "bookmark"')" \
+    "$(printf 'bookmark\t%s\t%s\n' "$proj_id" "$proj_commit" "$task_id" "$task_commit")"
+  assert_contains "project file read at its tip" "$listing" \
+    "read"$'\t'"$proj_id"$'\t'"$proj_commit"$'\t+\t'
+  assert_contains "task file read at its tip" "$listing" \
+    "read"$'\t'"$task_id"$'\t'"$task_commit"$'\t+\tTODO\tTask'
+  assert_contains "subtask entry of the project" "$listing" \
+    "entry"$'\t'"$proj_id"$'\t'"$proj_commit"$'\t[ ]\t'"$task_id"
+  assert_not_contains "other bookmarks skipped" "$listing" "not-a-task"
+}
+
+test__task__find_lookups__wrappers_use_the_repository() {
+  setup_workspace "find-wrappers"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Task") || true
+
+  local task_prefix project_prefix
+  task_prefix="$(_workspace__get_task_prefix "$REPO")"
+  project_prefix="$(_workspace__get_project_prefix "$REPO")"
+  assert_eq "parent branch" \
+    "$(_task__find_parent_branch "$REPO" "$task_id" "$task_prefix" "$project_prefix")" "$proj_id"
+  assert_eq "ongoing task read from its own branch" \
+    "$(_task__find_branch "$REPO" "$task_id" "$task_prefix" "$project_prefix")" "$task_id"
+  assert_eq "parent project" \
+    "$(_task__find_parent_project "$REPO" "$task_id" "$task_prefix" "$project_prefix")" "$proj_id"
+}
+
+# Print a listing in the format of _task__list_branch_records. Each argument
+# is "OWNER" for a bookmark without entries, "OWNER=" for a conflicted
+# bookmark, or "OWNER:CHECKBOX:SUBTASK_ID[,CHECKBOX:SUBTASK_ID]..." for a
+# bookmark whose file lists those entries. CHECKBOX is ' ', '-' or 'x'.
+# Usage: _listing SPEC...
+_listing() {
+  local spec owner entries entry commit
+  for spec in "$@"; do
+    owner="${spec%%[:=]*}"
+    commit="c-$owner"
+    [[ "$spec" == *= ]] && commit=''
+    printf 'bookmark\t%s\t%s\n' "$owner" "$commit"
+  done
+  for spec in "$@"; do
+    [[ "$spec" == *= ]] && continue
+    owner="${spec%%:*}"
+    printf 'read\t%s\tc-%s\t+\tTODO\t%s\n' "$owner" "$owner" "$owner"
+    [[ "$spec" == *:* ]] || continue
+    entries="${spec#*:}"
+    while [[ -n "$entries" ]]; do
+      entry="${entries%%,*}"
+      printf 'entry\t%s\tc-%s\t[%s]\t%s\n' "$owner" "$owner" "${entry%%:*}" "${entry#*:}"
+      [[ "$entries" == *,* ]] && entries="${entries#*,}" || entries=''
+    done
+  done
+}
+
+test__task__find_parent_branch_in__one_parent() {
+  local listing output exit_code=0
+  listing="$(_listing 'project/p-00000001: :task/a-00000002' 'task/a-00000002')"
+  output="$(_task__find_parent_branch_in "$listing" task/a-00000002)" || exit_code=$?
+  assert_success "parent found" "$exit_code"
+  assert_eq "parent printed" "$output" project/p-00000001
+}
+
+test__task__find_parent_branch_in__any_checkbox() {
+  local listing
+  listing="$(_listing 'project/p-00000001:x:task/a-00000002,-:task/b-00000003')"
+  assert_eq "parent of a merged task" \
+    "$(_task__find_parent_branch_in "$listing" task/a-00000002)" project/p-00000001
+  assert_eq "parent of an in-progress task" \
+    "$(_task__find_parent_branch_in "$listing" task/b-00000003)" project/p-00000001
+}
+
+test__task__find_parent_branch_in__no_parent() {
+  local listing output exit_code=0
+  listing="$(_listing 'project/p-00000001' 'task/a-00000002:x:task/a-00000002')"
+  output="$(_task__find_parent_branch_in "$listing" task/a-00000002 2>&1)" || exit_code=$?
+  assert_exit_code "no parent, and the task's own file does not count" "$exit_code" 1
+  assert_output_empty "nothing printed" "$output"
+}
+
+test__task__find_parent_branch_in__multiple_parents() {
+  local listing output exit_code=0 err="$_TEST_ROOT/parents-err.txt"
+  listing="$(_listing 'project/p-00000001: :task/a-00000002' \
+    'project/q-00000003:x:task/a-00000002' 'task/b-00000004: :task/a-00000002')"
+  output="$(_task__find_parent_branch_in "$listing" task/a-00000002 2>"$err")" || exit_code=$?
+  assert_exit_code "multiple parents" "$exit_code" 2
+  assert_output_empty "nothing printed" "$output"
+  assert_eq "error names the first two parents in bookmark order" "$(cat "$err")" \
+    "Error: Multiple parent branches found for 'task/a-00000002': 'project/p-00000001' and 'project/q-00000003'."
+}
+
+test__task__find_branch_in__merged_task_read_from_first_marking_owner() {
+  local listing
+  listing="$(_listing 'project/p-00000001: :task/a-00000002' \
+    'project/q-00000003:x:task/a-00000002' 'task/a-00000002' \
+    'task/b-00000004:x:task/a-00000002')"
+  assert_eq "first owner marking the task [x]" \
+    "$(_task__find_branch_in "$listing" task/a-00000002)" project/q-00000003
+}
+
+test__task__find_branch_in__ongoing_task_read_from_its_bookmark() {
+  local listing
+  listing="$(_listing 'project/p-00000001:-:task/a-00000002' 'task/a-00000002')"
+  assert_eq "own bookmark" "$(_task__find_branch_in "$listing" task/a-00000002)" \
+    task/a-00000002
+}
+
+test__task__find_branch_in__without_a_usable_bookmark() {
+  local listing output exit_code=0
+  listing="$(_listing 'project/p-00000001: :task/a-00000002,-:task/b-00000003' \
+    'task/b-00000003=')"
+  output="$(_task__find_branch_in "$listing" task/a-00000002)" || exit_code=$?
+  assert_exit_code "deleted bookmark" "$exit_code" 1
+  assert_output_empty "nothing printed for a deleted bookmark" "$output"
+
+  exit_code=0
+  output="$(_task__find_branch_in "$listing" task/b-00000003)" || exit_code=$?
+  assert_exit_code "conflicted bookmark" "$exit_code" 1
+  assert_output_empty "nothing printed for a conflicted bookmark" "$output"
+}
+
+test__task__find_parent_project_in__walks_to_the_nearest_project() {
+  local listing
+  listing="$(_listing 'project/p-00000001: :task/a-00000002' \
+    'task/a-00000002: :task/b-00000003' 'task/b-00000003: :task/c-00000004' \
+    'task/c-00000004')"
+  assert_eq "grandparent project" \
+    "$(_task__find_parent_project_in "$listing" task/c-00000004 project/)" project/p-00000001
+  assert_eq "parent project" \
+    "$(_task__find_parent_project_in "$listing" task/a-00000002 project/)" project/p-00000001
+}
+
+test__task__find_parent_project_in__propagates_lookup_failures() {
+  local listing output exit_code=0 err="$_TEST_ROOT/project-err.txt"
+  listing="$(_listing 'task/a-00000002: :task/b-00000003' 'task/b-00000003')"
+  output="$(_task__find_parent_project_in "$listing" task/b-00000003 project/ 2>&1)" \
+    || exit_code=$?
+  assert_exit_code "no ancestor project" "$exit_code" 1
+  assert_output_empty "nothing printed without a project" "$output"
+
+  listing="$(_listing 'project/p-00000001: :task/a-00000002' \
+    'project/q-00000003: :task/a-00000002' 'task/a-00000002: :task/b-00000003')"
+  exit_code=0
+  output="$(_task__find_parent_project_in "$listing" task/b-00000003 project/ 2>"$err")" \
+    || exit_code=$?
+  assert_exit_code "multiple parents at a higher level" "$exit_code" 2
+  assert_contains "error names the ambiguous task" "$(cat "$err")" \
+    "Multiple parent branches found for 'task/a-00000002'"
+}
+
+test__task__find_parent_project_in__detects_a_cycle() {
+  local listing output exit_code=0 err="$_TEST_ROOT/cycle-err.txt"
+  listing="$(_listing 'task/a-00000002: :task/b-00000003' 'task/b-00000003: :task/a-00000002')"
+  output="$(_task__find_parent_project_in "$listing" task/a-00000002 project/ 2>"$err")" \
+    || exit_code=$?
+  assert_exit_code "cycle" "$exit_code" 2
+  assert_output_empty "nothing printed" "$output"
+  assert_eq "error names the revisited task" "$(cat "$err")" \
+    "Error: Cycle in the task hierarchy at 'task/a-00000002'."
+}
+
+# ---------------------------------------------------------------------------
 # _task__get_range_context / _task__resolve_range
 # ---------------------------------------------------------------------------
 
