@@ -29,6 +29,117 @@ test__task__write_stub__has_placeholder_title() {
 }
 
 # ---------------------------------------------------------------------------
+# _task__build_index
+# ---------------------------------------------------------------------------
+
+# Build the task index of $REPO. Usage: _build_index
+_build_index() {
+  _task__build_index "$REPO" "$(_workspace__get_task_prefix "$REPO")" \
+    "$(_workspace__get_project_prefix "$REPO")"
+}
+
+# Print FIELD (1-based, after the row type) of the task row for ID in INDEX.
+# Usage: _index_task_field INDEX ID FIELD
+_index_task_field() {
+  printf '%s\n' "$1" | awk -F'\t' -v id="$2" -v field="$3" \
+    '$1 == "task" && $2 == id { print $(field + 1) }'
+}
+
+# Print the "CHECKBOX SUBTASK_ID" subtask rows of ID in INDEX, one per line.
+# Usage: _index_subtasks INDEX ID
+_index_subtasks() {
+  printf '%s\n' "$1" | awk -F'\t' -v id="$2" \
+    '$1 == "subtask" && $2 == id { print $3 " " $4 }'
+}
+
+test__task__build_index__lists_bookmarked_tasks_with_records() {
+  setup_workspace "index-basic"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_a=$(create_task "a" "Task A") || true
+  checkout_task "$proj_id" || true
+  task_b=$(create_task "b" "Task B") || true
+
+  local index exit_code=0
+  index="$(_build_index 2>/dev/null)" || exit_code=$?
+  assert_success "index builds" "$exit_code"
+  assert_eq "project kind" "$(_index_task_field "$index" "$proj_id" 2)" "project"
+  assert_eq "task kind" "$(_index_task_field "$index" "$task_a" 2)" "task"
+  assert_eq "project has a branch" "$(_index_task_field "$index" "$proj_id" 3)" "1"
+  assert_eq "task source is its own tip" "$(_index_task_field "$index" "$task_a" 4)" \
+    "$(get_full_commit_id "$task_a")"
+  assert_eq "task status" "$(_index_task_field "$index" "$task_a" 5)" "TODO"
+  assert_eq "task title" "$(_index_task_field "$index" "$task_b" 6)" "Task B"
+  assert_eq "subtasks in file order" "$(_index_subtasks "$index" "$proj_id")" \
+    "$(printf '[ ] %s\n[ ] %s' "$task_a" "$task_b")"
+}
+
+test__task__build_index__reads_checked_in_task_from_parent() {
+  setup_workspace "index-merged"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Original Title") || true
+  checkout_task "$task_id" || true
+  checkin_task --complete >/dev/null || true
+  run_tt task edit "$task_id" --title "Edited On Own Branch" >/dev/null 2>&1 || true
+
+  local index
+  index="$(_build_index 2>/dev/null)"
+  assert_eq "source is the parent tip" "$(_index_task_field "$index" "$task_id" 4)" \
+    "$(get_full_commit_id "$proj_id")"
+  assert_eq "title from the parent copy" "$(_index_task_field "$index" "$task_id" 6)" \
+    "Original Title"
+  assert_eq "status from the parent copy" "$(_index_task_field "$index" "$task_id" 5)" \
+    "DONE"
+}
+
+test__task__build_index__includes_subtasks_without_a_bookmark() {
+  setup_workspace "index-no-bookmark"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  merged=$(create_task "merged" "Merged Task") || true
+  checkout_task "$merged" || true
+  checkin_task --complete >/dev/null || true
+  checkout_task "$proj_id" || true
+  pending=$(create_task "pending" "Pending Task") || true
+  jj -R "$REPO" bookmark delete "$merged" "$pending" >/dev/null 2>&1
+
+  local index err
+  err="$_TEST_ROOT/index-err.txt"
+  index="$(_build_index 2>"$err")"
+  assert_eq "merged task has no branch" "$(_index_task_field "$index" "$merged" 3)" "0"
+  assert_eq "merged task read from the parent" "$(_index_task_field "$index" "$merged" 6)" \
+    "Merged Task"
+  assert_eq "pending task listed" "$(_index_task_field "$index" "$pending" 2)" "task"
+  assert_eq "pending task unreadable" "$(_index_task_field "$index" "$pending" 4)" ""
+  assert_contains "unreadable task warned" "$(cat "$err")" \
+    "Warning: Cannot read the task file of '$pending'."
+  assert_not_contains "readable task not warned" "$(cat "$err")" "'$merged'"
+}
+
+test__task__build_index__includes_orphaned_bookmarks() {
+  setup_workspace "index-orphan"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Orphan") || true
+  _task__commit_on_branch "$REPO" "$proj_id" "drop subtask" \
+    --modify ".tt/task/${proj_id#*/}/TASK.md" -- _writer_drop_subtasks >/dev/null
+
+  local index
+  index="$(_build_index 2>/dev/null)"
+  assert_output_empty "project lists no subtasks" "$(_index_subtasks "$index" "$proj_id")"
+  assert_eq "orphan listed" "$(_index_task_field "$index" "$task_id" 6)" "Orphan"
+}
+
+# Writer: removes every subtask entry from the staged project file.
+_writer_drop_subtasks() {
+  local file
+  file="$(printf '%s\n' "$1"/.tt/task/*/TASK.md)"
+  grep -v '^subtask:' "$file" > "$file.tmp"
+  mv "$file.tmp" "$file"
+}
+
+# ---------------------------------------------------------------------------
 # _task__get_range_context / _task__resolve_range
 # ---------------------------------------------------------------------------
 

@@ -39,6 +39,7 @@
 #   _task__find_parent_branch        — parent branch listing a task as a subtask
 #   _task__find_parent_project       — nearest ancestor project branch
 #   _task__find_branch               — canonical branch for a task ("where to read" rule)
+#   _task__build_index               — every task with its record and subtask entries
 #   _task__get_range_context         — task id + parent bookmark + upper bound
 #   _task__resolve_range             — parent bookmark + upper bound only
 #   _task__resolve_fork_point        — fork point commit between parent and upper bound
@@ -952,6 +953,208 @@ _task__find_branch() {
   fi
 
   return 1
+}
+
+# Usage: _task__build_index REPO TASK_PREFIX PROJECT_PREFIX
+# Prints the index of every task in REPO. A task exists when it has a task or
+# project bookmark, or when the record of an existing task lists it as a
+# subtask. Each task's record comes from one revision, its source:
+#   - a task marked [x] in the file on a bookmarked task's own tip is read
+#     from that tip;
+#   - a task marked [x] in the record of a task without a bookmark is read
+#     from the source of that record;
+#   - any other task is read from its own bookmark.
+# When several files mark a task [x], the first in bookmark order wins.
+#
+# Prints tab-separated rows. Fields may be empty, so split on single tabs:
+#   task<TAB>ID<TAB>KIND<TAB>HAS_BRANCH<TAB>SOURCE<TAB>STATUS<TAB>TITLE
+#       one row per task, bookmarked tasks first in bookmark order, then the
+#       rest in discovery order. KIND is 'project', 'task' or 'other' (an ID
+#       that matches neither pattern). HAS_BRANCH is 1 when the task has its
+#       own bookmark and 0 otherwise. SOURCE is the commit ID the record was
+#       read from. SOURCE, STATUS and TITLE are empty when the record cannot
+#       be read. Tabs and carriage returns in values become spaces.
+#   subtask<TAB>ID<TAB>CHECKBOX<TAB>SUBTASK_ID
+#       one row per well-formed subtask entry of a readable record, in file
+#       order, after the row of the task that lists it.
+# Logs a warning for each task whose record cannot be read. Returns 1 when the
+# repository cannot be read.
+#
+# The task files are read in a few batches: one for the bookmark tips, one for
+# the records whose source is another task's tip, and one more for each level
+# of nesting below a task without a bookmark.
+_task__build_index() {
+  local repo="$1" task_prefix="$2" project_prefix="$3"
+  local targets
+  targets="$(_repo__list_bookmark_targets "$repo")" || return 1
+
+  local table='' name commit
+  while IFS=$'\t' read -r name commit; do
+    [[ -n "$name" ]] || continue
+    _task__check_is_task_branch "$name" "$task_prefix" \
+      || _task__check_is_project_branch "$name" "$project_prefix" || continue
+    table+="bookmark"$'\t'"$name"$'\t'"$commit"$'\n'
+  done <<< "$targets"
+
+  local requests records
+  requests="$(__task__resolve_index plan <<< "$table")"
+  while [[ -n "$requests" ]]; do
+    records="$(__task__read_index_records "$repo" "$task_prefix" "$project_prefix" \
+      "$requests")" || return 1
+    table+="$records"$'\n'
+    requests="$(__task__resolve_index plan <<< "$table")"
+  done
+
+  local row rest id kind source
+  while IFS= read -r row; do
+    if [[ "$row" != task$'\t'* ]]; then
+      printf '%s\n' "$row"
+      continue
+    fi
+    rest="${row#task$'\t'}"
+    id="${rest%%$'\t'*}"
+    rest="${rest#*$'\t'}"
+    if _task__check_is_project_branch "$id" "$project_prefix"; then
+      kind='project'
+    elif _task__check_is_task_branch "$id" "$task_prefix"; then
+      kind='task'
+    else
+      kind='other'
+    fi
+    printf 'task\t%s\t%s\t%s\n' "$id" "$kind" "$rest"
+    source="${rest#*$'\t'}"
+    source="${source%%$'\t'*}"
+    [[ -n "$source" ]] || _ui__log "Warning: Cannot read the task file of '$id'."
+  done < <(__task__resolve_index format <<< "$table")
+}
+
+# Usage: __task__resolve_index MODE < TABLE
+# Resolves the source of every task from TABLE, the facts _task__build_index
+# has gathered so far, one tab-separated row each:
+#   bookmark<TAB>ID<TAB>COMMIT        a task bookmark and the commit it points at
+#   read<TAB>ID<TAB>COMMIT<TAB>FOUND<TAB>STATUS<TAB>TITLE
+#                                     the outcome of reading ID's file at COMMIT
+#                                     (FOUND is '+' when the file was read)
+#   entry<TAB>ID<TAB>COMMIT<TAB>CHECKBOX<TAB>SUBTASK_ID
+#                                     a subtask entry of that file
+# MODE 'plan' prints one "ID<TAB>COMMIT" line for each source that TABLE does
+# not cover yet. MODE 'format' prints the task and subtask rows of
+# _task__build_index, without the KIND field.
+__task__resolve_index() {
+  awk -v mode="$1" '
+    BEGIN { FS = "\t" }
+    $1 == "bookmark" { bookmarks[++bookmark_count] = $2; tip[$2] = $3; next }
+    $1 == "read" {
+      key = $2 SUBSEP $3
+      found[key] = ($4 == "+"); status[key] = $5; title[key] = $6
+      next
+    }
+    $1 == "entry" {
+      key = $2 SUBSEP $3
+      n = ++entry_count[key]
+      entry_checkbox[key, n] = $4; entry_subtask[key, n] = $5
+      next
+    }
+
+    # Tests membership first, since reading an absent element creates it.
+    function was_found(key) { return (key in found) && found[key] }
+
+    function mark_merged(id, commit,   key, n, subtask) {
+      key = id SUBSEP commit
+      for (n = 1; n <= entry_count[key]; n++) {
+        subtask = entry_subtask[key, n]
+        if (entry_checkbox[key, n] == "[x]" && !(subtask in merged_source)) {
+          merged_source[subtask] = commit
+        }
+      }
+    }
+
+    END {
+      for (i = 1; i <= bookmark_count; i++) {
+        id = bookmarks[i]
+        if (tip[id] != "" && was_found(id SUBSEP tip[id])) mark_merged(id, tip[id])
+      }
+      for (i = 1; i <= bookmark_count; i++) {
+        known[bookmarks[i]] = 1
+        queue[++queue_count] = bookmarks[i]
+      }
+      for (q = 1; q <= queue_count; q++) {
+        id = queue[q]
+        source = (id in merged_source) ? merged_source[id] : tip[id]
+        sources[id] = source
+        if (source == "") continue
+        key = id SUBSEP source
+        if (!(key in found)) {
+          if (mode == "plan") print id "\t" source
+          continue
+        }
+        if (!was_found(key)) continue
+        mark_merged(id, source)
+        for (n = 1; n <= entry_count[key]; n++) {
+          subtask = entry_subtask[key, n]
+          if (!(subtask in known)) {
+            known[subtask] = 1
+            queue[++queue_count] = subtask
+          }
+        }
+      }
+      if (mode != "format") exit
+      for (q = 1; q <= queue_count; q++) {
+        id = queue[q]
+        key = id SUBSEP sources[id]
+        readable = (sources[id] != "" && was_found(key))
+        printf "task\t%s\t%d\t%s\t%s\t%s\n", id, (id in tip), \
+          readable ? sources[id] : "", readable ? status[key] : "", \
+          readable ? title[key] : ""
+        if (!readable) continue
+        for (n = 1; n <= entry_count[key]; n++) {
+          printf "subtask\t%s\t%s\t%s\n", id, entry_checkbox[key, n], \
+            entry_subtask[key, n]
+        }
+      }
+    }
+  '
+}
+
+# Usage: __task__read_index_records REPO TASK_PREFIX PROJECT_PREFIX REQUESTS
+# Reads the task file of each "ID<TAB>COMMIT" line of REQUESTS at COMMIT, in
+# one batch, and prints the read and entry rows __task__resolve_index takes.
+# Returns 1 when the batch read fails.
+__task__read_index_records() {
+  local repo="$1" task_prefix="$2" project_prefix="$3" requests="$4"
+  local -a ids=() commits=()
+  local id commit path paths=''
+  while IFS=$'\t' read -r id commit; do
+    [[ -n "$id" ]] || continue
+    ids+=("$id")
+    commits+=("$commit")
+    path="$(_task__resolve_file "$id" "$task_prefix" "$project_prefix")" || path=''
+    paths+="$commit"$'\t'"$path"$'\n'
+  done <<< "$requests"
+
+  local record fields title status subtask_count subtask i=0 j
+  while IFS= read -r -d '' record; do
+    id="${ids[i]}"
+    commit="${commits[i]}"
+    i=$(( i + 1 ))
+    if [[ "$record" != +* ]]; then
+      printf 'read\t%s\t%s\t-\t\t\n' "$id" "$commit"
+      continue
+    fi
+    fields="$(_frontmatter__parse_values "${record:1}" title status 'subtask[]')"
+    { IFS= read -r title; IFS= read -r status; IFS= read -r subtask_count
+      title="${title//[$'\t\r']/ }"
+      status="${status//[$'\t\r']/ }"
+      printf 'read\t%s\t%s\t+\t%s\t%s\n' "$id" "$commit" "$status" "$title"
+      for (( j = 0; j < subtask_count; j++ )); do
+        IFS= read -r subtask
+        [[ "$subtask" =~ $__TASK__SUBTASK_ENTRY ]] || continue
+        printf 'entry\t%s\t%s\t[%s]\t%s\n' "$id" "$commit" \
+          "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+      done
+    } <<< "$fields" || true
+  done < <(printf '%s' "$paths" | _repo__read_files_at_revisions "$repo")
+  [[ $i -eq ${#ids[@]} ]]
 }
 
 # Usage: _task__commit_on_branch REPO BRANCH MESSAGE
