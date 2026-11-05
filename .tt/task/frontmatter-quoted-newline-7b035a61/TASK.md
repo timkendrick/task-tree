@@ -1,6 +1,6 @@
 ---
 title: "Fix quoted `\\n` in frontmatter field parsing"
-status: IN-PROGRESS
+status: DONE
 created: 2026-11-04T17:30:05Z
 updated: 2026-11-04T17:30:05Z
 ---
