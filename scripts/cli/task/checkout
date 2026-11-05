@@ -326,6 +326,7 @@ main() {
   task_fields="$(_task__read_fields "$repo" "$task_id" "$task_id" \
     "$task_prefix" "$project_prefix" title status)" || task_fields=''
   { IFS= read -r task_title; IFS= read -r task_status; } <<< "$task_fields" || true
+  task_title="$(_frontmatter__decode "$task_title")"
 
   # Determine if a status-updating checkout commit is needed.
   # Status TODO means the task has never been checked out.
@@ -356,7 +357,7 @@ main() {
       _task__set_field "$root/$task_file" status "IN-PROGRESS"
     }
     _task__commit_on_branch "$repo" "$task_id" \
-      "$(_commit__format_message "task" "checkout" "$task_id" "$task_title")" \
+      "$(_commit__format_title_message "task" "checkout" "$task_id" "$task_title")" \
       --modify "$task_file" -- checkout_writer >/dev/null
   fi
 

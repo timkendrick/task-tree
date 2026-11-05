@@ -76,6 +76,26 @@ test__task__build_index__lists_bookmarked_tasks_with_records() {
     "$(printf '[ ] %s\n[ ] %s' "$task_a" "$task_b")"
 }
 
+test__task__build_index__title_with_newline_keeps_fields_aligned() {
+  setup_workspace "index-newline-title"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_a=$(create_task "a" $'Line one\nline two') || true
+  checkout_task "$proj_id" || true
+  task_b=$(create_task "b" 'Literal \n and \\ kept') || true
+
+  local index exit_code=0
+  index="$(_build_index 2>/dev/null)" || exit_code=$?
+  assert_success "index builds" "$exit_code"
+  assert_eq "the status is not shifted" "$(_index_task_field "$index" "$task_a" 6)" "TODO"
+  assert_eq "the newline becomes a space" "$(_index_task_field "$index" "$task_a" 7)" \
+    "Line one line two"
+  assert_eq "backslashes in the title are kept" "$(_index_task_field "$index" "$task_b" 7)" \
+    'Literal \n and \\ kept'
+  assert_eq "the project's subtasks are read" "$(_index_subtasks "$index" "$proj_id")" \
+    "$(printf '[ ] %s\n[ ] %s' "$task_a" "$task_b")"
+}
+
 test__task__build_index__reads_checked_in_task_from_parent() {
   setup_workspace "index-merged"
   proj_id=$(create_project "proj" "Project") || true

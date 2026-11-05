@@ -233,6 +233,23 @@ test_task_edit__leaves_unrelated_frontmatter_untouched() {
     "$(printf '%s\n' "$before" | grep -v '^title:\|^updated:')"
 }
 
+
+test_task_edit__title_with_newline_is_kept_and_subject_is_one_line() {
+  setup_workspace "edit-newline-title"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" $'Line one\nline two') || true
+  checkout_task "$task_id" >/dev/null || true
+
+  run_tt task edit --label "bug" <<< "" >/dev/null 2>&1 || true
+  content="$(read_task_file "$task_id")"
+  assert_contains "the label is written" "$content" "label: bug"
+  assert_contains "the title line is unchanged" "$content" 'title: "Line one\nline two"'
+  assert_eq "the edit commit message is one line" \
+    "$(jj -R "$REPO" log --no-graph -r "$task_id" -T description)" \
+    "[tt:task:$task_id:edit] Line one line two"
+}
+
 test_task_edit__refuses_when_the_canonical_workspace_is_stale() {
   setup_workspace "edit-stale-canonical"
   setup_stale_canonical "edited"

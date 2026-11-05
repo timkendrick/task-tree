@@ -219,7 +219,7 @@ main() {
   _history__begin_transaction "$repo"
 
   _task__commit_on_branch "$repo" "$bookmark" \
-    "$(_commit__format_message "task" "context:add" "$bookmark" "$ctx_title")" \
+    "$(_commit__format_title_message "task" "context:add" "$bookmark" "$ctx_title")" \
     --modify "$task_file" -- ctx_add_writer >/dev/null
 
   # Commit transaction (records after-op for undo)

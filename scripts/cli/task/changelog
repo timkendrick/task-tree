@@ -112,7 +112,7 @@ read_task_metadata() {
   fields="$(_task__read_fields "$repo" "$rev" "$task_id" "$task_prefix" "$project_prefix" \
     status title)" || return 0
   { IFS= read -r status; IFS= read -r title; } <<< "$fields" || true
-  printf '%s\t%s\n' "$status" "$title"
+  printf '%s\t%s\n' "$status" "$(_string__to_single_line "$(_frontmatter__decode "$title")")"
 }
 
 # Usage: record_operation_fields RECORD OPERATION
