@@ -22,6 +22,21 @@ test_task_tree__basic_tree_output() {
 }
 
 
+test_task_tree__title_with_newline_is_one_line() {
+  setup_workspace "tree-newline-title"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  child=$(create_task "child" $'Line one\nline two') || true
+  checkout_task "$proj_id" >/dev/null || true
+
+  output="" exit_code=0
+  output=$(run_tt task tree 2>&1) || exit_code=$?
+  assert_success "tree succeeds" "$exit_code"
+  assert_contains "the child's title is on its line" "$output" \
+    "- [ ] [$child](.tt/task/${child#*/}/TASK.md) Line one line two"
+}
+
+
 test_task_tree__focus_shows_current_chain() {
   setup_workspace "tree-focus"
   proj_id=$(create_project "proj" "Project") || true
