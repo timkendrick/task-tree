@@ -106,6 +106,7 @@ main() {
   } <<< "$fields" || true
   contexts="${contexts%$'\n'}"
   body="${body%$'\n'}"
+  title="$(_frontmatter__decode "$title")"
   body="$(_string__trim_text "$body")"
 
   # --- Emit prompt ---
@@ -126,6 +127,7 @@ main() {
         <<< "$(_task__read_context_fields "$repo" "$branch" "$task_id" "$ctx_id" \
           "$task_prefix" "$project_prefix" title '...')" || true
       ctx_body="${ctx_body%$'\n'}"
+      ctx_title="$(_frontmatter__decode "$ctx_title")"
       _frontmatter__format_block context "$ctx_id" title "$(_frontmatter__quote "$ctx_title")"
       printf '%s\n\n' "$ctx_body"
     done <<< "$contexts"
