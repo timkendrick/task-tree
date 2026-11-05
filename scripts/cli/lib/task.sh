@@ -203,7 +203,8 @@ _task__resolve_file() {
 # argument order. A repeatable field (label, context, subtask) must be
 # requested as a list, with a '[]' suffix; a single-valued field must not be:
 #   title, status, created, updated
-#       one line holding the decoded value (empty when absent).
+#       one line holding the decoded value, line-encoded (empty when absent);
+#       _frontmatter__decode recovers the value.
 #   label[], context[], subtask[]
 #       a line holding the entry count, then one line per raw entry in file
 #       order.
@@ -272,6 +273,7 @@ _task__format_context() {
     IFS= read -r -d '' body
   } <<< "$fields" || true
   body="${body%$'\n'}"
+  title="$(_frontmatter__decode "$title")"
 
   local -a pairs=(context "$ctx_id")
   [[ -n "$title" ]] && pairs+=(title "$(_frontmatter__quote "$title")")
@@ -337,7 +339,9 @@ _task__read_status() {
 # Prints the decoded title of TASK_ID's task file at REV. Fails as
 # _task__read_fields.
 _task__read_title() {
-  _task__read_fields "$1" "$2" "$3" "$4" "$5" title
+  local title
+  title="$(_task__read_fields "$1" "$2" "$3" "$4" "$5" title)" || return 1
+  _frontmatter__decode "$title"
 }
 
 # Usage: _task__check_file_exists REPO REV TASK_ID TASK_PREFIX PROJECT_PREFIX
@@ -657,8 +661,8 @@ __task__resolve_summaries() {
 
 # Usage: _task__read_context_titles REPO COMMIT TASK_ID TASK_PREFIX PROJECT_PREFIX < CTX_IDS
 # Prints the decoded title of each context of TASK_ID named on a non-empty
-# line of CTX_IDS, one line each and in order, as recorded at COMMIT, a full
-# commit ID. The line is empty when the context file cannot be read or has no
+# line of CTX_IDS, line-encoded as _frontmatter__parse_values prints it, one
+# line each and in order, as recorded at COMMIT, a full commit ID. The line is empty when the context file cannot be read or has no
 # title. Reads every file in one batch. Returns 1 when the batch read fails.
 _task__read_context_titles() {
   local repo="$1" commit="$2" task_id="$3" task_prefix="$4" project_prefix="$5"
@@ -1365,7 +1369,11 @@ __task__read_index_records() {
     fi
     fields="$(_frontmatter__parse_values "${record:1}" title status 'subtask[]')"
     { IFS= read -r title; IFS= read -r status; IFS= read -r subtask_count
-      title="${title//[$'\t\r']/ }"
+      if [[ "$title" == *\\* ]]; then
+        title="$(_string__to_single_line "$(_frontmatter__decode "$title")")"
+      else
+        title="${title//[$'\t\r']/ }"
+      fi
       status="${status//[$'\t\r']/ }"
       printf 'read\t%s\t%s\t+\t%s\t%s\n' "$id" "$commit" "$status" "$title"
       for (( j = 0; j < subtask_count; j++ )); do
@@ -1509,7 +1517,7 @@ _task__commit_fork() {
 
   local new_commit
   new_commit="$(__task__commit_staged "$repo" "$base_commit" \
-    "$(_commit__format_message "task" "fork" "$task_id" "$title")" \
+    "$(_commit__format_title_message "task" "fork" "$task_id" "$title")" \
     -- __task__write_fork "$suffix" "${writer[@]+"${writer[@]}"}")" || return 1
   [[ -n "$new_commit" ]] || return 1
   printf '%s\n' "$new_commit"

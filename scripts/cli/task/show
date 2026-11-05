@@ -130,6 +130,7 @@ main() {
     IFS= read -r -d '' body
   } <<< "$fields" || true
   body="${body%$'\n'}"
+  title="$(_string__to_single_line "$(_frontmatter__decode "$title")")"
   [[ -z "$status" ]] && status="TODO"
   subtasks="${subtasks%$'\n'}"
   contexts="${contexts%$'\n'}"
@@ -207,6 +208,7 @@ main() {
     while IFS= read -r ctx_id; do
       [[ -z "$ctx_id" ]] && continue
       IFS= read -r ctx_title <&3 || ctx_title=''
+      ctx_title="$(_string__to_single_line "$(_frontmatter__decode "$ctx_title")")"
       if [[ -n "$ctx_title" ]]; then
         printf -- '- %s (%s)\n' "$ctx_title" "$ctx_id"
       else

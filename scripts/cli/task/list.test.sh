@@ -31,6 +31,23 @@ test_task_list__table_sorted_with_current_task_marked() {
 }
 
 
+test_task_list__title_with_newline_is_one_row() {
+  setup_workspace "list-newline-title"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" $'Line one\nline two') || true
+
+  output="" exit_code=0
+  output=$(run_tt task list 2>/dev/null) || exit_code=$?
+  assert_success "list succeeds" "$exit_code"
+  assert_eq "the title is on its row with the status intact" "$output" "$(
+    table_row '' ID TYPE STATUS TITLE
+    table_row '*' "$proj_id" project IN-PROGRESS Project
+    table_row '' "$task_id" task TODO 'Line one line two'
+  )"
+}
+
+
 test_task_list__no_marker_without_current_task() {
   setup_workspace "list-no-current"
   proj_id=$(create_project "proj" "Project") || true

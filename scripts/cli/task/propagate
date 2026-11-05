@@ -274,7 +274,7 @@ propagate_one_merge() {
   # A two-parent commit with the child's tip first and the incoming parent tip
   # second. Like a check-in merge, it is described by the incoming task.
   local message merge_commit
-  message="$(_commit__format_message "task" "propagate" "$from" \
+  message="$(_commit__format_title_message "task" "propagate" "$from" \
     "$(read_title "$repo" "$from" "$from" "$task_prefix" "$project_prefix")")"
   merge_commit="$(_task__merge_branch "$repo" "$message" "$child_tip" "$from")" || {
     _ui__log "Error: Could not merge '$from' into '$child'."

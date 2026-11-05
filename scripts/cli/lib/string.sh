@@ -4,6 +4,7 @@
 # Public surface:
 #   _string__first_line          — the first line of a multi-line string
 #   _string__trim_text           — strip surrounding blank lines and trailing whitespace
+#   _string__to_single_line      — replace line breaks and tabs with spaces
 #   _string__to_slug             — derive a slug from a free-form title
 #   _string__validate_slug       — validate slug shape (errors to stderr)
 #   _string__generate_hex        — random 8-character hex string for IDs
@@ -17,6 +18,13 @@ _string__trim_text() {
   local trimmed
   trimmed="$(printf '%s' "$1" | awk 'NF{found=1} found{print}' | sed -e 's/[[:space:]]*$//')"
   printf '%s' "$trimmed"
+}
+
+# Usage: _string__to_single_line TEXT
+# Prints TEXT with each newline, carriage return and tab replaced by a space,
+# so it fits on one line and in one tab-separated column.
+_string__to_single_line() {
+  printf '%s' "${1//[$'\n\r\t']/ }"
 }
 
 # Usage: _string__first_line TEXT
