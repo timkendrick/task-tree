@@ -278,6 +278,7 @@ main() {
     exit 1
   }
   { IFS= read -r task_title; IFS= read -r task_status; } <<< "$task_fields" || true
+  task_title="$(_frontmatter__decode "$task_title")"
 
   # Validate --delete requires DONE. With --complete the task is marked DONE later in
   # this command, so the check is deferred until after the complete step has run.
@@ -353,6 +354,7 @@ main() {
       exit 1
     }
     { IFS= read -r task_title; IFS= read -r task_status; } <<< "$task_fields" || true
+    task_title="$(_frontmatter__decode "$task_title")"
 
     if [[ "$delete" == true ]] && [[ "$task_status" != "DONE" ]]; then
       _ui__log "Error: --delete requires task status to be DONE (current: $task_status)."
@@ -516,7 +518,7 @@ main() {
   # --- Create the handoff commit (child bookmark does NOT advance) ---
   local handoff_commit
   handoff_commit="$(_task__commit_handoff "$repo" "$child_bookmark" \
-    "$(_commit__format_message "task" "handoff" "$task_id" "$task_title")" \
+    "$(_commit__format_title_message "task" "handoff" "$task_id" "$task_title")" \
     -- checkin_handoff_writer)"
 
   if [[ -n "$ctx_id" ]]; then
@@ -535,7 +537,7 @@ main() {
   # relies on). The merge carries no file writes of its own.
   local merge_commit
   merge_commit="$(_task__merge_branch "$repo" \
-    "$(_commit__format_message "task" "checkin" "$task_id" "$task_title")" \
+    "$(_commit__format_title_message "task" "checkin" "$task_id" "$task_title")" \
     "$old_parent_tip" "$handoff_commit")"
 
   # Check for conflicts (unless --force)

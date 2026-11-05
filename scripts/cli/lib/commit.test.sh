@@ -25,6 +25,25 @@ test__commit__format_message__without_entity_id() {
     "[tt:workspace:init] Initialized workspace"
 }
 
+test__commit__format_message__keeps_a_multi_line_description() {
+  assert_eq "a checkpoint message keeps its lines" \
+    "$(_commit__format_message task checkpoint 'task/foo-ab123456' $'Subject\n\nBody')" \
+    $'[tt:task:task/foo-ab123456:checkpoint] Subject\n\nBody'
+}
+
+# ---------------------------------------------------------------------------
+# _commit__format_title_message
+# ---------------------------------------------------------------------------
+
+test__commit__format_title_message__puts_the_title_on_one_line() {
+  assert_eq "line breaks and tabs become spaces" \
+    "$(_commit__format_title_message task edit 'task/foo-ab123456' $'Line one\nline\r\ttwo')" \
+    "[tt:task:task/foo-ab123456:edit] Line one line  two"
+  assert_eq "a one-line title is unchanged" \
+    "$(_commit__format_title_message task edit 'task/foo-ab123456' 'My title')" \
+    "[tt:task:task/foo-ab123456:edit] My title"
+}
+
 # ---------------------------------------------------------------------------
 # _commit__parse_message
 # ---------------------------------------------------------------------------

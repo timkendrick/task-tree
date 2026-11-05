@@ -116,6 +116,7 @@ main() {
       IFS= read -r subtask; subtasks+=("$subtask")
     done
   } <<< "$task_fields" || true
+  task_title="$(_frontmatter__decode "$task_title")"
 
   # If already DONE, nothing to do
   if [[ "$task_status" == "DONE" ]]; then
@@ -156,7 +157,7 @@ main() {
   # Commit the status change onto the task branch
   local commit_id
   commit_id="$(_task__commit_on_branch "$repo" "$bookmark" \
-    "$(_commit__format_message "task" "complete" "$bookmark" "$task_title")" \
+    "$(_commit__format_title_message "task" "complete" "$bookmark" "$task_title")" \
     --modify "$task_file" -- complete_writer)"
 
   # Commit transaction (records after-op for undo)

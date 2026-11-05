@@ -10,6 +10,7 @@
 #   _frontmatter__parse_field          — raw value of a single-valued field
 #   _frontmatter__parse_quoted_field   — field value with matched quotes stripped
 #   _frontmatter__parse_values         — values of several fields, lists count-prefixed
+#   _frontmatter__decode               — the value a _frontmatter__parse_values line encodes
 #   _frontmatter__parse_repeated_field — every value of a repeatable field
 #   _frontmatter__quote                — encode a value as a quoted frontmatter string
 #   _frontmatter__format_block         — delimited frontmatter block from key/value pairs
@@ -97,8 +98,9 @@ _frontmatter__parse_quoted_field() {
 # Prints the requested frontmatter fields in a single pass, in argument order.
 # Each FIELD is either a plain name or a name with a '[]' suffix:
 #   NAME    one line: the first occurrence's value, decoded as
-#           _frontmatter__parse_quoted_field does, or an empty line when the
-#           field is absent.
+#           _frontmatter__parse_quoted_field does and then line-encoded (a
+#           backslash as '\\', a newline as '\n'), or an empty line when the
+#           field is absent. _frontmatter__decode recovers the value.
 #   NAME[]  one line holding the number of occurrences N (0 when absent),
 #           followed by N lines holding each raw value in file order. An
 #           occurrence with an empty value gives an empty line.
@@ -108,11 +110,11 @@ _frontmatter__parse_quoted_field() {
 # A field requested more than once is printed once per request. Returns 1
 # before printing anything when '...' is not the last request.
 #
-# A newline cannot occur inside a value: the frontmatter format stores each
-# value on one line, and quoting escapes newlines. A caller reads exactly one
-# line per NAME, then one count line and exactly that many entry lines per
-# NAME[]. Command substitution strips trailing empty lines, so a read past the
-# end of the captured output stands for an empty value:
+# No printed line holds a newline: the frontmatter format stores each raw
+# value on one line, and a decoded NAME value is line-encoded. A caller reads
+# exactly one line per NAME, then one count line and exactly that many entry
+# lines per NAME[]. Command substitution strips trailing empty lines, so a
+# read past the end of the captured output stands for an empty value:
 #
 #   { IFS= read -r title; IFS= read -r subtask_count
 #     subtasks=()
@@ -120,6 +122,7 @@ _frontmatter__parse_quoted_field() {
 #       IFS= read -r subtask; subtasks+=("$subtask")
 #     done
 #   } <<< "$(_frontmatter__parse_values "$content" title 'subtask[]')" || true
+#   title="$(_frontmatter__decode "$title")"
 #
 # The body follows the last field line; read it to the end of the input, and
 # drop the newline the here-string appends:
@@ -158,7 +161,9 @@ _frontmatter__parse_values() {
         values[i]+="$value"$'\n'
         counts[i]=$(( counts[i] + 1 ))
       elif [[ -z "${found[i]}" ]]; then
-        values[i]="$(__frontmatter__unquote "$value")"
+        value="$(__frontmatter__unquote "$value")"
+        value="${value//\\/\\\\}"
+        values[i]="${value//$'\n'/\\n}"
         found[i]=1
       fi
     done
@@ -174,6 +179,31 @@ _frontmatter__parse_values() {
   if [[ -n "$with_body" ]]; then
     _frontmatter__parse_body "$content"
   fi
+}
+
+# Usage: _frontmatter__decode LINE
+# Prints the value LINE encodes, LINE being a NAME line printed by
+# _frontmatter__parse_values: '\\' becomes a backslash and '\n' a newline. A
+# backslash before any other character, or at the end of LINE, is kept as
+# written. A LINE with no backslash is printed unchanged.
+_frontmatter__decode() {
+  local line="$1"
+  if [[ "$line" != *\\* ]]; then
+    printf '%s' "$line"
+    return 0
+  fi
+  local out='' rest="$line" next
+  while [[ "$rest" == *\\* ]]; do
+    out+="${rest%%\\*}"
+    rest="${rest#*\\}"
+    next="${rest:0:1}"
+    case "$next" in
+      '\') out+='\'; rest="${rest:1}" ;;
+      n) out+=$'\n'; rest="${rest:1}" ;;
+      *) out+='\' ;;
+    esac
+  done
+  printf '%s' "$out$rest"
 }
 
 # Usage: _frontmatter__format_block [KEY VALUE]...

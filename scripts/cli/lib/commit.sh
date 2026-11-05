@@ -2,8 +2,9 @@
 # Source this file; do not execute directly.
 #
 # Public surface:
-#   _commit__format_message — construct a standardized tt commit message
-#   _commit__parse_message  — split a tt commit message into its parts
+#   _commit__format_message       — construct a standardized tt commit message
+#   _commit__format_title_message — construct a one-line tt commit message from a title
+#   _commit__parse_message        — split a tt commit message into its parts
 
 # Usage: _commit__format_message NAMESPACE OPERATION ENTITY_ID DESCRIPTION
 #
@@ -34,6 +35,15 @@ _commit__format_message() {
   else
     printf '[tt:%s:%s:%s] %s' "$namespace" "$entity_id" "$operation" "$description"
   fi
+}
+
+# Usage: _commit__format_title_message NAMESPACE OPERATION ENTITY_ID TITLE
+#
+# As _commit__format_message, with TITLE as the description: each newline,
+# carriage return and tab in TITLE becomes a space, so the message is a single
+# line.
+_commit__format_title_message() {
+  _commit__format_message "$1" "$2" "$3" "$(_string__to_single_line "$4")"
 }
 
 # Usage: _commit__parse_message MESSAGE
