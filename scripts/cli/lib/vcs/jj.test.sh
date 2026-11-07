@@ -2032,6 +2032,17 @@ test__jj__show_log__files_only_for_marked_events() {
   assert_not_contains "unmarked event lists no files" "$output" "TASK.md"
 }
 
+test__jj__show_log__ignores_user_word_wrap() {
+  setup_workspace
+  _fixture_log_history
+  local config="$_TEST_ROOT/wrap-config.toml"
+  printf '[ui]\nlog-word-wrap = true\n' > "$config"
+  local output
+  output="$(COLUMNS=20 JJ_CONFIG="$config" _show_fixture_log)"
+  assert_contains "event record stays on one line" "$output" \
+    $'\x1f[tt:task:task/t-1:context:add] Notes'
+}
+
 test__jj__show_log__limit_and_empty_ranges() {
   setup_workspace
   _fixture_log_history

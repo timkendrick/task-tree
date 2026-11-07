@@ -1716,8 +1716,10 @@ _jj__show_log() {
       ++ \"\\x1f\" ++ stringify(description.first_line()) ++ \"\\n\",
     builtin_log_compact)"
 
-  # Run from inside the repository ($PWD) so the listed file paths are relative to the repo root
+  # Run from inside the repository ($PWD) so the listed file paths are relative to the repo root.
+  # Word wrapping would split an event record across lines, so it is turned off.
   ( cd "$repo" && __jj__read "$PWD" --ignore-working-copy --color "$color_mode" \
+      --config 'ui.log-word-wrap=false' \
       --config "template-aliases.'format_commit_bookmarks(commit)'=''" \
       --config "template-aliases.'format_commit_tags(commit)'=''" \
       --config "template-aliases.'format_commit_description_summary(commit)'='${summary}'" \
