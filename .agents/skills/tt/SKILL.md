@@ -16,6 +16,7 @@ tt task show         # Show an overview of the current task
 tt task tree --focus # Show the current task within the overall task tree
 tt task current      # Print the current task ID
 tt task parent       # Print the parent task ID
+tt task log          # Show the commit graph of the current task
 ```
 
 ## Command reference
@@ -214,6 +215,12 @@ Show the diff of all unmerged commits on a task branch since it diverged from it
 tt task changelog [--task <task-id>] [--since <revision>] [--depth <n>] [--repo PATH]
 ```
 Summarize the work checked into a task branch: a tree of the tasks checked into it, followed immediately by a list of the checkpoints recorded directly on it. Covers everything since the most recent common ancestor of the branch and `--since` (default: the parent branch). `--depth` limits the subtask levels reported (`0` for checkpoints only, `1` for immediate subtasks, and so on; default: all levels). Task titles and statuses are reported as they were when checked in, and tasks still in progress at that point are flagged `[IN-PROGRESS]`. Prints nothing when no work has been checked in.
+
+#### `tt task log`  (alias: `tt log`)
+```
+tt task log [--task <task-id>] [--limit <n>] [--repo PATH]
+```
+Show the commit graph of a task branch, newest first, in the shape of `jj log`. tt commits appear as one line each: an event glyph, the change ID and, for task, context and checkpoint events, a short label. Other commits appear in full, and bookmarks and tags follow each commit's description. A task branch shows its complete range (every check-in plus unmerged work); a project branch shows every commit since its task file appeared. Without `--task`, uses the current task and includes trailing commits beyond the task bookmark. `--limit` caps the number of commits shown. Set `TT_LOG_ICONS=unicode` when the terminal has no Nerd Font. Pipe the output (or set `PAGER=cat`) to avoid the pager in non-interactive use.
 
 #### `tt task edit`
 ```
