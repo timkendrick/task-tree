@@ -108,3 +108,6 @@ _repo__list_changed_files()        { _jj__list_changed_files "$@"; }
 _repo__list_changed_files_in_range() { _jj__list_changed_files_in_range "$@"; }
 _repo__get_file_diff()             { _jj__get_file_diff "$@"; }
 _repo__show_diff()                 { _jj__show_diff "$@"; }
+
+# --- History graph ---
+_repo__show_log()                  { _jj__show_log "$@"; }

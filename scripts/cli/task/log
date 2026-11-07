@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt task log — Show the commit graph of a task branch.
+#
+# Usage: log [--task <task-id>] [--limit <n>] [--repo PATH] [-h|--help]
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat <<EOF
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--limit <n>] [--repo PATH]
+
+Show the commit graph of a task branch, newest first. Commits made by tt
+appear as a single line: an event glyph, the change ID and, for some events,
+a short label. Other commits appear in full. Bookmarks and tags follow each
+commit's description.
+
+A task branch shows its complete range: every prior check-in plus the
+current unmerged work. A project branch shows every commit since the
+project's task file appeared.
+
+Without --task, uses the current task and includes any trailing commits
+beyond the task bookmark (up to @ if working copy is non-empty, or @- if
+empty).
+
+Output is paged with \$PAGER (default: less -FRX) when stdout is a terminal.
+
+Options:
+  --task ID    Task or project branch name (default: current task).
+  --limit N    Show at most N commits.
+  --repo PATH  Repository root (overrides TT_REPO; default: find .jj).
+  -h, --help   Show this help.
+
+Environment:
+  TT_LOG_ICONS  Set to 'unicode' to use standard Unicode symbols instead of
+                Nerd Font icons.
+
+EOF
+}
+
+main() {
+  local task_id_arg='' limit='' repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        task_id_arg="$2"; shift 2 ;;
+      --limit)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        [[ "$2" =~ ^[1-9][0-9]*$ ]] || { usage >&2; exit 1; }
+        limit="$2"; shift 2 ;;
+      --repo)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        repo="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      -*) usage >&2; exit 1 ;;
+      *)  usage >&2; exit 1 ;;
+    esac
+  done
+
+  repo="$(_workspace__resolve_repo "$repo")"
+
+  local color=false
+  _ui__check_color && color=true
+  local icons=nerd
+  [[ "${TT_LOG_ICONS:-}" == 'unicode' ]] && icons=unicode
+
+  local graph
+  graph="$(_task__show_log "$repo" "$task_id_arg" "$limit" "$color")" || exit $?
+  [[ -z "$graph" ]] && exit 0
+
+  if [[ ! -t 1 ]]; then
+    printf '%s\n' "$graph" | _log__render "$icons" "$color"
+    exit 0
+  fi
+
+  # PAGER may carry its own arguments, so it is split into words on purpose.
+  local pager="${PAGER:-less -FRX}" status=0
+  # shellcheck disable=SC2086
+  printf '%s\n' "$graph" | _log__render "$icons" "$color" | $pager || status=$?
+  # Quitting the pager early closes the pipe, which is not an error.
+  [[ $status -eq 0 || $status -eq 141 ]] || exit "$status"
+}
+
+main "$@"
