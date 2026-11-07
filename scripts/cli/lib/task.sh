@@ -51,6 +51,7 @@
 #   _task__resolve_range             — parent bookmark + upper bound only
 #   _task__resolve_fork_point        — fork point commit between parent and upper bound
 #   _task__get_full_range_records    — every commit component attributable to a task
+#   _task__show_log                  — commit graph of a task's complete range
 #   _task__resolve_current           — task-file/bookmark of the task checked out here
 #   _task__resolve_current_branch    — bookmark name of the task checked out here
 #   _task__find_for_revision         — task/project branch recorded by a revision
@@ -833,6 +834,33 @@ _task__get_range_context() {
   task_prefix="$(_workspace__get_task_prefix "$repo")"
   project_prefix="$(_workspace__get_project_prefix "$repo")"
 
+  local target
+  target="$(__task__resolve_range_target "$repo" "$task_id_arg" "$task_prefix" "$project_prefix")" \
+    || return 1
+  local task_bookmark upper_bound
+  IFS=$'\t' read -r task_bookmark upper_bound <<< "$target"
+
+  local parent_bookmark exit_code=0
+  parent_bookmark="$(_task__find_parent_branch "$repo" "$task_bookmark" "$task_prefix" "$project_prefix")" || exit_code=$?
+  if [[ $exit_code -ne 0 ]]; then
+    [[ $exit_code -eq 1 ]] && _ui__log "Error: No parent found for '$task_bookmark'."
+    return $exit_code
+  fi
+
+  printf '%s\t%s\t%s' "$task_bookmark" "$parent_bookmark" "$upper_bound"
+}
+
+# Usage: __task__resolve_range_target REPO TASK_ID TASK_PREFIX PROJECT_PREFIX
+# Resolves the task or project branch that a range ends on, and the range's
+# upper bound. An empty TASK_ID selects the current branch, with the upper
+# bound extended past its bookmark as _task__get_range_context describes.
+#
+# Outputs "<task-id>\t<upper-bound>" to stdout.
+# Exit 1: no current branch, or the bookmark does not exist (error printed to
+# stderr).
+__task__resolve_range_target() {
+  local repo="$1" task_id_arg="$2" task_prefix="$3" project_prefix="$4"
+
   local task_bookmark upper_bound
 
   if [[ -z "$task_id_arg" ]]; then
@@ -861,14 +889,7 @@ _task__get_range_context() {
     fi
   fi
 
-  local parent_bookmark exit_code=0
-  parent_bookmark="$(_task__find_parent_branch "$repo" "$task_bookmark" "$task_prefix" "$project_prefix")" || exit_code=$?
-  if [[ $exit_code -ne 0 ]]; then
-    [[ $exit_code -eq 1 ]] && _ui__log "Error: No parent found for '$task_bookmark'."
-    return $exit_code
-  fi
-
-  printf '%s\t%s\t%s' "$task_bookmark" "$parent_bookmark" "$upper_bound"
+  printf '%s\t%s' "$task_bookmark" "$upper_bound"
 }
 
 # Usage: _task__resolve_range REPO [TASK_ID]
@@ -1160,6 +1181,67 @@ _task__full_range_span_empty() {
   local count
   count="$(_repo__count_commits_in_range "$repo" "$base" "$tip")"
   [[ "$count" -eq 0 ]]
+}
+
+# Usage: _task__show_log REPO TASK_ID LIMIT COLOR
+# Prints the commit graph of a branch in the _repo__show_log format, with tt
+# commits as event commits. An empty TASK_ID selects the current branch and
+# extends the graph past its bookmark, as _task__get_range_context describes.
+#
+# A task branch shows its complete range (see _task__get_full_range_records).
+# A project branch shows every commit from the one that introduced its task
+# file up to its bookmark.
+#
+# LIMIT caps the number of commits shown (empty for no limit). COLOR is 'true'
+# or 'false'.
+# Exit 1: the branch is not a task or project branch, or the branch or a range
+# boundary cannot be resolved (error printed to stderr).
+# Exit 2: multiple parents found (error printed to stderr).
+_task__show_log() {
+  local repo="$1" task_id_arg="$2" limit="$3" color="$4"
+
+  local task_prefix project_prefix
+  task_prefix="$(_workspace__get_task_prefix "$repo")"
+  project_prefix="$(_workspace__get_project_prefix "$repo")"
+
+  local target
+  target="$(__task__resolve_range_target "$repo" "$task_id_arg" "$task_prefix" "$project_prefix")" \
+    || return 1
+  local task_id upper_bound
+  IFS=$'\t' read -r task_id upper_bound <<< "$target"
+
+  local -a ranges=()
+  if ! _task__check_is_task_branch "$task_id" "$task_prefix" \
+    && ! _task__check_is_project_branch "$task_id" "$project_prefix"; then
+    _ui__log "Error: '$task_id' is not a task or project branch."
+    return 1
+  elif _task__check_is_project_branch "$task_id" "$project_prefix"; then
+    local task_file boundary
+    task_file="$(_task__resolve_file "$task_id" "$task_prefix" "$project_prefix")"
+    if ! boundary="$(_repo__find_file_introduction "$repo" "$task_file" "$upper_bound" "$upper_bound")"; then
+      _ui__log "Error: Could not resolve where '$task_id' starts."
+      return 1
+    fi
+    ranges=(dag "$boundary" "$upper_bound")
+  else
+    local parent_bookmark exit_code=0
+    parent_bookmark="$(_task__find_parent_branch "$repo" "$task_id" "$task_prefix" "$project_prefix")" \
+      || exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+      [[ $exit_code -eq 1 ]] && _ui__log "Error: No parent found for '$task_id'."
+      return $exit_code
+    fi
+    local records base tip _kind _order _ts
+    records="$(_task__get_full_range_records "$repo" "$task_id" "$parent_bookmark" "$upper_bound")" \
+      || return 1
+    while IFS=$'\t' read -r base tip _kind _order _ts; do
+      [[ -z "$base" ]] && continue
+      ranges+=(range "$base" "$tip")
+    done <<< "$records"
+  fi
+
+  _repo__show_log "$repo" "$limit" "$color" "$TT_COMMIT_PREFIX" ':context:' "$(_path__task_root)" \
+    "${ranges[@]+"${ranges[@]}"}"
 }
 
 # Usage: _task__build_index REPO TASK_PREFIX PROJECT_PREFIX

@@ -19,7 +19,7 @@ lib/vcs/jj.sh                  backend implementation (_jj__*) — the only plac
                                or `git` is invoked
 ```
 
-Utility modules — `ui`, `string`, `format`, `path`, `frontmatter`, `commit`, `hook`, `lock` — sit beside the
+Utility modules — `ui`, `string`, `format`, `log`, `path`, `frontmatter`, `commit`, `hook`, `lock` — sit beside the
 facades. They are callable from any tier and perform no VCS access of their own.
 
 | Tier | May call | May not call |
@@ -44,6 +44,7 @@ directives, in dependency order:
 | `ui.sh` | Diagnostic logging, command execution and tracing, editor prompts, interactive selection |
 | `string.sh` | Slugs, slug validation, hex identifiers, timestamps |
 | `format.sh` | Value and display-block formatting shared across commands |
+| `log.sh` | Restyling of the commit graph that `tt task log` prints |
 | `path.sh` | Repo-relative path construction, symlink resolution, metadata exclusions |
 | `frontmatter.sh` | Frontmatter parsing (fields, counted lists, body), block formatting and in-place field rewriting |
 | `commit.sh` | `[tt:<ns>:<id>:<op>]` commit message construction and parsing |
@@ -235,6 +236,12 @@ can depend on the working copy happening to sit where a previous step left it.
 | `list_changed_files_in_range` | Files a range changes against its base |
 | `get_file_diff` | Git-format diff of one file at a revision |
 | `show_diff` | Git-format diff between two revisions |
+
+#### History graph
+
+| Operation | Purpose |
+| --- | --- |
+| `show_log` | Commit graph of a union of ranges, with tt commits as one-line event records |
 
 #### Mutations (bare)
 

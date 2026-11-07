@@ -2,9 +2,12 @@
 # Source this file; do not execute directly.
 #
 # Public surface:
+#   TT_COMMIT_PREFIX              — text that every tt commit message starts with
 #   _commit__format_message       — construct a standardized tt commit message
 #   _commit__format_title_message — construct a one-line tt commit message from a title
 #   _commit__parse_message        — split a tt commit message into its parts
+
+TT_COMMIT_PREFIX='[tt:'
 
 # Usage: _commit__format_message NAMESPACE OPERATION ENTITY_ID DESCRIPTION
 #
@@ -31,9 +34,9 @@ _commit__format_message() {
   local description="$4"
 
   if [[ -z "$entity_id" ]]; then
-    printf '[tt:%s:%s] %s' "$namespace" "$operation" "$description"
+    printf '%s%s:%s] %s' "$TT_COMMIT_PREFIX" "$namespace" "$operation" "$description"
   else
-    printf '[tt:%s:%s:%s] %s' "$namespace" "$entity_id" "$operation" "$description"
+    printf '%s%s:%s:%s] %s' "$TT_COMMIT_PREFIX" "$namespace" "$entity_id" "$operation" "$description"
   fi
 }
 
@@ -64,8 +67,8 @@ _commit__format_title_message() {
 _commit__parse_message() {
   local message="$1"
 
-  [[ "$message" == '[tt:'* ]] || return 1
-  local remainder="${message#\[tt:}"
+  [[ "$message" == "$TT_COMMIT_PREFIX"* ]] || return 1
+  local remainder="${message#"$TT_COMMIT_PREFIX"}"
   [[ "$remainder" == *']'* ]] || return 1
 
   local tag="${remainder%%\]*}"
