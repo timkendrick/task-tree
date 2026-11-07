@@ -172,7 +172,7 @@ subtask: [x] task/history-lock-0ec875c3
 subtask: [ ] task/replace-propagate-merge-with-rebase-ab380733
 subtask: [ ] task/tt-task-subtask-list-5193cbc5
 subtask: [x] task/frontmatter-quoted-newline-7b035a61
-subtask: [ ] task/tt-task-log-cli-command-33677d84
+subtask: [x] task/tt-task-log-cli-command-33677d84
 ---
 Implement shell script implementations of all `tt` CLI commands
 
