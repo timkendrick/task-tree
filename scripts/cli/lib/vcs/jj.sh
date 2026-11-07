@@ -120,6 +120,8 @@
 #     _jj__list_changed_files_in_range — files a range changes relative to its base
 #     _jj__get_file_diff             — Git-format diff of one file at a revision
 #     _jj__show_diff                 — Git-format diff between two revisions
+#   History graph:
+#     _jj__show_log                  — commit graph of a set of ranges, with event records
 
 # ---------------------------------------------------------------------------
 # Internal runners (__jj__*; not part of the backend contract)
@@ -1624,4 +1626,106 @@ _jj__show_diff() {
   else
     __jj__read "$repo" --ignore-working-copy diff --git --from "$from" --to "$to"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# History graph
+# ---------------------------------------------------------------------------
+
+# Usage: _jj__show_log REPO LIMIT COLOR EVENT_PREFIX FILES_MARKER FILES_ROOT [KIND FROM TO]...
+#
+# Prints the commit graph of the union of the given ranges, newest first.
+# Each trailing KIND FROM TO triple names one range:
+#   range — FROM..TO: ancestors of TO that are not ancestors of FROM
+#   dag   — FROM::TO: descendants of FROM that are ancestors of TO, inclusive
+# Prints nothing (status 0) when no ranges are given.
+#
+# LIMIT caps the number of commits shown (empty for no limit). COLOR is 'true'
+# or 'false' and selects whether the backend's own styling is emitted.
+#
+# An event commit is a commit whose description starts with EVENT_PREFIX. Its
+# graph node is the placeholder byte 0x01, and the text after the node is a
+# single record introduced by 0x1e, with fields separated by 0x1f:
+#   <change-prefix> <change-rest> <files> <refs...> <message>
+#
+# <change-prefix> and <change-rest> split the 8-character change ID at the end
+# of its shortest unique prefix. <files> lists the files the commit adds or
+# removes beneath the directory FILES_ROOT, space-separated. It is filled only
+# when the first line of the description contains FILES_MARKER, since
+# computing a diff for every event commit is slow. <message> is the first line
+# of the description.
+#
+# Every other commit keeps the backend's own two-line rendering, minus its
+# bookmarks and tags. These move to the end of the description line, after a
+# 0x1d byte, as the <refs...> fields.
+#
+# The four <refs...> fields hold space-separated names, in this order:
+#   local bookmarks: "*" suffix when out of sync with a tracked remote
+#   remote bookmarks: "<name>@<remote>", only when out of sync with the local
+#   local tags: as local bookmarks
+#   remote tags: as remote bookmarks
+# A conflicted ref has a "??" suffix instead.
+#
+# EVENT_PREFIX, FILES_MARKER and FILES_ROOT must not contain quotes or
+# backslashes. Returns jj's exit code.
+_jj__show_log() {
+  local repo="$1" limit="$2" color="$3"
+  local event_prefix="$4" files_marker="$5" files_root="$6"
+  shift 6
+
+  local revset='' kind from to term
+  while [[ $# -ge 3 ]]; do
+    kind="$1" from="$2" to="$3"
+    shift 3
+    case "$kind" in
+      range) term="(${from})..(${to})" ;;
+      dag)   term="(${from})::(${to})" ;;
+      *)     return 1 ;;
+    esac
+    if [[ -z "$revset" ]]; then
+      revset="$term"
+    else
+      revset="${revset} | ${term}"
+    fi
+  done
+  [[ -z "$revset" ]] && return 0
+
+  local color_mode='never'
+  [[ "$color" == true ]] && color_mode='always'
+  local -a limit_args=()
+  [[ -n "$limit" ]] && limit_args=(--limit "$limit")
+
+  local local_ref='r.name() ++ if(r.conflict(), "??", if(!r.synced(), "*"))'
+  local remote_ref='r.name() ++ "@" ++ r.remote() ++ if(r.conflict(), "??")'
+  local refs
+  refs="stringify(commit.local_bookmarks().map(|r| tt_local_ref(r)).join(\" \"))"
+  refs+=" ++ \"\\x1f\" ++ stringify(commit.remote_bookmarks().filter(|r| !r.synced()).map(|r| tt_remote_ref(r)).join(\" \"))"
+  refs+=" ++ \"\\x1f\" ++ stringify(commit.local_tags().map(|r| tt_local_ref(r)).join(\" \"))"
+  refs+=" ++ \"\\x1f\" ++ stringify(commit.remote_tags().filter(|r| !r.synced()).map(|r| tt_remote_ref(r)).join(\" \"))"
+
+  local summary='if(commit.description(), commit.description().first_line(), label(if(commit.empty(), "empty"), description_placeholder)) ++ "\x1d" ++ tt_refs(commit)'
+
+  local node="if(description.starts_with(\"${event_prefix}\"), \"\\x01\", if(config(\"ui.graph.style\").as_string().starts_with(\"ascii\"), builtin_log_node_ascii, builtin_log_node))"
+
+  local files="diff.files().filter(|f| (f.status() == \"added\" || f.status() == \"removed\") && f.path().display().starts_with(\"${files_root}/\")).map(|f| f.path().display()).join(\" \")"
+  local template="if(description.starts_with(\"${event_prefix}\"),
+    \"\\x1e\" ++ stringify(change_id.shortest(8).prefix())
+      ++ \"\\x1f\" ++ stringify(change_id.shortest(8).rest())
+      ++ \"\\x1f\" ++ if(description.first_line().contains(\"${files_marker}\"), stringify(${files}))
+      ++ \"\\x1f\" ++ tt_refs(self)
+      ++ \"\\x1f\" ++ stringify(description.first_line()) ++ \"\\n\",
+    builtin_log_compact)"
+
+  # Run from inside the repository ($PWD) so the listed file paths are relative to the repo root.
+  # Word wrapping would split an event record across lines, so it is turned off.
+  ( cd "$repo" && __jj__read "$PWD" --ignore-working-copy --color "$color_mode" \
+      --config 'ui.log-word-wrap=false' \
+      --config "template-aliases.'format_commit_bookmarks(commit)'=''" \
+      --config "template-aliases.'format_commit_tags(commit)'=''" \
+      --config "template-aliases.'format_commit_description_summary(commit)'='${summary}'" \
+      --config "template-aliases.'tt_local_ref(r)'='${local_ref}'" \
+      --config "template-aliases.'tt_remote_ref(r)'='${remote_ref}'" \
+      --config "template-aliases.'tt_refs(commit)'='${refs}'" \
+      --config "templates.log_node='${node}'" \
+      log -r "$revset" -T "$template" "${limit_args[@]+"${limit_args[@]}"}" )
 }

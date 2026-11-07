@@ -109,6 +109,7 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} revset       →  tt task revset
   ${SCRIPT_NAME} diff         →  tt task diff
   ${SCRIPT_NAME} changelog    →  tt task changelog
+  ${SCRIPT_NAME} log          →  tt task log
 
 EOF
 }
@@ -145,6 +146,7 @@ main() {
     revset)      set -- task     revset       "${@:2}" ;;
     diff)        set -- task     diff         "${@:2}" ;;
     changelog)   set -- task     changelog    "${@:2}" ;;
+    log)         set -- task     log          "${@:2}" ;;
     add-context)  set -- task     context add   "${@:2}" ;;
     get-context)  set -- task     context get   "${@:2}" ;;
     list-context) set -- task     context list  "${@:2}" ;;

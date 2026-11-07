@@ -1968,4 +1968,94 @@ test__jj__abandon_commit__abandons_and_rejects_absent() {
   assert_failure "absent revision rejected" "$exit_code"
 }
 
+# ---------------------------------------------------------------------------
+# _jj__show_log
+# ---------------------------------------------------------------------------
+
+# Build on _fixture_linear_history: an event commit adding a context file on
+# top of "feature", tagged "v1", with bookmark "feature" moved onto it.
+# Sets EVENT_COMMIT to its full commit ID.
+_fixture_log_history() {
+  _fixture_linear_history
+  edit_file .tt/task/t/context/notes-1.md "notes"
+  jj -R "$REPO" commit -m "[tt:task:task/t-1:context:add] Notes" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set feature -r '@-' >/dev/null 2>&1
+  jj -R "$REPO" tag set v1 -r '@-' >/dev/null 2>&1
+  EVENT_COMMIT="$(get_full_commit_id 'feature')"
+}
+
+_show_fixture_log() {
+  _jj__show_log "$REPO" "${1:-}" false '[tt:' ':context:' '.tt/task' range "$BASE_COMMIT" feature
+}
+
+test__jj__show_log__event_commit_record() {
+  setup_workspace
+  _fixture_log_history
+  local output change
+  output="$(_show_fixture_log)"
+  change="$(jj -R "$REPO" log --ignore-working-copy --no-graph -r feature -T 'change_id.shortest(8)')"
+
+  local record
+  record="$(printf '%s\n' "$output" | grep $'\x1e')"
+  assert_contains "event node is the placeholder byte" "$record" $'\x01'
+  local fields="${record#*$'\x1e'}"
+  local prefix rest files lb rb lt rt message
+  IFS=$'\x1f' read -r prefix rest files lb rb lt rt message <<< "$fields"
+  assert_eq "change ID split at the shortest prefix" "${prefix}${rest}" "$change"
+  assert_eq "added context file listed" "$files" ".tt/task/t/context/notes-1.md"
+  assert_eq "local bookmark listed" "$lb" "feature"
+  assert_eq "no remote bookmarks" "$rb" ""
+  assert_eq "local tag listed" "$lt" "v1"
+  assert_eq "no remote tags" "$rt" ""
+  assert_eq "message is the first description line" "$message" "[tt:task:task/t-1:context:add] Notes"
+}
+
+test__jj__show_log__plain_commit_refs_follow_description() {
+  setup_workspace
+  _fixture_log_history
+  jj -R "$REPO" bookmark set second -r "$SECOND_COMMIT" >/dev/null 2>&1
+  local output
+  output="$(_show_fixture_log)"
+  assert_contains "refs suffix follows the description" "$output" $'second\x1dsecond\x1f\x1f\x1f'
+  assert_not_contains "header line omits bookmarks" "$output" " second "
+  assert_contains "plain commit without refs has empty fields" "$output" $'first\x1d\x1f\x1f\x1f'
+}
+
+test__jj__show_log__files_only_for_marked_events() {
+  setup_workspace
+  _fixture_linear_history
+  edit_file .tt/task/t/TASK.md "task"
+  jj -R "$REPO" commit -m "[tt:task:task/t-1:edit] T" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set feature -r '@-' >/dev/null 2>&1
+  local output
+  output="$(_show_fixture_log)"
+  assert_not_contains "unmarked event lists no files" "$output" "TASK.md"
+}
+
+test__jj__show_log__ignores_user_word_wrap() {
+  setup_workspace
+  _fixture_log_history
+  local config="$_TEST_ROOT/wrap-config.toml"
+  printf '[ui]\nlog-word-wrap = true\n' > "$config"
+  local output
+  output="$(COLUMNS=20 JJ_CONFIG="$config" _show_fixture_log)"
+  assert_contains "event record stays on one line" "$output" \
+    $'\x1f[tt:task:task/t-1:context:add] Notes'
+}
+
+test__jj__show_log__limit_and_empty_ranges() {
+  setup_workspace
+  _fixture_log_history
+  local output
+  output="$(_show_fixture_log 1)"
+  assert_contains "newest commit shown" "$output" "Notes"
+  assert_not_contains "older commits cut by the limit" "$output" "second"
+  assert_output_empty "no ranges prints nothing" \
+    "$(_jj__show_log "$REPO" '' false '[tt:' ':context:' '.tt/task')"
+  local exit_code=0
+  _jj__show_log "$REPO" '' false '[tt:' ':context:' '.tt/task' range "$BASE_COMMIT" no-such-bookmark \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_failure "absent revision rejected" "$exit_code"
+}
+
 run_tests "tt lib/vcs/jj (unit)"
