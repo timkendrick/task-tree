@@ -1,6 +1,6 @@
 ---
 title: "Allow filtering `tt worktree list` items by task fields"
-status: IN-PROGRESS
+status: DONE
 created: 2026-11-09T15:42:56Z
 updated: 2026-11-09T15:42:56Z
 ---
