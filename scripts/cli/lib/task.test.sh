@@ -153,6 +153,83 @@ test__task__build_index__includes_orphaned_bookmarks() {
   assert_eq "orphan listed" "$(_index_task_field "$index" "$task_id" 7)" "Orphan"
 }
 
+# ---------------------------------------------------------------------------
+# _task__parse_index_filter and _task__filter_index
+# ---------------------------------------------------------------------------
+
+test__task__parse_index_filter__accepts_type_values() {
+  assert_eq "project type" "$(_task__parse_index_filter type project)" $'type\tproject'
+  assert_eq "task type" "$(_task__parse_index_filter type task)" $'type\ttask'
+}
+
+test__task__parse_index_filter__normalizes_status_values() {
+  assert_eq "uppercase status" "$(_task__parse_index_filter status DONE)" $'status\tDONE'
+  assert_eq "lowercase status" "$(_task__parse_index_filter status todo)" $'status\tTODO'
+  assert_eq "status with hyphen" "$(_task__parse_index_filter status In-Progress)" \
+    $'status\tINPROGRESS'
+  assert_eq "empty status" "$(_task__parse_index_filter status '')" $'status\t'
+}
+
+test__task__parse_index_filter__rejects_invalid_input() {
+  local output exit_code=0
+  output="$(_task__parse_index_filter type Project 2>&1)" || exit_code=$?
+  assert_exit_code "type is case-sensitive" "$exit_code" 1
+  assert_eq "type error names the accepted types" "$output" \
+    "Error: Invalid type 'Project'. Expected one of: project, task."
+
+  exit_code=0
+  output="$(_task__parse_index_filter status blocked 2>&1)" || exit_code=$?
+  assert_exit_code "unknown status rejected" "$exit_code" 1
+  assert_eq "status error names the accepted statuses" "$output" \
+    "Error: Invalid status 'blocked'. Expected one of: TODO, IN-PROGRESS, DONE, ''."
+
+  exit_code=0
+  output="$(_task__parse_index_filter title Foo 2>&1)" || exit_code=$?
+  assert_exit_code "unknown key rejected" "$exit_code" 1
+  assert_eq "key error names the accepted keys" "$output" \
+    "Error: Unknown task field 'title'. Expected one of: type, status."
+}
+
+# Synthetic task index: one project, three tasks with distinct statuses, and a
+# subtask row.
+_filter_index_fixture() {
+  printf 'task\tproject/p-00000001\tproject\t1\tp\tc\tIN-PROGRESS\tP\n'
+  printf 'subtask\tproject/p-00000001\t[ ]\ttask/a-00000002\n'
+  printf 'task\ttask/a-00000002\ttask\t1\ta\tc\tTODO\tA\n'
+  printf 'task\ttask/b-00000003\ttask\t1\tb\tc\tDONE\tB\n'
+  printf 'task\ttask/c-00000004\ttask\t0\tc\t\t\t\n'
+}
+
+# Print the IDs of the fixture rows matching the filter terms of KEY VALUE pairs.
+# Usage: _filter_index_ids [KEY VALUE]...
+_filter_index_ids() {
+  local filters=''
+  while [[ $# -gt 0 ]]; do
+    filters+="$(_task__parse_index_filter "$1" "$2")"$'\n'
+    shift 2
+  done
+  _filter_index_fixture | _task__filter_index "$filters" | cut -f2
+}
+
+test__task__filter_index__without_terms_prints_every_task_row() {
+  assert_eq "every task row, no subtask rows" "$(_filter_index_fixture | _task__filter_index '')" \
+    "$(_filter_index_fixture | grep '^task')"
+}
+
+test__task__filter_index__matches_any_value_of_a_key() {
+  assert_eq "one type" "$(_filter_index_ids type project)" "project/p-00000001"
+  assert_eq "one status" "$(_filter_index_ids status DONE)" "task/b-00000003"
+  assert_eq "repeated status" "$(_filter_index_ids status todo status DONE)" \
+    "$(printf '%s\n' task/a-00000002 task/b-00000003)"
+  assert_eq "empty status" "$(_filter_index_ids status '')" "task/c-00000004"
+}
+
+test__task__filter_index__matches_every_key() {
+  assert_eq "type and status" "$(_filter_index_ids type task status in-progress status todo)" \
+    "task/a-00000002"
+  assert_output_empty "no row matches both keys" "$(_filter_index_ids type project status DONE)"
+}
+
 # Writer: removes every subtask entry from the staged project file.
 _writer_drop_subtasks() {
   local file
