@@ -47,6 +47,8 @@
 #   _task__read_context_titles       — titles of many context files, in one batch
 #   _task__parse_subtask_entries     — checkbox and subtask ID of many raw subtask entries
 #   _task__build_index               — every task with its record and subtask entries
+#   _task__parse_index_filter        — validated filter term for one task index field
+#   _task__filter_index              — task index rows matching a set of filter terms
 #   _task__get_range_context         — task id + parent bookmark + upper bound
 #   _task__resolve_range             — parent bookmark + upper bound only
 #   _task__resolve_fork_point        — fork point commit between parent and upper bound
@@ -1320,6 +1322,70 @@ _task__build_index() {
     source="${rest%%$'\t'*}"
     [[ -n "$source" ]] || _ui__log "Warning: Cannot read the task file of '$id'."
   done < <(__task__resolve_index format <<< "$table")
+}
+
+# Usage: _task__parse_index_filter KEY VALUE
+# Prints the filter term "KEY<TAB>VALUE" that selects the tasks of the task
+# index whose KEY field equals VALUE. KEY is one of:
+#   type    'project' or 'task'; case-sensitive.
+#   status  TODO, IN-PROGRESS, DONE, or '' for a task without a status;
+#           case-insensitive, and the hyphen is optional. The term holds the
+#           status uppercased without hyphens.
+# Logs an error and returns 1 when KEY or VALUE is not accepted.
+_task__parse_index_filter() {
+  local key="$1" value="$2"
+  case "$key" in
+    type)
+      case "$value" in
+        project|task) ;;
+        *)
+          _ui__log "Error: Invalid type '$value'. Expected one of: project, task."
+          return 1 ;;
+      esac ;;
+    status)
+      local status
+      status="$(printf '%s' "$value" | tr '[:lower:]' '[:upper:]' | tr -d '-')"
+      case "$status" in
+        TODO|INPROGRESS|DONE|'') ;;
+        *)
+          _ui__log "Error: Invalid status '$value'. Expected one of: TODO, IN-PROGRESS, DONE, ''."
+          return 1 ;;
+      esac
+      value="$status" ;;
+    *)
+      _ui__log "Error: Unknown task field '$key'. Expected one of: type, status."
+      return 1 ;;
+  esac
+  printf '%s\t%s\n' "$key" "$value"
+}
+
+# Usage: _task__filter_index FILTERS < INDEX
+# Prints the task rows of INDEX, the output of _task__build_index, that match
+# FILTERS: newline-separated terms printed by _task__parse_index_filter. A row
+# matches a key when its field equals any value given for that key, and must
+# match every key given. With no terms, prints every task row.
+_task__filter_index() {
+  TT_INDEX_FILTERS="$1" awk '
+    function normalize(status,    value) {
+      value = toupper(status)
+      gsub(/-/, "", value)
+      return value
+    }
+    BEGIN {
+      FS = "\t"
+      n = split(ENVIRON["TT_INDEX_FILTERS"], terms, "\n")
+      for (i = 1; i <= n; i++) {
+        if (terms[i] == "") continue
+        split(terms[i], term, "\t")
+        filtered[term[1]] = 1
+        wanted[term[1], term[2]] = 1
+      }
+    }
+    $1 != "task" { next }
+    ("type" in filtered) && !(("type", $3) in wanted) { next }
+    ("status" in filtered) && !(("status", normalize($7)) in wanted) { next }
+    { print }
+  '
 }
 
 # Usage: __task__resolve_index MODE < TABLE
