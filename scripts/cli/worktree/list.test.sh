@@ -210,6 +210,98 @@ test_worktree_list__quiet_with_task_filter() {
   assert_not_contains "quiet output has no header" "$output" "NAME"
 }
 
+# Create a worktree named NAME whose working copy sits on the root commit, so it
+# holds no task. Usage: _create_taskless_worktree NAME
+_create_taskless_worktree() {
+  jj -R "$REPO" workspace add --name "$1" -r 'root()' "$_TEST_ROOT/$1" >/dev/null 2>&1
+}
+
+# Print the --quiet output of tt worktree list ARGS..., sorted.
+# Usage: _list_names ARGS...
+_list_names() {
+  run_tt worktree list --quiet "$@" 2>/dev/null | LC_ALL=C sort
+}
+
+test_worktree_list__task_field_filters() {
+  # Worktrees on a TODO-then-checked-out task (IN-PROGRESS), a completed task
+  # (DONE) and a second project (IN-PROGRESS), plus one holding no task.
+  setup_workspace "list-task-fields"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  active_id=$(create_task "active" "Active") || true
+  checkout_task "$proj_id" >/dev/null || true
+  done_id=$(create_task "finished" "Finished") || true
+  other_proj_id=$(create_project "other" "Other Project") || true
+  create_task_worktree "$active_id" >/dev/null
+  done_wt=$(create_task_worktree "$done_id")
+  create_task_worktree "$other_proj_id" >/dev/null
+  run_tt_in_worktree "$done_wt" task complete >/dev/null 2>&1 || true
+  _create_taskless_worktree "bare"
+
+  output="" exit_code=0
+  output=$(run_tt worktree list --task.status DONE 2>&1) || exit_code=$?
+  assert_success "list --task.status succeeds" "$exit_code"
+  assert_line_count "the header and one worktree are printed" "$output" 2
+  assert_contains "the completed task's worktree is listed" "$output" "$done_id"
+
+  assert_eq "status matching ignores case and hyphens" "$(_list_names --task.status inprogress)" \
+    "$(printf '%s\n' "$active_id" "$other_proj_id" | LC_ALL=C sort)"
+  assert_eq "repeated status matches either value" \
+    "$(_list_names --task.status todo --task.status DONE --task.status in-progress)" \
+    "$(printf '%s\n' "$active_id" "$done_id" "$other_proj_id" | LC_ALL=C sort)"
+  assert_eq "type filter" "$(_list_names --task.type project)" "$other_proj_id"
+  assert_eq "different keys must all match" \
+    "$(_list_names --task.type task --task.status in-progress)" "$active_id"
+  assert_eq "task.<key> filters combine with --task" \
+    "$(_list_names --task "$done_id" --task.status DONE)" "$done_id"
+  assert_output_empty "--task and task.<key> filters can exclude each other" \
+    "$(_list_names --task "$active_id" --task.status DONE)"
+  assert_output_empty "an empty status matches no worktree without a task" \
+    "$(_list_names --task.status '')"
+  assert_output_empty "a status no task has matches no worktree" "$(_list_names --task.status todo)"
+}
+
+test_worktree_list__empty_task_filter_matches_worktrees_without_a_task() {
+  setup_workspace "list-no-task"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "my-task" "My Task") || true
+  create_task_worktree "$task_id" >/dev/null
+  _create_taskless_worktree "bare"
+
+  assert_eq "both worktrees are listed without a filter" "$(_list_names)" \
+    "$(printf '%s\n' bare "$task_id" | LC_ALL=C sort)"
+
+  output="" exit_code=0
+  output=$(run_tt worktree list --task '' 2>&1) || exit_code=$?
+  assert_success "list --task '' succeeds" "$exit_code"
+  assert_line_count "the header and one worktree are printed" "$output" 2
+  assert_matches "the worktree without a task is listed" "$output" "^  bare +\\(none\\) "
+  assert_eq "quiet output names the worktree without a task" "$(_list_names --task '')" "bare"
+}
+
+test_worktree_list__task_field_filter_invalid_arguments() {
+  setup_workspace "list-task-fields-invalid"
+  output="" exit_code=0
+  output=$(run_tt worktree list --task.title Foo 2>&1) || exit_code=$?
+  assert_exit_code "unknown key rejected" "$exit_code" 1
+  assert_contains "error names the accepted keys" "$output" \
+    "Error: Unknown task field 'title'. Expected one of: type, status."
+
+  exit_code=0
+  output=$(run_tt worktree list --task.status blocked 2>&1) || exit_code=$?
+  assert_exit_code "invalid status rejected" "$exit_code" 1
+  assert_contains "error names the accepted statuses" "$output" \
+    "Error: Invalid status 'blocked'. Expected one of: TODO, IN-PROGRESS, DONE, ''."
+
+  exit_code=0
+  output=$(run_tt worktree list --task.type Project 2>&1) || exit_code=$?
+  assert_exit_code "type is case-sensitive" "$exit_code" 1
+
+  exit_code=0
+  output=$(run_tt worktree list --task.status 2>&1) || exit_code=$?
+  assert_exit_code "missing value rejected" "$exit_code" 1
+}
 
 test_worktree_list__help() {
   setup_workspace "worktree-list-help"
@@ -218,6 +310,7 @@ test_worktree_list__help() {
   assert_success "exit code" "$exit_code"
   assert_usage_command_name "command name" "$output" "tt worktree list"
   assert_required_usage_argument "argument: --task" "$output" "--task"
+  assert_optional_usage_argument "argument: --task.<key>" "$output" "--task.<key>"
   assert_required_usage_argument "argument: --quiet" "$output" "--quiet"
   assert_required_usage_argument "argument: --repo" "$output" "--repo"
 }
