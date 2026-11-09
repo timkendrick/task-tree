@@ -9,10 +9,14 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # The canonical repository is not a worktree and is not listed.
 #
 # Usage:
-#   list [--task <task-id>] [--quiet] [--repo PATH]
+#   list [--task <task-id>] [--task.<key> <value>]... [--quiet] [--repo PATH]
 #
 # Options:
-#   --task <task-id>  Filter to worktrees matching the given task or project ID.
+#   --task <task-id>  Filter to worktrees matching the given task or project ID,
+#                     or to worktrees holding no task when <task-id> is ''.
+#   --task.<key> <value>
+#                     Filter to worktrees whose task matches the tt task list
+#                     filter --<key> <value>. Repeatable.
 #   --quiet           Machine-readable: print worktree names only, one per line.
 #   --repo PATH       Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #   -h, --help        Show this help.
@@ -21,7 +25,7 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--quiet] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--task.<key> <value>]... [--quiet] [--repo PATH]
 
 List all worktrees of the current repository and their corresponding
 tt task or project IDs. The canonical repository is not a worktree and is
@@ -34,15 +38,25 @@ Output columns:
   PATH      filesystem path to the worktree root (~-abbreviated), or (none)
 
 Options:
-  --task <task-id>  Filter to only worktrees whose TASK ID matches <task-id>
+  --task <task-id>  Filter to only worktrees whose TASK ID matches <task-id>,
+                    or to worktrees holding no task when <task-id> is ''
+  --task.<key> <value>
+                    Filter to only worktrees whose task matches the filter
+                    --<key> <value> of tt task list, e.g. --task.status DONE.
+                    Takes the same keys and values; see tt task list --help.
+                    Repeatable; a task matches a key when it equals any value
+                    given for that key. Worktrees holding no task never match.
   --quiet           Print worktree names only (one per line); no header or table
   --repo PATH       Repository root (overrides TT_REPO; default: walk up from CWD to find .jj)
   -h, --help        Show this help
+
+A worktree must match every option given.
 
 Examples:
   ${COMMAND_NAME:-$SCRIPT_NAME}
   ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345
   ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345 --quiet
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task.status todo --task.status in-progress
   ${COMMAND_NAME:-$SCRIPT_NAME} --repo /path/to/repo
 
 EOF
@@ -50,7 +64,8 @@ EOF
 
 main() {
   local repo=''
-  local task_filter=''
+  local task_filter='' filter_task=false
+  local index_filters=''
   local quiet=false
 
   while [[ $# -gt 0 ]]; do
@@ -60,7 +75,12 @@ main() {
         repo="$2"; shift 2 ;;
       --task)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
-        task_filter="$2"; shift 2 ;;
+        task_filter="$2"; filter_task=true; shift 2 ;;
+      --task.*)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        local term
+        term="$(_task__parse_index_filter "${1#--task.}" "$2")" || { usage >&2; exit 1; }
+        index_filters+="$term"$'\n'; shift 2 ;;
       --quiet)
         quiet=true; shift ;;
       -h|--help) usage; exit 0 ;;
@@ -77,7 +97,6 @@ main() {
   task_prefix="$(_workspace__get_task_prefix "$repo")"
   project_prefix="$(_workspace__get_project_prefix "$repo")"
 
-  # Validate --task filter if provided
   if [[ -n "$task_filter" ]]; then
     if ! _task__check_is_task_branch "$task_filter" "$task_prefix" && \
        ! _task__check_is_project_branch "$task_filter" "$project_prefix"; then
@@ -85,6 +104,17 @@ main() {
       _ui__log "  Expected prefix '$task_prefix' or '$project_prefix' with 8-hex suffix"
       exit 1
     fi
+  fi
+
+  # IDs of the tasks matching the --task.<key> filters, one per line
+  local matching_ids=''
+  if [[ -n "$index_filters" ]]; then
+    local index
+    index="$(_task__build_index "$repo" "$task_prefix" "$project_prefix")" || {
+      _ui__log "Error: Cannot read the task index."
+      exit 1
+    }
+    matching_ids="$(printf '%s\n' "$index" | _task__filter_index "$index_filters" | cut -f2)"
   fi
 
   # Determine current worktree root (to mark with *)
@@ -103,12 +133,17 @@ main() {
       ws_path='(none)'
     fi
 
-    if [[ -z "$task_id" ]]; then
-      task_id='(none)'
+    if [[ "$filter_task" == true && "$task_id" != "$task_filter" ]]; then
+      continue
     fi
 
-    if [[ -n "$task_filter" && "$task_id" != "$task_filter" ]]; then
-      continue
+    if [[ -n "$index_filters" ]]; then
+      [[ -n "$task_id" ]] || continue
+      grep -qxF -- "$task_id" <<< "$matching_ids" || continue
+    fi
+
+    if [[ -z "$task_id" ]]; then
+      task_id='(none)'
     fi
 
     local display_path="$ws_path"
