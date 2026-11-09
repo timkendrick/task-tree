@@ -321,9 +321,9 @@ Recover a stale workspace — one whose files belong to a rewritten commit, whic
 
 #### `tt worktree list`
 ```
-tt worktree list [--task <task-id>] [--quiet]
+tt worktree list [--task <task-id>] [--task.<key> <value>]... [--quiet]
 ```
-List all worktrees and their corresponding tt task/project IDs. The canonical repository is not listed. `--quiet` prints names only.
+List all worktrees and their corresponding tt task/project IDs. The canonical repository is not listed. `--task` keeps worktrees holding that task; `--task ''` keeps worktrees holding no task. `--task.<key> <value>` keeps worktrees whose task matches the `tt task list` filter `--<key> <value>` (same keys, values and matching rules), e.g. `tt worktree list --task.status DONE` finds worktrees whose task is done. Worktrees holding no task never match a `--task.<key>` filter. Combine options to require all of them. `--quiet` prints names only.
 
 #### `tt worktree show`
 ```
