@@ -174,6 +174,7 @@ subtask: [ ] task/tt-task-subtask-list-5193cbc5
 subtask: [x] task/frontmatter-quoted-newline-7b035a61
 subtask: [x] task/tt-task-log-cli-command-33677d84
 subtask: [ ] task/tt-worktree-list-filter-by-task-e06523d6
+subtask: [ ] task/tt-task-list-parent-column-f74ffb43
 ---
 Implement shell script implementations of all `tt` CLI commands
 
