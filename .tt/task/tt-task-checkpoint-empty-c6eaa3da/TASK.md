@@ -1,6 +1,6 @@
 ---
 title: "Empty `tt task checkpoint` commits"
-status: TODO
+status: IN-PROGRESS
 created: 2026-08-04T08:34:59Z
 updated: 2026-08-04T08:35:00Z
 ---
