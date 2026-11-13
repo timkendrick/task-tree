@@ -2,7 +2,8 @@
 title: "Empty `tt task checkpoint` commits"
 status: IN-PROGRESS
 created: 2026-08-04T08:34:59Z
-updated: 2026-08-04T08:35:00Z
+updated: 2026-11-13T21:22:25Z
+context: context/history-migration-bbe12b82
 ---
 Currently, `tt task checkpoint` creates a checkpoint commit with whatever changes are currently in the working copy, and appends the checkpoint commit to the current branch tip.
 
