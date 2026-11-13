@@ -149,12 +149,12 @@ Mark a task DONE. Requires all child tasks to be done, unless `--force` is given
 #### `tt task checkin`
 ```
 tt task checkin [<task-id>] [--complete] [--rebase | --merge] [--force] [--delete]
-                [--context <markdown>|-] [--switch] [--retain-worktree]
+                [--context <markdown>|-] [--switch]
                 [--propagate [--propagate-rebase | --propagate-merge]
                 [--propagate-shallow] [--propagate-force] [--propagate-dry-run]
                 [--propagate-to <child-id>]]
 ```
-Merge a task branch into its parent. `--complete` marks it done first. `--delete` removes the task file after checkin, along with the task's dedicated worktree if it has one (pass `--retain-worktree` to keep it). `--propagate` propagates the updated parent tip to sibling branches.
+Merge a task branch into its parent. `--complete` marks it done first. `--delete` removes the task file after checkin and deregisters the task's worktree, but never deletes the worktree's files (run `tt worktree delete` first to remove them). `--propagate` propagates the updated parent tip to sibling branches.
 
 Checkin never removes a worktree unless `--delete` is given; use `tt worktree delete` to tear one down on its own, or `tt worktree prune` to remove every worktree whose task is `DONE`.
 
