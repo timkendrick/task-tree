@@ -1,6 +1,6 @@
 ---
 title: "Allow `key=value` form in `list` command arguments"
-status: IN-PROGRESS
+status: DONE
 created: 2026-11-13T13:48:07Z
 updated: 2026-11-13T13:48:07Z
 ---
