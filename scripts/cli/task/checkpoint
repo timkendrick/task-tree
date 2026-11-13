@@ -117,9 +117,9 @@ main() {
   local workspace_dir
   workspace_dir="$(_workspace__get_dir "$repo")" || true
 
-  local task_file bookmark
+  local bookmark
   if [[ -z "$task_id_arg" ]]; then
-    { read -r task_file; read -r bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
+    { read -r _; read -r bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
     if [[ -z "$bookmark" ]]; then
       _ui__log "Error: not on a task or project branch."
       exit 1
