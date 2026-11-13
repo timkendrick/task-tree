@@ -37,7 +37,14 @@ The todo list is not persisted; it is derived from project branches, task hierar
 
 Each branch stores its own local task context in a task file and can introspect the hierarchy to read parent context, traceable back to its enclosing project.
 
-Only the **current** task's task file is writable by the user; all other task files (including the parent task file) are read-only. This is enforced by `tt task checkin` (see §6.6): validation fails if the unmerged range contains modifications to any task file other than the current task's. The parent task file is updated only by the tool itself, not by the user: the `[tt:task:<id>:handoff]` and `[tt:task:<id>:checkin]` commits (which are created on the parent branch, not the child branch) mark the subtask as done in the parent's frontmatter at checkin time.
+### Metadata and data
+
+Commit contents fall into two planes:
+
+- **Metadata** — the task files and context files under `.tt/task/`, and the repo-root `TASK.md` symlink. Only tt writes metadata, in the commits it creates for task operations (§6.0).
+- **Data** — every other file in the repository. Only the user writes data, in ordinary VCS commits.
+
+Apart from `tt workspace init`, which commits the workspace configuration, tt's own commits never change data, and the user's commits never change metadata. User commits reach a task branch through `tt task checkpoint`, which merges them into the branch with an empty merge commit and records an empty checkpoint commit on top (§6.3). Both sides of the boundary are enforced: every branch-writing command refuses while uncommitted changes touch metadata (§6.17), `tt task checkpoint` refuses to merge commits that change it, and `tt task checkin` refuses an unmerged range that modifies any task file other than the current task's (§6.6). The parent task file is updated only by the tool itself, not by the user: the `[tt:task:<id>:handoff]` and `[tt:task:<id>:checkin]` commits (which are created on the parent branch, not the child branch) mark the subtask as done in the parent's frontmatter at checkin time.
 
 ### Worktrees and the canonical repository
 
@@ -381,7 +388,7 @@ Any other value — including `INFO` or `VERBOSE` — leaves narration off.
 
 - **`tt task checkout <task-id> [--worktree [=<path>] [--switch]] [--rebase | --merge] [--force]`** — Switch to the given task branch. With `--worktree`, uses or creates a worktree for that task (never the canonical repository); otherwise uses the closest ancestor task workspace or the current workspace. With `--rebase` or `--merge` (mutually exclusive), first pulls any changes from the parent task into this task by running `tt task propagate --from <parent> --to <task-id>` with the chosen strategy, before switching the working copy; only valid for task branches, since project branches have no parent. Refuses if the target workspace has local changes unless `--force`, and refuses if the invoking worktree's working-copy commit carries a bookmark. Updates task status to `IN-PROGRESS` if the task is `TODO` (first checkout) or `DONE` (reopening a completed task), creating a `[tt:task:<task-id>:checkout] <title>` commit on the task branch that changes only the status, and advancing the task bookmark; runs `setup` hook when creating a new worktree. Without `--worktree`, always updates the virtual project's `HEAD` symlink; with `--worktree`, only updates `HEAD` if `--switch` is also provided (`--switch` is only valid with `--worktree`). On success, prints the worktree path to stdout (all other output is on stderr). See §6.2. Refuses while uncommitted changes touch task metadata in the invoking worktree, unless `--force` (see §6.17).
 
-- **`tt task checkpoint [--message <msg>] [--squash]`** — Record the current state and advance the task bookmark. Always records the working copy as a new commit described by `--message` (or by an interactively composed message; `--message` is required when stdin is not a terminal, and an empty message cancels the checkpoint), even when the working copy is empty, and advances the bookmark to it, leaving the worktree on a clean open working copy above it. With `--squash`, squashes all commits between the last bookmark and the current working copy into a single checkpoint commit (see §6.3.2). Refuses if the working-copy commit carries a bookmark, since a checkpoint records the working copy as a new commit above the branch tip rather than amending it. Prints a short confirmation on success. See §6.3. Hooks: **pre-checkpoint**, **post-checkpoint**. Refuses while uncommitted changes touch task metadata (see §6.17).
+- **`tt task checkpoint [--message <msg>] [--task <task-id>]`** — Record a checkpoint on a task branch and advance the task bookmark. Without `--task`, acts on the current task and requires a clean working copy: when commits lie between the task bookmark and the working copy's parent, it first merges them into the branch with an empty `[tt:task:<task-id>:merge] <title>` commit, then records an empty `[tt:task:<task-id>:checkpoint] <message>` commit on top, advances the bookmark to it and moves the working copy onto it. It refuses when a commit to be merged changes task metadata, or when the merge conflicts. With `--task`, records only the empty checkpoint commit, on the given branch, whatever the state of the working copy. The message comes from `--message` or an interactively composed message (`--message` is required when stdin is not a terminal, and an empty message cancels the checkpoint). Refuses if the working-copy commit carries a bookmark. Prints a short confirmation on success. See §6.3. Hooks: **pre-merge**, **post-merge**, **pre-checkpoint**, **post-checkpoint**. Refuses while uncommitted changes touch task metadata (see §6.17).
 
 - **`tt task complete [<task-id>] [--force]`** — Mark the current task (or a given task) as done. Creates a `[tt:task:<task-id>:complete] <title>` commit directly on the task branch that sets `status` to `DONE` in the task file, and advances the task bookmark to this commit. Refuses if the working-copy commit carries a bookmark; the working copy may otherwise hold uncommitted changes, which are never absorbed. Requires all child tasks to be done (every `subtask:` entry marked `[x]`) unless `--force` is specified. See §6.4. Hooks: **pre-complete** (blocking), **post-complete** (optional). Refuses while uncommitted changes touch task metadata, unless `--force`; when `<task-id>` is omitted, also refuses while the worktree has commits past the task bookmark (see §6.17).
 
@@ -478,7 +485,8 @@ Each task and project branch follows a structured lifecycle of named commits. Th
 | `[tt:task:<id>:reorder] <title>` | `tt task reorder` | Rewrites the `subtask:` ordering in a task file; `<id>` is the task whose file was rewritten, and its bookmark advances |
 | `[tt:task:<task-id>:remove] <title>` | `tt task move` | On the old parent branch: removes the `subtask:` entry and the task stub directory; old parent bookmark advances |
 | `[tt:task:<task-id>:move] <title>` | `tt task move` | On the new parent branch: adds the `subtask:` entry and the task stub directory; new parent bookmark advances |
-| `[tt:task:<task-id>:checkpoint] <message>` | `tt task checkpoint` | Advances the task bookmark to the current working state |
+| `[tt:task:<task-id>:merge] <title>` | `tt task checkpoint` | Empty merge commit on the task branch: the task bookmark's tip is the first parent and the user's commits the second. The checkpoint commit follows directly on top |
+| `[tt:task:<task-id>:checkpoint] <message>` | `tt task checkpoint` | Empty commit on the task branch; task bookmark advances |
 | `[tt:task:<task-id>:complete] <title>` | `tt task complete` | Sets status → `DONE` in the task file; final task bookmark advance |
 | `[tt:task:<task-id>:handoff] <title>` | `tt task checkin` | Off-mainline merge-source commit; child bookmark does **not** advance to this commit |
 | `[tt:task:<project-id>:handoff] <title>` | `tt task publish` | Off-mainline merge-source commit for project branches; project bookmark does **not** advance to this commit |
@@ -503,6 +511,10 @@ project/P:
   │ │  ↑ task/T  (final bookmark position)
   │ ○  [tt:task:task/T:checkpoint] ...               ← tt task checkpoint
   │ │  ↑ task/T
+  │ ○    [tt:task:task/T:merge] <T-title>            ← tt task checkpoint  (merges user commits)
+  │ ├─╮
+  │ │ ○  <user commits>                              ← jj commit
+  │ ├─╯
   │ ○  [tt:task:task/T:checkout] <T-title>           ← tt task checkout  (status → IN-PROGRESS)
   │ │  ↑ task/T
   │ ○  [tt:task:task/T:edit] <T-title>               ← tt task edit  (child branch init)
@@ -523,6 +535,8 @@ project/P:
 ```
 
 Every commit on the `task/T` arm from the fork commit up to `complete` records `TASK.md → T`. The handoff points it back at `project/P` (§4.3).
+
+User commits never sit on a branch's first-parent line: a checkpoint merges them in from a side arm (§6.3). The diagrams below abbreviate each checkpoint, together with any merge commit beneath it, as a single `[checkpoint]` line.
 
 **Partial checkin.** When `tt task checkin` is called while the task is still `IN-PROGRESS`, a handoff is created but the child bookmark does not advance and the task is not marked done. The parent absorbs the work-in-progress; the task continues from its current bookmark tip. A subsequent checkin (after more work, or after `tt task complete`) produces another handoff from the same task. The graph below shows one partial checkin followed by a complete checkin:
 
@@ -624,7 +638,7 @@ If the target workspace's working copy is an ancestor task's workspace (not the 
 
 **Reopening completed tasks.** Checking out a task whose `status` is `DONE` reopens it: the tool creates a `[tt:task:<task-id>:checkout] <title>` commit on the task's existing branch that sets `status` back to `IN-PROGRESS`, advances the task bookmark, and leaves a clean working copy on top — the same flow as the first checkout of a `TODO` task. Reopening never pulls changes from the parent branch: the commit is appended to the branch as it stands. Pass `--rebase` or `--merge` to bring the parent's tip in as well (recommended if the task was previously checked in, since the parent has moved on and the next checkin would otherwise conflict). The parent branch is not modified, so its `subtask:` entry for the task remains `[x]` until the next `tt task checkin`, which rewrites it to `[-]` for an `IN-PROGRESS` child (see §6.5). Checking out a task that is already `IN-PROGRESS` remains a no-op with respect to history.
 
-**Preconditions.** The target workspace must not be stale (§6.16) — checked before its cleanliness, since a stale workspace cannot be read — must have no local changes unless `--force` is given, and the working-copy commit of the worktree the command is invoked from must not carry a bookmark: the checkout transaction snapshots that working copy, and a bookmark sitting on it would follow the snapshot, absorbing unrelated uncommitted changes into the branch it names (move off it by starting a new working-copy commit on top of it first). Unless `--force` is given, uncommitted changes in the invoking worktree must not touch task metadata (§6.17). Checkout is one of the three working-copy-bound commands (with `tt task checkpoint` and `tt workspace init`): unlike a bare branch write it exists to create worktrees and move working copies.
+**Preconditions.** The target workspace must not be stale (§6.16) — checked before its cleanliness, since a stale workspace cannot be read — must have no local changes unless `--force` is given, and the working-copy commit of the worktree the command is invoked from must not carry a bookmark: the checkout transaction snapshots that working copy, and a bookmark sitting on it would follow the snapshot, absorbing unrelated uncommitted changes into the branch it names (move off it by starting a new working-copy commit on top of it first). Unless `--force` is given, uncommitted changes in the invoking worktree must not touch task metadata (§6.17). Checkout is one of the two working-copy-bound commands (with `tt workspace init`): unlike a bare branch write it exists to create worktrees and move working copies.
 
 **Multiple worktree prevention.** Each task can have at most one worktree. If `--worktree=<path>` is provided and a worktree for this task already exists at a different filesystem path (compared via `realpath`), the command exits with an error showing the existing worktree path. If the provided path matches the existing worktree, the command succeeds silently and reuses it. The bare `--worktree` flag (no `=<path>`) always reuses the existing worktree if one is found, or derives a conventional path if none exists.
 
@@ -636,13 +650,68 @@ If the target workspace's working copy is an ancestor task's workspace (not the 
 
 ### 6.3 Checkpoint (`tt task checkpoint`)
 
-`tt task checkpoint` records the current state of work and advances the task bookmark. It always creates a new commit, even if the working copy is empty.
+`tt task checkpoint` brings the user's committed work onto the task branch and advances the task bookmark. The user records work with ordinary VCS commits on top of the task branch; those commits are not on the branch until a checkpoint merges them in. Neither commit a checkpoint creates changes any files (§2).
 
-**Commit message:** `[tt:task:<task-id>:checkpoint] <message>`. The `<message>` part comes from `--message` if provided; otherwise the user is prompted to enter it in an editor (see §6.3.1 below). If `--message` is omitted and stdin is not a terminal (e.g. the command is run from a script), no editor is opened: the command prints `Error: cannot open an editor for the checkpoint message: stdin is not a terminal. Pass --message <msg>.` to stderr and exits 1, before resolving the repository or performing any VCS operation. An empty message, whether passed as `--message ''` or left by the editor, prints `Checkpoint canceled: no message provided.` to stderr and exits 1 without performing any VCS operation.
+**Commit flow.** Without `--task`, the commits to merge are those reachable from the working copy's parent (`@-`) but not from the task bookmark.
 
-**Commit flow:** The working copy is always recorded as a commit described by the full message, regardless of whether it has pending changes, and the worktree is left on a clean open working copy on top of it. The bookmark is then advanced to the recorded commit.
+1. If there are any, create a merge commit described as `[tt:task:<task-id>:merge] <title>`. Its first parent is the task bookmark's tip and its second parent is `@-`: like every merge tt creates, it lists the receiving branch first (§6.14). Its tree is the merge of its parents, so it changes no files.
+2. Create the checkpoint commit, described as `[tt:task:<task-id>:checkpoint] <message>`, with no file changes. It sits on the merge commit, or on the bookmark's tip when there was nothing to merge.
+3. Advance the task bookmark to the checkpoint commit, and move the working copy onto it.
 
-**Preconditions:** must be on a task or project branch whose bookmark resolves; the working-copy commit must not carry a bookmark. A checkpoint records the working copy as a new commit *above* the branch tip, so a working copy that is itself a branch tip has nothing above it to record and the capture would amend that branch instead — there is no exemption. Checkpoint is one of the three working-copy-bound commands (with `tt task checkout` and `tt workspace init`): capturing the user's uncommitted work is the whole point of the command. That work must not include edits to task metadata, which tt alone writes (§6.17). Worktrees other than the invoking one that the advanced bookmark leaves behind are reported as out of sync (bring them forward with `tt worktree sync`).
+Before, with two user commits past the bookmark:
+
+```
+@  (working copy, clean)
+○  C2
+○  C1
+○  [tt:task:task/T:edit] <title>             ← task/T
+```
+
+After:
+
+```
+@  (working copy)
+○  [tt:task:task/T:checkpoint] <message>     ← task/T
+○    [tt:task:task/T:merge] <title>
+├─╮
+│ ○  C2
+│ ○  C1
+├─╯
+○  [tt:task:task/T:edit] <title>
+```
+
+The branch's first-parent line — checkpoint, merge, edit — holds tt commits only, and the user's commits sit on a side arm. With nothing to merge, the checkpoint is a single empty commit on the bookmark's tip, which serves as a milestone marker.
+
+The bookmark's tip need not be an ancestor of `@-`. A command given an explicit task ID may have advanced the branch after the user started committing; the merge joins the two lines.
+
+**Explicit task (`--task <task-id>`).** Records only the checkpoint commit, directly on the tip of the given branch, and merges nothing. The branch need not be checked out anywhere. As for every bare branch write (§6.1.2), the working copy may hold uncommitted changes, which are never absorbed, and the invoking worktree is carried forward onto the checkpoint when it sits on the branch's old tip. Commits past the bookmark in the invoking worktree are left out of the branch, as for any command given an explicit task ID (§6.17).
+
+**Commit message.** `<message>` comes from `--message` if provided; otherwise the user is prompted to enter it in an editor (see §6.3.1 below). If `--message` is omitted and stdin is not a terminal (e.g. the command is run from a script), no editor is opened: the command prints `Error: cannot open an editor for the checkpoint message: stdin is not a terminal. Pass --message <msg>.` to stderr and exits 1, before resolving the repository or performing any VCS operation. An empty message, whether passed as `--message ''` or left by the editor, prints `Checkpoint canceled: no message provided.` to stderr and exits 1 without performing any VCS operation. The merge commit is always described by the task title.
+
+**Preconditions** (all checked before any VCS operation; any failure aborts the command):
+
+- Without `--task`, the working copy is on a task or project branch. With `--task`, the given ID names a task or project branch. Either way the branch's bookmark resolves.
+- The working-copy commit does not carry a bookmark, and the canonical workspace is not stale (§6.16).
+- No uncommitted change touches task metadata (§6.17).
+- Without `--task`: the working copy is clean, since uncommitted work would be left out of the merge; and no commit to be merged changes task metadata. That refusal lists the offending paths:
+
+  ```
+  Error: Commits after the task bookmark 'task/foo-abc12345' change task metadata:
+    .tt/task/foo-abc12345/TASK.md
+    Task metadata is written by tt alone. Remove these changes from the commits first.
+  ```
+
+**Conflicts.** When the merge commit comes out conflicted, the command refuses and rolls back, leaving the bookmark where it was.
+
+**Output.** After the operation, print a short confirmation naming the checkpoint commit, e.g.:
+
+```
+Checkpoint: task/foo-abc12345 → <commit-id>
+```
+
+Worktrees other than the invoking one that the advanced bookmark leaves behind are reported as out of sync (bring them forward with `tt worktree sync`).
+
+**Hooks.** All run in the invoking worktree. When there are commits to merge, **pre-merge** runs before the merge commit is created and **post-merge** runs once it exists and is free of conflicts; both are blocking. Then **pre-checkpoint** (blocking) runs before the checkpoint commit is created, and **post-checkpoint** (optional) runs after the command succeeds. A blocking hook that fails rolls back the whole command, the merge included. See §8.
 
 #### 6.3.1 Interactive message editing
 
@@ -655,55 +724,16 @@ When `--message` is not provided and stdin is a terminal, `tt task checkpoint` o
 ```
 <prefilled-message>
 
-# Task: <task-title> (<task-id>)
+# Task: <task-id>
 # An empty message cancels the checkpoint.
 ```
 
-**Prefilled message:** normally the task title. However, when the commit range since the task bookmark contains exactly one commit, the template is prefilled with the first line of that commit's description instead, so a single-commit checkpoint reuses the message the user already wrote. If that commit has no description, the task title is used. This applies regardless of the `--squash` flag, and does not affect `--message` (which skips the editor entirely). It is never used as the message without the editor: when stdin is not a terminal, `--message` is required.
+**Prefilled message:** normally the task title. However, when exactly one commit is to be merged, the template is prefilled with the first line of that commit's description instead, so a checkpoint of a single commit reuses the message the user already wrote. If that commit has no description, the task title is used. The prefill never replaces `--message` (which skips the editor entirely), and it is never used as the message without the editor: when stdin is not a terminal, `--message` is required.
 
 The file is opened in the resolved editor. Once the editor exits:
 
 - **Editor exits non-zero:** Print an error to stderr and exit 1. No VCS operation is performed.
 - **Editor exits zero:** Strip all lines beginning with `#`, then trim trailing whitespace from each line along with any leading and trailing blank lines. Indentation within a line is preserved, so a template that prefills indented content (see §6.5) survives the round trip. If nothing remains, print `Checkpoint canceled: no message provided.` to stderr and exit 1. Otherwise use the stripped text as `<message>`.
-
-**Preconditions** (all checked before any VCS operation; any failure aborts the command):
-
-- Current branch is a task or project branch.
-
-**Behavior:** After the operation, print a short confirmation, e.g.:
-
-```
-Checkpoint: task/foo-abc12345 → <commit-id>
-```
-
-**Hooks:** Runs **pre-checkpoint** (blocking) before any VCS operation, and **post-checkpoint** (optional) after success. Both run in the current task worktree. See §8.
-
-#### 6.3.2 Squashing intermediate commits (`--squash`)
-
-When `--squash` is passed, `tt task checkpoint` collapses all commits between the most recent bookmark state and the current working copy into a single checkpoint commit stacked directly after the bookmark. Intermediate commits are automatically abandoned by jj.
-
-**Commit flow with `--squash`:**
-
-1. List the commits that descend from the bookmark and are ancestors of the working copy's parent, the bookmark itself excluded. If none exist, fall back to the normal commit flow.
-2. Snapshot the working copy, then fold each listed commit into the working-copy commit in turn (addressed by change ID, which survives the rewrites each fold performs). The emptied sources are abandoned, so the working-copy commit ends up sitting directly on the bookmark with all of their content.
-3. Record the working copy as the checkpoint commit and advance the bookmark to it, exactly as for a normal checkpoint.
-
-**When there is nothing to squash** (the working copy parent is already the bookmark), `--squash` behaves identically to a normal checkpoint.
-
-**Before `--squash`:**
-
-```
-bookmark → A → B → C → @ (open WC, may have pending changes)
-```
-
-**After `--squash`:**
-
-```
-bookmark → Checkpoint → @ (new open WC)
-                ↑
-           bookmark now here
-           (A, B, C abandoned automatically by jj)
-```
 
 ### 6.4 Complete (`tt task complete`)
 
@@ -1202,14 +1232,14 @@ These lookups use only steps 1 and 2 above, the **bookmark listing**. A command 
 
 **Reference commit.** The report covers the branch tip back to a reference commit: the most recent common ancestor (fork point) of the branch and the revision given by `--since`, which defaults to the branch's parent branch. Because it is a common ancestor rather than the revision itself, `--since` may name any revision, including one on an unrelated branch.
 
-**Mainline walk.** Starting at the branch tip and following **first parents only**, the command visits every commit down to the reference commit. Following first parents is what separates the branch's own history from history merged into it: a checkin merge records the branch it landed on as its first parent and the incoming handoff commit as its second, and `tt task propagate --merge` likewise records the child's own tip first. Work merged in from elsewhere is therefore never mistaken for the branch's own.
+**Mainline walk.** Starting at the branch tip and following **first parents only**, the command visits every commit down to the reference commit. Following first parents is what separates the branch's own history from history merged into it: a checkin merge records the branch it landed on as its first parent and the incoming handoff commit as its second, `tt task propagate --merge` likewise records the child's own tip first, and a checkpoint's merge records the task bookmark's tip first. Work merged in from elsewhere is therefore never mistaken for the branch's own.
 
 Commits on that walk are classified by their description:
 
 - `[tt:task:<task-id>:checkpoint] <message>` — where `<task-id>` is the branch being reported on — becomes a checkpoint entry.
 - `[tt:task:<subtask-id>:checkin] <title>` becomes a task entry.
 
-Other commits are not reported. This includes fork commits and propagate merges (`[tt:task:<parent-id>:propagate]`), which propagate adds to a child branch (§6.8).
+Other commits are not reported. This includes fork commits, checkpoint merges (`[tt:task:<task-id>:merge]`) and propagate merges (`[tt:task:<parent-id>:propagate]`), which propagate adds to a child branch (§6.8).
 
 **Recursion.** A checkin merge brings in everything its task had accumulated. For a checkin with mainline parent `m` and handoff parent `h`, the work it merged is the mainline of `h` excluding everything already reachable from `m`; walking that range the same way yields the tasks checked into that subtask, which are rendered as its children, and so on recursively. Excluding `m`'s ancestors is what keeps an earlier partial checkin from being reported twice.
 
@@ -1252,7 +1282,7 @@ Within the ancestry bounded by the creation boundary and the task/parent bookmar
 
 - **historical** — a prior check-in of the task into its current parent. Identified from a two-parent merge candidate (a merge with a parent that changes root `TASK.md`) whose second parent is a single-parent commit (the handoff) that rewrites root `TASK.md` from the task's own file to the parent's file. The component spans from the merge's first parent to the handoff's parent, excluding both the handoff and the merge itself — the wrapper commits that `tt task checkin` creates around every check-in (§6.5).
 - **child** — a direct child of the task checked into it. Identified the same way, but with the handoff's root `TASK.md` transition running from some *other* task's file to this task's file. The component spans from the merge's first parent through the merge itself, since the merge commit is the delivered check-in on the task's own branch.
-- **path** — a single commit, other than the creation boundary, that changes the task's own task file directly without being part of a check-in merge: a task-management operation (edit, context add/remove/edit, checkpoint, reorder, rename) or a direct child's creation or deletion, whichever branch currently carries the task's retained files.
+- **path** — a single commit, other than the creation boundary, that changes the task's own task file directly without being part of a check-in merge: a task-management operation (edit, context add/remove/edit, reorder, rename) or a direct child's creation or deletion, whichever branch currently carries the task's retained files.
 - **current** — the task's ordinary unmerged range, computed exactly as it is without `--all` (its parent bookmark to its upper bound), always last.
 
 A handoff whose root `TASK.md` transition does not unambiguously match one of these two shapes, including one whose symlink is unchanged, is not classified, and the underlying work is only picked up by whatever narrower `path` or `current` components happen to cover it. Complete-range discovery never falls back to a commit's structured description to resolve this ambiguity.
@@ -1315,11 +1345,11 @@ Error: Worktree '<path>' has uncommitted changes to task metadata:
   Discard these changes first, or use --force.
 ```
 
-The guard applies whether the task ID is implicit or explicit, because an explicit ID can still name the branch the invoking worktree sits on. `tt task checkpoint` applies it too: task metadata is written by tt alone, so a checkpoint must not record hand edits to it. Other files under `.tt/`, such as `.tt/config.toml` and `.tt/hooks/`, are edited by hand and are not covered. `--force` bypasses the guard on the commands that accept it: `tt task checkout`, `checkin`, `complete`, `delete`, `propagate`, `publish` and `tt worktree sync`. `tt task move` and `tt task rename` need no separate guard, since they already require a clean working copy.
+The guard applies whether the task ID is implicit or explicit, because an explicit ID can still name the branch the invoking worktree sits on. `tt task checkpoint` applies it too, and also refuses to merge commits that change task metadata (§6.3), since task metadata is written by tt alone. Other files under `.tt/`, such as `.tt/config.toml` and `.tt/hooks/`, are edited by hand and are not covered. `--force` bypasses the guard on the commands that accept it: `tt task checkout`, `checkin`, `complete`, `delete`, `propagate`, `publish` and `tt worktree sync`. `tt task move` and `tt task rename` need no separate guard, since they already require a clean working copy.
 
 `tt worktree sync` applies the same guard to each target worktree, since the sync replays that worktree's uncommitted changes onto the branch head. A refused target is left where it was. With `--all`, it counts as a failure for that worktree alone: the other worktrees are still synchronized, and the command exits non-zero.
 
-**Commits past the task bookmark.** Commits made with plain VCS commands since the last tt write to a branch are not on the branch until `tt task checkpoint` records them:
+**Commits past the task bookmark.** Commits made with plain VCS commands since the last tt write to a branch are not on the branch until `tt task checkpoint` merges them in (§6.3):
 
 ```
 @        working copy
@@ -1350,6 +1380,8 @@ Passing the ID explicitly is the only way to skip the check: the command then ta
 
 **Uncommitted changes in a delivered branch.** `tt task checkin`, `tt task propagate` and `tt task publish` carry the branch onward as it stands, so uncommitted work in the invoking worktree is silently left out of the result. When the branch is the implicit current one, they also refuse a dirty working copy. `--force` skips this check for `propagate` and `publish`; `checkin` requires a clean working copy unconditionally when `<task-id>` is omitted. Passing the ID explicitly skips it for all three.
 
+`tt task checkpoint` without `--task` merges the commits under the working copy, so it refuses a dirty working copy for the same reason, with no override. With `--task` it merges nothing and the working copy may be dirty.
+
 The guards live in `lib/worktree.sh` (`_worktree__ensure_metadata_unmodified`, `_worktree__ensure_no_uncheckpointed_commits`, `_worktree__ensure_clean` and `_worktree__ensure_checkpointed`, which combines the last two). The set of task-metadata paths is defined once, by `_path__check_is_task_metadata` in `lib/path.sh`.
 
 ### 6.18 Log (`tt task log`)
@@ -1373,6 +1405,7 @@ The guards live in `lib/worktree.sh` (`_worktree__ensure_metadata_unmodified`, `
 | `fork` | `nf-fa-code_fork` | ⑂ U+2442 | Task name |
 | `edit` | `nf-fa-pencil` | ✎ U+270E | |
 | `checkout` | `nf-fa-play` | ▶ U+25B6 | |
+| `merge` | `nf-oct-git_pull_request` | ⑃ U+2443 | |
 | `checkpoint` | `nf-fa-flag` | ⚑ U+2691 | Checkpoint message |
 | `complete` | `nf-fa-check` | ✓ U+2713 | |
 | `handoff` | `nf-fa-sign_out` | ↗ U+2197 | |
@@ -1399,14 +1432,16 @@ Task and context names drop the `task/` or `context/` prefix and the hex suffix:
 - Remote refs such as `main@origin` and `main@git` are dimmed. They appear only when they point to a different commit from the local ref.
 - A conflicted ref keeps jj's `??` suffix and takes a red warning icon (`nf-fa-warning`, or ⚠ U+26A0).
 
-**Example.** A task `task/fix-parser-1a2b3c4d` with one plain commit and one checkpoint, and a further plain commit past the bookmark, renders as follows without `--task`:
+**Example.** A task `task/fix-parser-1a2b3c4d` with one plain commit merged by a checkpoint, and a further plain commit past the bookmark, renders as follows without `--task`:
 
 ```
 @  yqosqzyt alice@example.com 2026-11-07 11:30:12 task/fix-parser-1a2b3c4d@ 0c4d81fe
 │  Handle trailing commas
 ⚑  wzwqsusw  Finish nested lists  ⚐ task/fix-parser-1a2b3c4d*
-○  lpzpoxqt alice@example.com 2026-11-07 11:20:00 9c1e22a0
-│  Parse nested lists
+⑃    mlkpwrzu
+├─╮
+│ ○  lpzpoxqt alice@example.com 2026-11-07 11:20:00 9c1e22a0
+├─╯  Parse nested lists
 ▶  plrvzvzm
 ✎  wzkvkmxs
 ⑂  qtlpzpox  fix-parser
@@ -1446,7 +1481,9 @@ Every hook receives at least:
 | **post-checkout** | After successful `tt task checkout` or `tt worktree switch` | Checked-out task worktree | Optional | TT_TASK_ID, TT_TASK_BRANCH (newly-checked-out), TT_PREVIOUS_TASK_ID, TT_PREVIOUS_TASK_BRANCH (outgoing) |
 | **pre-create** | Before creating task in `tt task create` | Parent task worktree | Yes | TT_PARENT_TASK_ID, TT_PARENT_BRANCH, TT_TITLE, TT_SLUG, TT_DESCRIPTION, TT_LABELS (space-separated; labels with spaces/special chars quoted) |
 | **post-create** | After task created in `tt task create` | New task worktree if created, else worktree we end up in | Optional | TT_TASK_ID (new), TT_TASK_BRANCH (new), TT_PARENT_TASK_ID, TT_PARENT_BRANCH; TT_WORKTREE_DIR = that same worktree |
-| **pre-checkpoint** | Before `tt task checkpoint` performs any VCS operation | Current task worktree | Yes | TT_TASK_ID, TT_TASK_BRANCH, TT_MESSAGE (the checkpoint message, from `--message` or the editor) |
+| **pre-merge** | Before `tt task checkpoint` creates its merge commit; only when there are commits to merge | Current task worktree | Yes | TT_TASK_ID, TT_TASK_BRANCH, TT_MERGE_HEAD (the commit being merged in: the working copy's parent) |
+| **post-merge** | After `tt task checkpoint` creates its merge commit and finds it free of conflicts, before the checkpoint commit | Same | Yes | TT_TASK_ID, TT_TASK_BRANCH, TT_MERGE_HEAD, TT_COMMIT (the merge commit) |
+| **pre-checkpoint** | Before `tt task checkpoint` creates its checkpoint commit (after **post-merge**, if it ran) | Current task worktree | Yes | TT_TASK_ID, TT_TASK_BRANCH, TT_MESSAGE (the checkpoint message, from `--message` or the editor) |
 | **post-checkpoint** | After `tt task checkpoint` succeeds | Same | Optional | TT_TASK_ID, TT_TASK_BRANCH, TT_COMMIT (the commit the bookmark was moved to), TT_MESSAGE |
 | **pre-complete** | Before `tt task complete` performs any VCS operation | Current task worktree | Yes | TT_TASK_ID, TT_TASK_BRANCH |
 | **post-complete** | After `tt task complete` succeeds | Same | Optional | TT_TASK_ID, TT_TASK_BRANCH, TT_COMMIT (the commit the bookmark was moved to) |
@@ -1458,7 +1495,7 @@ Every hook receives at least:
 | **pre-delete** | Before `tt task delete` | Current (child) task worktree | Yes | TT_TASK_ID, TT_TASK_BRANCH (task being deleted), TT_PARENT_TASK_ID, TT_PARENT_TASK_BRANCH (parent task whose frontmatter is updated) |
 | **post-delete** | After `tt task delete` succeeds | Same | Optional | Same as pre-delete |
 
-**Blocking vs optional:** Pre- hooks are blocking: a non-zero exit aborts the command. Post- hooks and **setup** are best-effort: a non-zero exit is relayed to the user but does not abort the workflow, so optional bookkeeping does not fail the operation.
+**Blocking vs optional:** Pre- hooks are blocking: a non-zero exit aborts the command. **post-merge** is blocking too: it runs mid-command, and a non-zero exit rolls back the merge with everything else. Other post- hooks and **setup** are best-effort: a non-zero exit is relayed to the user but does not abort the workflow, so optional bookkeeping does not fail the operation.
 
 **post-create:** If no new worktree is created, TT_WORKTREE_DIR is the worktree we end up in (e.g. the parent's); TT_TASK_ID and TT_TASK_BRANCH still refer to the new task and its branch.
 
@@ -1478,10 +1515,10 @@ The standard workflow:
 
 4. **Begin a task** — `tt task checkout <task-id> [--worktree [=<path>] [--switch]] [--rebase | --merge] [--force]`. The tool checks the target workspace is clean (or clobbers changes if `--force` is specified), verifies the task or project branch exists, optionally pulls parent changes into the task with `--rebase` or `--merge` (see §6.2), uses or creates the appropriate workspace per §6.2, sets task status to `IN-PROGRESS` in a new commit if the task status is currently `TODO` or `DONE` (reopening a completed task; the commit changes nothing else, since the `TASK.md` symlink already points at the task), runs `setup` when initializing a new worktree, and updates the `HEAD` symlink (unless `--worktree` is used without `--switch`). See §6.2.
 
-5. **Work on the task** — User commits changes on the branch and accumulates context in `./TASK.md`.
+5. **Work on the task** — User commits changes on top of the task branch with ordinary VCS commits, and records context with the context commands.
    - **Add context** — Run `tt task context add [--title <title>]` and provide context body via stdin (e.g., `cat ./notes.md | tt task context add --title "Research notes"`). If stdin is a terminal, an editor is opened for body input. Creates a commit. See §5.2.
    - **Read context** — Run `tt task context get [<context-id>...]` to print one or more context files for the current task to stdout. See §5.2.
-   - **Checkpoint** — Run `tt task checkpoint [--message <message>]` to create a `[tt:task:<task-id>:checkpoint] <message>` commit and advance the task bookmark. See §6.3.
+   - **Checkpoint** — Commit the work with ordinary VCS commits, then run `tt task checkpoint [--message <message>]`. It merges those commits into the task branch with a `[tt:task:<task-id>:merge] <title>` commit, records a `[tt:task:<task-id>:checkpoint] <message>` commit on top, and advances the task bookmark. See §6.3.
 
 6. **Complete the task** — `tt task complete [<task-id>] [--worktree=<path>] [--force]`. When work is done, marks the task `DONE` with a `[tt:task:<task-id>:complete] <title>` commit and advances the task bookmark. Requires all child tasks to be done unless `--force`. Can be invoked from any workspace by passing `<task-id>`. See §6.4.
 
@@ -1552,7 +1589,7 @@ Multiple tasks can be checked out simultaneously; the symlinked HEAD worktree fa
 The test harness (`scripts/harness/harness.sh`) is a sourceable bash library providing:
 
 - **Workspace setup:** `setup_workspace` creates a fresh jj repository with `tt workspace init` in a temporary directory, providing an isolated environment for each test. The workspace includes a `.tt/workspace` symlink pointing to the virtual project directory (created automatically by `workspace init`) for worktree-related tests.
-- **Workflow helpers:** `create_project`, `create_task`, `create_task_under`, `checkout_task`, `checkpoint_task`, `complete_task`, `checkin_task`, `edit_file`, `append_file` — convenience wrappers for common workflow steps.
+- **Workflow helpers:** `create_project`, `create_task`, `create_task_under`, `checkout_task`, `checkpoint_task` (commits any pending changes with a plain VCS commit first), `checkpoint_task_in_worktree`, `complete_task`, `checkin_task`, `edit_file`, `append_file` — convenience wrappers for common workflow steps.
 - **VCS introspection:** `get_jj_op`, `get_wc_commit`, `get_bookmark_commit`, `get_commit_message`, `get_modified_files`, `is_wc_clean`, `bookmark_exists`, `is_vcs_ancestor`, `file_exists_at_rev`, and more.
 - **Generic assertions:** `assert_eq`, `assert_neq`, `assert_contains`, `assert_not_contains`, `assert_matches`, `assert_file_exists`, `assert_success`, `assert_failure`, `assert_output_empty`, `assert_line_count`, and more.
 - **VCS assertions:** `assert_bookmark_exists`, `assert_wc_clean`, `assert_commit_message`, `assert_file_on_branch`, `assert_no_conflicts`, `assert_is_ancestor`, and more.
