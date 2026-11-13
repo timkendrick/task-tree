@@ -248,9 +248,12 @@ create_task_worktree() {
   printf '%s\n' "$path"
 }
 
-# Checkpoint the current task with a message.
+# Commit the working copy with a plain VCS commit (even when it is empty), then
+# checkpoint the current task with a message, merging that commit into the
+# task branch.
 # Usage: checkpoint_task MESSAGE
 checkpoint_task() {
+  jj commit -m "$1" >/dev/null 2>&1 || return $?
   run_tt task checkpoint -m "$1" 2>&1
 }
 
