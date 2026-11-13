@@ -248,10 +248,29 @@ create_task_worktree() {
   printf '%s\n' "$path"
 }
 
-# Checkpoint the current task with a message.
+# Checkpoint the current task with a message. Uncommitted changes in the
+# working copy of the current directory are first committed with a plain VCS
+# commit, so the checkpoint merges them into the task branch.
 # Usage: checkpoint_task MESSAGE
 checkpoint_task() {
+  local empty
+  empty="$(jj log -r '@' --no-graph -T 'empty' 2>/dev/null)" || return $?
+  if [[ "$empty" != "true" ]]; then
+    jj commit -m "$1" >/dev/null 2>&1 || return $?
+  fi
   run_tt task checkpoint -m "$1" 2>&1
+}
+
+# As checkpoint_task, run from inside WORKTREE without TT_REPO set
+# (run_tt_in_worktree).
+# Usage: checkpoint_task_in_worktree WORKTREE MESSAGE
+checkpoint_task_in_worktree() {
+  local worktree="$1" message="$2" empty
+  empty="$(jj -R "$worktree" log -r '@' --no-graph -T 'empty' 2>/dev/null)" || return $?
+  if [[ "$empty" != "true" ]]; then
+    jj -R "$worktree" commit -m "$message" >/dev/null 2>&1 || return $?
+  fi
+  run_tt_in_worktree "$worktree" task checkpoint -m "$message" 2>&1
 }
 
 # Complete the current task (or a specific task).

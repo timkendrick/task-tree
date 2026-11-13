@@ -61,7 +61,6 @@
 #     _jj__filter_commits_reachable_from — the given commits that REV can reach
 #     _jj__find_fork_point_commit    — commit ID where two revisions' histories fork
 #     _jj__list_commits_in_range     — commit IDs in FROM..TO, oldest first
-#     _jj__list_commits_in_dag_range — commit IDs descended from BASE up to TIP
 #     _jj__count_commits_in_range    — number of commits in FROM..TO
 #     _jj__list_range_root_commits   — commit IDs of the roots of FROM..TO
 #     _jj__list_range_root_parent_commits — commit IDs of the parents of the roots of FROM..TO
@@ -91,7 +90,6 @@
 #     _jj__create_merge_commit       — create a merge commit of two or more parents
 #     _jj__set_description           — replace a revision's description
 #     _jj__move_commits              — rebase revisions and their descendants onto a destination
-#     _jj__squash_commit             — fold a revision's changes into another revision
 #     _jj__restore_tree              — set a revision's tree wholesale from another revision
 #     _jj__restore_path              — set one path in a revision from another revision
 #     _jj__abandon_commit            — abandon a revision, rebasing descendants onto its parents
@@ -518,22 +516,6 @@ _jj__find_fork_point_commit() {
 _jj__list_commits_in_range() {
   local repo="$1" from="$2" to="$3"
   __jj__read "$repo" --ignore-working-copy log -r "${from}..${to}" \
-    --no-graph --reversed -T 'commit_id ++ "\n"'
-}
-
-# Usage: _jj__list_commits_in_dag_range REPO BASE TIP
-# Prints the commit IDs of the commits that descend from BASE and are
-# ancestors of TIP — the DAG range between the two — with BASE itself
-# excluded, one per line, oldest first. Returns jj's exit code; nothing is
-# printed if the range cannot be resolved.
-#
-# Narrower than the FROM..TO range of _jj__list_commits_in_range: that range
-# holds everything reachable from TIP but not from BASE, which includes
-# commits that arrived at TIP through a merge from a line that never descended
-# from BASE. Here every listed commit lies on a path from BASE to TIP.
-_jj__list_commits_in_dag_range() {
-  local repo="$1" base="$2" tip="$3"
-  __jj__read "$repo" --ignore-working-copy log -r "(${base})::(${tip}) ~ (${base})" \
     --no-graph --reversed -T 'commit_id ++ "\n"'
 }
 
@@ -1245,17 +1227,6 @@ _jj__move_commits() {
     __jj__write "$repo" --ignore-working-copy rebase \
       -s "$source_rev" -d "$dest_rev" || return $?
   done
-}
-
-# Usage: _jj__squash_commit REPO FROM_REV INTO_REV
-# Folds FROM_REV's changes into INTO_REV. The destination keeps its own
-# identity (change ID) and its own description (--use-destination-message);
-# the emptied source is abandoned. Bare graph mutation: no working copy is
-# touched. Status only; never logs, never exits.
-_jj__squash_commit() {
-  local repo="$1" from_rev="$2" into_rev="$3"
-  __jj__write "$repo" --ignore-working-copy squash \
-    --from "$from_rev" --into "$into_rev" --use-destination-message
 }
 
 # Usage: _jj__restore_tree REPO SOURCE_REV TARGET_REV

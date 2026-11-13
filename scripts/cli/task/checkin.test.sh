@@ -316,7 +316,7 @@ test_task_checkin__head_symlink_updated_from_worktree() {
   local worktree_path="$VIRTUAL/$task_id"
 
   # Checkpoint from within the worktree
-  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$worktree_path" "work" >/dev/null 2>&1 || true
 
   # HEAD currently points to the task worktree
   local head_before
@@ -352,7 +352,7 @@ test_task_checkin__switch_targets_repo_root_when_parent_has_no_worktree() {
   # Give the task a dedicated worktree and point HEAD at it
   run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
   local worktree_path="$VIRTUAL/$task_id"
-  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$worktree_path" "work" >/dev/null 2>&1 || true
 
   # Move the main workspace off the project branch so the parent task is not
   # checked out in any worktree.
@@ -383,7 +383,7 @@ test_task_checkin__switch_prefers_the_parent_worktree_over_the_canonical_reposit
   task_id=$(create_task "t" "T") || true
   local task_wt
   task_wt=$(create_task_worktree "$task_id")
-  run_tt_in_worktree "$task_wt" task checkpoint -m "work" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$task_wt" "work" >/dev/null 2>&1 || true
   assert_current_task "the canonical repository is on the parent" "$proj_id"
 
   local exit_code=0
@@ -427,7 +427,7 @@ test_task_checkin__head_not_switched_without_switch_flag() {
 
   run_tt task checkout "$task_id" --worktree --switch >/dev/null 2>&1 || true
   local worktree_path="$VIRTUAL/$task_id"
-  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$worktree_path" "work" >/dev/null 2>&1 || true
 
   local head_before
   head_before="$(readlink "$VIRTUAL/HEAD")"
@@ -457,7 +457,7 @@ test_task_checkin__worktree_retained_after_complete_checkin() {
   assert_file_exists "worktree exists before checkin" "$worktree_path"
 
   # Checkpoint from the worktree
-  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$worktree_path" "work" >/dev/null 2>&1 || true
 
   # Complete checkin (from main repo, with explicit task_id)
   run_tt task checkin --complete "$task_id" >/dev/null 2>&1 || true
@@ -481,7 +481,7 @@ test_task_checkin__worktree_files_kept_with_delete() {
   local worktree_path="$VIRTUAL/$task_id"
   assert_file_exists "worktree exists before checkin" "$worktree_path"
 
-  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$worktree_path" "work" >/dev/null 2>&1 || true
 
   local exit_code=0
   output=$(run_tt task checkin --complete --delete "$task_id" 2>&1) || exit_code=$?
@@ -504,7 +504,7 @@ test_task_checkin__worktree_not_deleted_after_partial_checkin() {
   run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
   local worktree_path="$VIRTUAL/$task_id"
 
-  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$worktree_path" "work" >/dev/null 2>&1 || true
 
   # Partial checkin (IN-PROGRESS, not complete)
   run_tt task checkin "$task_id" >/dev/null 2>&1 || true
@@ -658,7 +658,7 @@ test_task_checkin__head_not_switched_when_checkin_non_active_task() {
   # Give both tasks dedicated worktrees so that target_ws != current_worktree
   run_tt task checkout "$task_a" --worktree --switch >/dev/null 2>&1 || true
   local worktree_a="$VIRTUAL/$task_a"
-  run_tt_in_worktree "$worktree_a" task checkpoint -m "Work on A" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$worktree_a" "Work on A" >/dev/null 2>&1 || true
   run_tt_in_worktree "$worktree_a" task complete >/dev/null 2>&1 || true
 
   # Give task B its own worktree and switch HEAD to it
@@ -694,7 +694,7 @@ test_task_checkin__switch_applies_when_checkin_non_active_task() {
 
   run_tt task checkout "$task_a" --worktree --switch >/dev/null 2>&1 || true
   local worktree_a="$VIRTUAL/$task_a"
-  run_tt_in_worktree "$worktree_a" task checkpoint -m "Work on A" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$worktree_a" "Work on A" >/dev/null 2>&1 || true
   run_tt_in_worktree "$worktree_a" task complete >/dev/null 2>&1 || true
 
   # Give task B its own worktree and switch HEAD to it
@@ -785,7 +785,7 @@ test_task_checkin__wc_stays_on_child_and_merge_shape() {
   checkout_task "$proj_id" >/dev/null || true
   task_id=$(create_task "t" "T") || true
   worktree_path=$(create_task_worktree "$task_id")
-  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$worktree_path" "work" >/dev/null 2>&1 || true
 
   old_parent_tip=$(get_bookmark_commit "$proj_id")
   child_tip=$(get_bookmark_commit "$task_id")
@@ -896,7 +896,7 @@ test_task_checkin__delete_keeps_dirty_child_worktree() {
 
   run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
   local worktree_path="$VIRTUAL/$task_id"
-  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$worktree_path" "work" >/dev/null 2>&1 || true
   printf 'unsaved\n' > "$worktree_path/scratch.txt"
 
   local exit_code=0
@@ -915,7 +915,7 @@ test_task_checkin__delete_force_keeps_child_worktree() {
 
   run_tt task checkout "$task_id" --worktree >/dev/null 2>&1 || true
   local worktree_path="$VIRTUAL/$task_id"
-  run_tt_in_worktree "$worktree_path" task checkpoint -m "work" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$worktree_path" "work" >/dev/null 2>&1 || true
   printf 'unsaved\n' > "$worktree_path/scratch.txt"
 
   local exit_code=0

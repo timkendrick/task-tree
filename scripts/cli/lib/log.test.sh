@@ -40,6 +40,7 @@ create +
 fork \342\221\202
 edit \342\234\216
 checkout \342\226\266
+merge \342\221\203
 checkpoint \342\232\221
 complete \342\234\223
 handoff \342\206\227
@@ -63,6 +64,22 @@ test__log__render__event_glyphs_nerd() {
   assert_eq "workspace init uses the home icon" \
     "$(_event_line "[tt:workspace:init] Create workspace" | _log__render nerd false)" \
     $'| \357\200\225  abcdefgh'
+}
+
+test__log__render__merge_has_no_label() {
+  assert_eq "merge shows the glyph alone" \
+    "$(_event_line "[tt:task:task/t-0a1b2c3d:merge] T" | _render_unicode)" \
+    $'| \342\221\203  abcdefgh'
+  assert_eq "merge uses the Nerd Font pull request icon" \
+    "$(_event_line "[tt:task:task/t-0a1b2c3d:merge] T" | _log__render nerd false)" \
+    $'| \357\220\207  abcdefgh'
+}
+
+test__log__render__merge_node_padding_collapsed() {
+  assert_eq "graph padding after a merge node collapses to two spaces" \
+    "$(printf '| \001    \036ab\037cdefgh\037\037\037\037\037\037%s\n' \
+        "[tt:task:task/t-0a1b2c3d:merge] T" | _render_unicode)" \
+    $'| \342\221\203  abcdefgh'
 }
 
 test__log__render__workspace_init_unicode() {

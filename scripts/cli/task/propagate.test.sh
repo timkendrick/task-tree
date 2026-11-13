@@ -359,7 +359,7 @@ test_task_propagate__parent_worktree_keeps_its_branch() {
 
   wt=$(create_task_worktree "$incoming")
   printf 'work\n' > "$wt/incoming-work.txt"
-  run_tt_in_worktree "$wt" task checkpoint -m "Incoming work" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$wt" "Incoming work" >/dev/null 2>&1 || true
 
   output="" exit_code=0
   output=$(run_tt_in_worktree "$wt" task checkin --complete --propagate 2>&1) || exit_code=$?
@@ -577,7 +577,8 @@ test_task_propagate__rebase_after_partial_checkin_forks_underneath() {
     "roots(${PROJ}..${CHILD})" "[tt:task:$CHILD:fork] Child"
   assert_eq "the fork commit sits on the parent tip" \
     "$(get_full_commit_id "roots(${PROJ}..${CHILD})-")" "$(get_full_commit_id "$PROJ")"
-  assert_revset_count "the range is the fork commit and the new work" "${PROJ}..${CHILD}" "2"
+  assert_revset_count "the range is the fork commit and the new work (commit, merge, checkpoint)" \
+    "${PROJ}..${CHILD}" "4"
   _assert_range_symlink "every commit on the child's line points at the child" \
     "${PROJ}..${CHILD}" "$CHILD"
   assert_file_on_branch "the child received the parent's change" "$CHILD" "parent-file.txt"
@@ -589,7 +590,7 @@ test_task_propagate__rebase_after_partial_checkin_forks_underneath() {
   output="" exit_code=0
   output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
   assert_success "second propagate succeeds" "$exit_code"
-  assert_revset_count "no second fork commit" "${PROJ}..${CHILD}" "2"
+  assert_revset_count "no second fork commit" "${PROJ}..${CHILD}" "4"
   assert_commit_message_first_line "the existing fork commit is still the root" \
     "roots(${PROJ}..${CHILD})" "[tt:task:$CHILD:fork] Child"
   _assert_range_symlink "the child's line still points at the child" \
@@ -610,7 +611,8 @@ test_task_propagate__rebase_done_child_after_partial_checkin_forks() {
   assert_success "propagate succeeds" "$exit_code"
   assert_commit_message_first_line "the fork commit is the root of the range" \
     "roots(${PROJ}..${CHILD})" "[tt:task:$CHILD:fork] Child"
-  assert_revset_count "fork commit, new work and completion" "${PROJ}..${CHILD}" "3"
+  assert_revset_count "fork commit, new work (commit, merge, checkpoint) and completion" \
+    "${PROJ}..${CHILD}" "5"
   _assert_range_symlink "every commit on the child's line points at the child" \
     "${PROJ}..${CHILD}" "$CHILD"
   assert_task_status "the child stays DONE" "$CHILD" "DONE"
@@ -668,7 +670,8 @@ test_task_propagate__merge_after_partial_checkin_keeps_child_symlink() {
   assert_commit_message_first_line "the merge is labelled as a propagate of the parent" \
     "$CHILD" "[tt:task:$PROJ:propagate] Project"
   assert_task_symlink_at_rev "the merge points TASK.md at the child" "$CHILD" "$CHILD"
-  assert_revset_count "the new work and the merge, no extra commit" "${PROJ}..${CHILD}" "2"
+  # The new work is a commit, its checkpoint merge and the checkpoint itself.
+  assert_revset_count "the new work and the propagate merge, no extra commit" "${PROJ}..${CHILD}" "4"
   assert_no_conflicts "no conflicts" "$CHILD"
 }
 
@@ -704,7 +707,7 @@ test_task_propagate__synced_child_worktree_reports_the_child() {
   CHILD=$(create_task "c" "Child") || true
   wt=$(create_task_worktree "$CHILD")
   printf 'work\n' > "$wt/child-work.txt"
-  run_tt_in_worktree "$wt" task checkpoint -m "Child work" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$wt" "Child work" >/dev/null 2>&1 || true
   run_tt_in_worktree "$wt" task checkin >/dev/null 2>&1 || true
 
   checkout_task "$PROJ" >/dev/null || true

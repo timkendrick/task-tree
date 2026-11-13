@@ -33,6 +33,7 @@ _log__render() {
       define("fork",       "\357\204\246", "\342\221\202", "1;36")  # code fork
       define("edit",       "\357\201\200", "\342\234\216", "33")    # pencil
       define("checkout",   "\357\201\213", "\342\226\266", "34")    # play
+      define("merge",      "\357\220\207", "\342\221\203", "36")    # git pull request
       define("checkpoint", "\357\200\244", "\342\232\221", "37")    # flag
       define("complete",   "\357\200\214", "\342\234\223", "1;32")  # check
       define("handoff",    "\357\202\213", "\342\206\227", "36")    # sign out
