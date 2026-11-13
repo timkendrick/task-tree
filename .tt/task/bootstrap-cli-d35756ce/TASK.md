@@ -176,6 +176,7 @@ subtask: [x] task/tt-worktree-list-filter-by-task-e06523d6
 subtask: [ ] task/tt-task-list-parent-column-f74ffb43
 subtask: [x] task/list-key-equals-value-filters-e0c24716
 subtask: [x] task/tt-task-checkin-delete-worktree-b61f0d9a
+subtask: [ ] task/propagate-checkpoint-merge-parents-2837f3d1
 ---
 Implement shell script implementations of all `tt` CLI commands
 
