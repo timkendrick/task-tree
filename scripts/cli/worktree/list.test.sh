@@ -259,6 +259,10 @@ test_worktree_list__task_field_filters() {
   assert_output_empty "an empty status matches no worktree without a task" \
     "$(_list_names --task.status '')"
   assert_output_empty "a status no task has matches no worktree" "$(_list_names --task.status todo)"
+  assert_eq "--task.status= form" "$(_list_names --task.status=DONE)" "$done_id"
+  assert_eq "--task.<key>= form combines with separate-value form" \
+    "$(_list_names --task.type=task --task.status in-progress)" "$active_id"
+  assert_eq "--task= form" "$(_list_names --task="$done_id")" "$done_id"
 }
 
 test_worktree_list__empty_task_filter_matches_worktrees_without_a_task() {
@@ -278,6 +282,7 @@ test_worktree_list__empty_task_filter_matches_worktrees_without_a_task() {
   assert_line_count "the header and one worktree are printed" "$output" 2
   assert_matches "the worktree without a task is listed" "$output" "^  bare +\\(none\\) "
   assert_eq "quiet output names the worktree without a task" "$(_list_names --task '')" "bare"
+  assert_eq "--task= matches worktrees without a task" "$(_list_names --task=)" "bare"
 }
 
 test_worktree_list__task_field_filter_invalid_arguments() {
@@ -301,6 +306,11 @@ test_worktree_list__task_field_filter_invalid_arguments() {
   exit_code=0
   output=$(run_tt worktree list --task.status 2>&1) || exit_code=$?
   assert_exit_code "missing value rejected" "$exit_code" 1
+
+  exit_code=0
+  output=$(run_tt worktree list --task.title=Foo 2>&1) || exit_code=$?
+  assert_exit_code "unknown key in = form rejected" "$exit_code" 1
+  assert_contains "error names the unknown key" "$output" "Error: Unknown task field 'title'."
 }
 
 test_worktree_list__help() {
