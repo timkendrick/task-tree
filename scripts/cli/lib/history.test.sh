@@ -280,11 +280,76 @@ test__history__transaction__begin_snapshots_working_copy() {
 
 test__history__transaction__nested_begin_is_noop() {
   setup_workspace "history-nested"
+  printf '%s:\n' "already-set" >> "$REPO/.tt/history"
 
   local exit_code=0
   ( export TT_TRANSACTION_ID="already-set"; _history__begin_transaction "$REPO" ) || exit_code=$?
   assert_success "nested begin returns 0" "$exit_code"
-  assert_history_count "nested begin appends no entry" 0
+  assert_history_count "nested begin appends no entry" 1
+  assert_file_not_exists "the history lock is released" "$REPO/.tt/history.lock"
+}
+
+test__history__transaction__nested_begin_refuses_mismatched_id() {
+  setup_workspace "history-nested-mismatch"
+  printf '%s:\n' "in-progress-op" >> "$REPO/.tt/history"
+
+  local out exit_code=0
+  out="$( ( export TT_TRANSACTION_ID="other-op"; _history__begin_transaction "$REPO" ) 2>&1 )" || exit_code=$?
+  assert_exit_code "nested begin refuses" 1 "$exit_code"
+  assert_contains "error reports the mismatch" "$out" \
+    "Error: TT_TRANSACTION_ID does not match the transaction in progress."
+  assert_contains "error names the inherited ID" "$out" "other-op"
+  assert_contains "error names the in-progress transaction" "$out" "in-progress-op"
+  assert_history_count "no entry appended" 1
+  assert_file_not_exists "the history lock is released" "$REPO/.tt/history.lock"
+}
+
+test__history__transaction__nested_begin_refuses_without_transaction() {
+  setup_workspace "history-nested-closed"
+  printf '%s:%s\n' "closed-op" "after-op" >> "$REPO/.tt/history"
+
+  local out exit_code=0
+  out="$( ( export TT_TRANSACTION_ID="closed-op"; _history__begin_transaction "$REPO" ) 2>&1 )" || exit_code=$?
+  assert_exit_code "nested begin refuses after the transaction closed" 1 "$exit_code"
+  assert_contains "error reports no transaction in progress" "$out" \
+    "Error: TT_TRANSACTION_ID is set, but no transaction is in progress."
+
+  : > "$REPO/.tt/history"
+  exit_code=0
+  out="$( ( export TT_TRANSACTION_ID="closed-op"; _history__begin_transaction "$REPO" ) 2>&1 )" || exit_code=$?
+  assert_exit_code "nested begin refuses on an empty history" 1 "$exit_code"
+  assert_contains "error reports no transaction in progress on an empty history" "$out" \
+    "Error: TT_TRANSACTION_ID is set, but no transaction is in progress."
+  assert_history_count "no entry appended" 0
+}
+
+test__history__transaction__detach_leaves_the_entry_in_progress() {
+  setup_workspace "history-detach"
+  write_subcommand
+
+  local key exit_code=0
+  # The command exits zero after detaching: without the detach, the abort trap
+  # would roll the transaction back on that exit.
+  key="$(run_command "$REPO" '
+    _history__begin_transaction "$1"
+    key="$TT_TRANSACTION_ID"
+    _history__detach_transaction
+    [[ -z "${TT_TRANSACTION_ID:-}" ]] || exit 9
+    printf %s "$key"
+  ' 2>/dev/null)" || exit_code=$?
+  assert_success "the command exits cleanly after detaching" "$exit_code"
+
+  get_history_lines
+  assert_eq "exactly one entry recorded" "${#HISTORY_LINES[@]}" "1"
+  assert_eq "the entry is in progress under the key" "${HISTORY_LINES[0]}" "${key}:"
+  assert_file_not_exists "the history lock is released" "$REPO/.tt/history.lock"
+
+  # A later command that inherits the key joins the transaction.
+  exit_code=0
+  TT_TRANSACTION_ID="$key" TT_TEST_COMMON_SH="$_COMMON_SH" "$TT_TEST_SUBCOMMAND" "$REPO" 0 >/dev/null 2>&1 || exit_code=$?
+  assert_success "a command with the key joins the transaction" "$exit_code"
+  get_history_lines
+  assert_eq "the joined command leaves the entry in progress" "${HISTORY_LINES[0]}" "${key}:"
 }
 
 test__history__transaction__nested_exit_leaves_the_parent_running() {
