@@ -181,6 +181,7 @@ test_workspace_init__bookmark_on_working_copy_allowed() {
 
 
 test_workspace_init__help() {
+  setup_workspace "init-help"
   output="" exit_code=0
   output=$(run_tt workspace init --help 2>&1) || exit_code=$?
   assert_success "exit code" "$exit_code"

@@ -354,6 +354,32 @@ tt worktree prune [--dry-run] [--force]
 ```
 Delete every worktree whose task is `DONE`, using `tt worktree delete` for each one. Prints each deleted path to stdout. `--dry-run` prints the same paths without deleting anything. `--force` is passed through to each delete. A worktree that fails to delete is reported and skipped, and the command exits non-zero.
 
+### History commands
+
+#### `tt history undo`  (alias: `tt undo`)
+```
+tt history undo [--force | --key <key>]
+```
+Revert the most recent mutating `tt` command. Refuses while a transaction is in progress, while the repository has changed outside `tt`, or while the working copy is dirty, unless `--force`. `--key` reverts the transaction opened by `tt history lock` and keeps uncommitted files.
+
+#### `tt history lock`  (alias: `tt lock`)
+```
+tt history lock
+```
+Open a transaction that spans several commands, and print its key. Export the key as `TT_TRANSACTION_ID` to run commands inside it; every other mutating command refuses until it is closed. Close it with `tt unlock --key <key>` to keep the changes as one history entry, or `tt undo --key <key>` to revert them all. A command that fails inside the transaction is **not** rolled back, so revert with `tt undo --key` instead:
+
+```shell
+key="$(tt lock)"; export TT_TRANSACTION_ID="$key"
+if tt create --project --slug api --title API </dev/null; then tt unlock --key "$key"; else tt undo --key "$key"; fi
+unset TT_TRANSACTION_ID
+```
+
+#### `tt history unlock`  (alias: `tt unlock`)
+```
+tt history unlock [--force | --key <key>]
+```
+`--key` commits the transaction opened by `tt history lock`. `--force` clears a transaction left in progress by a crashed command, keeping the current repository state, and removes a stuck history lock.
+
 ---
 
 ## Standard tt workflow

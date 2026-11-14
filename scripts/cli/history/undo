@@ -8,11 +8,14 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # tt history undo — revert the repository to the state before the last mutating tt command.
 #
 # Usage:
-#   history undo [--force] [--repo PATH]
+#   history undo [--force | --key KEY] [--repo PATH]
 #
 # Options:
 #   --force   Bypass safety checks (in-progress transactions, op ID mismatch,
 #             dirty working copy).
+#   --key     Revert the in-progress transaction only when its key (its
+#             before-op ID) is KEY. Uncommitted files are kept, as a failed
+#             command's rollback keeps them.
 #   --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #
 # The transaction history is stored in .tt/history as lines of:
@@ -26,7 +29,7 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: tt history undo [--force] [--repo PATH]
+Usage: tt history undo [--force | --key KEY] [--repo PATH]
 
 Undo the most recent mutating tt command by restoring the repository to the
 operation state before that command ran.
@@ -40,18 +43,98 @@ Options:
               - in-progress (stale) transaction lock
               - operation ID mismatch (repo modified outside tt)
               - dirty working copy
+  --key     Revert the in-progress transaction opened by 'tt history lock',
+            only when its key is KEY. Exits 1 when no transaction is in
+            progress or the keys differ. Uncommitted changes in the working
+            copy are kept. Cannot be combined with --force.
   --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
   tt history undo           # undo last tt command
   tt undo                   # same (alias)
   tt history undo --force   # force-undo even if the op ID mismatches or the WC is dirty
+  tt undo --key "\$TT_TRANSACTION_ID"   # revert the transaction opened by 'tt lock'
 
 EOF
 }
 
+# Usage: __undo__pop_entry REPO HISTORY_FILE
+# Removes the last entry from HISTORY_FILE after a successful restore, then
+# patches the now-last entry's after-op to the current (post-restore)
+# operation.
+#
+# Why: restoring an operation creates a NEW operation — the repo state matches
+# the target, but the operation ID differs. Without this patch the history
+# chain breaks (the now-last entry's after-op still points to the *original*
+# op, not the restore op), so a subsequent `tt undo` would fail its safety
+# check.
+__undo__pop_entry() {
+  local repo="$1" history_file="$2"
+
+  if [[ "$(uname)" == "Darwin" ]]; then
+    sed -i '' '$ d' "$history_file"
+  else
+    sed -i '$ d' "$history_file"
+  fi
+
+  if [[ -f "$history_file" && -s "$history_file" ]]; then
+    local new_current_op
+    new_current_op="$(_history__resolve_operation "$repo")" || true
+    if [[ -n "$new_current_op" ]]; then
+      local prev_line
+      prev_line="$(tail -n 1 "$history_file")"
+      if [[ -n "$prev_line" ]]; then
+        local prev_before="${prev_line%%:*}"
+        local prev_after="${prev_line#*:}"
+        if [[ -n "$prev_after" && "$prev_after" != "$new_current_op" ]]; then
+          if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' "$ s|^${prev_before}:${prev_after}\$|${prev_before}:${new_current_op}|" "$history_file"
+          else
+            sed -i "$ s|^${prev_before}:${prev_after}\$|${prev_before}:${new_current_op}|" "$history_file"
+          fi
+        fi
+      fi
+    fi
+  fi
+}
+
+# Usage: __undo__revert_keyed_transaction REPO HISTORY_FILE KEY BEFORE_OP AFTER_OP
+# Reverts the in-progress transaction named KEY, given the last history entry
+# BEFORE_OP:AFTER_OP. The caller holds the history lock. Exits 1 when no
+# transaction is in progress or when KEY names another one. The restore runs
+# from REPO and keeps uncommitted files, as a failed command's rollback does.
+# When the restore fails, the entry is kept and the command exits 1.
+__undo__revert_keyed_transaction() {
+  local repo="$1" history_file="$2" key="$3" before_op="$4" after_op="$5"
+
+  if [[ -n "$after_op" ]]; then
+    _ui__log "Error: No transaction is in progress."
+    _ui__log "  Key: $key"
+    exit 1
+  fi
+
+  if [[ "$before_op" != "$key" ]]; then
+    _ui__log "Error: The key does not match the transaction in progress."
+    _ui__log "  Key:                     $key"
+    _ui__log "  In-progress transaction: $before_op"
+    exit 1
+  fi
+
+  if ! _history__restore_transaction "$repo" "$repo" "$before_op"; then
+    _ui__log "Error: Could not restore the VCS operation state."
+    _ui__log "  The transaction is still in progress at operation $before_op."
+    _ui__log "  Run 'tt history undo --key $key' from a worktree that is not stale to retry."
+    exit 1
+  fi
+
+  __undo__pop_entry "$repo" "$history_file"
+
+  _ui__log "Undone: transaction reverted (repository restored to operation ${before_op:0:12}...)"
+}
+
 main() {
   local force=false
+  local key=''
   local repo=''
 
   while [[ $# -gt 0 ]]; do
@@ -59,6 +142,11 @@ main() {
       --force)
         force=true
         shift
+        ;;
+      --key)
+        [[ $# -lt 2 || -z "$2" ]] && { usage >&2; exit 1; }
+        key="$2"
+        shift 2
         ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
@@ -77,6 +165,11 @@ main() {
         ;;
     esac
   done
+
+  if [[ "$force" == true && -n "$key" ]]; then
+    _ui__log "Error: --force and --key cannot be combined."
+    exit 1
+  fi
 
   repo="$(_workspace__resolve_repo "$repo")"
 
@@ -117,6 +210,11 @@ main() {
   if [[ -z "$before_op" ]]; then
     _ui__log "Error: Malformed history entry: '$last_line'"
     exit 1
+  fi
+
+  if [[ -n "$key" ]]; then
+    __undo__revert_keyed_transaction "$repo" "$history_file" "$key" "$before_op" "$after_op"
+    exit 0
   fi
 
   # Check for in-progress transaction (empty after-op-id)
@@ -198,39 +296,8 @@ main() {
   # Restore the repository to the before-op state (pop the history line only on success)
   _history__restore_operation "$repo" "$before_op"
 
-  # Pop the last line from the history file (only reached on success)
-  if [[ "$(uname)" == "Darwin" ]]; then
-    sed -i '' '$ d' "$history_file"
-  else
-    sed -i '$ d' "$history_file"
-  fi
-
-  # Patch the now-last history entry's after-op to the current (post-restore) operation.
-  #
-  # Why: restoring an operation creates a NEW operation — the repo state matches
-  # the target, but the operation ID differs. Without this patch the history
-  # chain breaks (the now-last entry's after-op still points to the *original*
-  # op, not the restore op), so a subsequent `tt undo` would fail its safety
-  # check.
-  if [[ -f "$history_file" && -s "$history_file" ]]; then
-    local new_current_op
-    new_current_op="$(_history__resolve_operation "$repo")" || true
-    if [[ -n "$new_current_op" ]]; then
-      local prev_line
-      prev_line="$(tail -n 1 "$history_file")"
-      if [[ -n "$prev_line" ]]; then
-        local prev_before="${prev_line%%:*}"
-        local prev_after="${prev_line#*:}"
-        if [[ -n "$prev_after" && "$prev_after" != "$new_current_op" ]]; then
-          if [[ "$(uname)" == "Darwin" ]]; then
-            sed -i '' "$ s|^${prev_before}:${prev_after}\$|${prev_before}:${new_current_op}|" "$history_file"
-          else
-            sed -i "$ s|^${prev_before}:${prev_after}\$|${prev_before}:${new_current_op}|" "$history_file"
-          fi
-        fi
-      fi
-    fi
-  fi
+  # Pop the history line (only reached on success)
+  __undo__pop_entry "$repo" "$history_file"
 
   trap - ERR
 

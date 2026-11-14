@@ -149,6 +149,7 @@ setup_workspace() {
 # Run a tt command, with stdout and stderr captured separately.
 # Usage: run_tt [args...]
 run_tt() {
+  __harness_require_repo run_tt || return 1
   if _harness_cache_ready && _harness_read_stdin; then
     _harness_run_cached "$_HARNESS_STDIN" "$@"
   else
@@ -162,7 +163,25 @@ run_tt() {
 # Usage: run_tt_in_worktree WORKTREE_PATH [args...]
 run_tt_in_worktree() {
   local worktree_path="$1"; shift
+  __harness_require_repo run_tt_in_worktree || return 1
+  if [[ -z "$worktree_path" ]]; then
+    _log_fail "run_tt_in_worktree: no worktree path given"
+    _record_fail "run_tt_in_worktree: no worktree path given"
+    return 1
+  fi
   (cd "$worktree_path" && unset TT_REPO && "$TT" "$@")
+}
+
+# Refuses, as a test failure, to run tt when no test workspace is named by
+# REPO or TT_REPO. tt would otherwise find a repository by walking up from the
+# working directory, and reach the repository the tests run from.
+# Usage: __harness_require_repo CALLER
+__harness_require_repo() {
+  local caller="$1"
+  [[ -n "${REPO:-}" || -n "${TT_REPO:-}" ]] && return 0
+  _log_fail "$caller: no test workspace (call setup_workspace first)"
+  _record_fail "$caller: no test workspace"
+  return 1
 }
 
 # Edit a working copy file (creates or overwrites).
