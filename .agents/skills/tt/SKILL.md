@@ -249,7 +249,7 @@ Rename a task's slug (human-readable part of the task ID), preserving the hex su
 ```
 tt task move --parent <parent-task-id> [--task <task-id>]
 ```
-Reparent a task by moving it to a different parent.
+Reparent a task by moving it to a different parent. Refuses a task that is partially checked in to its current parent, because part of its work already belongs to that parent.
 
 #### `tt task delete`
 ```
