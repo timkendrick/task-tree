@@ -146,7 +146,6 @@ subtask: [x] task/publish-propagate-noop-70c5246e
 subtask: [x] task/stale-workspace-precondition-842a32f4
 subtask: [x] task/unify-worktree-task-resolution-363c8a36
 subtask: [ ] task/inline-child-task-completed-checkin-e8b06da2
-subtask: [ ] task/tt-task-reorder-propagate-c60ed18c
 subtask: [x] task/changelog-task-commit-ids-216386e1
 subtask: [ ] task/parallel-runner-hangs-on-crashed-test-c77d2074
 subtask: [x] task/tt-task-find-506a2320
