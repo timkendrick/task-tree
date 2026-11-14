@@ -28,7 +28,8 @@
 #   _task__check_file_exists         — whether a task's file exists at a revision
 #   _task__check_path_exists         — whether a repo-relative path exists at a revision
 #   _task__read_commit_message       — description recorded on a commit
-#   _task__list_commits_since_branch — commits on a branch's line since its tip
+#   _task__list_commits_since_branch — commits a revision has that a branch lacks
+#   _task__list_metadata_changes_since_branch — task metadata touched by those commits
 #   _task__list_mainline_commits     — first-parent commit records of a range
 #   _task__filter_reachable_commits  — commits of a set that a revision can reach
 #   _task__read_symlink              — read a symlink target as recorded on a branch
@@ -368,20 +369,38 @@ _task__read_commit_message() {
 }
 
 # Usage: _task__list_commits_since_branch REPO BRANCH TIP
-# Prints the commit IDs, one per line and oldest first, of the commits that
-# descend from BRANCH's tip and are ancestors of TIP, with BRANCH's own tip
-# excluded — the work recorded on the branch's line of descent since its
-# bookmark last moved. Nothing is printed (status 0) when there is no such
-# commit or the range does not resolve.
-#
-# The descent condition is what distinguishes this from the plain BRANCH..TIP
-# range: a commit that reached TIP through a merge from another line is an
-# ancestor of TIP without descending from the branch tip, and it is not work
-# that belongs to this branch's own line. Documented pass-through to
-# _repo__list_commits_in_dag_range.
+# Prints the commit IDs, one per line and oldest first, of the commits TIP
+# reaches that BRANCH's tip does not — the work a checkpoint would merge into
+# BRANCH. Nothing is printed when there is no such commit. Returns non-zero
+# when the range does not resolve. Documented pass-through to
+# _repo__list_commits_in_range.
 _task__list_commits_since_branch() {
   local repo="$1" branch="$2" tip="$3"
-  _repo__list_commits_in_dag_range "$repo" "$branch" "$tip"
+  _repo__list_commits_in_range "$repo" "$branch" "$tip"
+}
+
+# Usage: _task__list_metadata_changes_since_branch REPO BRANCH TIP
+# Prints the task-metadata paths (_path__check_is_task_metadata) that any
+# commit in the range of _task__list_commits_since_branch changes against its
+# parents, one per line, sorted and without duplicates. Each commit is checked
+# on its own, so an edit that a later commit reverts is still reported.
+# Nothing is printed when no commit touches task metadata. Returns non-zero
+# when the range or a commit's changes cannot be listed.
+_task__list_metadata_changes_since_branch() {
+  local repo="$1" branch="$2" tip="$3"
+  local commits commit changes path
+  local -a modified=()
+  commits="$(_task__list_commits_since_branch "$repo" "$branch" "$tip")" || return 1
+  while IFS= read -r commit; do
+    [[ -n "$commit" ]] || continue
+    changes="$(_repo__list_changed_files "$repo" "$commit")" || return 1
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      _path__check_is_task_metadata "$path" && modified+=("$path")
+    done <<< "$changes"
+  done <<< "$commits"
+  [[ ${#modified[@]} -eq 0 ]] && return 0
+  printf '%s\n' "${modified[@]}" | sort -u
 }
 
 # Usage: _task__list_mainline_commits REPO TIP BASE

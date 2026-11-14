@@ -189,7 +189,6 @@ Signatures, argument conventions and return values are documented on the backend
 | `find_fork_point_commit` | Where two revisions' histories diverge |
 | `check_is_canonical_commit_id` | Whether text has the form of a full commit ID, so it needs no resolution |
 | `list_commits_in_range` | Commit IDs in a range, oldest first |
-| `list_commits_in_dag_range` | Commits descended from a base, up to a tip |
 | `count_commits_in_range` | Size of a range |
 | `list_range_root_commits` | The roots of a range |
 | `list_range_root_parent_commits` | The parents of a range's roots |
@@ -253,7 +252,6 @@ No working copy is involved in any of these; each rewrites the commit graph dire
 | `create_merge_commit` | Create a merge commit over two or more parents |
 | `set_description` | Replace a revision's description |
 | `move_commits` | Rebase revisions and their descendants onto a destination |
-| `squash_commit` | Fold one revision's changes into another |
 | `restore_tree` | Set a revision's tree wholesale from another, preserving its identity |
 | `restore_path` | Set one path in a revision from another revision, replaying descendants |
 | `abandon_commit` | Abandon a revision, rebasing descendants onto its parents |
@@ -388,7 +386,8 @@ the parent would drag that worktree onto the parent branch.
 
 Every merge tt creates lists **the receiving branch first and the incoming line second**. Check-in
 and publish merge a handoff into the branch that receives it; `tt task propagate --merge` merges a
-parent's tip into the child that receives it. `_task__merge_branch` is the single facade that builds
+parent's tip into the child that receives it; `tt task checkpoint` merges the user's commits into
+the task branch that receives them. `_task__merge_branch` is the single facade that builds
 them, and it takes the receiving tip as its first parent argument.
 
 The order is load-bearing, not cosmetic. A branch's own line is its **first-parent mainline**, and
@@ -402,7 +401,7 @@ graph that way:
   the receiving branch.
 
 A merge built with the parents reversed would silently misreport both, so the order is asserted in
-the test suites of the three commands that create merges.
+the test suites of the four commands that create merges.
 
 ### 5.2 Constraints
 
@@ -501,8 +500,8 @@ command that defaults to it all go through the same read: `_task__resolve_curren
 `_worktree__resolve_branch_at` applied to the invoking worktree's `@`, and returns the task file
 alongside the branch. There is no graph-derived fallback to fall back *to* — the backend carries no
 nearest-bookmark operation at all — so a worktree recording no task is reported as holding none,
-and the commands that need one (`tt task current`, `tt task checkpoint`, `tt task create` without
-`--parent`) fail instead of adopting whichever branch lies below.
+and the commands that need one (`tt task current`, `tt task checkpoint` without `--task`,
+`tt task create` without `--parent`) fail instead of adopting whichever branch lies below.
 
 ### 6.4 Stale workspaces
 
@@ -557,12 +556,11 @@ so every command reports the same condition the same way.
 
 ## 7. Working-copy-bound commands
 
-Three commands legitimately require a working copy, and only they may reach the restricted
+Two commands legitimately require a working copy, and only they may reach the restricted
 operations of §4.2:
 
 | Command | Why |
 | --- | --- |
-| `tt task checkpoint` | Snapshots the user's real, uncommitted work |
 | `tt task checkout` | Moves the working copy and populates a new worktree |
 | `tt workspace init` | Commits the initial workspace state before any branch exists |
 

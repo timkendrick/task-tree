@@ -1814,38 +1814,6 @@ test__jj__move_commits__rebases_sources_onto_destination() {
 }
 
 # ---------------------------------------------------------------------------
-# _jj__squash_commit
-# ---------------------------------------------------------------------------
-
-test__jj__squash_commit__preserves_destination_identity_and_message() {
-  setup_workspace
-  edit_file dst.txt "d"
-  jj -R "$REPO" commit -m "destination message" >/dev/null 2>&1
-  jj -R "$REPO" bookmark set dst -r '@-' >/dev/null 2>&1
-  edit_file extra.txt "e"
-  jj -R "$REPO" commit -m "source message" >/dev/null 2>&1
-  local src_commit dst_change
-  src_commit="$(get_full_commit_id '@-')"
-  dst_change="$(_jj__resolve_change "$REPO" dst)"
-
-  local exit_code=0
-  _jj__squash_commit "$REPO" "$src_commit" dst || exit_code=$?
-  assert_success "squashed" "$exit_code"
-  assert_eq "destination change ID preserved" \
-    "$(_jj__resolve_change "$REPO" dst)" "$dst_change"
-  assert_eq "destination message preserved" \
-    "$(_jj__get_commit_description "$REPO" dst)" "destination message"
-  assert_eq "source content folded into the destination" \
-    "$(_jj__read_file_at_revision "$REPO" dst extra.txt)" "e"
-  assert_eq "emptied source abandoned; @ now sits on the destination" \
-    "$(_jj__resolve_commit "$REPO" '@-')" "$(_jj__resolve_commit "$REPO" dst)"
-
-  exit_code=0
-  _jj__squash_commit "$REPO" no-such-bookmark dst || exit_code=$?
-  assert_failure "absent source revision rejected" "$exit_code"
-}
-
-# ---------------------------------------------------------------------------
 # _jj__restore_tree
 # ---------------------------------------------------------------------------
 

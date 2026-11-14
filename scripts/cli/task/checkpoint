@@ -5,52 +5,64 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt task checkpoint — record current state and advance the task bookmark.
+# tt task checkpoint — merge committed work into the task branch and record a
+# checkpoint.
 #
-# Working-copy-bound: a checkpoint exists to capture the uncommitted work
-# sitting in the worktree it is run from, so unlike the commands that write
-# their branch bare it reads and moves that worktree's working copy. Every VCS
-# operation therefore goes through the working-copy-bound facades in
-# lib/worktree.sh, which take the worktree root explicitly.
+# Checkpoint commits carry no file changes. Without --task, the commits the
+# working copy sits on that the task bookmark does not reach are merged into
+# the branch first, by a `merge` commit whose first parent is the bookmark and
+# whose second parent is the working copy's parent. The empty `checkpoint`
+# commit then lands on top, and the bookmark advances to it. With --task, only
+# the checkpoint commit is written.
 #
 # Usage:
-#   checkpoint [--message <message>] [--squash] [--repo PATH]
+#   checkpoint [--message <message>] [--task <task-id>] [--repo PATH]
 #
 # Options:
-#   -m, --message <msg>  Commit message (skips editor prompt; required when stdin is not a
+#   -m, --message <msg>  Checkpoint message (skips editor prompt; required when stdin is not a
 #                        terminal). An empty message cancels the checkpoint.
-#   --squash             Squash all commits since the last bookmark into a single checkpoint commit.
+#   --task <task-id>     Record an empty checkpoint on this branch, without merging anything.
 #   --repo PATH          Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--message <message>] [--squash] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--message <message>] [--task <task-id>] [--repo PATH]
 
-Record the current state of work by creating a named commit and advancing the task bookmark.
+Record a checkpoint on a task branch and advance the task bookmark.
 
-Prompts for the commit message in an editor unless --message is given. When stdin
+Without --task, the commits made since the task bookmark (up to the working
+copy's parent) are first merged into the current task branch. The working copy
+must be clean, and those commits must not change task metadata. With --task,
+an empty checkpoint is recorded on the given branch and nothing is merged.
+
+Prompts for the message in an editor unless --message is given. When stdin
 is not a terminal, --message is required. An empty message cancels the checkpoint.
 
 Options:
-  -m, --message <msg>   Commit message (skips editor prompt).
-  --squash              Squash all commits since the last bookmark into a single checkpoint commit.
+  -m, --message <msg>   Checkpoint message (skips editor prompt).
+  --task <task-id>      Record an empty checkpoint on this task branch, merging nothing.
   --repo PATH           Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
   ${COMMAND_NAME:-$SCRIPT_NAME} -m "add foo"
   ${COMMAND_NAME:-$SCRIPT_NAME} --message "refactor bar"
-  ${COMMAND_NAME:-$SCRIPT_NAME} --squash -m "collapse and checkpoint"
+  ${COMMAND_NAME:-$SCRIPT_NAME} --task task/foo-abc12345 -m "milestone"
   ${COMMAND_NAME:-$SCRIPT_NAME}           # opens editor
 
 EOF
 }
 
+# Writer for the checkpoint commit: a checkpoint carries no file changes.
+checkpoint_writer() {
+  :
+}
+
 main() {
   local message=''
   local message_provided=false
-  local squash=false
+  local task_id_arg=''
   local repo=''
 
   while [[ $# -gt 0 ]]; do
@@ -66,21 +78,23 @@ main() {
         message_provided=true
         shift
         ;;
+      --task)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        task_id_arg="$2"
+        shift 2
+        ;;
+      --task=*)
+        task_id_arg="${1#--task=}"
+        shift
+        ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"
         shift 2
         ;;
-      --squash)
-        squash=true
-        shift
-        ;;
       -h|--help)
         usage
         exit 0
-        ;;
-      -*)
-        usage >&2; exit 1
         ;;
       *)
         usage >&2; exit 1
@@ -103,54 +117,76 @@ main() {
   local workspace_dir
   workspace_dir="$(_workspace__get_dir "$repo")" || true
 
-  # Resolve current branch
-  local task_file bookmark
-  { read -r task_file; read -r bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
-
-  # Precondition: must be on a task or project branch
-  if [[ -z "$bookmark" ]]; then
-    _ui__log "Error: not on a task or project branch."
-    exit 1
+  local bookmark
+  if [[ -z "$task_id_arg" ]]; then
+    { read -r _; read -r bookmark; } < <(_task__resolve_current "$repo" "$task_prefix" "$project_prefix")
+    if [[ -z "$bookmark" ]]; then
+      _ui__log "Error: not on a task or project branch."
+      exit 1
+    fi
+  else
+    bookmark="$task_id_arg"
+    if ! _task__resolve_suffix "$bookmark" "$task_prefix" "$project_prefix" >/dev/null; then
+      _ui__log "Error: '$task_id_arg' is not a task or project branch."
+      exit 1
+    fi
   fi
 
-  # Precondition: verify bookmark exists
   if ! _task__check_branch_exists "$repo" "$bookmark"; then
     _ui__log "Error: bookmark '$bookmark' not found in repository."
     exit 1
   fi
 
-  # Get current worktree
   local current_worktree
   current_worktree="$(_worktree__resolve_current "$repo")"
 
-  # Precondition: task metadata is written by tt alone, so a checkpoint must not
-  # record hand edits to it.
+  _worktree__ensure_working_copy "$repo" || exit 1
+  _worktree__ensure_canonical_current "$repo" || exit 1
   _worktree__ensure_metadata_unmodified "$current_worktree" || exit 1
 
-  # Read task title from task file frontmatter
+  # Without --task, the commits the working copy sits on that the bookmark
+  # does not reach are merged into the branch. The working copy must be clean,
+  # since uncommitted work would otherwise be silently left out of the merge.
+  local merge_head='' commits_to_merge='' commit_count=0
+  if [[ -z "$task_id_arg" ]]; then
+    _worktree__ensure_clean "$current_worktree" \
+      "or pass the task ID explicitly to record an empty checkpoint" || exit 1
+
+    merge_head="$(_worktree__resolve_working_copy_parent "$current_worktree")"
+    commits_to_merge="$(_task__list_commits_since_branch "$repo" "$bookmark" "$merge_head")" || {
+      _ui__log "Error: Could not list the commits after the task bookmark '$bookmark'."
+      exit 1
+    }
+    commit_count="$(printf '%s\n' "$commits_to_merge" | grep -c . || true)"
+
+    if [[ "$commit_count" -gt 0 ]]; then
+      local metadata_changes
+      metadata_changes="$(_task__list_metadata_changes_since_branch "$repo" "$bookmark" "$merge_head")" || {
+        _ui__log "Error: Could not list the changes made after the task bookmark '$bookmark'."
+        exit 1
+      }
+      if [[ -n "$metadata_changes" ]]; then
+        local path
+        _ui__log "Error: Commits after the task bookmark '$bookmark' change task metadata:"
+        while IFS= read -r path; do
+          _ui__log "  $path"
+        done <<< "$metadata_changes"
+        _ui__log "  Task metadata is written by tt alone. Remove these changes from the commits first."
+        exit 1
+      fi
+    fi
+  fi
+
   local task_title
   task_title="$(_task__read_title "$repo" "$bookmark" "$bookmark" "$task_prefix" "$project_prefix")" \
     || task_title=''
 
-  # Derive task ID (bookmark name without prefix) for display
-  local task_id="$bookmark"
-
-  # Commits already recorded on this branch's line since the bookmark last
-  # moved: everything from the bookmark up to the commit the working copy sits
-  # on, the bookmark itself excluded.
-  local wc_parent intermediates intermediate_count
-  wc_parent="$(_worktree__resolve_working_copy_parent "$current_worktree")"
-  intermediates="$(_task__list_commits_since_branch "$repo" "$bookmark" "$wc_parent")" || true
-  intermediate_count="$(printf '%s\n' "$intermediates" | grep -c . || true)"
-
-  # Get message from editor if not provided
   if [[ "$message_provided" == false ]]; then
-    # When the range since the bookmark holds exactly one commit, prefill the
-    # editor with the first line of that commit's description instead of the
-    # task title.
+    # When exactly one commit is about to be merged, prefill the editor with
+    # the first line of its description instead of the task title.
     local default_message="$task_title" single_desc
-    if [[ "$intermediate_count" -eq 1 ]]; then
-      single_desc="$(_task__read_commit_message "$repo" "$intermediates")"
+    if [[ "$commit_count" -eq 1 ]]; then
+      single_desc="$(_task__read_commit_message "$repo" "$commits_to_merge")"
       single_desc="${single_desc%%$'\n'*}"
       if [[ -n "$single_desc" ]]; then
         default_message="$single_desc"
@@ -159,7 +195,7 @@ main() {
 
     local template
     template="$(printf '%s\n\n# Task: %s\n# An empty message cancels the checkpoint.' \
-      "$default_message" "$task_id")"
+      "$default_message" "$bookmark")"
     message="$(_ui__prompt <<< "$template")" || exit 1
   fi
 
@@ -168,57 +204,59 @@ main() {
     exit 1
   fi
 
-  # Build full commit message
-  local full_msg
-  full_msg="$(_commit__format_message "task" "checkpoint" "$bookmark" "$message")"
-
-  # Precondition: the working-copy commit must not carry a bookmark. A
-  # checkpoint records the working copy as a NEW commit on top of the branch;
-  # if the working copy were itself a branch tip there would be nothing above
-  # the tip to record, and the capture would amend that branch instead.
-  _worktree__ensure_working_copy "$repo" || exit 1
-  _worktree__ensure_canonical_current "$repo" || exit 1
-
-  # Pre-checkpoint hook (blocking)
-  # Begin transaction (records before-op for undo)
   _history__begin_transaction "$repo"
+
+  local base="$bookmark"
+  if [[ "$commit_count" -gt 0 ]]; then
+    _hook__run "$repo" "pre-merge" true "$current_worktree" "${workspace_dir:-}" \
+      "TT_TASK_ID=$bookmark" \
+      "TT_TASK_BRANCH=$bookmark" \
+      "TT_MERGE_HEAD=$merge_head"
+
+    local merge_commit
+    merge_commit="$(_task__merge_branch "$repo" \
+      "$(_commit__format_title_message "task" "merge" "$bookmark" "$task_title")" \
+      "$bookmark" "$merge_head")" || {
+      _ui__log "Error: Could not merge the commits after the task bookmark into '$bookmark'."
+      exit 1
+    }
+    if _task__check_conflicts "$repo" "$merge_commit"; then
+      _ui__log "Error: Merging the commits after the task bookmark into '$bookmark' produces conflicts."
+      exit 1
+    fi
+
+    _hook__run "$repo" "post-merge" true "$current_worktree" "${workspace_dir:-}" \
+      "TT_TASK_ID=$bookmark" \
+      "TT_TASK_BRANCH=$bookmark" \
+      "TT_MERGE_HEAD=$merge_head" \
+      "TT_COMMIT=$merge_commit"
+
+    base="$merge_commit"
+  fi
 
   _hook__run "$repo" "pre-checkpoint" true "$current_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$bookmark" \
     "TT_TASK_BRANCH=$bookmark" \
     "TT_MESSAGE=${message}"
 
-  # With --squash, fold every commit recorded since the bookmark into the
-  # working copy first, so the single commit created below carries all of it.
-  # Nothing to fold means an ordinary checkpoint.
-  if [[ "$squash" == true && "$intermediate_count" -gt 0 ]]; then
-    local -a squash_sources=()
-    local squash_source
-    while IFS= read -r squash_source; do
-      [[ -n "$squash_source" ]] && squash_sources+=("$squash_source")
-    done <<< "$intermediates"
-    _worktree__squash_into_working_copy "$current_worktree" "${squash_sources[@]}"
+  local checkpoint_message new_commit
+  checkpoint_message="$(_commit__format_message "task" "checkpoint" "$bookmark" "$message")"
+  if [[ "$commit_count" -gt 0 ]]; then
+    # The working copy sits on the merged commits rather than on the bookmark,
+    # so it is reattached from the newest of them.
+    new_commit="$(_task__commit_detached "$repo" "$base" "$checkpoint_message" -- checkpoint_writer)"
+    _worktree__reattach_current "$repo" "$bookmark" "$merge_head" "$new_commit"
+    _task__advance_branch "$repo" "$bookmark" "$new_commit"
+  else
+    new_commit="$(_task__commit_on_branch "$repo" "$bookmark" "$checkpoint_message" -- checkpoint_writer)"
   fi
 
-  # Record the working copy (works for empty or non-empty WC)
-  _worktree__commit_working_copy "$current_worktree" "$full_msg"
-
-  # Get new commit ID — the commit just recorded is what the working copy now
-  # sits on
-  local new_commit
-  new_commit="$(_worktree__resolve_working_copy_parent "$current_worktree")"
-
-  # Advance bookmark
-  _task__advance_branch "$repo" "$bookmark" "$new_commit"
-
-  # Commit transaction (records after-op for undo)
   _history__commit_transaction "$repo"
 
   _worktree__report_unsynced "$repo" "$bookmark"
 
   _ui__log "Checkpoint: $bookmark → ${new_commit:0:8}"
 
-  # Post-checkpoint hook (non-blocking)
   _hook__run "$repo" "post-checkpoint" false "$current_worktree" "${workspace_dir:-}" \
     "TT_TASK_ID=$bookmark" \
     "TT_TASK_BRANCH=$bookmark" \
