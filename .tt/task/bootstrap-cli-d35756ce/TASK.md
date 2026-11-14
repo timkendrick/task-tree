@@ -14,7 +14,6 @@ subtask: [ ] task/rename-anonymous-task-id-arguments-2509eae4
 subtask: [ ] task/tt-history-truncate-b37bc2e3
 subtask: [x] task/tt-worktree-prune-2c7055f6
 subtask: [x] task/standardize-vcs-operations-d5419005
-subtask: [ ] task/standardize-metadata-operations-cc4f8cab
 subtask: [ ] task/standardize-command-output-a1c39913
 subtask: [ ] task/tt-task-checkin-reorder-766c71b4
 subtask: [ ] task/custom-merge-conflict-resolver-06dbf6a0
