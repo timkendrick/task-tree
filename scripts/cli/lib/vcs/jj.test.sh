@@ -28,6 +28,36 @@ _fixture_linear_history() {
   SECOND_COMMIT="$(get_full_commit_id 'feature')"
 }
 
+# Build a range BASE..task containing two merges:
+#   - MERGE_COMMIT has first parent W_COMMIT (outside the range) and second
+#     parent C2_COMMIT (inside it).
+#   - The task tip has first parent C3_COMMIT (inside the range) and second
+#     parent W_COMMIT (outside it).
+# Bookmark "base" points at W_COMMIT and bookmark "task" at the tip.
+_fixture_external_first_parent_merge() {
+  BASE_COMMIT="$(get_full_commit_id '@-')"
+  W_COMMIT="$(_make_commit "fixture w" "$BASE_COMMIT")"
+  C2_COMMIT="$(_make_commit "fixture c2" "$W_COMMIT")"
+  MERGE_COMMIT="$(_make_commit "fixture first merge" "$W_COMMIT" "$C2_COMMIT")"
+  C3_COMMIT="$(_make_commit "fixture c3" "$MERGE_COMMIT")"
+  TIP_COMMIT="$(_make_commit "fixture second merge" "$C3_COMMIT" "$W_COMMIT")"
+  jj -R "$REPO" bookmark set base -r "$W_COMMIT" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set task -r "$TIP_COMMIT" >/dev/null 2>&1
+}
+
+# Print the change ID of REV.
+# Usage: _change_id REV
+_change_id() {
+  jj -R "$REPO" log --ignore-working-copy -r "$1" --no-graph -T 'change_id'
+}
+
+# Print the commit IDs of REV's parents, space-separated, first parent first.
+# Usage: _parents_of REV
+_parents_of() {
+  jj -R "$REPO" log --ignore-working-copy -r "$1" --no-graph \
+    -T 'parents.map(|p| p.commit_id()).join(" ")'
+}
+
 # Create a commit described MESSAGE on top of PARENT_REV (a second PARENT_REV
 # makes it a merge, the first parent given first) without moving the working
 # copy, and print its full commit ID.
@@ -652,6 +682,46 @@ test__jj__list_range_root_parent_commits__prints_root_parents() {
 }
 
 # ---------------------------------------------------------------------------
+# _jj__list_range_external_first_parent_changes
+# ---------------------------------------------------------------------------
+
+test__jj__list_range_external_first_parent_changes__lists_merges_hanging_off_their_first_parent() {
+  setup_workspace
+  _fixture_external_first_parent_merge
+  assert_eq "only the merge whose first parent is outside the range" \
+    "$(_jj__list_range_external_first_parent_changes "$REPO" base task)" \
+    "$(_change_id "$MERGE_COMMIT")"
+  assert_eq "a range whose merges keep their first parent inside lists nothing" \
+    "$(_jj__list_range_external_first_parent_changes "$REPO" "$MERGE_COMMIT" task)" ""
+  assert_eq "an empty range lists nothing" \
+    "$(_jj__list_range_external_first_parent_changes "$REPO" task task)" ""
+  local exit_code=0
+  _jj__list_range_external_first_parent_changes "$REPO" base no-such-bookmark >/dev/null \
+    || exit_code=$?
+  assert_failure "absent revision rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__list_parent_commits
+# ---------------------------------------------------------------------------
+
+test__jj__list_parent_commits__prints_parents_in_order() {
+  setup_workspace
+  _fixture_external_first_parent_merge
+  assert_eq "merge parents listed first parent first" \
+    "$(_jj__list_parent_commits "$REPO" "$MERGE_COMMIT")" \
+    "$(printf '%s\n%s' "$W_COMMIT" "$C2_COMMIT")"
+  assert_eq "a single parent" \
+    "$(_jj__list_parent_commits "$REPO" "$C2_COMMIT")" "$W_COMMIT"
+  local exit_code=0
+  _jj__list_parent_commits "$REPO" no-such-bookmark >/dev/null || exit_code=$?
+  assert_failure "absent revision rejected" "$exit_code"
+  exit_code=0
+  _jj__list_parent_commits "$REPO" "${W_COMMIT}::" >/dev/null || exit_code=$?
+  assert_failure "a revset of several commits rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
 # _jj__check_range_covered
 # ---------------------------------------------------------------------------
 
@@ -867,6 +937,35 @@ test__jj__get_worktree_checkout_revision__unreadable_workspace_fails() {
   output="$(_jj__get_worktree_checkout_revision "$_TEST_ROOT" 2>/dev/null)" || exit_code=$?
   assert_failure "a path that is not a workspace is rejected" "$exit_code"
   assert_output_empty "nothing printed for an unreadable workspace" "$output"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__reattach_worktree
+# ---------------------------------------------------------------------------
+
+test__jj__reattach_worktree__several_destinations_make_a_merge() {
+  setup_workspace
+  _fixture_external_first_parent_merge
+  local dest merge_change
+  dest="$(_make_commit "fixture dest" "$W_COMMIT")"
+  merge_change="$(_change_id "$MERGE_COMMIT")"
+  jj -R "$REPO" new task >/dev/null 2>&1
+  edit_file pending.txt "pending"
+
+  local exit_code=0
+  _jj__reattach_worktree "$REPO" "$merge_change" "$dest" "$C2_COMMIT" || exit_code=$?
+  assert_success "subtree reattached" "$exit_code"
+  assert_eq "parents in the order given" \
+    "$(_parents_of "$merge_change")" "$dest $C2_COMMIT"
+  assert_eq "the pending edit travelled with the working copy" \
+    "$(cat "$REPO/pending.txt")" "pending"
+  local status_exit=0
+  jj -R "$REPO" status >/dev/null 2>&1 || status_exit=$?
+  assert_success "working copy is not stale" "$status_exit"
+
+  exit_code=0
+  _jj__reattach_worktree "$REPO" "$merge_change" || exit_code=$?
+  assert_failure "no destinations rejected" "$exit_code"
 }
 
 # ---------------------------------------------------------------------------
@@ -1811,6 +1910,33 @@ test__jj__move_commits__rebases_sources_onto_destination() {
   exit_code=0
   _jj__move_commits "$REPO" dest no-such-bookmark || exit_code=$?
   assert_failure "absent source rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
+# _jj__set_parents
+# ---------------------------------------------------------------------------
+
+test__jj__set_parents__replaces_parents_in_order() {
+  setup_workspace
+  _fixture_external_first_parent_merge
+  local dest merge_change
+  dest="$(_make_commit "fixture dest" "$W_COMMIT")"
+  merge_change="$(_change_id "$MERGE_COMMIT")"
+
+  local exit_code=0
+  _jj__set_parents "$REPO" "$merge_change" "$dest" "$C2_COMMIT" || exit_code=$?
+  assert_success "parents replaced" "$exit_code"
+  assert_eq "parents in the order given" \
+    "$(_parents_of "$merge_change")" "$dest $C2_COMMIT"
+  assert_eq "the descendant stays on the rewritten merge" \
+    "$(_parents_of "$(_change_id "$C3_COMMIT")")" "$(get_full_commit_id "$merge_change")"
+
+  exit_code=0
+  _jj__set_parents "$REPO" "$merge_change" || exit_code=$?
+  assert_failure "no parents rejected" "$exit_code"
+  exit_code=0
+  _jj__set_parents "$REPO" no-such-bookmark "$dest" || exit_code=$?
+  assert_failure "absent revision rejected" "$exit_code"
 }
 
 # ---------------------------------------------------------------------------

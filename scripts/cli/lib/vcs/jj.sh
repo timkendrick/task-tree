@@ -64,6 +64,8 @@
 #     _jj__count_commits_in_range    — number of commits in FROM..TO
 #     _jj__list_range_root_commits   — commit IDs of the roots of FROM..TO
 #     _jj__list_range_root_parent_commits — commit IDs of the parents of the roots of FROM..TO
+#     _jj__list_range_external_first_parent_changes — non-root commits of FROM..TO whose first parent is outside it
+#     _jj__list_parent_commits       — commit IDs of a revision's parents, in order
 #     _jj__check_range_covered       — whether a range is inside a union of ranges
 #     _jj__format_revision_range     — render a FROM/TO range in a named format
 #     _jj__list_mainline_commits     — first-parent mainline commit records
@@ -83,13 +85,14 @@
 #     _jj__new_working_copy_child    — start a new working-copy commit
 #     _jj__commit_working_copy       — commit the working copy with a message
 #     _jj__snapshot_worktree         — capture on-disk changes into the working-copy commit
-#     _jj__reattach_worktree         — rebase the working-copy commit onto a destination
+#     _jj__reattach_worktree         — rebase the working-copy commit onto one or more destinations
 #     _jj__refresh_worktree          — update on-disk files after a bare rewrite of @
 #   Mutations (bare; no working copy involved):
 #     _jj__commit_changeset          — build a commit in the backing Git store from a staged tree
 #     _jj__create_merge_commit       — create a merge commit of two or more parents
 #     _jj__set_description           — replace a revision's description
 #     _jj__move_commits              — rebase revisions and their descendants onto a destination
+#     _jj__set_parents               — replace a revision's parents, keeping its descendants on it
 #     _jj__restore_tree              — set a revision's tree wholesale from another revision
 #     _jj__restore_path              — set one path in a revision from another revision
 #     _jj__abandon_commit            — abandon a revision, rebasing descendants onto its parents
@@ -549,6 +552,34 @@ _jj__list_range_root_parent_commits() {
     --no-graph -T 'commit_id ++ "\n"'
 }
 
+# Usage: _jj__list_range_external_first_parent_changes REPO FROM TO
+# Prints the change IDs of the commits in the FROM..TO range that are not
+# roots of the range but whose first parent lies outside it, one per line,
+# oldest first. Such a commit is a merge that joins the range to history
+# outside it through its first parent. Rebasing the range roots leaves that
+# first parent in place. Change IDs rather than commit IDs because the rebase
+# that moves the range rewrites these commits. Prints nothing when the range
+# has no such commit. Returns jj's exit code.
+_jj__list_range_external_first_parent_changes() {
+  local repo="$1" from="$2" to="$3"
+  local range="${from}..${to}"
+  local escaped
+  escaped="$(__jj__escape_revset_string "$range")"
+  __jj__read "$repo" --ignore-working-copy log -r "(${range}) ~ roots(${range})" \
+    --no-graph --reversed \
+    -T 'if(!parents.first().contained_in("'"${escaped}"'"), change_id ++ "\n")'
+}
+
+# Usage: _jj__list_parent_commits REPO REV
+# Prints the commit IDs of REV's parents, one per line, in parent order: the
+# first parent first. REV must resolve to a single commit. Returns jj's exit
+# code.
+_jj__list_parent_commits() {
+  local repo="$1" rev="$2"
+  __jj__read "$repo" --ignore-working-copy log -r "exactly(${rev}, 1)" \
+    --no-graph -T 'parents.map(|p| p.commit_id() ++ "\n").join("")'
+}
+
 # Usage: _jj__check_range_covered REPO BASE TIP COVER_BASE COVER_TIP [COVER_BASE COVER_TIP ...]
 # Returns 0 when every commit in the BASE..TIP range is inside the union of
 # the given cover ranges (each COVER_BASE..COVER_TIP pair). At least one cover
@@ -804,8 +835,10 @@ _jj__snapshot_worktree() {
   __jj__write_internal "$worktree" log -r '@' --no-graph -T ''
 }
 
-# Usage: _jj__reattach_worktree WORKTREE FROM_REV DEST_REV
-# Rebases FROM_REV, together with all of its descendants, onto DEST_REV. Runs
+# Usage: _jj__reattach_worktree WORKTREE FROM_REV DEST_REV [DEST_REV...]
+# Rebases FROM_REV, together with all of its descendants, onto DEST_REV. More
+# than one DEST_REV makes FROM_REV a merge whose parents are the DEST_REVs in
+# the order given. Runs
 # against WORKTREE WITHOUT --ignore-working-copy, deliberately: jj then
 # snapshots any pending on-disk changes into the working-copy commit before
 # rebasing, and updates WORKTREE's on-disk files in the same step whenever the
@@ -818,8 +851,15 @@ _jj__snapshot_worktree() {
 # line, which moves that whole subtree and carries the working copy with it.
 # Status only; never logs, never exits.
 _jj__reattach_worktree() {
-  local worktree="$1" from_rev="$2" dest_rev="$3"
-  __jj__write "$worktree" rebase -s "$from_rev" -d "$dest_rev"
+  local worktree="$1" from_rev="$2"
+  shift 2
+  [[ $# -ge 1 ]] || return 1
+  local -a dest_flags=()
+  local dest_rev
+  for dest_rev in "$@"; do
+    dest_flags+=(-d "$dest_rev")
+  done
+  __jj__write "$worktree" rebase -s "$from_rev" "${dest_flags[@]}"
 }
 
 # Usage: _jj__get_worktree_checkout_revision WORKTREE
@@ -1227,6 +1267,24 @@ _jj__move_commits() {
     __jj__write "$repo" --ignore-working-copy rebase \
       -s "$source_rev" -d "$dest_rev" || return $?
   done
+}
+
+# Usage: _jj__set_parents REPO REV PARENT_REV [PARENT_REV...]
+# Replaces REV's parents with the given PARENT_REVs, in the order given: the
+# first PARENT_REV becomes the first parent. REV's descendants are rebased
+# with it, so they stay on top of it. At least one parent is required. Bare
+# graph mutation: no working copy is touched. Status only; never logs, never
+# exits.
+_jj__set_parents() {
+  local repo="$1" rev="$2"
+  shift 2
+  [[ $# -ge 1 ]] || return 1
+  local -a dest_flags=()
+  local parent_rev
+  for parent_rev in "$@"; do
+    dest_flags+=(-d "$parent_rev")
+  done
+  __jj__write "$repo" --ignore-working-copy rebase -s "$rev" "${dest_flags[@]}"
 }
 
 # Usage: _jj__restore_tree REPO SOURCE_REV TARGET_REV

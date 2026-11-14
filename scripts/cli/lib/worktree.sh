@@ -815,11 +815,12 @@ _worktree__reattach_current() {
   _repo__reattach_worktree "$worktree" "$wc_change" "$new_rev"
 }
 
-# Usage: _worktree__move_subtree REPO SOURCE_REV DEST_REV
+# Usage: _worktree__move_subtree REPO SOURCE_REV DEST_REV [DEST_REV...]
 #
 # Rebases SOURCE_REV together with every commit descended from it onto
 # DEST_REV, running the rewrite from INSIDE the current worktree rather than
-# as a bare graph mutation.
+# as a bare graph mutation. More than one DEST_REV makes SOURCE_REV a merge
+# whose parents are the DEST_REVs in the order given.
 #
 # The distinction matters only when the current working-copy commit is itself
 # part of the moved subtree. A bare rewrite would move that commit in the
@@ -833,12 +834,14 @@ _worktree__reattach_current() {
 # working-copy commit — it never moves a branch onto them).
 #
 # Callers that know the working copy is outside the subtree should prefer the
-# bare move (_repo__move_commits), which skips the snapshot entirely.
+# bare move (_repo__move_commits or _repo__set_parents), which skips the
+# snapshot entirely.
 _worktree__move_subtree() {
-  local repo="$1" source_rev="$2" dest_rev="$3"
+  local repo="$1" source_rev="$2"
+  shift 2
   local worktree
   worktree="$(_repo__resolve_worktree_root "$repo")" || return 1
-  _repo__reattach_worktree "$worktree" "$source_rev" "$dest_rev"
+  _repo__reattach_worktree "$worktree" "$source_rev" "$@"
 }
 
 # Usage: _worktree__refresh_current REPO
