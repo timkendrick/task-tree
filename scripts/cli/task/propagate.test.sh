@@ -429,6 +429,34 @@ _assert_forked_onto() {
   assert_task_symlink_at_rev "$label: TASK.md points at the child" "$child" "$child"
 }
 
+# Asserts that CHILD's first-parent line passes through the fork commit at the
+# root of the PARENT..CHILD range and reaches PARENT's tip.
+# Usage: _assert_first_parent_line_through_fork LABEL CHILD PARENT
+_assert_first_parent_line_through_fork() {
+  local label="$1" child="$2" parent="$3"
+  assert_revset_count "$label: the first-parent line passes through the fork commit" \
+    "first_ancestors(${child}) & roots(${parent}..${child})" 1
+  assert_revset_count "$label: the first-parent line reaches the parent tip" \
+    "first_ancestors(${child}) & ${parent}" 1
+}
+
+# Asserts that the checkpoint merge MERGE_REV has exactly two parents: the
+# fork commit at the root of the PARENT..CHILD range, then a user commit that
+# sits on that fork commit.
+# Usage: _assert_merge_on_fork LABEL MERGE_REV CHILD PARENT
+_assert_merge_on_fork() {
+  local label="$1" merge="$2" child="$3" parent="$4"
+  local fork="roots(${parent}..${child})"
+  assert_commit_message_first_line "$label: the commit is the checkpoint merge" \
+    "$merge" "[tt:task:$child:merge] Child"
+  assert_revset_count "$label: the merge has two parents" "parents(${merge})" 2
+  assert_eq "$label: the merge's first parent is the fork commit" \
+    "$(get_full_commit_id "first_parent(${merge})")" "$(get_full_commit_id "$fork")"
+  assert_eq "$label: the merge's second parent sits on the fork commit" \
+    "$(get_full_commit_id "parents(parents(${merge}) ~ first_parent(${merge}))")" \
+    "$(get_full_commit_id "$fork")"
+}
+
 test_task_propagate__up_to_date_in_progress_child_forks_rebase() {
   setup_workspace "prop-fork-rebase"
   _setup_partial_checkin
@@ -579,6 +607,8 @@ test_task_propagate__rebase_after_partial_checkin_forks_underneath() {
     "$(get_full_commit_id "roots(${PROJ}..${CHILD})-")" "$(get_full_commit_id "$PROJ")"
   assert_revset_count "the range is the fork commit and the new work (commit, merge, checkpoint)" \
     "${PROJ}..${CHILD}" "4"
+  _assert_first_parent_line_through_fork "first propagate" "$CHILD" "$PROJ"
+  _assert_merge_on_fork "first propagate" "${CHILD}-" "$CHILD" "$PROJ"
   _assert_range_symlink "every commit on the child's line points at the child" \
     "${PROJ}..${CHILD}" "$CHILD"
   assert_file_on_branch "the child received the parent's change" "$CHILD" "parent-file.txt"
@@ -593,8 +623,36 @@ test_task_propagate__rebase_after_partial_checkin_forks_underneath() {
   assert_revset_count "no second fork commit" "${PROJ}..${CHILD}" "4"
   assert_commit_message_first_line "the existing fork commit is still the root" \
     "roots(${PROJ}..${CHILD})" "[tt:task:$CHILD:fork] Child"
+  _assert_first_parent_line_through_fork "second propagate" "$CHILD" "$PROJ"
+  _assert_merge_on_fork "second propagate" "${CHILD}-" "$CHILD" "$PROJ"
   _assert_range_symlink "the child's line still points at the child" \
     "${PROJ}..${CHILD}" "$CHILD"
+}
+
+# The invoking worktree sits on the child, above the checkpoint merge, with a
+# pending edit. Re-parenting the merge must carry the working copy along.
+test_task_propagate__rebase_after_partial_checkin_carries_the_working_copy() {
+  setup_workspace "prop-fork-rebase-wc-above-merge"
+  _setup_partial_checkin
+  _add_work "parent-file.txt" "Parent update"
+  checkout_task "$CHILD" >/dev/null || true
+  _add_work "more-work.txt" "More work"
+  edit_file "$REPO/pending.txt" "pending"
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
+  assert_success "propagate succeeds" "$exit_code"
+  _assert_first_parent_line_through_fork "propagate" "$CHILD" "$PROJ"
+  _assert_merge_on_fork "propagate" "${CHILD}-" "$CHILD" "$PROJ"
+  assert_eq "the working copy sits on the child's tip" \
+    "$(get_full_commit_id '@-')" "$(get_full_commit_id "$CHILD")"
+  assert_eq "the pending edit is still on disk" "$(cat "$REPO/pending.txt")" "pending"
+  assert_file_exists "the parent's change is on disk" "$REPO/parent-file.txt"
+  local status_output status_exit=0
+  status_output=$(jj -R "$REPO" status 2>&1) || status_exit=$?
+  assert_success "the working copy is usable" "$status_exit"
+  assert_not_contains "the working copy is not stale" "$status_output" "stale"
+  assert_no_conflicts "no conflicts" "${PROJ}..${CHILD}"
 }
 
 test_task_propagate__rebase_done_child_after_partial_checkin_forks() {
@@ -613,6 +671,8 @@ test_task_propagate__rebase_done_child_after_partial_checkin_forks() {
     "roots(${PROJ}..${CHILD})" "[tt:task:$CHILD:fork] Child"
   assert_revset_count "fork commit, new work (commit, merge, checkpoint) and completion" \
     "${PROJ}..${CHILD}" "5"
+  _assert_first_parent_line_through_fork "propagate" "$CHILD" "$PROJ"
+  _assert_merge_on_fork "propagate" "${CHILD}--" "$CHILD" "$PROJ"
   _assert_range_symlink "every commit on the child's line points at the child" \
     "${PROJ}..${CHILD}" "$CHILD"
   assert_task_status "the child stays DONE" "$CHILD" "DONE"
@@ -637,12 +697,48 @@ test_task_propagate__rebase_nested_grandchild_has_no_conflicts() {
   assert_no_conflicts "no conflicts on the child's line" "${PROJ}..${CHILD}"
   assert_commit_message_first_line "the fork commit is the root of the range" \
     "roots(${PROJ}..${CHILD})" "[tt:task:$CHILD:fork] Child"
+  _assert_first_parent_line_through_fork "propagate" "$CHILD" "$PROJ"
   _assert_range_symlink "the child's own line points at the child" \
     "first_ancestors(${CHILD}) ~ ::${PROJ}" "$CHILD"
   _assert_range_symlink "the grandchild's commits point at the grandchild" \
     "(${PROJ}..${GRANDCHILD}) ~ first_ancestors(${CHILD})" "$GRANDCHILD"
   assert_task_symlink_at_rev "the grandchild tip points at the grandchild" \
     "$GRANDCHILD" "$GRANDCHILD"
+}
+
+# The grandchild existed before the child's partial checkin and was checked in
+# after it. Its checkin merge then has the child's checked-in tip, which the
+# project already contains, as its first parent.
+test_task_propagate__rebase_grandchild_checked_in_after_partial_checkin() {
+  setup_workspace "prop-fork-grandchild-after-partial"
+  PROJ=$(create_project "proj" "Project") || true
+  checkout_task "$PROJ" >/dev/null || true
+  CHILD=$(create_task "c" "Child") || true
+  checkout_task "$CHILD" >/dev/null || true
+  _add_work "child-work.txt" "Child work"
+  GRANDCHILD=$(create_task_under "$CHILD" "g" "Grandchild") || true
+  run_tt task checkin "$CHILD" >/dev/null 2>&1 || true
+  local checked_in_tip
+  checked_in_tip=$(get_full_commit_id "$CHILD")
+  checkout_task "$GRANDCHILD" >/dev/null || true
+  _add_work "grandchild-work.txt" "Grandchild work"
+  run_tt task checkin "$GRANDCHILD" --complete >/dev/null 2>&1 || true
+  assert_eq "the grandchild's checkin merge hangs off the checked-in tip" \
+    "$(get_full_commit_id "first_parent(${CHILD})")" "$checked_in_tip"
+  checkout_task "$PROJ" >/dev/null || true
+  _add_work "parent-file.txt" "Parent update"
+
+  output="" exit_code=0
+  output=$(run_tt task propagate --from "$PROJ" 2>&1) || exit_code=$?
+  assert_success "propagate succeeds" "$exit_code"
+  assert_commit_message_first_line "the fork commit is the root of the range" \
+    "roots(${PROJ}..${CHILD})" "[tt:task:$CHILD:fork] Child"
+  _assert_first_parent_line_through_fork "propagate" "$CHILD" "$PROJ"
+  assert_eq "the checkin merge's first parent is the fork commit" \
+    "$(get_full_commit_id "first_parent(${CHILD})")" \
+    "$(get_full_commit_id "roots(${PROJ}..${CHILD})")"
+  assert_revset_count "the checkin merge keeps two parents" "parents(${CHILD})" 2
+  assert_no_conflicts "no conflicts on the child's line" "${PROJ}..${CHILD}"
 }
 
 test_task_propagate__merge_after_partial_checkin_keeps_child_symlink() {

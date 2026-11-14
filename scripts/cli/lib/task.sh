@@ -1964,6 +1964,14 @@ _task__list_unmerged_root_parents() {
 # worktree instead (_worktree__move_subtree) so the on-disk files travel with
 # the commits rather than being left behind. Bare roots are moved first so the
 # carried subtree is rewritten last, against a graph that is otherwise final.
+#
+# Moving the roots does not move a merge whose first parent lies outside the
+# range. A checkpoint merge made after a partial check-in has this shape: its
+# first parent is the checked-in commit, which BASE_REV already contains. The
+# rebase leaves that first parent behind, so the branch's first-parent line
+# would skip the moved commits. Each such merge therefore gets DEST_REV as its
+# first parent once the roots have moved, and keeps its other parents. The
+# working-copy rule above applies to these rewrites too.
 _task__move_unmerged_range() {
   local repo="$1" base_rev="$2" task_rev="$3" dest_rev="$4"
 
@@ -1971,11 +1979,12 @@ _task__move_unmerged_range() {
   roots="$(_task__list_unmerged_roots "$repo" "$base_rev" "$task_rev")" || roots=''
   [[ -n "$roots" ]] || return 0
 
-  local worktree wc_commit=''
-  worktree="$(_repo__resolve_worktree_root "$repo")" || worktree=''
-  if [[ -n "$worktree" ]]; then
-    wc_commit="$(_repo__resolve_commit "$worktree" '@')" || wc_commit=''
-  fi
+  local merges
+  merges="$(_repo__list_range_external_first_parent_changes "$repo" "$base_rev" "$task_rev")" \
+    || return 1
+
+  local wc_commit
+  wc_commit="$(__task__resolve_working_copy_commit "$repo")"
 
   local -a bare_roots=() carried_roots=()
   local root
@@ -1994,7 +2003,56 @@ _task__move_unmerged_range() {
   for root in "${carried_roots[@]+"${carried_roots[@]}"}"; do
     _worktree__move_subtree "$repo" "$root" "$dest_rev" || return 1
   done
+
+  local merge
+  while IFS= read -r merge; do
+    [[ -n "$merge" ]] || continue
+    __task__replace_first_parent "$repo" "$merge" "$dest_rev" || return 1
+  done <<< "$merges"
   return 0
+}
+
+# Usage: __task__resolve_working_copy_commit REPO
+#
+# Prints the commit ID of the current worktree's working-copy commit. Prints
+# nothing when there is no current worktree or its working-copy commit cannot
+# be resolved.
+__task__resolve_working_copy_commit() {
+  local repo="$1"
+  local worktree
+  worktree="$(_repo__resolve_worktree_root "$repo")" || return 0
+  _repo__resolve_commit "$worktree" '@' || true
+}
+
+# Usage: __task__replace_first_parent REPO REV NEW_PARENT_REV
+#
+# Makes NEW_PARENT_REV the first parent of REV and keeps REV's other parents
+# in order. REV's descendants stay on top of it. When the current working-copy
+# commit descends from REV, the rewrite runs through the current worktree so
+# that the on-disk files follow it. Otherwise it is a bare graph rewrite.
+__task__replace_first_parent() {
+  local repo="$1" rev="$2" new_parent_rev="$3"
+
+  local parent_list
+  parent_list="$(_repo__list_parent_commits "$repo" "$rev")" || return 1
+  local -a parents=("$new_parent_rev")
+  local parent is_first=true
+  while IFS= read -r parent; do
+    [[ -n "$parent" ]] || continue
+    if [[ "$is_first" == true ]]; then
+      is_first=false
+      continue
+    fi
+    parents+=("$parent")
+  done <<< "$parent_list"
+
+  local wc_commit
+  wc_commit="$(__task__resolve_working_copy_commit "$repo")"
+  if [[ -n "$wc_commit" ]] && _repo__check_is_ancestor "$repo" "$rev" "$wc_commit"; then
+    _worktree__move_subtree "$repo" "$rev" "${parents[@]}"
+  else
+    _repo__set_parents "$repo" "$rev" "${parents[@]}"
+  fi
 }
 
 # Usage: _task__restore_symlink REPO SOURCE_REV TARGET_REV

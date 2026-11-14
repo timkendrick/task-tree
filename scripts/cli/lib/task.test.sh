@@ -1265,6 +1265,49 @@ test__task__list_unmerged_root_parents__reports_the_partially_checked_in_tip() {
 }
 
 # ---------------------------------------------------------------------------
+# _task__move_unmerged_range
+# ---------------------------------------------------------------------------
+
+# After a partial checkin, the first checkpoint merge has the checked-in tip
+# as its first parent. Moving the range onto a destination that does not
+# contain that tip must re-parent the merge onto the destination, so that the
+# checked-in tip drops out of the task's history.
+test__task__move_unmerged_range__reparents_a_merge_hanging_off_the_base() {
+  setup_workspace "move-unmerged-range-merge"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  dest_id=$(create_task "d" "Destination") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo w1 > "$REPO/w1.txt"
+  checkpoint_task "w1" >/dev/null || true
+  w1_commit=$(get_full_commit_id "$task_id")
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true   # partial checkin
+  checkout_task "$task_id" >/dev/null || true
+  echo w2 > "$REPO/w2.txt"
+  checkpoint_task "w2" >/dev/null || true
+  assert_eq "before the move, the merge hangs off the checked-in tip" \
+    "$(get_full_commit_id "first_parent(${task_id}-)")" "$w1_commit"
+  checkout_task "$proj_id" >/dev/null || true
+
+  local exit_code=0
+  _task__move_unmerged_range "$REPO" "$proj_id" "$task_id" "$dest_id" || exit_code=$?
+  assert_success "range moved" "$exit_code"
+
+  local merge="${task_id}-"
+  local user_commit="parents(${merge}) ~ first_parent(${merge})"
+  assert_eq "the merge's first parent is the destination" \
+    "$(get_full_commit_id "first_parent(${merge})")" "$(get_full_commit_id "$dest_id")"
+  assert_eq "the merge's second parent is the user commit, on the destination" \
+    "$(get_full_commit_id "parents(${user_commit})")" "$(get_full_commit_id "$dest_id")"
+  assert_revset_count "the first-parent line reaches the destination" \
+    "first_ancestors(${task_id}) & ${dest_id}" 1
+  assert_not_ancestor "the checked-in tip is no longer in the task's history" \
+    "$w1_commit" "$task_id"
+}
+
+# ---------------------------------------------------------------------------
 # _task__resolve_current
 # ---------------------------------------------------------------------------
 
