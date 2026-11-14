@@ -1,6 +1,6 @@
 ---
 title: "Empty `tt task checkpoint` commits"
-status: IN-PROGRESS
+status: DONE
 created: 2026-08-04T08:34:59Z
 updated: 2026-11-13T21:30:09Z
 context: context/history-migration-bbe12b82
