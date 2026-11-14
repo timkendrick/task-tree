@@ -448,7 +448,7 @@ Any other value — including `INFO` or `VERBOSE` — leaves narration off.
 
 - **`tt task rename --slug <new-slug> [--task <task-id>] [--repo PATH]`** — Rename a task's slug (the human-readable part of the task ID), preserving the hex suffix. For example: `task/old-name-abc123` → `task/new-name-abc123`. Rewrites every commit that carries the task directory so the directory moves to its new path, retargets the repo-root `TASK.md` symlink where it points into the old directory, repoints the parent's `subtask:` reference, and renames the bookmark. Requires a clean working copy. If the task has no parent (e.g., a project), only the bookmark and directory are renamed. Silently succeeds if the new slug matches the current slug. Errors if the new ID would conflict with an existing bookmark, and refuses when another worktree is parked inside the range of commits to be rewritten. See §6.10.
 
-- **`tt task move [--task <task-id>] --parent <parent-task-id> [--repo PATH] [--workspace-dir PATH]`** — Reparent a task by moving it to a different parent. Removes the task from its current parent's `subtask:` list and adds it to the new parent's `subtask:` list. Rebases the task's unmerged commit range (commits not yet in the old parent's ancestry) onto the new parent's bookmark tip. Defaults to the current task if `--task` is not given. Checks for a clean working copy before proceeding. Returns a non-zero exit code if the task or parent does not exist. Aborts if the task has no current parent (parentless project), if the new parent is the same as the current parent, or if the move would create a cycle in the task tree. See §6.11.
+- **`tt task move [--task <task-id>] --parent <parent-task-id> [--repo PATH] [--workspace-dir PATH]`** — Reparent a task by moving it to a different parent. Removes the task from its current parent's `subtask:` list and adds it to the new parent's `subtask:` list. Rebases the task's unmerged commit range (commits not yet in the old parent's ancestry) onto the new parent's bookmark tip. Defaults to the current task if `--task` is not given. Checks for a clean working copy before proceeding. Returns a non-zero exit code if the task or parent does not exist. Aborts if the task has no current parent (parentless project), if the new parent is the same as the current parent, if the move would create a cycle in the task tree, or if the task is partially checked in to its current parent. See §6.11.
 
 ### 5.5 Worktree
 
@@ -894,6 +894,34 @@ Concretely, for a child branch `C` and parent branch `P`:
 - **Attachment commits:** `parents(roots(P..C))`, the commits the moved commits hang off. They are always in `P`'s history.
 - `C` is **up to date** when it has no moved commits, or when every rebase root already sits directly on `P`'s tip.
 - Otherwise, the rebase roots and all their descendants are rebased onto `P`'s tip (or onto a fork commit there, see below): `jj rebase -s "roots(P..C)" -d <destination>`.
+- **Outside first parents:** after the rebase, each moved commit whose first parent lies outside the moved commits takes the destination as its first parent. It keeps its other parents in order.
+
+**Keeping the first-parent line intact.** The rebase moves the roots and everything above them. It does not move a parent of a moved commit when that parent lies outside the moved commits. Only a merge can have such a parent and still not be a root. The first checkpoint merge after a partial check-in has this shape: its first parent is the checked-in commit, which `P` already contains. A grandchild's check-in merge has the same shape when the grandchild existed before `C`'s partial check-in. Left alone, the merge keeps that first parent, and the first-parent line from `C` skips the fork commit and the rebased work. Propagate therefore gives each such merge the destination as its first parent. The merge keeps two parents, and its first parent stays a tt commit.
+
+Before the rebase. `W` was checked in to `P`, then the user committed `c2` and ran `tt task checkpoint`:
+
+```
+o  [C:checkpoint]      <- C
+o    [C:merge]
+|\
+| o  c2
+|/
+o  W                          (in P's history)
+```
+
+After the rebase onto a new fork commit `F2` on `P`'s tip `Pwork`:
+
+```
+o  [C:checkpoint]      <- C
+o    [C:merge]
+|\
+| o  c2
+|/
+o  F2 [C:fork]
+o  Pwork               <- P
+```
+
+Without the outside-first-parent step, `[C:merge]` would keep `W` as its first parent, and the first-parent line from `C` would run `[C:checkpoint]`, `[C:merge]`, `W`.
 
 **Keeping `TASK.md` on the child.** Every commit on `C`'s own line points `TASK.md` at `C` (§4.3), and propagate preserves this. A partial check-in breaks the plain rebase and merge: the handoff points `TASK.md` back at `P`, and `C`'s later commits do not touch it. Propagate therefore adds commits in three cases. It never creates an empty commit.
 
@@ -1021,10 +1049,10 @@ Narrower sets are wrong in ways that are easy to miss. Descending from the paren
 
 1. **Remove from old parent:** Creates a `[tt:task:<task-id>:remove] <title>` commit on the old parent branch that removes the `subtask:` entry for the task **and** deletes the task's stub directory (`.tt/task/<slug>-<hex>/`). Old parent bookmark advances.
 2. **Add to new parent:** Creates a `[tt:task:<task-id>:move] <title>` commit on the new parent branch that adds `subtask: [ ] <task-id>` to the new parent's frontmatter **and** copies the task's stub TASK.md (read from the old parent's pre-Step-1 commit ID) into `.tt/task/<slug>-<hex>/TASK.md` on the new parent. New parent bookmark advances.
-3. **Rebase task branch:** Rebases the task's unmerged range (`roots(::task ~ ::old_parent)`) onto the new parent's bookmark tip. If there are no unmerged commits (e.g., the task branch has no commits beyond the old parent's ancestry), this step is skipped.
+3. **Rebase task branch:** Rebases the task's unmerged range (`roots(::task ~ ::old_parent)`) onto the new parent's bookmark tip, in the same way as propagate (§6.8). If there are no unmerged commits (e.g., the task branch has no commits beyond the old parent's ancestry), this step is skipped.
 4. **Restore the task symlink:** Sets `TASK.md` in each moved root to its state in that root's pre-move commit, where it points at the moved task. Commits above each root inherit it. The invoking worktree is then refreshed, because the restore is a bare rewrite.
 
-**Task symlink handling.** On the new parent's line `TASK.md` points at the new parent, while every commit on the task's own line points it at the task (§4.3). The rebase in Step 3 cannot reconcile the two. A root that changes the symlink, such as the fork commit, ends up conflicted on `TASK.md`. A root that inherits it, such as the first commit after a partial check-in, ends up pointing at the new parent. Step 4 resolves both cases by restoring the symlink from the root's own pre-move commit.
+**Task symlink handling.** On the new parent's line `TASK.md` points at the new parent, while every commit on the task's own line points it at the task (§4.3). The rebase in Step 3 cannot reconcile the two. A root that changes the symlink, such as the fork commit, ends up conflicted on `TASK.md`. Step 4 resolves this by restoring the symlink from the root's own pre-move commit.
 
 **Stub file handling.** `tt task create` always places the task's stub TASK.md on the parent branch. `tt task move` mirrors this invariant: the stub is removed from the old parent (Step 1) and placed on the new parent (Step 2). This is also essential for conflict-free rebasing in Step 3: jj performs a 3-way merge when rebasing, using the old parent tip as the base. If the new parent lacks the stub, jj sees a delete-vs-modify conflict in the task's TASK.md. By placing a byte-identical copy of the stub on the new parent, jj sees "theirs == base" and cleanly takes the task branch's own TASK.md without conflict. The stub is read from the old parent's commit ID (captured before Step 1 advances the bookmark), ensuring the content is byte-identical to what the rebase will use as its merge base.
 
@@ -1036,6 +1064,7 @@ Narrower sets are wrong in ways that are easy to miss. Descending from the paren
 - The task must have exactly one current parent (found via `subtask:` traversal). Parentless tasks (projects) cannot be moved.
 - The new parent must not be the same as the current parent.
 - Moving the task must not create a cycle (the new parent must not be a descendant of the task).
+- The task must not be partially checked in to its current parent. Detection uses the test propagate applies (§6.8): a commit that the task's unmerged range hangs off points `TASK.md` at the task. Part of such a task already belongs to the old parent, and the move would rebase only the rest. The command refuses before it writes anything: `Error: Cannot move '<task-id>': already partially checked in to '<old-parent>'`.
 
 **Worktrees:** The move does not relocate the working copy. The invoking worktree follows a parent branch it is actually sitting on, so its work stays attached to the branch it was on; a worktree on some other branch is left where it is. Worktrees left behind on either parent branch are reported as out of sync, to be brought forward with `tt worktree sync`.
 
