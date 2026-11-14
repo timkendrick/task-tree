@@ -1,6 +1,6 @@
 ---
 title: "Add `tt history lock` / `tt history unlock --key` CLI commands"
-status: IN-PROGRESS
+status: DONE
 created: 2026-11-14T10:01:52Z
 updated: 2026-11-14T12:59:38Z
 context: context/implementation-summary-e0703531
