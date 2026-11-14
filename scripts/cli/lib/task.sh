@@ -85,6 +85,7 @@
 #   _task__list_unmerged_changes     — paths changed by a branch's unmerged range
 #   _task__list_unmerged_roots       — attachment points of a task's unmerged range
 #   _task__list_unmerged_root_parents — commits a task's unmerged range hangs off
+#   _task__check_attached_to_own_line — whether a task's unmerged range hangs off its own line
 #   _task__move_unmerged_range       — reparent a task's unmerged range
 #   _task__restore_symlink           — set a commit's task symlink from another commit
 #   _task__check_up_to_date          — whether a task already sits on a base revision
@@ -1945,6 +1946,29 @@ _task__list_unmerged_roots() {
 _task__list_unmerged_root_parents() {
   local repo="$1" base_rev="$2" task_rev="$3"
   _repo__list_range_root_parent_commits "$repo" "$base_rev" "$task_rev"
+}
+
+# Usage: _task__check_attached_to_own_line REPO BASE_REV TASK_REV TASK_FILE
+#
+# Returns 0 when any commit that TASK_REV's unmerged range relative to
+# BASE_REV hangs off (_task__list_unmerged_root_parents) points the task
+# symlink at TASK_FILE, the task's own task file. Such a commit belongs to the
+# task's own line, and an earlier check-in brought it into BASE_REV: the task
+# is partially checked in. The range then does not include the task's fork
+# commit. Returns 1 otherwise, including when the range is empty.
+_task__check_attached_to_own_line() {
+  local repo="$1" base_rev="$2" task_rev="$3" task_file="$4"
+  local root_parents
+  root_parents="$(_task__list_unmerged_root_parents "$repo" "$base_rev" "$task_rev")" \
+    || root_parents=''
+  local root_parent target
+  while IFS= read -r root_parent; do
+    [[ -n "$root_parent" ]] || continue
+    target="$(_task__read_symlink "$repo" "$root_parent" "$TT_TASK_SYMLINK_FILENAME")" \
+      || continue
+    [[ "$target" == "$task_file" ]] && return 0
+  done <<< "$root_parents"
+  return 1
 }
 
 # Usage: _task__move_unmerged_range REPO BASE_REV TASK_REV DEST_REV

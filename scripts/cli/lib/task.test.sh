@@ -1265,6 +1265,39 @@ test__task__list_unmerged_root_parents__reports_the_partially_checked_in_tip() {
 }
 
 # ---------------------------------------------------------------------------
+# _task__check_attached_to_own_line
+# ---------------------------------------------------------------------------
+
+test__task__check_attached_to_own_line__detects_a_partial_checkin() {
+  setup_workspace "attached-to-own-line"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" >/dev/null || true
+  task_id=$(create_task "t" "T") || true
+  checkout_task "$task_id" >/dev/null || true
+  echo w1 > "$REPO/w1.txt"
+  checkpoint_task "w1" >/dev/null || true
+  local task_file
+  task_file="$(_task__resolve_file "$task_id" "$(_workspace__get_task_prefix "$REPO")" \
+    "$(_workspace__get_project_prefix "$REPO")")"
+
+  local exit_code=0
+  _task__check_attached_to_own_line "$REPO" "$proj_id" "$task_id" "$task_file" || exit_code=$?
+  assert_failure "a task that was never checked in hangs off its parent" "$exit_code"
+
+  run_tt task checkin "$task_id" >/dev/null 2>&1 || true   # partial checkin
+  checkout_task "$task_id" >/dev/null || true
+  echo w2 > "$REPO/w2.txt"
+  checkpoint_task "w2" >/dev/null || true
+
+  exit_code=0
+  _task__check_attached_to_own_line "$REPO" "$proj_id" "$task_id" "$task_file" || exit_code=$?
+  assert_success "a partially checked-in task hangs off its own line" "$exit_code"
+  exit_code=0
+  _task__check_attached_to_own_line "$REPO" "$task_id" "$task_id" "$task_file" || exit_code=$?
+  assert_failure "an empty range hangs off nothing" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
 # _task__move_unmerged_range
 # ---------------------------------------------------------------------------
 

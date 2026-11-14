@@ -111,27 +111,6 @@ read_status() {
   _task__read_status "$repo" "$child" "$child" "$task_prefix" "$project_prefix"
 }
 
-# Usage: is_attached_to_own_line REPO CHILD_BOOKMARK PARENT_BOOKMARK TASK_FILE
-# Returns 0 (true) if any commit that the child's unmerged range hangs off
-# points the task symlink at TASK_FILE, the child's own task file. Such a
-# commit is a child commit that an earlier check-in brought into the parent.
-# The moved commits then do not include the child's fork commit, so on the
-# parent's tip they would inherit the parent's task symlink.
-is_attached_to_own_line() {
-  local repo="$1" child="$2" parent="$3" task_file="$4"
-  local root_parents
-  root_parents="$(_task__list_unmerged_root_parents "$repo" "$parent" "$child")" \
-    || root_parents=''
-  local root_parent target
-  while IFS= read -r root_parent; do
-    [[ -n "$root_parent" ]] || continue
-    target="$(_task__read_symlink "$repo" "$root_parent" "$TT_TASK_SYMLINK_FILENAME")" \
-      || continue
-    [[ "$target" == "$task_file" ]] && return 0
-  done <<< "$root_parents"
-  return 1
-}
-
 # Usage: get_subtask_ids REPO BOOKMARK TASK_PREFIX PROJECT_PREFIX
 # Prints one subtask task-id per line for all checkboxes ([ ], [-], [x]).
 # Includes [x] entries so that partially-checked-in children that are still
@@ -216,8 +195,10 @@ propagate_one_rebase() {
     return 0
   fi
 
+  # A range that hangs off the child's own line does not include the child's
+  # fork commit, so on FROM's tip it would inherit FROM's task symlink.
   local needs_fork=false
-  is_attached_to_own_line "$repo" "$child" "$from" "$task_file" && needs_fork=true
+  _task__check_attached_to_own_line "$repo" "$from" "$child" "$task_file" && needs_fork=true
 
   if [[ "$dry_run" == true ]]; then
     if [[ "$needs_fork" == true ]]; then
