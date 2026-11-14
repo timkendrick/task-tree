@@ -2,7 +2,8 @@
 title: "Keep the first-parent line intact when rebasing checkpoint merges"
 status: IN-PROGRESS
 created: 2026-11-13T16:26:20Z
-updated: 2026-11-13T16:26:20Z
+updated: 2026-11-14T12:57:54Z
+context: context/implementation-summary-cbec5117
 ---
 ## Problem
 
