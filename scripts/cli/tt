@@ -96,6 +96,8 @@ Aliases (shorthand for common subcommands):
   ${SCRIPT_NAME} delete-context → tt task context delete
   ${SCRIPT_NAME} prompt       →  tt task prompt
   ${SCRIPT_NAME} undo         →  tt history undo
+  ${SCRIPT_NAME} lock         →  tt history lock
+  ${SCRIPT_NAME} unlock       →  tt history unlock
   ${SCRIPT_NAME} init         →  tt workspace init
   ${SCRIPT_NAME} switch       →  tt worktree switch
   ${SCRIPT_NAME} sync         →  tt worktree sync
@@ -121,6 +123,8 @@ main() {
   # Resolve top-level aliases before dispatching
   case "${1:-}" in
     undo)        set -- history  undo         "${@:2}" ;;
+    lock)        set -- history  lock         "${@:2}" ;;
+    unlock)      set -- history  unlock       "${@:2}" ;;
     init)        set -- workspace init        "${@:2}" ;;
     switch)      set -- worktree switch      "${@:2}" ;;
     sync)        set -- worktree sync        "${@:2}" ;;

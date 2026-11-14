@@ -264,6 +264,8 @@ The canonical form is `tt <entity-type> <command>`, e.g. `tt workspace init` or 
 | `tt prompt` | `tt task prompt` |
 | `tt move` | `tt task move` |
 | `tt undo` | `tt history undo` |
+| `tt lock` | `tt history lock` |
+| `tt unlock` | `tt history unlock` |
 | `tt active` | `tt worktree active` |
 | `tt repo` | `tt workspace repo` |
 | `tt root` | `tt workspace root` |
@@ -296,24 +298,35 @@ Any other value — including `INFO` or `VERBOSE` — leaves narration off.
 
 ### 5.2 History
 
-- **`tt history undo [--force] [--repo PATH]`** — Undo the most recent mutating `tt` command by restoring the jj repository to the operation state before that command ran. Multiple invocations go further back in history. There is no `tt history redo`; instead, the outgoing jj operation ID is logged to stderr before undoing so the user can manually restore it with `jj op restore <operation-id>`.
+- **`tt history lock [--repo PATH]`** — Open a **user-held transaction**: a transaction that stays open after the command exits. Prints the transaction's **key** (its before-op ID) to stdout. Commands run with `TT_TRANSACTION_ID` set to the key join the transaction. `tt history unlock --key` commits it as a single history entry, and `tt history undo --key` reverts it. See §6.12.6.
+
+  - Exits 1 if `TT_TRANSACTION_ID` is already set.
+  - Exits 1 if the history file does not exist.
+  - Exits 1 if the canonical workspace is stale (§6.16).
+  - Exits 1 if a transaction is already in progress.
+  - Snapshots the invoking worktree after recording the in-progress entry, as every transaction begin does.
+
+- **`tt history undo [--force | --key KEY] [--repo PATH]`** — Undo the most recent mutating `tt` command by restoring the jj repository to the operation state before that command ran. Multiple invocations go further back in history. There is no `tt history redo`; instead, the outgoing jj operation ID is logged to stderr before undoing so the user can manually restore it with `jj op restore <operation-id>`.
 
   **Safety checks** (all bypassed by `--force`):
   - No in-progress transaction (last history entry has a non-empty after-op-id). An in-progress entry indicates a `tt` command crashed mid-transaction; `--force` allows reverting it.
   - Current jj operation ID matches the last recorded after-op-id. A mismatch indicates the repository was modified outside of `tt` since the last recorded command; `--force` allows undoing anyway.
   - Working copy is clean (no uncommitted changes).
 
+  **`--key KEY`** reverts the in-progress transaction whose key is KEY, typically one opened by `tt history lock`. It exits 1 when no transaction is in progress or when the in-progress transaction has another key. Uncommitted changes in the invoking worktree are kept, as a failed command's rollback keeps them. `--key` cannot be combined with `--force`.
+
   See §6.12 for the full transaction history mechanism.
 
-- **`tt history unlock [--force] [--repo PATH]`** — Clear a stale in-progress transaction from `.tt/history` without reverting the jj repository state. Use this when a `tt` process crashed mid-transaction and the jj repository is already in an acceptable state.
+- **`tt history unlock [--force | --key KEY] [--repo PATH]`** — Clear a stale in-progress transaction from `.tt/history` without reverting the jj repository state. Use this when a `tt` process crashed mid-transaction and the jj repository is already in an acceptable state. With `--key`, commit the user-held transaction opened by `tt history lock`.
 
-  - If there is no in-progress transaction: exits 0 silently (no-op).
-  - If the history file is empty: exits 0 silently (no-op).
+  - If there is no in-progress transaction: exits 0 silently (no-op), unless `--key` is given.
+  - If the history file is empty: exits 0 silently (no-op), unless `--key` is given.
   - If the history file does not exist: exits 1 with an error message.
   - If there is an in-progress transaction and `--force` is not given: exits 1 with a message.
   - If a history lock (`.tt/history.lock`, left behind by a killed `tt` process) is present and `--force` is not given: exits 1 with a message naming the lock.
   - With `--force` and a history lock present: removes the lock and reports its removal, whether or not there is an in-progress transaction.
   - With `--force`: completes the transaction entry by writing `<before-op-id>:<current-op-id>` (where `<current-op-id>` is the current jj operation ID) — this marks the history as clean without changing the jj repository state.
+  - With `--key KEY`: completes the transaction entry in the same way, but only when the in-progress entry's before-op ID is KEY. Exits 1 when no transaction is in progress, when the keys differ, or when a history lock is present. `--key` cannot be combined with `--force`.
 
   **Contrast with `tt history undo --force`:** `undo --force` reverts the jj repository to the state before the crashed command ran. Use `unlock --force` when you want to keep the current jj state and just unblock future `tt` commands.
 
@@ -1108,8 +1121,9 @@ Each read-check-write of `.tt/history` runs under a short-lived lock. Without it
 - Transaction rollback: removing the in-progress entry. The VCS restore runs outside the lock.
 - `tt history undo`: the whole sequence of reading the last entry, restoring the repository and rewriting the history. A transaction that began in between would otherwise have its own entry removed. The restore can take a while, so a command started during an undo can wait, and on a large repository it can reach the timeout.
 - `tt history unlock`: its rewrite of the in-progress entry.
+- Nested begin: reading the last line to verify the inherited transaction ID (§6.12.3).
 
-Nested sub-commands do not touch the lock. Their begin, commit and rollback calls return early, so they cannot deadlock against the parent command.
+The parent command does not hold the lock while a nested sub-command runs, so the nested verification cannot deadlock against it. Nested commit and rollback calls return early and do not touch the lock.
 
 **Timeout:** a command that cannot take the lock fails with an error that names the lock directory:
 
@@ -1129,7 +1143,7 @@ The transaction API is implemented in `scripts/cli/lib/history.sh` as three oper
 
 - **Begin** — Called at the start of a mutating command, before the first VCS operation. Under the history lock (§6.12.2), captures the current VCS operation ID as `<before-op-id>`, checks for an in-progress entry, and appends `<before-op-id>:` (in-progress) to `.tt/history`. It then releases the lock, exports `TT_TRANSACTION_ID=<before-op-id>`, marks this process as the transaction owner, and sets an `ERR` trap to roll back on failure. It then **snapshots the invoking worktree**, capturing any pending on-disk changes into that worktree's own working-copy commit. The snapshot deliberately runs *after* the before-op ID is recorded, so undoing the transaction also reverts the snapshot and the user's uncommitted work is restored as it was.
 
-  **Nested sub-commands:** When a top-level command delegates to a sub-command (e.g. `tt task create --checkout` calling `tt task checkout` internally), the sub-command inherits `TT_TRANSACTION_ID` via the environment and its begin call returns immediately (no-op). Ownership is recorded in a variable that is *not* exported, so the sub-command's commit and rollback calls are also no-ops — only the top-level command owns the transaction.
+  **Nested sub-commands:** When a top-level command delegates to a sub-command (e.g. `tt task create --checkout` calling `tt task checkout` internally), the sub-command inherits `TT_TRANSACTION_ID` via the environment and its begin call opens no transaction. Begin only verifies the inherited ID: under the history lock, it checks that the last line of `.tt/history` is `<TT_TRANSACTION_ID>:`. It exits 1 when no transaction is in progress or when the in-progress transaction has another ID. The same check admits commands that join a user-held transaction (§6.12.6) and rejects a stale or mistyped key. Ownership is recorded in a variable that is *not* exported, so the sub-command's commit and rollback calls are also no-ops — only the top-level command owns the transaction.
 
 - **Commit** — Called at the successful end of a command, after all operations (including follow-on actions like `--propagate` and `--checkout`) complete. Captures the current VCS operation ID as `<after-op-id>`, replaces the last line of `.tt/history` (`<before-op-id>:`) with `<before-op-id>:<after-op-id>`, and clears the `ERR` trap. No-op if not the transaction owner.
 
@@ -1176,6 +1190,15 @@ A killed command can also leave the history lock behind (§6.12.2). Later comman
 
 **`tt history undo` is not itself transactional:** The undo command does not write to `.tt/history`. This means you cannot "undo the undo" via `tt history undo`; use `jj op restore <after-op-id>` from the logged output instead.
 
+**`--key KEY`:** reverts the user-held transaction whose key is KEY (§6.12.6). `--key` cannot be combined with `--force`. Step 1 applies unchanged. The other steps change as follows:
+
+- If the last entry is complete: exit 1 with "No transaction is in progress".
+- If the last entry is in progress with a before-op ID other than KEY: exit 1, naming both IDs.
+- The safety checks of step 2 do not apply, and step 3 logs nothing.
+- The restore keeps the invoking worktree's uncommitted files, as rollback does (§6.12.3). It runs from the invoking worktree.
+- If the restore fails, the entry is kept and the command exits 1.
+- Otherwise, steps 6 and 7 apply unchanged.
+
 #### 6.12.5 `tt history unlock` command
 
 `tt history unlock [--force] [--repo PATH]` clears a stale in-progress transaction from `.tt/history` without reverting the jj repository state.
@@ -1193,6 +1216,47 @@ A killed command can also leave the history lock behind (§6.12.2). Later comman
 **Result:** The transaction entry's `<after-op-id>` reflects the actual current jj operation, accurately representing the state of the repository at the time the lock was cleared. Subsequent `tt` commands will no longer see an in-progress entry and will start normally.
 
 **`tt history unlock` is not itself transactional:** The unlock command does not write a new transaction entry to `.tt/history`. It only modifies the existing in-progress entry.
+
+**`--key KEY`:** commits the user-held transaction whose key is KEY (§6.12.6). Steps 1, 2 and 4 apply unchanged, and `--key` cannot be combined with `--force`. The other steps change as follows:
+
+- If the history file is empty or the last entry is complete: exit 1 with "No transaction is in progress".
+- If the last entry is in progress with a before-op ID other than KEY: exit 1, naming both IDs.
+- Otherwise: complete the entry as step 7 does.
+
+#### 6.12.6 User-held transactions
+
+A transaction normally lasts as long as one command. A **user-held transaction** spans several commands, so that they form one history entry. One `tt history undo` then reverts them all, and a script can revert them all when one of them fails.
+
+**Lifecycle:**
+
+1. `tt history lock` begins a transaction as any command does: it records the in-progress entry and snapshots the invoking worktree. It then gives up ownership without closing the transaction, so the entry outlives the process. It prints the transaction's **key**, which is the entry's before-op ID.
+2. The user exports `TT_TRANSACTION_ID` with the key. Each later command treats the transaction as its parent's (§6.12.3): it verifies the key, opens no transaction of its own, and does not commit or roll back. A command without the key refuses with the stale-transaction error, and a command with a wrong key refuses with a mismatch error.
+3. The user closes the transaction with one of these commands:
+   - `tt history unlock --key KEY` writes the current operation as the after-op ID. The commands become one completed history entry.
+   - `tt history undo --key KEY` restores the before-op state and removes the entry. Uncommitted files in the invoking worktree are kept, as rollback keeps them (§6.12.3).
+
+**Worked example:** a script creates a project and a task under it. If either command fails, the script reverts both.
+
+```bash
+key="$(tt lock)"
+export TT_TRANSACTION_ID="$key"
+if proj="$(tt create --project --slug api --title API)" &&
+   tt create --parent "$proj" --slug auth --title Auth; then
+  tt unlock --key "$key"
+else
+  tt undo --key "$key"
+fi
+unset TT_TRANSACTION_ID
+```
+
+- `tt lock` records `<op-0>:` and prints `op-0`.
+- Both `tt create` commands verify `op-0` against the last history line and run inside the transaction.
+- On success, `tt unlock --key` rewrites the line as `<op-0>:<op-n>`, where `op-n` is the current operation. A later `tt undo` removes both the project and the task.
+- On failure, `tt undo --key` restores `op-0` and removes the line. The repository returns to its state before `tt lock`.
+
+**Failures inside the transaction are not rolled back.** A command that joins the transaction does not own it, so a failure leaves that command's partial writes in place. `tt history undo --key` reverts them along with everything else in the transaction.
+
+**Staleness checks:** commands that join the transaction skip the canonical-workspace check (§6.16), as nested sub-commands do. `tt history lock` runs that check before it opens the transaction instead. A command inside the transaction can still make the canonical workspace stale, and later commands in the transaction do not report it. `tt history undo --key` restores from the worktree it runs in, so run it from a worktree that is not stale.
 
 ---
 
@@ -1352,7 +1416,7 @@ tt refuses to act on a stale workspace rather than recovering it silently, becau
 
 **The canonical workspace.** Every command that writes to a branch first checks that the **canonical** workspace — the original repository directory, as opposed to the worktrees tasks are checked out into — is not stale. The canonical workspace is where a failed command's transaction rollback restores the repository from (§6.12), and it is the one workspace guaranteed to still exist even when the invoking worktree has just been deleted. In a repository driven from task worktrees it is rarely the one being worked in, so it can sit stale unnoticed; a rollback that then needed it would fail. Checking up front means the command refuses before writing anything, rather than discovering the problem while already failing.
 
-The check inspects the canonical workspace only. The invoking worktree is deliberately left to fail on its own terms: if it is stale, the transaction's begin-time snapshot refuses immediately and rolls back cleanly. It is also skipped when the canonical workspace *is* the invoking worktree, and inside a nested sub-command, where the outermost command has already checked.
+The check inspects the canonical workspace only. The invoking worktree is deliberately left to fail on its own terms: if it is stale, the transaction's begin-time snapshot refuses immediately and rolls back cleanly. It is also skipped when the canonical workspace *is* the invoking worktree, and inside a nested sub-command, where the outermost command has already checked. Commands that join a user-held transaction skip it for the same reason: `tt history lock` checks once, before the transaction opens (§6.12.6).
 
 A residual gap is accepted rather than closed: a command that itself rewrites the canonical workspace's working-copy commit makes it stale during its own run, and a rollback after that point still cannot restore. This is survivable because such a rollback keeps the transaction entry (§6.12), and the recovery it names — `tt history undo --force` — restores from whichever worktree it is invoked in, which in that situation is not the stale one.
 

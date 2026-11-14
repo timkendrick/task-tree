@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+# shellcheck source=../lib/common.sh
+. "$SCRIPT_DIR/../lib/common.sh"
+
+# tt history lock — open a transaction that outlives the command, and print
+#                   its key.
+#
+# Usage:
+#   tt history lock [--repo PATH]
+#
+# Options:
+#   --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
+#
+# Records an in-progress entry in .tt/history and snapshots the working copy,
+# as every mutating command does when it begins. The transaction is then left
+# open, and its key (the operation ID before the transaction) is printed to
+# stdout. Commands run with TT_TRANSACTION_ID set to the key join the
+# transaction. `tt history unlock --key` commits it; `tt history undo --key`
+# reverts it.
+
+readonly SCRIPT_NAME="${0##*/}"
+
+usage() {
+  cat <<EOF
+Usage: tt history lock [--repo PATH]
+
+Open a transaction that stays open after this command exits, and print its
+key to stdout. Run commands with TT_TRANSACTION_ID set to the key to make
+them part of the transaction. Other mutating tt commands refuse to run until
+the transaction is closed.
+
+Close the transaction with one of:
+  tt history unlock --key KEY   keep the changes as a single history entry
+  tt history undo --key KEY     revert every change made since the lock
+
+Commands inside the transaction do not roll back on failure. Use
+'tt history undo --key KEY' to revert the whole transaction instead.
+
+Options:
+  --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
+
+Examples:
+  export TT_TRANSACTION_ID="\$(tt lock)"
+  tt task create --slug foo --title "Foo"
+  tt task checkout task/foo
+  tt unlock --key "\$TT_TRANSACTION_ID" && unset TT_TRANSACTION_ID
+
+EOF
+}
+
+main() {
+  local repo=''
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        [[ $# -lt 2 ]] && { usage >&2; exit 1; }
+        repo="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -*)
+        usage >&2; exit 1
+        ;;
+      *)
+        usage >&2; exit 1
+        ;;
+    esac
+  done
+
+  if [[ -n "${TT_TRANSACTION_ID:-}" ]]; then
+    _ui__log "Error: Already inside a transaction (TT_TRANSACTION_ID is set)."
+    _ui__log "  TT_TRANSACTION_ID: $TT_TRANSACTION_ID"
+    exit 1
+  fi
+
+  repo="$(_workspace__resolve_repo "$repo")"
+
+  local history_file
+  history_file="$(_history__resolve_file "$repo")" || exit 1
+  if [[ ! -f "$history_file" ]]; then
+    _ui__log "Error: History file not found: $history_file"
+    _ui__log "  Has the workspace been initialized? Run: tt workspace init"
+    exit 1
+  fi
+
+  # Commands that join the transaction skip this check, so it runs once here,
+  # before the transaction opens.
+  _worktree__ensure_canonical_current "$repo" || exit 1
+
+  _history__begin_transaction "$repo"
+  local key="$TT_TRANSACTION_ID"
+  _history__detach_transaction
+
+  printf '%s\n' "$key"
+  _ui__log "Transaction open. Run commands inside it with:"
+  _ui__log "  export TT_TRANSACTION_ID=$key"
+  _ui__log "Then close it with one of:"
+  _ui__log "  tt history unlock --key $key"
+  _ui__log "  tt history undo --key $key"
+}
+
+main "$@"

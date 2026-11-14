@@ -596,8 +596,9 @@ rather than interleave with it. That makes the closing of every transaction an i
 a tidiness: an entry left open is a lock nobody holds, and every later branch write fails against it
 until `tt history undo --force` or `tt history unlock --force` clears it.
 
-Sub-commands inherit `TT_TRANSACTION_ID` through the environment, so their own `begin` is a no-op and
-the whole run — `tt task checkin --complete` invoking `complete`, say — records a single entry. Only
+Sub-commands inherit `TT_TRANSACTION_ID` through the environment, so their own `begin` opens nothing:
+it only checks, under the history lock, that the in-progress entry carries that ID, and refuses
+otherwise. The whole run — `tt task checkin --complete` invoking `complete`, say — records a single entry. Only
 the process that opened the transaction owns it: `_TT_TRANSACTION_OWNER` is deliberately not
 exported, so a sub-command can neither commit nor roll back its parent's work.
 
@@ -625,6 +626,10 @@ Both signals are needed, and the handler disarms both before doing anything:
 The status that triggered the trap is captured first and re-raised last, so the command's exit code
 survives the rollback.
 
+The one sanctioned way to exit with a transaction open is `_history__detach_transaction`, which
+disarms the trap and drops ownership while leaving the entry in progress. Only `tt history lock`
+calls it (§8.3).
+
 A command that needs a cleanup of its own must not install a competing EXIT trap, since bash keeps
 one handler per signal and the last one installed wins. Such cleanups run in a subshell that owns
 its own trap instead — `tt task rename`'s staging directory and the staging area inside
@@ -638,7 +643,8 @@ snapshot captured, so the files the working-copy commit changed are copied aside
 afterwards — but only when the restore lands on the same working-copy commit, since a transaction
 that deliberately moved the working copy has no business putting the old files back. Preservation is
 best-effort throughout: each step degrades to a plain restore, which is still recoverable from the
-operation log.
+operation log. The restore and the preservation live in `_history__restore_transaction`, which
+rollback runs from the canonical workspace and `tt history undo --key` runs from the invoking one.
 
 A restore that **fails** keeps the in-progress entry instead of deleting it, and reports an error naming the
 operation to restore and both recovery commands. The entry is then a lock, which is the only thing that makes a
@@ -650,6 +656,19 @@ a working-copy comparison that is meaningless once the restore did not happen. `
 Restoring an operation *creates* an operation, so after a rollback the repository's current operation
 is not the one recorded as the previous transaction's after-op. Tests therefore assert that no
 in-progress entry survives a failure, not that the log's tail matches the current operation.
+
+### 8.3 User-held transactions
+
+`tt history lock` begins a transaction and then detaches from it, so the in-progress entry outlives
+the process. Its before-op ID is the transaction's key. Commands that run with `TT_TRANSACTION_ID`
+set to the key join the transaction by the nested path above: the key check admits them, and they
+neither commit nor roll back. `tt history unlock --key` and `tt history undo --key` close the
+transaction, and each first checks that the in-progress entry carries the key.
+
+No process owns a user-held transaction, so nothing rolls back a joined command that fails. The
+revert is the user's call, through `undo --key`. For the same reason, a joined command skips the
+canonical-workspace check (§6.4) as a nested one does, and `tt history lock` runs that check once
+before it begins.
 
 ## 9. Testing
 
