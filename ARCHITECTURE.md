@@ -192,6 +192,8 @@ Signatures, argument conventions and return values are documented on the backend
 | `count_commits_in_range` | Size of a range |
 | `list_range_root_commits` | The roots of a range |
 | `list_range_root_parent_commits` | The parents of a range's roots |
+| `list_range_external_first_parent_changes` | Non-root commits of a range whose first parent is outside it |
+| `list_parent_commits` | A revision's parents, first parent first |
 | `check_range_covered` | Whether a range lies inside a union of ranges |
 | `format_revision_range` | Render a range in a named format (`native` or `git`) |
 | `list_mainline_commits` | First-parent mainline commit records |
@@ -252,6 +254,7 @@ No working copy is involved in any of these; each rewrites the commit graph dire
 | `create_merge_commit` | Create a merge commit over two or more parents |
 | `set_description` | Replace a revision's description |
 | `move_commits` | Rebase revisions and their descendants onto a destination |
+| `set_parents` | Replace a revision's parents in order, keeping its descendants on it |
 | `restore_tree` | Set a revision's tree wholesale from another, preserving its identity |
 | `restore_path` | Set one path in a revision from another revision, replaying descendants |
 | `abandon_commit` | Abandon a revision, rebasing descendants onto its parents |
@@ -282,7 +285,7 @@ These take a **worktree root** and execute with the process working directory in
 | `new_working_copy_child` | Start a new working-copy commit |
 | `commit_working_copy` | Record the working copy as a commit |
 | `snapshot_worktree` | Capture on-disk changes into the working-copy commit |
-| `reattach_worktree` | Rebase the working-copy commit onto a destination |
+| `reattach_worktree` | Rebase the working-copy commit onto one or more destinations |
 | `refresh_worktree` | Update on-disk files after a bare rewrite of the working-copy commit |
 
 ### 4.3 Tracing
