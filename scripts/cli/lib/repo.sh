@@ -43,10 +43,11 @@ _repo__check_is_ancestor()         { _jj__check_is_ancestor "$@"; }
 _repo__filter_commits_reachable_from() { _jj__filter_commits_reachable_from "$@"; }
 _repo__find_fork_point_commit()    { _jj__find_fork_point_commit "$@"; }
 _repo__list_commits_in_range()     { _jj__list_commits_in_range "$@"; }
-_repo__list_commits_in_dag_range() { _jj__list_commits_in_dag_range "$@"; }
 _repo__count_commits_in_range()    { _jj__count_commits_in_range "$@"; }
 _repo__list_range_root_commits()   { _jj__list_range_root_commits "$@"; }
 _repo__list_range_root_parent_commits() { _jj__list_range_root_parent_commits "$@"; }
+_repo__list_range_external_first_parent_changes() { _jj__list_range_external_first_parent_changes "$@"; }
+_repo__list_parent_commits()       { _jj__list_parent_commits "$@"; }
 _repo__check_range_covered()       { _jj__check_range_covered "$@"; }
 _repo__format_revision_range()     { _jj__format_revision_range "$@"; }
 _repo__list_mainline_commits()     { _jj__list_mainline_commits "$@"; }
@@ -76,7 +77,7 @@ _repo__commit_changeset()          { _jj__commit_changeset "$@"; }
 _repo__create_merge_commit()       { _jj__create_merge_commit "$@"; }
 _repo__set_description()           { _jj__set_description "$@"; }
 _repo__move_commits()              { _jj__move_commits "$@"; }
-_repo__squash_commit()             { _jj__squash_commit "$@"; }
+_repo__set_parents()               { _jj__set_parents "$@"; }
 _repo__restore_tree()              { _jj__restore_tree "$@"; }
 _repo__restore_path()              { _jj__restore_path "$@"; }
 _repo__abandon_commit()            { _jj__abandon_commit "$@"; }

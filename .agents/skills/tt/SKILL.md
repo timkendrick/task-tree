@@ -16,7 +16,7 @@ tt task show         # Show an overview of the current task
 tt task tree --focus # Show the current task within the overall task tree
 tt task current      # Print the current task ID
 tt task parent       # Print the parent task ID
-tt task log          # Show the commit graph of the current task
+tt task log          # Show the task history of the current task (--all adds plain commits)
 ```
 
 ## Command reference
@@ -45,12 +45,13 @@ The **canonical repository** is the original repository directory (`tt workspace
 
 Two rules govern how `tt` treats the working copy. Both are worth knowing before running anything, because they explain the most common failure and the most common surprise.
 
-**Commands that write to a branch do not move the working copy.** They build the commit on the branch directly, leaving `@` exactly where it was and never absorbing uncommitted changes into what they commit. Only `tt task checkout`, `tt task checkpoint`, `tt workspace init`, `tt worktree sync` and `tt history undo` move a working copy at all. (`tt worktree switch` moves no working copy either — it only redirects the `HEAD` symlink.)
+**Commands that write to a branch do not move the working copy.** They build the commit on the branch directly, leaving `@` exactly where it was and never absorbing uncommitted changes into what they commit. Only `tt task checkout`, `tt workspace init`, `tt worktree sync` and `tt history undo` move a working copy at all. (`tt worktree switch` moves no working copy either — it only redirects the `HEAD` symlink.)
 
 A dirty working copy is therefore fine for most commands, including `tt task edit`, `tt task create`, `tt task complete`, `tt task delete`, `tt task reorder`, `tt worktree switch` and the context commands. These still require a clean one:
 
 | Command | Condition |
 |---|---|
+| `tt task checkpoint` | Unless `--task` is given |
 | `tt task checkin` | Only when called without an explicit task ID |
 | `tt task publish`, `tt task propagate` | Only when called without an explicit project ID / `--from`, and unless `--force` |
 | `tt task move`, `tt task rename` | Always |
@@ -66,9 +67,9 @@ Error: Worktree '<path>' has uncommitted changes to task metadata:
   Discard these changes first, or use --force.
 ```
 
-Use `tt task edit` and the context commands instead, and discard the hand edits (`jj restore .tt/task TASK.md`). `--force` bypasses the refusal where a command has it, but it can leave conflict markers in the working copy. `.tt/config.toml` and `.tt/hooks/` are not task metadata and may be edited freely.
+Use `tt task edit` and the context commands instead, and discard the hand edits (`jj restore .tt/task TASK.md`). The same goes for committed edits: `tt task checkpoint` refuses to merge commits that touch task metadata, so never include it in your own commits. `--force` bypasses the refusal where a command has it, but it can leave conflict markers in the working copy. `.tt/config.toml` and `.tt/hooks/` are not task metadata and may be edited freely.
 
-**Checkpoint before running commands on the current task.** Commits made with plain `jj commit` are not on the task branch until `tt task checkpoint` records them. Commands that default to the current task (`edit`, `complete`, `delete`, `context add`, `context delete`, `create` without `--parent`, `reorder` without a task ID or modifier, `propagate` without `--from`, `publish` and `checkin` without an ID) refuse while such commits exist:
+**Checkpoint before running commands on the current task.** Commits made with plain `jj commit` are not on the task branch until `tt task checkpoint` merges them in. Commands that default to the current task (`edit`, `complete`, `delete`, `context add`, `context delete`, `create` without `--parent`, `reorder` without a task ID or modifier, `propagate` without `--from`, `publish` and `checkin` without an ID) refuse while such commits exist:
 
 ```
 Error: Worktree '<path>' has commits after the task bookmark '<task-id>'.
@@ -136,9 +137,19 @@ Switch to the given task branch. `--worktree` uses/creates a worktree for the ta
 
 #### `tt task checkpoint`
 ```
-tt task checkpoint [-m <message>] [--squash]
+tt task checkpoint [-m <message>] [--task <task-id>]
 ```
-Record the current state of work. `--squash` collapses all commits since the last bookmark into a single checkpoint commit. Always pass `-m` when running non-interactively: without it the command opens an editor, and when stdin is not a terminal it exits with an error instead. An empty message cancels the checkpoint.
+Bring your committed work onto the current task branch. Commit your changes with `jj commit` first: the working copy must be clean. Checkpoint merges every commit after the task bookmark into the branch with an empty `[tt:task:<task-id>:merge]` commit, records an empty `[tt:task:<task-id>:checkpoint] <message>` commit on top, and advances the bookmark to it. With nothing to merge, it records just the empty checkpoint commit. It refuses if the commits change task metadata or the merge conflicts. `--task <task-id>` records only an empty checkpoint commit on that branch, merging nothing, whatever the state of the working copy. Always pass `-m` when running non-interactively: without it the command opens an editor, and when stdin is not a terminal it exits with an error instead. An empty message cancels the checkpoint.
+
+```
+○  [tt:task:task/T:checkpoint] Add parser   ← task/T
+○    [tt:task:task/T:merge] <title>
+├─╮
+│ ○  Parse lists      (your commits)
+│ ○  Add tokenizer
+├─╯
+○  [tt:task:task/T:checkout] <title>
+```
 
 #### `tt task complete`
 ```
@@ -149,12 +160,12 @@ Mark a task DONE. Requires all child tasks to be done, unless `--force` is given
 #### `tt task checkin`
 ```
 tt task checkin [<task-id>] [--complete] [--rebase | --merge] [--force] [--delete]
-                [--context <markdown>|-] [--switch] [--retain-worktree]
+                [--context <markdown>|-] [--switch]
                 [--propagate [--propagate-rebase | --propagate-merge]
                 [--propagate-shallow] [--propagate-force] [--propagate-dry-run]
                 [--propagate-to <child-id>]]
 ```
-Merge a task branch into its parent. `--complete` marks it done first. `--delete` removes the task file after checkin, along with the task's dedicated worktree if it has one (pass `--retain-worktree` to keep it). `--propagate` propagates the updated parent tip to sibling branches.
+Merge a task branch into its parent. `--complete` marks it done first. `--delete` removes the task file after checkin and deregisters the task's worktree, but never deletes the worktree's files (run `tt worktree delete` first to remove them). `--propagate` propagates the updated parent tip to sibling branches.
 
 Checkin never removes a worktree unless `--delete` is given; use `tt worktree delete` to tear one down on its own, or `tt worktree prune` to remove every worktree whose task is `DONE`.
 
@@ -218,9 +229,9 @@ Summarize the work checked into a task branch: a tree of the tasks checked into 
 
 #### `tt task log`  (alias: `tt log`)
 ```
-tt task log [--task <task-id>] [--limit <n>] [--repo PATH]
+tt task log [--task <task-id>] [--limit <n>] [--all] [--repo PATH]
 ```
-Show the commit graph of a task branch, newest first, in the shape of `jj log`. tt commits appear as one line each: an event glyph, the change ID and, for task, context and checkpoint events, a short label. Other commits appear in full, and bookmarks and tags follow each commit's description. A task branch shows its complete range (every check-in plus unmerged work); a project branch shows every commit since its task file appeared. Without `--task`, uses the current task and includes trailing commits beyond the task bookmark. `--limit` caps the number of commits shown. Set `TT_LOG_ICONS=unicode` when the terminal has no Nerd Font. Pipe the output (or set `PAGER=cat`) to avoid the pager in non-interactive use.
+Show the commit graph of a task branch, newest first, in the shape of `jj log`. tt commits appear as one line each: an event glyph, the change ID and, for some events, a label: the full task or context ID, or the checkpoint message. Other commits are hidden unless `--all` is given (checkpoint side chains, plain commits of checked-in child tasks, and commits past the bookmark); hidden commits between shown ones appear as `~  (elided revisions)`, and hidden commits above the newest shown one are counted in a first line such as `⚠  2 uncheckpointed commits`. With `--all` they appear in full. Bookmarks and tags follow each commit's description. A task branch shows its complete range (every check-in plus unmerged work); a project branch shows every commit since its task file appeared. Without `--task`, uses the current task and includes trailing commits beyond the task bookmark (usually plain commits, so counted rather than shown unless `--all` is given). `--limit` caps the number of commits shown, counting only the commits shown. Set `TT_LOG_ICONS=unicode` when the terminal has no Nerd Font. Pipe the output (or set `PAGER=cat`) to avoid the pager in non-interactive use.
 
 #### `tt task edit`
 ```
@@ -238,7 +249,7 @@ Rename a task's slug (human-readable part of the task ID), preserving the hex su
 ```
 tt task move --parent <parent-task-id> [--task <task-id>]
 ```
-Reparent a task by moving it to a different parent.
+Reparent a task by moving it to a different parent. Refuses a task that is partially checked in to its current parent, because part of its work already belongs to that parent.
 
 #### `tt task delete`
 ```
@@ -343,6 +354,32 @@ tt worktree prune [--dry-run] [--force]
 ```
 Delete every worktree whose task is `DONE`, using `tt worktree delete` for each one. Prints each deleted path to stdout. `--dry-run` prints the same paths without deleting anything. `--force` is passed through to each delete. A worktree that fails to delete is reported and skipped, and the command exits non-zero.
 
+### History commands
+
+#### `tt history undo`  (alias: `tt undo`)
+```
+tt history undo [--force | --key <key>]
+```
+Revert the most recent mutating `tt` command. Refuses while a transaction is in progress, while the repository has changed outside `tt`, or while the working copy is dirty, unless `--force`. `--key` reverts the transaction opened by `tt history lock` and keeps uncommitted files.
+
+#### `tt history lock`  (alias: `tt lock`)
+```
+tt history lock
+```
+Open a transaction that spans several commands, and print its key. Export the key as `TT_TRANSACTION_ID` to run commands inside it; every other mutating command refuses until it is closed. Close it with `tt unlock --key <key>` to keep the changes as one history entry, or `tt undo --key <key>` to revert them all. A command that fails inside the transaction is **not** rolled back, so revert with `tt undo --key` instead:
+
+```shell
+key="$(tt lock)"; export TT_TRANSACTION_ID="$key"
+if tt create --project --slug api --title API </dev/null; then tt unlock --key "$key"; else tt undo --key "$key"; fi
+unset TT_TRANSACTION_ID
+```
+
+#### `tt history unlock`  (alias: `tt unlock`)
+```
+tt history unlock [--force | --key <key>]
+```
+`--key` commits the transaction opened by `tt history lock`. `--force` clears a transaction left in progress by a crashed command, keeping the current repository state, and removes a stuck history lock.
+
 ---
 
 ## Standard tt workflow
@@ -353,9 +390,9 @@ All tasks should follow the general `tt` workflow:
 
 2. **Begin a task** — `tt task checkout <task-id> [--worktree[=<path>]] [--switch] [--force]`. Switches to the task branch and updates status to IN-PROGRESS if TODO or DONE. Checkout does not change `./TASK.md`. With `--worktree`, uses or creates a worktree; `--switch` also updates the HEAD symlink to the new worktree. Run `tt task checkout --help` for options.
 
-3. **Work on the task** — Make commits on the branch and accumulate context in `./TASK.md`.
+3. **Work on the task** — Make commits with `jj commit` on top of the task branch, and record context with the context commands.
    - **Add context** — Run `tt task context add [--title TITLE] [--slug SLUG]` to create a standalone context file for the task (reads body from stdin if piped, otherwise opens editor). Run `tt task context add --help` for options.
-   - **Checkpoint** — Run `tt task checkpoint [-m <message>] [--squash]` to create a named checkpoint commit and advance the task bookmark. Run `tt task checkpoint --help` for options.
+   - **Checkpoint** — Once the working copy is clean, run `tt task checkpoint [-m <message>]` to merge your commits into the task branch, record a named checkpoint commit and advance the task bookmark. Run `tt task checkpoint --help` for options.
 
 4. **Complete the task** — Run `tt task complete [<task-id>] [--force]`. Marks the task DONE with a `Complete task:` commit. Requires all child tasks done (use `--force` to bypass). Run `tt task complete --help` for options.
 
@@ -401,8 +438,9 @@ Work through each atomic leaf task (tasks with no incomplete children) in depend
 
 3. **Implement** the task, making incremental VCS commits to track atomic progress.
 
-4. **Checkpoint** the completed work:
+4. **Checkpoint** the completed work, after committing any remaining changes:
    ```shell
+   jj commit -m "<description>"
    tt task checkpoint --message "<summary>"
    ```
 

@@ -23,7 +23,6 @@
 #   _worktree__start_working_copy — move a worktree onto a new commit on a revision
 #   _worktree__commit_working_copy — record a worktree's working copy as a commit
 #   _worktree__resolve_working_copy_parent — commit a worktree's working copy sits on
-#   _worktree__squash_into_working_copy — fold commits into a worktree's working copy
 #   _worktree__record_working_copy — capture uncommitted work and name the operation holding it
 #   _worktree__find_for_branch  — worktree roots whose current branch is a bookmark
 #   _worktree__delete           — forget a workspace and remove its files from disk
@@ -484,49 +483,6 @@ _worktree__resolve_working_copy_parent() {
   _repo__get_working_copy_parent "$worktree"
 }
 
-# Usage: _worktree__squash_into_working_copy WORKTREE REV [REV...]
-#
-# Folds each given revision — every one an ancestor of WORKTREE's working-copy
-# commit — into that working-copy commit, so the work they carry ends up in a
-# single commit the caller can then record with a message of its own
-# (_worktree__commit_working_copy). The emptied sources are abandoned and the
-# working-copy commit keeps its own identity, so the whole run collapses onto
-# the nearest bookmarked ancestor.
-#
-# Three steps, in this order:
-#   1. Snapshot, so pending on-disk edits are part of the working-copy commit
-#      before anything is rewritten rather than being folded in blind.
-#   2. Resolve every source to its stable change ID up front, then squash them
-#      in turn: each squash rebases the commits above it, which invalidates
-#      the commit IDs of the sources still to come.
-#   3. Refresh the worktree, because the squashes are bare graph mutations:
-#      they rewrite the working-copy commit without updating the files on disk,
-#      and the backend refuses further working-copy commands until that
-#      mismatch is resolved. The files themselves do not change — the
-#      working-copy commit already contained the sources' content as an
-#      inherited ancestor.
-#
-# Working-copy-bound. Returns non-zero as soon as any step fails.
-_worktree__squash_into_working_copy() {
-  local worktree="$1"; shift
-  [[ $# -ge 1 ]] || return 1
-  _repo__snapshot_worktree "$worktree" || return 1
-  local wc_change
-  wc_change="$(_repo__get_working_copy_revision "$worktree")" || return 1
-  [[ -n "$wc_change" ]] || return 1
-  local rev change
-  local -a sources=()
-  for rev in "$@"; do
-    change="$(_repo__resolve_change "$worktree" "$rev")" || return 1
-    [[ -n "$change" ]] || return 1
-    sources+=("$change")
-  done
-  for change in "${sources[@]}"; do
-    _repo__squash_commit "$worktree" "$change" "$wc_change" || return 1
-  done
-  _repo__refresh_worktree "$worktree"
-}
-
 # Usage: _worktree__record_working_copy WORKTREE
 #
 # Captures whatever is uncommitted in WORKTREE into its working-copy commit,
@@ -824,10 +780,13 @@ _worktree__ensure_canonical_current() {
 
 # Usage: _worktree__reattach_current REPO BRANCH OLD_TIP NEW_REV
 #
-# After a write advances BRANCH from OLD_TIP to NEW_REV, moves the current
-# worktree's working-copy commit onto NEW_REV — but only when the worktree is
-# checked out ON BRANCH and its working-copy commit descends from OLD_TIP. Any
-# other position is left alone (status 0): the write does not concern it.
+# After a write advances BRANCH to NEW_REV, moves the current worktree's
+# working-copy commit onto NEW_REV — but only when the worktree is checked out
+# ON BRANCH and its working-copy commit descends from OLD_TIP. Any other
+# position is left alone (status 0): the write does not concern it. OLD_TIP is
+# normally the branch's previous tip; a checkpoint that merges commits past
+# the tip passes the newest of them instead, since that is what the working
+# copy sits on.
 #
 # Descent from OLD_TIP alone cannot identify the worktree's branch. Every task
 # branch forks from its parent's tip, and every commit on a merged-in branch
@@ -856,11 +815,12 @@ _worktree__reattach_current() {
   _repo__reattach_worktree "$worktree" "$wc_change" "$new_rev"
 }
 
-# Usage: _worktree__move_subtree REPO SOURCE_REV DEST_REV
+# Usage: _worktree__move_subtree REPO SOURCE_REV DEST_REV [DEST_REV...]
 #
 # Rebases SOURCE_REV together with every commit descended from it onto
 # DEST_REV, running the rewrite from INSIDE the current worktree rather than
-# as a bare graph mutation.
+# as a bare graph mutation. More than one DEST_REV makes SOURCE_REV a merge
+# whose parents are the DEST_REVs in the order given.
 #
 # The distinction matters only when the current working-copy commit is itself
 # part of the moved subtree. A bare rewrite would move that commit in the
@@ -874,12 +834,14 @@ _worktree__reattach_current() {
 # working-copy commit — it never moves a branch onto them).
 #
 # Callers that know the working copy is outside the subtree should prefer the
-# bare move (_repo__move_commits), which skips the snapshot entirely.
+# bare move (_repo__move_commits or _repo__set_parents), which skips the
+# snapshot entirely.
 _worktree__move_subtree() {
-  local repo="$1" source_rev="$2" dest_rev="$3"
+  local repo="$1" source_rev="$2"
+  shift 2
   local worktree
   worktree="$(_repo__resolve_worktree_root "$repo")" || return 1
-  _repo__reattach_worktree "$worktree" "$source_rev" "$dest_rev"
+  _repo__reattach_worktree "$worktree" "$source_rev" "$@"
 }
 
 # Usage: _worktree__refresh_current REPO

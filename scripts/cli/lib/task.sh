@@ -28,7 +28,8 @@
 #   _task__check_file_exists         — whether a task's file exists at a revision
 #   _task__check_path_exists         — whether a repo-relative path exists at a revision
 #   _task__read_commit_message       — description recorded on a commit
-#   _task__list_commits_since_branch — commits on a branch's line since its tip
+#   _task__list_commits_since_branch — commits a revision has that a branch lacks
+#   _task__list_metadata_changes_since_branch — task metadata touched by those commits
 #   _task__list_mainline_commits     — first-parent commit records of a range
 #   _task__filter_reachable_commits  — commits of a set that a revision can reach
 #   _task__read_symlink              — read a symlink target as recorded on a branch
@@ -84,6 +85,7 @@
 #   _task__list_unmerged_changes     — paths changed by a branch's unmerged range
 #   _task__list_unmerged_roots       — attachment points of a task's unmerged range
 #   _task__list_unmerged_root_parents — commits a task's unmerged range hangs off
+#   _task__check_attached_to_own_line — whether a task's unmerged range hangs off its own line
 #   _task__move_unmerged_range       — reparent a task's unmerged range
 #   _task__restore_symlink           — set a commit's task symlink from another commit
 #   _task__check_up_to_date          — whether a task already sits on a base revision
@@ -368,20 +370,38 @@ _task__read_commit_message() {
 }
 
 # Usage: _task__list_commits_since_branch REPO BRANCH TIP
-# Prints the commit IDs, one per line and oldest first, of the commits that
-# descend from BRANCH's tip and are ancestors of TIP, with BRANCH's own tip
-# excluded — the work recorded on the branch's line of descent since its
-# bookmark last moved. Nothing is printed (status 0) when there is no such
-# commit or the range does not resolve.
-#
-# The descent condition is what distinguishes this from the plain BRANCH..TIP
-# range: a commit that reached TIP through a merge from another line is an
-# ancestor of TIP without descending from the branch tip, and it is not work
-# that belongs to this branch's own line. Documented pass-through to
-# _repo__list_commits_in_dag_range.
+# Prints the commit IDs, one per line and oldest first, of the commits TIP
+# reaches that BRANCH's tip does not — the work a checkpoint would merge into
+# BRANCH. Nothing is printed when there is no such commit. Returns non-zero
+# when the range does not resolve. Documented pass-through to
+# _repo__list_commits_in_range.
 _task__list_commits_since_branch() {
   local repo="$1" branch="$2" tip="$3"
-  _repo__list_commits_in_dag_range "$repo" "$branch" "$tip"
+  _repo__list_commits_in_range "$repo" "$branch" "$tip"
+}
+
+# Usage: _task__list_metadata_changes_since_branch REPO BRANCH TIP
+# Prints the task-metadata paths (_path__check_is_task_metadata) that any
+# commit in the range of _task__list_commits_since_branch changes against its
+# parents, one per line, sorted and without duplicates. Each commit is checked
+# on its own, so an edit that a later commit reverts is still reported.
+# Nothing is printed when no commit touches task metadata. Returns non-zero
+# when the range or a commit's changes cannot be listed.
+_task__list_metadata_changes_since_branch() {
+  local repo="$1" branch="$2" tip="$3"
+  local commits commit changes path
+  local -a modified=()
+  commits="$(_task__list_commits_since_branch "$repo" "$branch" "$tip")" || return 1
+  while IFS= read -r commit; do
+    [[ -n "$commit" ]] || continue
+    changes="$(_repo__list_changed_files "$repo" "$commit")" || return 1
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      _path__check_is_task_metadata "$path" && modified+=("$path")
+    done <<< "$changes"
+  done <<< "$commits"
+  [[ ${#modified[@]} -eq 0 ]] && return 0
+  printf '%s\n' "${modified[@]}" | sort -u
 }
 
 # Usage: _task__list_mainline_commits REPO TIP BASE
@@ -1185,7 +1205,7 @@ _task__full_range_span_empty() {
   [[ "$count" -eq 0 ]]
 }
 
-# Usage: _task__show_log REPO TASK_ID LIMIT COLOR
+# Usage: _task__show_log REPO TASK_ID LIMIT COLOR EVENTS_ONLY
 # Prints the commit graph of a branch in the _repo__show_log format, with tt
 # commits as event commits. An empty TASK_ID selects the current branch and
 # extends the graph past its bookmark, as _task__get_range_context describes.
@@ -1195,12 +1215,13 @@ _task__full_range_span_empty() {
 # file up to its bookmark.
 #
 # LIMIT caps the number of commits shown (empty for no limit). COLOR is 'true'
-# or 'false'.
+# or 'false'. EVENTS_ONLY is 'true' to show only tt commits, or 'false' to show
+# every commit.
 # Exit 1: the branch is not a task or project branch, or the branch or a range
 # boundary cannot be resolved (error printed to stderr).
 # Exit 2: multiple parents found (error printed to stderr).
 _task__show_log() {
-  local repo="$1" task_id_arg="$2" limit="$3" color="$4"
+  local repo="$1" task_id_arg="$2" limit="$3" color="$4" events_only="$5"
 
   local task_prefix project_prefix
   task_prefix="$(_workspace__get_task_prefix "$repo")"
@@ -1242,7 +1263,7 @@ _task__show_log() {
     done <<< "$records"
   fi
 
-  _repo__show_log "$repo" "$limit" "$color" "$TT_COMMIT_PREFIX" ':context:' "$(_path__task_root)" \
+  _repo__show_log "$repo" "$limit" "$color" "$events_only" "$TT_COMMIT_PREFIX" ':context:' "$(_path__task_root)" \
     "${ranges[@]+"${ranges[@]}"}"
 }
 
@@ -1928,6 +1949,29 @@ _task__list_unmerged_root_parents() {
   _repo__list_range_root_parent_commits "$repo" "$base_rev" "$task_rev"
 }
 
+# Usage: _task__check_attached_to_own_line REPO BASE_REV TASK_REV TASK_FILE
+#
+# Returns 0 when any commit that TASK_REV's unmerged range relative to
+# BASE_REV hangs off (_task__list_unmerged_root_parents) points the task
+# symlink at TASK_FILE, the task's own task file. Such a commit belongs to the
+# task's own line, and an earlier check-in brought it into BASE_REV: the task
+# is partially checked in. The range then does not include the task's fork
+# commit. Returns 1 otherwise, including when the range is empty.
+_task__check_attached_to_own_line() {
+  local repo="$1" base_rev="$2" task_rev="$3" task_file="$4"
+  local root_parents
+  root_parents="$(_task__list_unmerged_root_parents "$repo" "$base_rev" "$task_rev")" \
+    || root_parents=''
+  local root_parent target
+  while IFS= read -r root_parent; do
+    [[ -n "$root_parent" ]] || continue
+    target="$(_task__read_symlink "$repo" "$root_parent" "$TT_TASK_SYMLINK_FILENAME")" \
+      || continue
+    [[ "$target" == "$task_file" ]] && return 0
+  done <<< "$root_parents"
+  return 1
+}
+
 # Usage: _task__move_unmerged_range REPO BASE_REV TASK_REV DEST_REV
 #
 # Reparents a task's line of work: rebases every root of TASK_REV's unmerged
@@ -1945,6 +1989,14 @@ _task__list_unmerged_root_parents() {
 # worktree instead (_worktree__move_subtree) so the on-disk files travel with
 # the commits rather than being left behind. Bare roots are moved first so the
 # carried subtree is rewritten last, against a graph that is otherwise final.
+#
+# Moving the roots does not move a merge whose first parent lies outside the
+# range. A checkpoint merge made after a partial check-in has this shape: its
+# first parent is the checked-in commit, which BASE_REV already contains. The
+# rebase leaves that first parent behind, so the branch's first-parent line
+# would skip the moved commits. Each such merge therefore gets DEST_REV as its
+# first parent once the roots have moved, and keeps its other parents. The
+# working-copy rule above applies to these rewrites too.
 _task__move_unmerged_range() {
   local repo="$1" base_rev="$2" task_rev="$3" dest_rev="$4"
 
@@ -1952,11 +2004,12 @@ _task__move_unmerged_range() {
   roots="$(_task__list_unmerged_roots "$repo" "$base_rev" "$task_rev")" || roots=''
   [[ -n "$roots" ]] || return 0
 
-  local worktree wc_commit=''
-  worktree="$(_repo__resolve_worktree_root "$repo")" || worktree=''
-  if [[ -n "$worktree" ]]; then
-    wc_commit="$(_repo__resolve_commit "$worktree" '@')" || wc_commit=''
-  fi
+  local merges
+  merges="$(_repo__list_range_external_first_parent_changes "$repo" "$base_rev" "$task_rev")" \
+    || return 1
+
+  local wc_commit
+  wc_commit="$(__task__resolve_working_copy_commit "$repo")"
 
   local -a bare_roots=() carried_roots=()
   local root
@@ -1975,7 +2028,56 @@ _task__move_unmerged_range() {
   for root in "${carried_roots[@]+"${carried_roots[@]}"}"; do
     _worktree__move_subtree "$repo" "$root" "$dest_rev" || return 1
   done
+
+  local merge
+  while IFS= read -r merge; do
+    [[ -n "$merge" ]] || continue
+    __task__replace_first_parent "$repo" "$merge" "$dest_rev" || return 1
+  done <<< "$merges"
   return 0
+}
+
+# Usage: __task__resolve_working_copy_commit REPO
+#
+# Prints the commit ID of the current worktree's working-copy commit. Prints
+# nothing when there is no current worktree or its working-copy commit cannot
+# be resolved.
+__task__resolve_working_copy_commit() {
+  local repo="$1"
+  local worktree
+  worktree="$(_repo__resolve_worktree_root "$repo")" || return 0
+  _repo__resolve_commit "$worktree" '@' || true
+}
+
+# Usage: __task__replace_first_parent REPO REV NEW_PARENT_REV
+#
+# Makes NEW_PARENT_REV the first parent of REV and keeps REV's other parents
+# in order. REV's descendants stay on top of it. When the current working-copy
+# commit descends from REV, the rewrite runs through the current worktree so
+# that the on-disk files follow it. Otherwise it is a bare graph rewrite.
+__task__replace_first_parent() {
+  local repo="$1" rev="$2" new_parent_rev="$3"
+
+  local parent_list
+  parent_list="$(_repo__list_parent_commits "$repo" "$rev")" || return 1
+  local -a parents=("$new_parent_rev")
+  local parent is_first=true
+  while IFS= read -r parent; do
+    [[ -n "$parent" ]] || continue
+    if [[ "$is_first" == true ]]; then
+      is_first=false
+      continue
+    fi
+    parents+=("$parent")
+  done <<< "$parent_list"
+
+  local wc_commit
+  wc_commit="$(__task__resolve_working_copy_commit "$repo")"
+  if [[ -n "$wc_commit" ]] && _repo__check_is_ancestor "$repo" "$rev" "$wc_commit"; then
+    _worktree__move_subtree "$repo" "$rev" "${parents[@]}"
+  else
+    _repo__set_parents "$repo" "$rev" "${parents[@]}"
+  fi
 }
 
 # Usage: _task__restore_symlink REPO SOURCE_REV TARGET_REV

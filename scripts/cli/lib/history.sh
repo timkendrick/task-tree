@@ -25,8 +25,11 @@
 # makes the next acquisition time out; `tt history unlock --force` removes it.
 #
 # Nesting: sub-commands invoked by a top-level command inherit TT_TRANSACTION_ID
-# via the environment. _history__begin_transaction is a no-op when TT_TRANSACTION_ID is
-# already set. The internal (non-exported) _TT_TRANSACTION_OWNER variable
+# via the environment. _history__begin_transaction opens nothing when
+# TT_TRANSACTION_ID is already set: it only verifies that the history file's
+# last entry is the in-progress entry for that ID, and refuses otherwise. The
+# check lets a user join commands to a transaction held open by `tt history
+# lock`, and rejects a stale or mistyped key. The internal (non-exported) _TT_TRANSACTION_OWNER variable
 # stores the resolved history file path for the owning process, and
 # _TT_TRANSACTION_LOCK the resolved lock path; neither is exported, so
 # sub-processes never inherit them (they are not the transaction owner) and
@@ -39,6 +42,11 @@
 # has landed), and work done then is still work that must be recorded and still
 # work a failure has to unwind.
 #
+# User-held transactions: `tt history lock` begins a transaction and then
+# detaches from it (_history__detach_transaction). The in-progress entry stays
+# open after the process exits, and its before-op ID is the key the user
+# passes to `tt history unlock --key` or `tt history undo --key` to close it.
+#
 # Public surface:
 #   _history__init                 — create an empty .tt/history file if absent
 #   _history__replace_last_line    — rewrite the file's last line when it matches
@@ -50,8 +58,10 @@
 #   _history__resolve_operation    — identifier of the repository's current operation
 #   _history__restore_operation    — return the repository to a recorded operation
 #   _history__begin_transaction    — record an in-progress entry and set the rollback trap
+#   _history__detach_transaction   — give up ownership, leaving the entry in progress
 #   _history__commit_transaction   — finalize the in-progress entry with the after-op-id
 #   _history__rollback_transaction — restore the before-op state and drop the entry
+#   _history__restore_transaction  — restore a before-op state, keeping uncommitted files
 #
 # Functions named with a double underscore (__history__*) are internal helpers
 # private to this module and not part of the public surface.
@@ -182,8 +192,9 @@ _history__restore_operation() {
 }
 
 # Usage: _history__begin_transaction REPO
-# Begins a tt transaction. No-op if TT_TRANSACTION_ID is already set (nested call).
-# Under the history lock, captures the current VCS operation ID, checks for
+# Begins a tt transaction. When TT_TRANSACTION_ID is already set (nested call),
+# opens nothing and only verifies the inherited ID (see
+# __history__verify_joined_transaction). Otherwise, under the history lock, captures the current VCS operation ID, checks for
 # in-progress transactions and appends "<before-op-id>:" to .tt/history; then
 # releases the lock, exports TT_TRANSACTION_ID, sets the
 # abort trap (see __history__abort_transaction), and finally snapshots the
@@ -203,8 +214,9 @@ _history__restore_operation() {
 # worktree has been deleted by the time they run (e.g. worktree delete).
 _history__begin_transaction() {
   local repo="$1"
-  # No-op when nested (parent command already began a transaction)
+  # A parent command or `tt history lock` already began the transaction
   if [[ -n "${TT_TRANSACTION_ID:-}" ]]; then
+    __history__verify_joined_transaction "$repo"
     return 0
   fi
 
@@ -267,6 +279,59 @@ _history__begin_transaction() {
   local snapshot_worktree
   snapshot_worktree="$(_repo__resolve_worktree_root "$repo")"
   _repo__snapshot_worktree "$snapshot_worktree"
+}
+
+# Usage: __history__verify_joined_transaction REPO
+# Checks that the inherited TT_TRANSACTION_ID names the in-progress transaction:
+# the last line of the history file must be "<TT_TRANSACTION_ID>:". Reads the
+# file under the history lock, so it never sees a rewrite half-done. Reports
+# and exits 1 when no transaction is in progress or when another one is.
+__history__verify_joined_transaction() {
+  local repo="$1"
+  local key="$TT_TRANSACTION_ID"
+
+  local history_file history_lock
+  history_file="$(_history__resolve_file "$repo")" || exit 1
+  history_lock="$(_history__resolve_lock "$repo")" || exit 1
+
+  _history__acquire_lock "$history_lock" || exit 1
+  local last_line=''
+  if [[ -f "$history_file" ]]; then
+    last_line="$(<"$history_file")"
+    last_line="${last_line##*$'\n'}"
+  fi
+  _history__release_lock "$history_lock"
+
+  if [[ "$last_line" == "${key}:" ]]; then
+    return 0
+  fi
+
+  if [[ -z "$last_line" || -n "${last_line#*:}" ]]; then
+    _ui__log "Error: TT_TRANSACTION_ID is set, but no transaction is in progress."
+    _ui__log "  TT_TRANSACTION_ID: $key"
+    _ui__log "  The transaction was closed, or the key is stale. Unset TT_TRANSACTION_ID to run outside a transaction."
+  else
+    _ui__log "Error: TT_TRANSACTION_ID does not match the transaction in progress."
+    _ui__log "  TT_TRANSACTION_ID:       $key"
+    _ui__log "  In-progress transaction: ${last_line%:}"
+  fi
+  exit 1
+}
+
+# Usage: _history__detach_transaction
+# Gives up ownership of the transaction this process began, without closing
+# it: clears the abort trap and the ownership variables, and leaves the
+# in-progress entry in the history file. The entry then outlives the process,
+# and the transaction stays open until `tt history unlock` or `tt history
+# undo` closes it. No-op when this process is not the transaction owner.
+_history__detach_transaction() {
+  if [[ -z "${_TT_TRANSACTION_OWNER:-}" ]]; then
+    return 0
+  fi
+  trap - ERR EXIT
+  unset _TT_TRANSACTION_OWNER
+  unset _TT_TRANSACTION_LOCK
+  unset TT_TRANSACTION_ID
 }
 
 # Usage: _history__commit_transaction REPO
@@ -351,10 +416,12 @@ __history__abort_transaction() {
 
 # Usage: _history__rollback_transaction REPO
 # Rolls back the transaction by restoring the VCS to the before-op state and
-# removing the in-progress line from .tt/history. Only the removal is done
-# under the history lock; when the lock cannot be taken, the timeout is
-# reported and the in-progress line is kept, locking the repository as a
-# failed restore does (below).
+# removing the in-progress line from .tt/history. The restore runs from the
+# canonical repo and keeps the user's uncommitted files (see
+# _history__restore_transaction). Only the removal is done under the history
+# lock; when the lock cannot be taken, the timeout is reported and the
+# in-progress line is kept, locking the repository as a failed restore does
+# (below).
 # No-op when called from a nested sub-command (not the transaction owner).
 #
 # When the restore itself fails, the in-progress line is KEPT rather than
@@ -364,19 +431,6 @@ __history__abort_transaction() {
 # carrying the operation to restore and both ways out (tt history undo
 # --force, or tt history unlock --force once recovered by hand). The calling
 # command's own exit status is unaffected either way.
-#
-# Working-copy preservation: restoring an operation also resets the on-disk
-# working copy, which would strip the changes captured by the transaction's
-# begin-time snapshot (and any captured later) from disk. To keep the user's
-# uncommitted work, the files changed in the working-copy commit are copied
-# aside before the restore and copied back afterwards (deletions are
-# likewise re-applied), but only when the restore lands on the same change —
-# i.e. the transaction never moved the working copy; when it did, the plain
-# restore semantics stand and the pre-transaction position wins. The
-# preserved files end up exactly as they were before the transaction: on
-# disk, not yet captured, picked up by the next snapshot. Preservation is
-# best-effort: every step degrades to a plain restore (e.g. when the
-# worktree has been deleted mid-transaction).
 _history__rollback_transaction() {
   local repo="$1"
   # Only the owning process rolls back
@@ -398,9 +452,75 @@ _history__rollback_transaction() {
 
   _ui__log "Rolling back transaction (restoring VCS operation: ${before_op:0:12}...)"
 
+  # A restore that fails leaves the repository mid-transaction, so the
+  # in-progress entry is KEPT: it is the lock that makes the next tt command
+  # refuse instead of running against a half-written repository.
+  if ! _history__restore_transaction "$repo" "$canonical_repo" "$before_op"; then
+    _ui__log "Error: Could not restore the VCS operation state."
+    _ui__log "  The repository was left mid-transaction at operation $before_op."
+    _ui__log "  The transaction is still recorded, so the next tt command will refuse."
+    _ui__log "  To retry the revert:        tt history undo --force"
+    _ui__log "  Or, once recovered by hand: tt history unlock --force"
+
+    # Close out this process's transaction state so no second rollback runs;
+    # only the history entry survives, which is what makes the damage visible.
+    trap - ERR EXIT
+    unset _TT_TRANSACTION_OWNER
+    unset _TT_TRANSACTION_LOCK
+    unset TT_TRANSACTION_ID
+    return 0
+  fi
+
+  # Remove the in-progress line from history. When the lock cannot be taken
+  # the line is kept, and the repository stays locked until it is cleared.
+  if [[ -f "$history_file" ]]; then
+    if _history__acquire_lock "$history_lock"; then
+      _history__delete_lines "$history_file" "${before_op}:" || \
+        _ui__log "Warning: Could not remove the in-progress entry from $history_file"
+      _history__release_lock "$history_lock"
+    else
+      _ui__log "  The repository was restored, but the transaction is still recorded,"
+      _ui__log "  so the next tt command will refuse until it is cleared."
+    fi
+  fi
+
+  # The transaction is closed: clear the abort trap, and with it every trace
+  # that would make a later sub-command believe it is running inside one.
+  trap - ERR EXIT
+  unset _TT_TRANSACTION_OWNER
+  unset _TT_TRANSACTION_LOCK
+  unset TT_TRANSACTION_ID
+}
+
+# Usage: _history__restore_transaction REPO RESTORE_FROM BEFORE_OP
+# Returns the repository to the operation BEFORE_OP, where a transaction
+# began, and keeps the uncommitted files of REPO's worktree. RESTORE_FROM is
+# the workspace the restore runs from; it must not be stale. Neither the
+# history file nor the history lock is touched: the caller owns both.
+# Returns 1 when the restore fails, and 0 otherwise.
+#
+# Working-copy preservation: restoring an operation also resets the on-disk
+# working copy, which would strip the changes captured by the transaction's
+# begin-time snapshot (and any captured later) from disk. To keep the user's
+# uncommitted work, the files changed in the working-copy commit are copied
+# aside before the restore and copied back afterwards (deletions are
+# likewise re-applied), but only when the restore lands on the same change —
+# i.e. the transaction never moved the working copy; when it did, the plain
+# restore semantics stand and the pre-transaction position wins. The
+# preserved files end up exactly as they were before the transaction: on
+# disk, not yet captured, picked up by the next snapshot. Preservation is
+# best-effort: every step degrades to a plain restore (e.g. when the
+# worktree has been deleted mid-transaction).
+#
+# A failed restore never disturbed the files, so the preserved copies are
+# discarded without being re-applied: the re-apply is gated on a
+# working-copy comparison that means nothing once the restore did not happen.
+_history__restore_transaction() {
+  local repo="$1" restore_from="$2" before_op="$3"
+
   # Copy the working-copy commit's changed files aside before the restore so
-  # they can be re-applied afterwards (see the header comment). Best-effort:
-  # failures simply skip preservation.
+  # they can be re-applied afterwards. Best-effort: failures simply skip
+  # preservation.
   local wc_worktree='' wc_change_before='' preserve_dir='' rel
   wc_worktree="$(_repo__resolve_worktree_root "$repo")" || wc_worktree=''
   if [[ -n "$wc_worktree" && -d "$wc_worktree" ]]; then
@@ -426,34 +546,13 @@ _history__rollback_transaction() {
     fi
   fi
 
-  # Restore the VCS to the before-op state. The backend operation works even
-  # when the caller's working directory has been deleted (e.g. after
-  # worktree delete).
-  #
-  # A restore that fails leaves the repository mid-transaction, so the
-  # in-progress entry is KEPT: it is the lock that makes the next tt command
-  # refuse instead of running against a half-written repository.
-  if ! _repo__restore_operation "$canonical_repo" "$before_op"; then
-    # Discard the preserved copies without re-applying them. A failed restore
-    # never disturbed the files, and the re-apply is gated on a working-copy
-    # comparison that means nothing once the restore did not happen.
+  # The backend operation works even when the caller's working directory has
+  # been deleted (e.g. after worktree delete).
+  if ! _repo__restore_operation "$restore_from" "$before_op"; then
     if [[ -n "$preserve_dir" ]]; then
       rm -rf "$preserve_dir"
     fi
-
-    _ui__log "Error: Could not restore the VCS operation state."
-    _ui__log "  The repository was left mid-transaction at operation $before_op."
-    _ui__log "  The transaction is still recorded, so the next tt command will refuse."
-    _ui__log "  To retry the revert:        tt history undo --force"
-    _ui__log "  Or, once recovered by hand: tt history unlock --force"
-
-    # Close out this process's transaction state so no second rollback runs;
-    # only the history entry survives, which is what makes the damage visible.
-    trap - ERR EXIT
-    unset _TT_TRANSACTION_OWNER
-    unset _TT_TRANSACTION_LOCK
-    unset TT_TRANSACTION_ID
-    return 0
+    return 1
   fi
 
   # Re-apply the preserved working-copy changes when the restore landed on
@@ -482,24 +581,4 @@ _history__rollback_transaction() {
     fi
     rm -rf "$preserve_dir"
   fi
-
-  # Remove the in-progress line from history. When the lock cannot be taken
-  # the line is kept, and the repository stays locked until it is cleared.
-  if [[ -f "$history_file" ]]; then
-    if _history__acquire_lock "$history_lock"; then
-      _history__delete_lines "$history_file" "${before_op}:" || \
-        _ui__log "Warning: Could not remove the in-progress entry from $history_file"
-      _history__release_lock "$history_lock"
-    else
-      _ui__log "  The repository was restored, but the transaction is still recorded,"
-      _ui__log "  so the next tt command will refuse until it is cleared."
-    fi
-  fi
-
-  # The transaction is closed: clear the abort trap, and with it every trace
-  # that would make a later sub-command believe it is running inside one.
-  trap - ERR EXIT
-  unset _TT_TRANSACTION_OWNER
-  unset _TT_TRANSACTION_LOCK
-  unset TT_TRANSACTION_ID
 }

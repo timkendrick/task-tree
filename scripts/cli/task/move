@@ -29,6 +29,8 @@ Removes the task from its current parent's subtask list, adds it to the new
 parent's subtask list, and rebases the task's unmerged commit range onto the
 new parent's bookmark tip.
 
+Refuses to move a task that is partially checked in to its current parent.
+
 Options:
   --task TASK-ID         Task to move (default: current task)
   --parent TASK-ID       New parent task (required)
@@ -199,6 +201,13 @@ main() {
     _ui__log "Error: Could not resolve branch '$old_parent'."
     exit 1
   }
+
+  # Guard: part of a partially checked-in task already belongs to the old
+  # parent. The move rebases only the rest, which would leave that work behind.
+  if _task__check_attached_to_own_line "$repo" "$old_parent_tip" "$task_id" "$task_file"; then
+    _ui__log "Error: Cannot move '$task_id': already partially checked in to '$old_parent'"
+    exit 1
+  fi
 
   # Precondition: the working-copy commit must not carry a bookmark
   _worktree__ensure_working_copy "$repo" || exit 1

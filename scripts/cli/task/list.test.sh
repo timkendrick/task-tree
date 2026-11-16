@@ -172,6 +172,33 @@ test_task_list__combined_filters() {
 }
 
 
+test_task_list__key_equals_value_filters() {
+  setup_workspace "list-equals"
+  proj_id=$(create_project "proj" "Project") || true
+  checkout_task "$proj_id" || true
+  task_id=$(create_task "t" "Task") || true
+
+  output=""
+  output=$(run_tt task list --type=project --quiet 2>/dev/null) || true
+  assert_eq "--type=project lists projects only" "$output" "$proj_id"
+
+  output=$(run_tt task list --status=todo --quiet 2>/dev/null) || true
+  assert_eq "--status=todo lists TODO tasks" "$output" "$task_id"
+
+  output=$(run_tt task list --type=task --type project --quiet 2>/dev/null) || true
+  assert_eq "= form combines with separate-value form" "$output" \
+    "$(printf '%s\n' "$proj_id" "$task_id")"
+
+  output=$(run_tt task list --status= --quiet 2>/dev/null) || true
+  assert_output_empty "--status= matches tasks without a status" "$output"
+
+  local exit_code=0
+  output=$(run_tt task list --status=blocked 2>&1) || exit_code=$?
+  assert_exit_code "invalid value in = form rejected" "$exit_code" 1
+  assert_contains "error names the invalid value" "$output" "Error: Invalid status 'blocked'."
+}
+
+
 test_task_list__checked_in_task_without_bookmark_listed() {
   setup_workspace "list-no-bookmark"
   proj_id=$(create_project "proj" "Project") || true

@@ -137,7 +137,7 @@ test_worktree_sync__parent_worktree_lands_on_its_own_branch() {
 
   wt=$(create_task_worktree "$incoming")
   printf 'work\n' > "$wt/incoming-work.txt"
-  run_tt_in_worktree "$wt" task checkpoint -m "Incoming work" >/dev/null 2>&1 || true
+  checkpoint_task_in_worktree "$wt" "Incoming work" >/dev/null 2>&1 || true
   run_tt_in_worktree "$wt" task checkin --complete --propagate >/dev/null 2>&1 || true
 
   out=$(run_tt worktree sync "$REPO" 2>&1) || exit_code=$?

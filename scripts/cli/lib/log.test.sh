@@ -40,6 +40,7 @@ create +
 fork \342\221\202
 edit \342\234\216
 checkout \342\226\266
+merge \342\221\203
 checkpoint \342\232\221
 complete \342\234\223
 handoff \342\206\227
@@ -59,10 +60,26 @@ EOF
 test__log__render__event_glyphs_nerd() {
   assert_eq "checkin uses the Nerd Font merge icon" \
     "$(_event_line "[tt:task:task/t-0a1b2c3d:checkin] T" | _log__render nerd false)" \
-    $'| \357\220\231  abcdefgh  t'
+    $'| \357\220\231  abcdefgh  task/t-0a1b2c3d'
   assert_eq "workspace init uses the home icon" \
     "$(_event_line "[tt:workspace:init] Create workspace" | _log__render nerd false)" \
     $'| \357\200\225  abcdefgh'
+}
+
+test__log__render__merge_has_no_label() {
+  assert_eq "merge shows the glyph alone" \
+    "$(_event_line "[tt:task:task/t-0a1b2c3d:merge] T" | _render_unicode)" \
+    $'| \342\221\203  abcdefgh'
+  assert_eq "merge uses the Nerd Font pull request icon" \
+    "$(_event_line "[tt:task:task/t-0a1b2c3d:merge] T" | _log__render nerd false)" \
+    $'| \357\220\207  abcdefgh'
+}
+
+test__log__render__merge_node_padding_collapsed() {
+  assert_eq "graph padding after a merge node collapses to two spaces" \
+    "$(printf '| \001    \036ab\037cdefgh\037\037\037\037\037\037%s\n' \
+        "[tt:task:task/t-0a1b2c3d:merge] T" | _render_unicode)" \
+    $'| \342\221\203  abcdefgh'
 }
 
 test__log__render__workspace_init_unicode() {
@@ -80,9 +97,9 @@ test__log__render__unknown_operation() {
 test__log__render__task_name_labels() {
   local operation
   for operation in create delete fork checkin move remove rename; do
-    assert_eq "$operation shows the task name" \
+    assert_eq "$operation shows the task ID" \
       "$(_event_line "[tt:task:task/my-task-0a1b2c3d:$operation] My task" | _render_unicode | cut -d' ' -f4-)" \
-      'abcdefgh  my-task'
+      'abcdefgh  task/my-task-0a1b2c3d'
   done
 }
 
@@ -102,17 +119,17 @@ test__log__render__checkpoint_message() {
 }
 
 test__log__render__context_name() {
-  assert_eq "context event shows the context name" \
+  assert_eq "context event shows the context ID" \
     "$(_event_line "[tt:task:task/t-0a1b2c3d:context:add] Notes" \
         ".tt/task/t-0a1b2c3d/context/implementation-notes-9f8e7d6c.md" | _render_unicode | cut -d' ' -f4-)" \
-    'abcdefgh  implementation-notes'
+    'abcdefgh  context/implementation-notes-9f8e7d6c'
 }
 
 test__log__render__event_refs() {
   assert_eq "bookmarks and tags follow the label" \
     "$(_event_line "[tt:task:task/t-0a1b2c3d:fork] T" '' 'task/t-0a1b2c3d*' 'task/t-0a1b2c3d@origin' 'v1' 'v1@git' \
         | _render_unicode | cut -d' ' -f4-)" \
-    $'abcdefgh  t  \342\232\220 task/t-0a1b2c3d*  \342\232\220 task/t-0a1b2c3d@origin  \342\214\226 v1  \342\214\226 v1@git'
+    $'abcdefgh  task/t-0a1b2c3d  \342\232\220 task/t-0a1b2c3d*  \342\232\220 task/t-0a1b2c3d@origin  \342\214\226 v1  \342\214\226 v1@git'
 }
 
 # ---------------------------------------------------------------------------
@@ -137,6 +154,14 @@ test__log__render__conflicted_refs() {
 test__log__render__other_lines_unchanged() {
   local input=$'@  abcdefgh user 2026-01-01 12345678\n|\n~  (elided revisions)'
   assert_eq "graph and header lines pass through" "$(printf '%s\n' "$input" | _render_unicode)" "$input"
+}
+
+test__log__render__hidden_count() {
+  assert_eq "plural count" "$(printf '\001  \0023\n' | _render_unicode)" $'\342\232\240  3 uncheckpointed commits'
+  assert_eq "singular count" "$(printf '\001  \0021\n' | _render_unicode)" $'\342\232\240  1 uncheckpointed commit'
+  assert_eq "yellow glyph, unstyled text" \
+    "$(printf '\001  \00212\n' | _log__render unicode true)" \
+    $'\033[33m\342\232\240\033[0m  12 uncheckpointed commits'
 }
 
 # ---------------------------------------------------------------------------

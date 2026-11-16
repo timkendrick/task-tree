@@ -61,10 +61,11 @@
 #     _jj__filter_commits_reachable_from — the given commits that REV can reach
 #     _jj__find_fork_point_commit    — commit ID where two revisions' histories fork
 #     _jj__list_commits_in_range     — commit IDs in FROM..TO, oldest first
-#     _jj__list_commits_in_dag_range — commit IDs descended from BASE up to TIP
 #     _jj__count_commits_in_range    — number of commits in FROM..TO
 #     _jj__list_range_root_commits   — commit IDs of the roots of FROM..TO
 #     _jj__list_range_root_parent_commits — commit IDs of the parents of the roots of FROM..TO
+#     _jj__list_range_external_first_parent_changes — non-root commits of FROM..TO whose first parent is outside it
+#     _jj__list_parent_commits       — commit IDs of a revision's parents, in order
 #     _jj__check_range_covered       — whether a range is inside a union of ranges
 #     _jj__format_revision_range     — render a FROM/TO range in a named format
 #     _jj__list_mainline_commits     — first-parent mainline commit records
@@ -84,14 +85,14 @@
 #     _jj__new_working_copy_child    — start a new working-copy commit
 #     _jj__commit_working_copy       — commit the working copy with a message
 #     _jj__snapshot_worktree         — capture on-disk changes into the working-copy commit
-#     _jj__reattach_worktree         — rebase the working-copy commit onto a destination
+#     _jj__reattach_worktree         — rebase the working-copy commit onto one or more destinations
 #     _jj__refresh_worktree          — update on-disk files after a bare rewrite of @
 #   Mutations (bare; no working copy involved):
 #     _jj__commit_changeset          — build a commit in the backing Git store from a staged tree
 #     _jj__create_merge_commit       — create a merge commit of two or more parents
 #     _jj__set_description           — replace a revision's description
 #     _jj__move_commits              — rebase revisions and their descendants onto a destination
-#     _jj__squash_commit             — fold a revision's changes into another revision
+#     _jj__set_parents               — replace a revision's parents, keeping its descendants on it
 #     _jj__restore_tree              — set a revision's tree wholesale from another revision
 #     _jj__restore_path              — set one path in a revision from another revision
 #     _jj__abandon_commit            — abandon a revision, rebasing descendants onto its parents
@@ -521,22 +522,6 @@ _jj__list_commits_in_range() {
     --no-graph --reversed -T 'commit_id ++ "\n"'
 }
 
-# Usage: _jj__list_commits_in_dag_range REPO BASE TIP
-# Prints the commit IDs of the commits that descend from BASE and are
-# ancestors of TIP — the DAG range between the two — with BASE itself
-# excluded, one per line, oldest first. Returns jj's exit code; nothing is
-# printed if the range cannot be resolved.
-#
-# Narrower than the FROM..TO range of _jj__list_commits_in_range: that range
-# holds everything reachable from TIP but not from BASE, which includes
-# commits that arrived at TIP through a merge from a line that never descended
-# from BASE. Here every listed commit lies on a path from BASE to TIP.
-_jj__list_commits_in_dag_range() {
-  local repo="$1" base="$2" tip="$3"
-  __jj__read "$repo" --ignore-working-copy log -r "(${base})::(${tip}) ~ (${base})" \
-    --no-graph --reversed -T 'commit_id ++ "\n"'
-}
-
 # Usage: _jj__count_commits_in_range REPO FROM TO
 # Prints the number of commits reachable from TO but not from FROM (FROM
 # exclusive, TO inclusive). Prints 0 (and returns 0) when the range cannot be
@@ -565,6 +550,34 @@ _jj__list_range_root_parent_commits() {
   local repo="$1" from="$2" to="$3"
   __jj__read "$repo" --ignore-working-copy log -r "parents(roots(${from}..${to}))" \
     --no-graph -T 'commit_id ++ "\n"'
+}
+
+# Usage: _jj__list_range_external_first_parent_changes REPO FROM TO
+# Prints the change IDs of the commits in the FROM..TO range that are not
+# roots of the range but whose first parent lies outside it, one per line,
+# oldest first. Such a commit is a merge that joins the range to history
+# outside it through its first parent. Rebasing the range roots leaves that
+# first parent in place. Change IDs rather than commit IDs because the rebase
+# that moves the range rewrites these commits. Prints nothing when the range
+# has no such commit. Returns jj's exit code.
+_jj__list_range_external_first_parent_changes() {
+  local repo="$1" from="$2" to="$3"
+  local range="${from}..${to}"
+  local escaped
+  escaped="$(__jj__escape_revset_string "$range")"
+  __jj__read "$repo" --ignore-working-copy log -r "(${range}) ~ roots(${range})" \
+    --no-graph --reversed \
+    -T 'if(!parents.first().contained_in("'"${escaped}"'"), change_id ++ "\n")'
+}
+
+# Usage: _jj__list_parent_commits REPO REV
+# Prints the commit IDs of REV's parents, one per line, in parent order: the
+# first parent first. REV must resolve to a single commit. Returns jj's exit
+# code.
+_jj__list_parent_commits() {
+  local repo="$1" rev="$2"
+  __jj__read "$repo" --ignore-working-copy log -r "exactly(${rev}, 1)" \
+    --no-graph -T 'parents.map(|p| p.commit_id() ++ "\n").join("")'
 }
 
 # Usage: _jj__check_range_covered REPO BASE TIP COVER_BASE COVER_TIP [COVER_BASE COVER_TIP ...]
@@ -822,8 +835,10 @@ _jj__snapshot_worktree() {
   __jj__write_internal "$worktree" log -r '@' --no-graph -T ''
 }
 
-# Usage: _jj__reattach_worktree WORKTREE FROM_REV DEST_REV
-# Rebases FROM_REV, together with all of its descendants, onto DEST_REV. Runs
+# Usage: _jj__reattach_worktree WORKTREE FROM_REV DEST_REV [DEST_REV...]
+# Rebases FROM_REV, together with all of its descendants, onto DEST_REV. More
+# than one DEST_REV makes FROM_REV a merge whose parents are the DEST_REVs in
+# the order given. Runs
 # against WORKTREE WITHOUT --ignore-working-copy, deliberately: jj then
 # snapshots any pending on-disk changes into the working-copy commit before
 # rebasing, and updates WORKTREE's on-disk files in the same step whenever the
@@ -836,8 +851,15 @@ _jj__snapshot_worktree() {
 # line, which moves that whole subtree and carries the working copy with it.
 # Status only; never logs, never exits.
 _jj__reattach_worktree() {
-  local worktree="$1" from_rev="$2" dest_rev="$3"
-  __jj__write "$worktree" rebase -s "$from_rev" -d "$dest_rev"
+  local worktree="$1" from_rev="$2"
+  shift 2
+  [[ $# -ge 1 ]] || return 1
+  local -a dest_flags=()
+  local dest_rev
+  for dest_rev in "$@"; do
+    dest_flags+=(-d "$dest_rev")
+  done
+  __jj__write "$worktree" rebase -s "$from_rev" "${dest_flags[@]}"
 }
 
 # Usage: _jj__get_worktree_checkout_revision WORKTREE
@@ -1169,6 +1191,21 @@ __jj__escape_revset_string() {
   printf '%s' "$text"
 }
 
+# Usage: __jj__escape_glob TEXT
+# Prints TEXT with every glob metacharacter backslash-escaped, so a glob
+# pattern built from it matches TEXT literally.
+__jj__escape_glob() {
+  local text="$1" escaped='' char i
+  for (( i = 0; i < ${#text}; i++ )); do
+    char="${text:i:1}"
+    case "$char" in
+      '\' | '*' | '?' | '[' | ']' | '{' | '}') escaped+="\\${char}" ;;
+      *) escaped+="$char" ;;
+    esac
+  done
+  printf '%s' "$escaped"
+}
+
 # Usage: _jj__create_merge_commit REPO MESSAGE PARENT_REV PARENT_REV [PARENT_REV...]
 #
 # Creates a merge commit with the given parents (at least two) and description
@@ -1247,15 +1284,22 @@ _jj__move_commits() {
   done
 }
 
-# Usage: _jj__squash_commit REPO FROM_REV INTO_REV
-# Folds FROM_REV's changes into INTO_REV. The destination keeps its own
-# identity (change ID) and its own description (--use-destination-message);
-# the emptied source is abandoned. Bare graph mutation: no working copy is
-# touched. Status only; never logs, never exits.
-_jj__squash_commit() {
-  local repo="$1" from_rev="$2" into_rev="$3"
-  __jj__write "$repo" --ignore-working-copy squash \
-    --from "$from_rev" --into "$into_rev" --use-destination-message
+# Usage: _jj__set_parents REPO REV PARENT_REV [PARENT_REV...]
+# Replaces REV's parents with the given PARENT_REVs, in the order given: the
+# first PARENT_REV becomes the first parent. REV's descendants are rebased
+# with it, so they stay on top of it. At least one parent is required. Bare
+# graph mutation: no working copy is touched. Status only; never logs, never
+# exits.
+_jj__set_parents() {
+  local repo="$1" rev="$2"
+  shift 2
+  [[ $# -ge 1 ]] || return 1
+  local -a dest_flags=()
+  local parent_rev
+  for parent_rev in "$@"; do
+    dest_flags+=(-d "$parent_rev")
+  done
+  __jj__write "$repo" --ignore-working-copy rebase -s "$rev" "${dest_flags[@]}"
 }
 
 # Usage: _jj__restore_tree REPO SOURCE_REV TARGET_REV
@@ -1632,7 +1676,7 @@ _jj__show_diff() {
 # History graph
 # ---------------------------------------------------------------------------
 
-# Usage: _jj__show_log REPO LIMIT COLOR EVENT_PREFIX FILES_MARKER FILES_ROOT [KIND FROM TO]...
+# Usage: _jj__show_log REPO LIMIT COLOR EVENTS_ONLY EVENT_PREFIX FILES_MARKER FILES_ROOT [KIND FROM TO]...
 #
 # Prints the commit graph of the union of the given ranges, newest first.
 # Each trailing KIND FROM TO triple names one range:
@@ -1642,6 +1686,15 @@ _jj__show_diff() {
 #
 # LIMIT caps the number of commits shown (empty for no limit). COLOR is 'true'
 # or 'false' and selects whether the backend's own styling is emitted.
+#
+# EVENTS_ONLY is 'true' or 'false'. When 'true', only event commits are shown,
+# and LIMIT counts only those. A run of hidden commits between two shown
+# commits is drawn as the backend's elided-revisions marker. Hidden commits
+# with no shown commit above them are counted instead: when there are any,
+# the graph is preceded by one line,
+#   0x01  0x02<count>
+# where 0x01 is a placeholder node and <count> is the number of such commits.
+# This line is not subject to LIMIT.
 #
 # An event commit is a commit whose description starts with EVENT_PREFIX. Its
 # graph node is the placeholder byte 0x01, and the text after the node is a
@@ -1669,9 +1722,9 @@ _jj__show_diff() {
 # EVENT_PREFIX, FILES_MARKER and FILES_ROOT must not contain quotes or
 # backslashes. Returns jj's exit code.
 _jj__show_log() {
-  local repo="$1" limit="$2" color="$3"
-  local event_prefix="$4" files_marker="$5" files_root="$6"
-  shift 6
+  local repo="$1" limit="$2" color="$3" events_only="$4"
+  local event_prefix="$5" files_marker="$6" files_root="$7"
+  shift 7
 
   local revset='' kind from to term
   while [[ $# -ge 3 ]]; do
@@ -1692,6 +1745,18 @@ _jj__show_log() {
 
   local color_mode='never'
   [[ "$color" == true ]] && color_mode='always'
+
+  if [[ "$events_only" == true ]]; then
+    local glob pattern
+    glob="$(__jj__escape_glob "$event_prefix")"
+    pattern="$(__jj__escape_revset_string "$glob")"
+    local shown="(${revset}) & subject(glob:\"${pattern}*\")"
+    local hidden
+    hidden="$(__jj__read "$repo" --ignore-working-copy log --no-graph \
+      -r "(${revset}) ~ ::(${shown})" -T '"x"')" || return $?
+    [[ -n "$hidden" ]] && printf '\001  \002%s\n' "${#hidden}"
+    revset="$shown"
+  fi
   local -a limit_args=()
   [[ -n "$limit" ]] && limit_args=(--limit "$limit")
 
@@ -1705,7 +1770,9 @@ _jj__show_log() {
 
   local summary='if(commit.description(), commit.description().first_line(), label(if(commit.empty(), "empty"), description_placeholder)) ++ "\x1d" ++ tt_refs(commit)'
 
-  local node="if(description.starts_with(\"${event_prefix}\"), \"\\x01\", if(config(\"ui.graph.style\").as_string().starts_with(\"ascii\"), builtin_log_node_ascii, builtin_log_node))"
+  # An elided-revisions node has no commit, so it goes straight to the builtin node.
+  local builtin_node='if(config("ui.graph.style").as_string().starts_with("ascii"), builtin_log_node_ascii, builtin_log_node)'
+  local node="if(self && description.starts_with(\"${event_prefix}\"), \"\\x01\", ${builtin_node})"
 
   local files="diff.files().filter(|f| (f.status() == \"added\" || f.status() == \"removed\") && f.path().display().starts_with(\"${files_root}/\")).map(|f| f.path().display()).join(\" \")"
   local template="if(description.starts_with(\"${event_prefix}\"),

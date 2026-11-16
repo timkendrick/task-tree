@@ -189,10 +189,11 @@ Signatures, argument conventions and return values are documented on the backend
 | `find_fork_point_commit` | Where two revisions' histories diverge |
 | `check_is_canonical_commit_id` | Whether text has the form of a full commit ID, so it needs no resolution |
 | `list_commits_in_range` | Commit IDs in a range, oldest first |
-| `list_commits_in_dag_range` | Commits descended from a base, up to a tip |
 | `count_commits_in_range` | Size of a range |
 | `list_range_root_commits` | The roots of a range |
 | `list_range_root_parent_commits` | The parents of a range's roots |
+| `list_range_external_first_parent_changes` | Non-root commits of a range whose first parent is outside it |
+| `list_parent_commits` | A revision's parents, first parent first |
 | `check_range_covered` | Whether a range lies inside a union of ranges |
 | `format_revision_range` | Render a range in a named format (`native` or `git`) |
 | `list_mainline_commits` | First-parent mainline commit records |
@@ -253,7 +254,7 @@ No working copy is involved in any of these; each rewrites the commit graph dire
 | `create_merge_commit` | Create a merge commit over two or more parents |
 | `set_description` | Replace a revision's description |
 | `move_commits` | Rebase revisions and their descendants onto a destination |
-| `squash_commit` | Fold one revision's changes into another |
+| `set_parents` | Replace a revision's parents in order, keeping its descendants on it |
 | `restore_tree` | Set a revision's tree wholesale from another, preserving its identity |
 | `restore_path` | Set one path in a revision from another revision, replaying descendants |
 | `abandon_commit` | Abandon a revision, rebasing descendants onto its parents |
@@ -284,7 +285,7 @@ These take a **worktree root** and execute with the process working directory in
 | `new_working_copy_child` | Start a new working-copy commit |
 | `commit_working_copy` | Record the working copy as a commit |
 | `snapshot_worktree` | Capture on-disk changes into the working-copy commit |
-| `reattach_worktree` | Rebase the working-copy commit onto a destination |
+| `reattach_worktree` | Rebase the working-copy commit onto one or more destinations |
 | `refresh_worktree` | Update on-disk files after a bare rewrite of the working-copy commit |
 
 ### 4.3 Tracing
@@ -388,7 +389,8 @@ the parent would drag that worktree onto the parent branch.
 
 Every merge tt creates lists **the receiving branch first and the incoming line second**. Check-in
 and publish merge a handoff into the branch that receives it; `tt task propagate --merge` merges a
-parent's tip into the child that receives it. `_task__merge_branch` is the single facade that builds
+parent's tip into the child that receives it; `tt task checkpoint` merges the user's commits into
+the task branch that receives them. `_task__merge_branch` is the single facade that builds
 them, and it takes the receiving tip as its first parent argument.
 
 The order is load-bearing, not cosmetic. A branch's own line is its **first-parent mainline**, and
@@ -402,7 +404,7 @@ graph that way:
   the receiving branch.
 
 A merge built with the parents reversed would silently misreport both, so the order is asserted in
-the test suites of the three commands that create merges.
+the test suites of the four commands that create merges.
 
 ### 5.2 Constraints
 
@@ -501,8 +503,8 @@ command that defaults to it all go through the same read: `_task__resolve_curren
 `_worktree__resolve_branch_at` applied to the invoking worktree's `@`, and returns the task file
 alongside the branch. There is no graph-derived fallback to fall back *to* — the backend carries no
 nearest-bookmark operation at all — so a worktree recording no task is reported as holding none,
-and the commands that need one (`tt task current`, `tt task checkpoint`, `tt task create` without
-`--parent`) fail instead of adopting whichever branch lies below.
+and the commands that need one (`tt task current`, `tt task checkpoint` without `--task`,
+`tt task create` without `--parent`) fail instead of adopting whichever branch lies below.
 
 ### 6.4 Stale workspaces
 
@@ -557,12 +559,11 @@ so every command reports the same condition the same way.
 
 ## 7. Working-copy-bound commands
 
-Three commands legitimately require a working copy, and only they may reach the restricted
+Two commands legitimately require a working copy, and only they may reach the restricted
 operations of §4.2:
 
 | Command | Why |
 | --- | --- |
-| `tt task checkpoint` | Snapshots the user's real, uncommitted work |
 | `tt task checkout` | Moves the working copy and populates a new worktree |
 | `tt workspace init` | Commits the initial workspace state before any branch exists |
 
@@ -595,8 +596,9 @@ rather than interleave with it. That makes the closing of every transaction an i
 a tidiness: an entry left open is a lock nobody holds, and every later branch write fails against it
 until `tt history undo --force` or `tt history unlock --force` clears it.
 
-Sub-commands inherit `TT_TRANSACTION_ID` through the environment, so their own `begin` is a no-op and
-the whole run — `tt task checkin --complete` invoking `complete`, say — records a single entry. Only
+Sub-commands inherit `TT_TRANSACTION_ID` through the environment, so their own `begin` opens nothing:
+it only checks, under the history lock, that the in-progress entry carries that ID, and refuses
+otherwise. The whole run — `tt task checkin --complete` invoking `complete`, say — records a single entry. Only
 the process that opened the transaction owns it: `_TT_TRANSACTION_OWNER` is deliberately not
 exported, so a sub-command can neither commit nor roll back its parent's work.
 
@@ -624,6 +626,10 @@ Both signals are needed, and the handler disarms both before doing anything:
 The status that triggered the trap is captured first and re-raised last, so the command's exit code
 survives the rollback.
 
+The one sanctioned way to exit with a transaction open is `_history__detach_transaction`, which
+disarms the trap and drops ownership while leaving the entry in progress. Only `tt history lock`
+calls it (§8.3).
+
 A command that needs a cleanup of its own must not install a competing EXIT trap, since bash keeps
 one handler per signal and the last one installed wins. Such cleanups run in a subshell that owns
 its own trap instead — `tt task rename`'s staging directory and the staging area inside
@@ -637,7 +643,8 @@ snapshot captured, so the files the working-copy commit changed are copied aside
 afterwards — but only when the restore lands on the same working-copy commit, since a transaction
 that deliberately moved the working copy has no business putting the old files back. Preservation is
 best-effort throughout: each step degrades to a plain restore, which is still recoverable from the
-operation log.
+operation log. The restore and the preservation live in `_history__restore_transaction`, which
+rollback runs from the canonical workspace and `tt history undo --key` runs from the invoking one.
 
 A restore that **fails** keeps the in-progress entry instead of deleting it, and reports an error naming the
 operation to restore and both recovery commands. The entry is then a lock, which is the only thing that makes a
@@ -649,6 +656,19 @@ a working-copy comparison that is meaningless once the restore did not happen. `
 Restoring an operation *creates* an operation, so after a rollback the repository's current operation
 is not the one recorded as the previous transaction's after-op. Tests therefore assert that no
 in-progress entry survives a failure, not that the log's tail matches the current operation.
+
+### 8.3 User-held transactions
+
+`tt history lock` begins a transaction and then detaches from it, so the in-progress entry outlives
+the process. Its before-op ID is the transaction's key. Commands that run with `TT_TRANSACTION_ID`
+set to the key join the transaction by the nested path above: the key check admits them, and they
+neither commit nor roll back. `tt history unlock --key` and `tt history undo --key` close the
+transaction, and each first checks that the in-progress entry carries the key.
+
+No process owns a user-held transaction, so nothing rolls back a joined command that fails. The
+revert is the user's call, through `undo --key`. For the same reason, a joined command skips the
+canonical-workspace check (§6.4) as a nested one does, and `tt history lock` runs that check once
+before it begins.
 
 ## 9. Testing
 

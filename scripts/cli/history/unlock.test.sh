@@ -186,6 +186,94 @@ test_history_unlock__leftover_lock_without_force_exits_error() {
 }
 
 
+test_history_unlock__key_commits_matching_transaction() {
+  setup_workspace "unlock-key"
+  create_project "proj" "Project" >/dev/null 2>&1
+  local key
+  key="$(inject_pending_transaction)"
+  local current_op
+  current_op="$(get_jj_op)"
+
+  local output="" exit_code=0
+  output=$(run_tt history unlock --key "$key" 2>&1) || exit_code=$?
+  assert_success "unlock --key succeeds" "$exit_code"
+  assert_contains "reports the commit" "$output" "Unlocked: transaction committed."
+  get_history_lines
+  assert_eq "the entry is completed at the current op" \
+    "${HISTORY_LINES[${#HISTORY_LINES[@]}-1]}" "${key}:${current_op}"
+}
+
+
+test_history_unlock__key_mismatch_exits_error() {
+  setup_workspace "unlock-key-mismatch"
+  create_project "proj" "Project" >/dev/null 2>&1
+  local key
+  key="$(inject_pending_transaction)"
+
+  local output="" exit_code=0
+  output=$(run_tt history unlock --key "not-the-key" 2>&1) || exit_code=$?
+  assert_failure "unlock --key exits 1 on a mismatch" "$exit_code"
+  assert_contains "reports the mismatch" "$output" \
+    "Error: The key does not match the transaction in progress."
+  assert_contains "names the in-progress transaction" "$output" "$key"
+  get_history_lines
+  assert_eq "the entry is still in progress" \
+    "${HISTORY_LINES[${#HISTORY_LINES[@]}-1]}" "${key}:"
+}
+
+
+test_history_unlock__key_without_transaction_exits_error() {
+  setup_workspace "unlock-key-none"
+  create_project "proj" "Project" >/dev/null 2>&1
+
+  local output="" exit_code=0
+  output=$(run_tt history unlock --key "some-key" 2>&1) || exit_code=$?
+  assert_failure "unlock --key exits 1 with no transaction in progress" "$exit_code"
+  assert_contains "reports no transaction" "$output" "Error: No transaction is in progress."
+}
+
+
+test_history_unlock__key_on_empty_history_exits_error() {
+  setup_workspace "unlock-key-empty"
+
+  local output="" exit_code=0
+  output=$(run_tt history unlock --key "some-key" 2>&1) || exit_code=$?
+  assert_failure "unlock --key exits 1 on an empty history" "$exit_code"
+  assert_contains "reports no transaction" "$output" "Error: No transaction is in progress."
+}
+
+
+test_history_unlock__key_with_force_exits_error() {
+  setup_workspace "unlock-key-force"
+  create_project "proj" "Project" >/dev/null 2>&1
+  local key
+  key="$(inject_pending_transaction)"
+
+  local output="" exit_code=0
+  output=$(run_tt history unlock --force --key "$key" 2>&1) || exit_code=$?
+  assert_failure "--force and --key are rejected together" "$exit_code"
+  assert_contains "reports the conflict" "$output" "Error: --force and --key cannot be combined."
+  get_history_lines
+  assert_eq "the entry is still in progress" \
+    "${HISTORY_LINES[${#HISTORY_LINES[@]}-1]}" "${key}:"
+}
+
+
+test_history_unlock__key_with_leftover_lock_exits_error() {
+  setup_workspace "unlock-key-lock"
+  create_project "proj" "Project" >/dev/null 2>&1
+  local key
+  key="$(inject_pending_transaction)"
+  mkdir "$REPO/.tt/history.lock"
+
+  local output="" exit_code=0
+  output=$(run_tt history unlock --key "$key" 2>&1) || exit_code=$?
+  assert_failure "unlock --key exits 1 with a leftover lock" "$exit_code"
+  assert_contains "reports the lock" "$output" "Error: History lock present:"
+  assert_file_exists "lock left in place" "$REPO/.tt/history.lock"
+}
+
+
 test_history_unlock__help() {
   setup_workspace "unlock-help"
   local output="" exit_code=0
@@ -193,6 +281,7 @@ test_history_unlock__help() {
   assert_success "exit code" "$exit_code"
   assert_usage_command_name "command name" "$output" "tt history unlock"
   assert_required_usage_argument "argument: --force" "$output" "--force"
+  assert_required_usage_argument "argument: --key" "$output" "--key"
   assert_required_usage_argument "argument: --repo" "$output" "--repo"
 }
 

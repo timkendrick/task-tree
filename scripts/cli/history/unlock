@@ -5,15 +5,18 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # shellcheck source=../lib/common.sh
 . "$SCRIPT_DIR/../lib/common.sh"
 
-# tt history unlock — clear a stale in-progress transaction from .tt/history
+# tt history unlock — complete an in-progress transaction in .tt/history
 #                     WITHOUT reverting the repository state.
 #
 # Usage:
-#   tt history unlock [--force] [--repo PATH]
+#   tt history unlock [--force | --key KEY] [--repo PATH]
 #
 # Options:
 #   --force   Required if the history is mid-transaction or a history lock
 #             (.tt/history.lock) was left behind. Without it, exits 1.
+#   --key     Complete the in-progress transaction only when its key (its
+#             before-op ID) is KEY. Exits 1 when no transaction is in
+#             progress or when the keys differ.
 #   --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 #
 # With --force, a leftover history lock is removed rather than waited for: this
@@ -23,7 +26,7 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 # If the history file does not exist, exits 1 with an error message.
 # If the history file is empty, exits silently with code 0 (no-op).
 #
-# When --force is given and there is an in-progress transaction, the last history
+# When --force or a matching --key is given, the last history
 # line is completed by writing the current operation ID as the after-op-id, producing:
 #   <before-op-id>:<current-op-id>
 # This leaves the repository state unchanged.
@@ -32,13 +35,15 @@ readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: tt history unlock [--force] [--repo PATH]
+Usage: tt history unlock [--force | --key KEY] [--repo PATH]
 
-Clear a stale in-progress transaction from .tt/history without reverting
-the repository. Use this when a tt process crashed mid-transaction and
-the repository is already in an acceptable state.
+Complete an in-progress transaction in .tt/history without reverting the
+repository. Use --key to commit a transaction opened by 'tt history lock'.
+Use --force when a tt process crashed mid-transaction and the repository
+is already in an acceptable state.
 
-If there is no in-progress transaction, this command exits 0 silently (no-op).
+Without --key, if there is no in-progress transaction, this command exits
+0 silently (no-op).
 
 A history lock (.tt/history.lock) left behind by a killed tt process blocks
 every later command. With --force it is removed; without, it is reported.
@@ -49,17 +54,22 @@ use: tt history undo --force
 Options:
   --force   Required to clear an in-progress transaction or a leftover
             history lock. Without it, exits 1 if either is present.
+  --key     Commit the in-progress transaction only when its key is KEY.
+            Exits 1 when no transaction is in progress or the keys differ.
+            Cannot be combined with --force.
   --repo    Repository root (overrides TT_REPO; default: walk up from CWD to find .jj).
 
 Examples:
   tt history unlock           # check for stale lock (no-op if clean)
   tt history unlock --force   # clear stale in-progress transaction and lock
+  tt unlock --key "\$TT_TRANSACTION_ID"   # commit the transaction opened by 'tt lock'
 
 EOF
 }
 
 main() {
   local force=false
+  local key=''
   local repo=''
 
   while [[ $# -gt 0 ]]; do
@@ -67,6 +77,11 @@ main() {
       --force)
         force=true
         shift
+        ;;
+      --key)
+        [[ $# -lt 2 || -z "$2" ]] && { usage >&2; exit 1; }
+        key="$2"
+        shift 2
         ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
@@ -85,6 +100,11 @@ main() {
         ;;
     esac
   done
+
+  if [[ "$force" == true && -n "$key" ]]; then
+    _ui__log "Error: --force and --key cannot be combined."
+    exit 1
+  fi
 
   repo="$(_workspace__resolve_repo "$repo")"
 
@@ -115,29 +135,34 @@ main() {
   _history__acquire_lock "$history_lock" || exit 1
   trap '_history__release_lock "'"$history_lock"'"' EXIT
 
-  # Empty history → nothing to unlock
-  if [[ ! -s "$history_file" ]]; then
-    exit 0
-  fi
-
-  # Read last line
-  local last_line
-  last_line="$(tail -n 1 "$history_file")"
-  if [[ -z "$last_line" ]]; then
-    exit 0
+  local last_line=''
+  if [[ -s "$history_file" ]]; then
+    last_line="$(tail -n 1 "$history_file")"
   fi
 
   local before_op after_op
   before_op="${last_line%%:*}"
   after_op="${last_line#*:}"
 
-  # No in-progress transaction → silent no-op
-  if [[ -n "$after_op" ]]; then
+  # No in-progress transaction → silent no-op, unless a key names one
+  if [[ -z "$last_line" || -n "$after_op" ]]; then
+    if [[ -n "$key" ]]; then
+      _ui__log "Error: No transaction is in progress."
+      _ui__log "  Key: $key"
+      exit 1
+    fi
     exit 0
   fi
 
+  if [[ -n "$key" && "$before_op" != "$key" ]]; then
+    _ui__log "Error: The key does not match the transaction in progress."
+    _ui__log "  Key:                     $key"
+    _ui__log "  In-progress transaction: $before_op"
+    exit 1
+  fi
+
   # In-progress transaction detected
-  if [[ "$force" != true ]]; then
+  if [[ "$force" != true && -z "$key" ]]; then
     _ui__log "Error: In-progress transaction detected."
     _ui__log "  before-op: ${before_op:0:12}..."
     _ui__log "  This may indicate a crashed or killed tt process."
@@ -146,7 +171,7 @@ main() {
     exit 1
   fi
 
-  # --force: complete the transaction entry by writing the current op as after-op
+  # Complete the transaction entry by writing the current op as after-op
   local current_op
   current_op="$(_history__resolve_operation "$repo")" || {
     _ui__log "Error: Could not read the current operation ID."
@@ -159,8 +184,12 @@ main() {
     sed -i "$ s|^${before_op}:\$|${before_op}:${current_op}|" "$history_file"
   fi
 
-  _ui__log "Unlocked: in-progress transaction cleared (history marked complete)."
-  _ui__log "  Repository state is unchanged."
+  if [[ -n "$key" ]]; then
+    _ui__log "Unlocked: transaction committed."
+  else
+    _ui__log "Unlocked: in-progress transaction cleared (history marked complete)."
+    _ui__log "  Repository state is unchanged."
+  fi
   _ui__log "  Transaction entry: ${before_op:0:12}:${current_op:0:12}..."
 }
 
