@@ -443,7 +443,7 @@ Any other value — including `INFO` or `VERBOSE` — leaves narration off.
 
 - **`tt task changelog [--task <task-id>] [--all] [--since <revision>] [--depth <n>] [--repo PATH]`** — Summarize the work checked into a task branch since a reference commit: the tasks checked into it, as a tree, followed by the checkpoints recorded directly on it, as a flat list. `--task` defaults to the current task; the branch is always reported up to its bookmark, never beyond. The reference commit is the most recent common ancestor of the branch and `--since`, which defaults to the branch's parent branch. `--depth` limits how many levels of subtask are reported (`0` reports checkpoints only, `1` adds the tasks checked into the branch, `2` also adds the tasks checked into those, and so on); without it every level is reported. With `--all`, gathers first-parent records from every connected component of the task's complete range (see §6.15) instead of walking from a single reference commit, deduplicates them by immutable commit ID, then applies the same tree/checkpoint rendering, grouping and depth limit; `--since`, when given, excludes records already reachable from that revision rather than changing the starting point. `--all` is not supported for project branches. Exits with an error if the task cannot be located, the branch is not a task or project branch, the revision cannot be resolved, there is no common ancestor, no parent branch exists and no `--since` was given, or `--depth` is not a non-negative integer. Writes nothing to stdout when no work was checked in since the reference commit. See §6.14. No hooks.
 
-- **`tt task log [--task <task-id>] [--limit <n>] [--repo PATH]`** — Show the commit graph of a task branch, newest first. tt commits appear as one line each: an event glyph, the change ID and, for some events, a short label. Other commits appear in full. Bookmarks and tags follow each commit's description. A task branch shows its complete range (see §6.15), and a project branch shows every commit since its task file appeared. Without `--task`, uses the current task and includes any trailing commits beyond the task bookmark (up to `@` if the working copy is non-empty, or `@-` if empty). With `--task`, the graph ends at the task bookmark. `--limit <n>` shows at most `n` commits. Output is paged with `$PAGER` (default `less -FRX`) when stdout is a terminal, and colored when stdout is a terminal and `NO_COLOR` is unset. Glyphs are Nerd Font icons unless `TT_LOG_ICONS=unicode` is set. Exits with an error if the task cannot be located, the bookmark does not exist, the branch is not a task or project branch, or `--limit` is not a positive integer. See §6.18. No hooks.
+- **`tt task log [--task <task-id>] [--limit <n>] [--all] [--repo PATH]`** — Show the commit graph of a task branch, newest first. tt commits appear as one line each: an event glyph, the change ID and, for some events, a short label. Other commits are hidden unless `--all` is given, and then appear in full. Bookmarks and tags follow each commit's description. A task branch shows its complete range (see §6.15), and a project branch shows every commit since its task file appeared. Without `--task`, uses the current task and includes any trailing commits beyond the task bookmark (up to `@` if the working copy is non-empty, or `@-` if empty). With `--task`, the graph ends at the task bookmark. `--limit <n>` shows at most `n` commits, counting only the commits shown. Output is paged with `$PAGER` (default `less -FRX`) when stdout is a terminal, and colored when stdout is a terminal and `NO_COLOR` is unset. Glyphs are Nerd Font icons unless `TT_LOG_ICONS=unicode` is set. Exits with an error if the task cannot be located, the bookmark does not exist, the branch is not a task or project branch, or `--limit` is not a positive integer. See §6.18. No hooks.
 
 - **`tt task parent [<task-id>] [--project]`** — Print the parent task ID of the current task (default) or the given task to stdout. With `--project`, walks up the hierarchy to find the nearest ancestor project branch instead of the immediate parent. Exits with code 1 if no parent (or no ancestor project) is found; exits with code 2 if multiple parents are found at any step, or if the walk under `--project` returns to a task it already visited. No hooks.
 
@@ -1479,44 +1479,46 @@ The guards live in `lib/worktree.sh` (`_worktree__ensure_metadata_unmodified`, `
 
 ### 6.18 Log (`tt task log`)
 
-`tt task log` shows the commit graph of a branch in the shape of `jj log`. tt records every task operation as a commit (§6.0), so a raw log of a task branch is mostly bookkeeping. The log collapses each tt commit to a one-line **event**, which leaves the focus on the commits that hold the actual work.
+`tt task log` shows the commit graph of a branch in the shape of `jj log`. tt records every task operation as a commit (§6.0), so a raw log of a task branch is mostly bookkeeping. The log collapses each tt commit to a one-line **event**. By default it shows only events, which gives a compact history of the task. `--all` adds the **plain commits** that hold the actual work.
 
 **Scope.** The graph covers one branch:
 
 - A task branch shows its complete range (§6.15): every prior check-in into its parent, the work its children checked into it, and its current unmerged work.
 - A project branch has no parent, so it has no complete range. It shows every commit that descends from the commit that introduced the project's task file and leads to the project bookmark. This includes the fork and checkin arms of its tasks.
-- Without `--task`, the graph ends at `@` (or `@-` when the working copy is empty), so it includes commits past the bookmark. With `--task`, it ends at the bookmark.
+- Without `--task`, the graph ends at `@` (or `@-` when the working copy is empty), so it includes commits past the bookmark. With `--task`, it ends at the bookmark. Commits past the bookmark are usually plain commits, so the difference shows mainly with `--all`.
 
-`--limit <n>` shows the newest `n` commits of that graph. Events and plain commits both count.
+**Plain commits hidden by default.** Without `--all`, the graph keeps only events. This hides the commits inside a checkpoint's side chain, the plain commits a child task checked in, and the plain commits past the bookmark. A run of hidden commits between two shown commits is drawn as jj's `~  (elided revisions)` marker, so a `merge` event keeps its arm with the marker in place of the side chain. The arms of `checkin` events show the child task's events. jj draws no marker for hidden commits that have no shown commit above them, such as the plain commits past the bookmark. tt counts these instead, and precedes the graph with one line such as `⚠  2 uncheckpointed commits`: a yellow warning glyph (`nf-fa-warning`, or ⚠ U+26A0), then the count. `--limit` does not apply to this line.
+
+`--limit <n>` shows the newest `n` commits of the graph that is shown. Without `--all`, only events count. With `--all`, events and plain commits both count.
 
 **Events.** An event is a commit whose description starts with `[tt:`. Its graph node is an event glyph, followed by the 8-character change ID in muted gray, with its shortest unique prefix in bold. Some events add a label:
 
 | Event | Nerd Font icon | Unicode glyph | Label |
 |---|---|---|---|
 | `new` | `nf-fa-star` | ★ U+2605 | |
-| `create` | `nf-fa-plus` | + | Task name |
-| `fork` | `nf-fa-code_fork` | ⑂ U+2442 | Task name |
+| `create` | `nf-fa-plus` | + | Task ID |
+| `fork` | `nf-fa-code_fork` | ⑂ U+2442 | Task ID |
 | `edit` | `nf-fa-pencil` | ✎ U+270E | |
 | `checkout` | `nf-fa-play` | ▶ U+25B6 | |
 | `merge` | `nf-oct-git_pull_request` | ⑃ U+2443 | |
 | `checkpoint` | `nf-fa-flag` | ⚑ U+2691 | Checkpoint message |
 | `complete` | `nf-fa-check` | ✓ U+2713 | |
 | `handoff` | `nf-fa-sign_out` | ↗ U+2197 | |
-| `checkin` | `nf-oct-git_merge` | ⊕ U+2295 | Task name |
+| `checkin` | `nf-oct-git_merge` | ⊕ U+2295 | Task ID |
 | `propagate` | `nf-oct-git_merge` | ⇣ U+21E3 | |
 | `publish` | `nf-fa-rocket` | ⇪ U+21EA | |
-| `delete` | `nf-fa-trash` | ✗ U+2717 | Task name |
+| `delete` | `nf-fa-trash` | ✗ U+2717 | Task ID |
 | `reorder` | `nf-fa-sort` | ⇅ U+21C5 | |
-| `context:add`, `context:delete` | `nf-fa-paperclip` | § U+00A7 | Context name |
-| `move` | `nf-fa-exchange` | ⇄ U+21C4 | Task name |
-| `remove` | `nf-fa-minus` | − U+2212 | Task name |
-| `rename` | `nf-fa-i_cursor` | ✐ U+2710 | New task name |
+| `context:add`, `context:delete` | `nf-fa-paperclip` | § U+00A7 | Context ID |
+| `move` | `nf-fa-exchange` | ⇄ U+21C4 | Task ID |
+| `remove` | `nf-fa-minus` | − U+2212 | Task ID |
+| `rename` | `nf-fa-i_cursor` | ✐ U+2710 | New task ID |
 | `workspace:init` | `nf-fa-home` | ◎ U+25CE | |
 | Any other operation | `nf-fa-question_circle` | ? | |
 
-Task and context names drop the `task/` or `context/` prefix and the hex suffix: `task/fix-parser-1a2b3c4d` becomes `fix-parser`. The commit message names the task, but not the context. The context name therefore comes from the context file that the commit adds or removes.
+Task and context IDs appear in full, such as `task/fix-parser-1a2b3c4d` or `context/notes-9f8e7d6c`. The commit message names the task, but not the context. The context ID therefore comes from the path of the context file that the commit adds or removes.
 
-**Plain commits.** Every other commit keeps jj's two-line compact rendering, minus its bookmarks and tags.
+**Plain commits.** With `--all`, every other commit keeps jj's two-line compact rendering, minus its bookmarks and tags.
 
 **Bookmarks and tags.** Bookmarks and tags follow the event label or the description line of a plain commit. Each one has an icon: a bookmark (`nf-oct-bookmark`, or ⚐ U+2690) or a tag (`nf-fa-tag`, or ⌖ U+2316).
 
@@ -1525,19 +1527,33 @@ Task and context names drop the `task/` or `context/` prefix and the hex suffix:
 - Remote refs such as `main@origin` and `main@git` are dimmed. They appear only when they point to a different commit from the local ref.
 - A conflicted ref keeps jj's `??` suffix and takes a red warning icon (`nf-fa-warning`, or ⚠ U+26A0).
 
-**Example.** A task `task/fix-parser-1a2b3c4d` with one plain commit merged by a checkpoint, and a further plain commit past the bookmark, renders as follows without `--task`:
+**Example.** A task `task/fix-parser-1a2b3c4d` has one plain commit merged by a checkpoint, and a further plain commit past the bookmark. Without `--task`, `tt task log` renders it as follows:
+
+```
+⚠  1 uncheckpointed commit
+⚑  wzwqsusw  Finish nested lists  ⚐ task/fix-parser-1a2b3c4d*
+⑃  mlkpwrzu
+├─╮
+│ ~  (elided revisions)
+├─╯
+▶  plrvzvzm
+✎  wzkvkmxs
+⑂  qtlpzpox  task/fix-parser-1a2b3c4d
+```
+
+`tt task log --all` renders the same task as follows:
 
 ```
 @  yqosqzyt alice@example.com 2026-11-07 11:30:12 task/fix-parser-1a2b3c4d@ 0c4d81fe
 │  Handle trailing commas
 ⚑  wzwqsusw  Finish nested lists  ⚐ task/fix-parser-1a2b3c4d*
-⑃    mlkpwrzu
+⑃  mlkpwrzu
 ├─╮
 │ ○  lpzpoxqt alice@example.com 2026-11-07 11:20:00 9c1e22a0
 ├─╯  Parse nested lists
 ▶  plrvzvzm
 ✎  wzkvkmxs
-⑂  qtlpzpox  fix-parser
+⑂  qtlpzpox  task/fix-parser-1a2b3c4d
 ```
 
 **Icons, color and paging.** Glyphs are Nerd Font icons by default. A terminal without a Nerd Font shows them as empty boxes, so `TT_LOG_ICONS=unicode` selects standard Unicode symbols instead. Output is colored when stdout is a terminal and `NO_COLOR` is unset. On a terminal, output is also paged with `$PAGER`, or `less -FRX` when `PAGER` is unset. The command runs no hooks and opens no transaction. Without `--task`, it snapshots the working copy to decide whether the graph ends at `@` or `@-`, as `tt task revset` does.

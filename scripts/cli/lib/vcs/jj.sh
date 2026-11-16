@@ -1191,6 +1191,21 @@ __jj__escape_revset_string() {
   printf '%s' "$text"
 }
 
+# Usage: __jj__escape_glob TEXT
+# Prints TEXT with every glob metacharacter backslash-escaped, so a glob
+# pattern built from it matches TEXT literally.
+__jj__escape_glob() {
+  local text="$1" escaped='' char i
+  for (( i = 0; i < ${#text}; i++ )); do
+    char="${text:i:1}"
+    case "$char" in
+      '\' | '*' | '?' | '[' | ']' | '{' | '}') escaped+="\\${char}" ;;
+      *) escaped+="$char" ;;
+    esac
+  done
+  printf '%s' "$escaped"
+}
+
 # Usage: _jj__create_merge_commit REPO MESSAGE PARENT_REV PARENT_REV [PARENT_REV...]
 #
 # Creates a merge commit with the given parents (at least two) and description
@@ -1661,7 +1676,7 @@ _jj__show_diff() {
 # History graph
 # ---------------------------------------------------------------------------
 
-# Usage: _jj__show_log REPO LIMIT COLOR EVENT_PREFIX FILES_MARKER FILES_ROOT [KIND FROM TO]...
+# Usage: _jj__show_log REPO LIMIT COLOR EVENTS_ONLY EVENT_PREFIX FILES_MARKER FILES_ROOT [KIND FROM TO]...
 #
 # Prints the commit graph of the union of the given ranges, newest first.
 # Each trailing KIND FROM TO triple names one range:
@@ -1671,6 +1686,15 @@ _jj__show_diff() {
 #
 # LIMIT caps the number of commits shown (empty for no limit). COLOR is 'true'
 # or 'false' and selects whether the backend's own styling is emitted.
+#
+# EVENTS_ONLY is 'true' or 'false'. When 'true', only event commits are shown,
+# and LIMIT counts only those. A run of hidden commits between two shown
+# commits is drawn as the backend's elided-revisions marker. Hidden commits
+# with no shown commit above them are counted instead: when there are any,
+# the graph is preceded by one line,
+#   0x01  0x02<count>
+# where 0x01 is a placeholder node and <count> is the number of such commits.
+# This line is not subject to LIMIT.
 #
 # An event commit is a commit whose description starts with EVENT_PREFIX. Its
 # graph node is the placeholder byte 0x01, and the text after the node is a
@@ -1698,9 +1722,9 @@ _jj__show_diff() {
 # EVENT_PREFIX, FILES_MARKER and FILES_ROOT must not contain quotes or
 # backslashes. Returns jj's exit code.
 _jj__show_log() {
-  local repo="$1" limit="$2" color="$3"
-  local event_prefix="$4" files_marker="$5" files_root="$6"
-  shift 6
+  local repo="$1" limit="$2" color="$3" events_only="$4"
+  local event_prefix="$5" files_marker="$6" files_root="$7"
+  shift 7
 
   local revset='' kind from to term
   while [[ $# -ge 3 ]]; do
@@ -1721,6 +1745,18 @@ _jj__show_log() {
 
   local color_mode='never'
   [[ "$color" == true ]] && color_mode='always'
+
+  if [[ "$events_only" == true ]]; then
+    local glob pattern
+    glob="$(__jj__escape_glob "$event_prefix")"
+    pattern="$(__jj__escape_revset_string "$glob")"
+    local shown="(${revset}) & subject(glob:\"${pattern}*\")"
+    local hidden
+    hidden="$(__jj__read "$repo" --ignore-working-copy log --no-graph \
+      -r "(${revset}) ~ ::(${shown})" -T '"x"')" || return $?
+    [[ -n "$hidden" ]] && printf '\001  \002%s\n' "${#hidden}"
+    revset="$shown"
+  fi
   local -a limit_args=()
   [[ -n "$limit" ]] && limit_args=(--limit "$limit")
 
@@ -1734,7 +1770,9 @@ _jj__show_log() {
 
   local summary='if(commit.description(), commit.description().first_line(), label(if(commit.empty(), "empty"), description_placeholder)) ++ "\x1d" ++ tt_refs(commit)'
 
-  local node="if(description.starts_with(\"${event_prefix}\"), \"\\x01\", if(config(\"ui.graph.style\").as_string().starts_with(\"ascii\"), builtin_log_node_ascii, builtin_log_node))"
+  # An elided-revisions node has no commit, so it goes straight to the builtin node.
+  local builtin_node='if(config("ui.graph.style").as_string().starts_with("ascii"), builtin_log_node_ascii, builtin_log_node)'
+  local node="if(self && description.starts_with(\"${event_prefix}\"), \"\\x01\", ${builtin_node})"
 
   local files="diff.files().filter(|f| (f.status() == \"added\" || f.status() == \"removed\") && f.path().display().starts_with(\"${files_root}/\")).map(|f| f.path().display()).join(\" \")"
   local template="if(description.starts_with(\"${event_prefix}\"),

@@ -16,15 +16,18 @@
 # selects whether ANSI styling is emitted.
 #
 # An event line shows the glyph for its operation, the change ID and a label:
-#   create, delete, fork, checkin, move, remove, rename: the task name
-#   context:add, context:delete: the context name
+#   create, delete, fork, checkin, move, remove, rename: the task ID
+#   context:add, context:delete: the context ID
 #   checkpoint: the checkpoint message
-# Task and context names drop the ID prefix and the hex suffix.
+#
+# The line that counts hidden commits above the graph shows a warning glyph
+# and reads "N uncheckpointed commits".
 _log__render() {
   local icons="$1" color="$2"
   awk -v icons="$icons" -v color="$color" '
     BEGIN {
       RS_CHAR = "\036"; US_CHAR = "\037"; GS_CHAR = "\035"; NODE_CHAR = "\001"
+      COUNT_CHAR = "\002"
       nerd = (icons == "nerd")
 
       # Event key, Nerd Font glyph, Unicode glyph, ANSI color.
@@ -68,11 +71,12 @@ _log__render() {
       return text
     }
 
-    function short_name(id) {
-      sub(/^.*\//, "", id)
-      sub(/\.md$/, "", id)
-      sub(/-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]$/, "", id)
-      return id
+    # A context file lives at <task dir>/<context ID>.md, and a context ID has
+    # the form <prefix>/<slug>-<hex>.
+    function context_id(path,    n, parts) {
+      sub(/\.md$/, "", path)
+      n = split(path, parts, "/")
+      return n < 2 ? path : parts[n - 1] "/" parts[n]
     }
 
     function render_refs(list, icon, code, weight,    out, n, i, names, ref_icon, ref_code) {
@@ -127,10 +131,10 @@ _log__render() {
 
       label = ""
       if (key ~ /^(create|delete|fork|checkin|move|remove|rename)$/) {
-        label = style("2", short_name(entity))
+        label = style("2", entity)
       } else if (key == "context") {
         files = f[3]; sub(/ .*$/, "", files)
-        label = style("2", short_name(files))
+        label = style("2", context_id(files))
       } else if (key == "checkpoint") {
         label = rest
       }
@@ -157,8 +161,18 @@ _log__render() {
       return substr(line, 1, at - 1) (color == "true" ? "\033[0m" : "") render_all_refs(f, 1)
     }
 
+    function render_hidden_count(line,    at, rest, digits) {
+      sub(NODE_CHAR, style("33", WARNING_ICON), line)
+      at = index(line, COUNT_CHAR)
+      rest = substr(line, at + 1)
+      digits = rest; sub(/[^0-9].*$/, "", digits)
+      rest = substr(rest, length(digits) + 1)
+      return substr(line, 1, at - 1) digits " uncheckpointed commit" (digits == "1" ? "" : "s") rest
+    }
+
     {
-      if (index($0, RS_CHAR) > 0) print render_event($0)
+      if (index($0, COUNT_CHAR) > 0) print render_hidden_count($0)
+      else if (index($0, RS_CHAR) > 0) print render_event($0)
       else if (index($0, GS_CHAR) > 0) print render_plain($0)
       else print
     }
