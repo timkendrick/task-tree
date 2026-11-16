@@ -175,7 +175,7 @@ subtask: [x] task/list-key-equals-value-filters-e0c24716
 subtask: [x] task/tt-task-checkin-delete-worktree-b61f0d9a
 subtask: [x] task/propagate-checkpoint-merge-parents-2837f3d1
 subtask: [x] task/tt-history-lock-unlock-1835f5e8
-subtask: [ ] task/tt-task-log-toggle-side-chain-commits-27f7f460
+subtask: [x] task/tt-task-log-toggle-side-chain-commits-27f7f460
 ---
 Implement shell script implementations of all `tt` CLI commands
 
