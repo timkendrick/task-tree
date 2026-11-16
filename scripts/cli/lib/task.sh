@@ -1205,7 +1205,7 @@ _task__full_range_span_empty() {
   [[ "$count" -eq 0 ]]
 }
 
-# Usage: _task__show_log REPO TASK_ID LIMIT COLOR
+# Usage: _task__show_log REPO TASK_ID LIMIT COLOR EVENTS_ONLY
 # Prints the commit graph of a branch in the _repo__show_log format, with tt
 # commits as event commits. An empty TASK_ID selects the current branch and
 # extends the graph past its bookmark, as _task__get_range_context describes.
@@ -1215,12 +1215,13 @@ _task__full_range_span_empty() {
 # file up to its bookmark.
 #
 # LIMIT caps the number of commits shown (empty for no limit). COLOR is 'true'
-# or 'false'.
+# or 'false'. EVENTS_ONLY is 'true' to show only tt commits, or 'false' to show
+# every commit.
 # Exit 1: the branch is not a task or project branch, or the branch or a range
 # boundary cannot be resolved (error printed to stderr).
 # Exit 2: multiple parents found (error printed to stderr).
 _task__show_log() {
-  local repo="$1" task_id_arg="$2" limit="$3" color="$4"
+  local repo="$1" task_id_arg="$2" limit="$3" color="$4" events_only="$5"
 
   local task_prefix project_prefix
   task_prefix="$(_workspace__get_task_prefix "$repo")"
@@ -1262,7 +1263,7 @@ _task__show_log() {
     done <<< "$records"
   fi
 
-  _repo__show_log "$repo" "$limit" "$color" "$TT_COMMIT_PREFIX" ':context:' "$(_path__task_root)" \
+  _repo__show_log "$repo" "$limit" "$color" "$events_only" "$TT_COMMIT_PREFIX" ':context:' "$(_path__task_root)" \
     "${ranges[@]+"${ranges[@]}"}"
 }
 

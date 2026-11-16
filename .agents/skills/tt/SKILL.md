@@ -16,7 +16,7 @@ tt task show         # Show an overview of the current task
 tt task tree --focus # Show the current task within the overall task tree
 tt task current      # Print the current task ID
 tt task parent       # Print the parent task ID
-tt task log          # Show the commit graph of the current task
+tt task log          # Show the task history of the current task (--all adds plain commits)
 ```
 
 ## Command reference
@@ -229,9 +229,9 @@ Summarize the work checked into a task branch: a tree of the tasks checked into 
 
 #### `tt task log`  (alias: `tt log`)
 ```
-tt task log [--task <task-id>] [--limit <n>] [--repo PATH]
+tt task log [--task <task-id>] [--limit <n>] [--all] [--repo PATH]
 ```
-Show the commit graph of a task branch, newest first, in the shape of `jj log`. tt commits appear as one line each: an event glyph, the change ID and, for task, context and checkpoint events, a short label. Other commits appear in full, and bookmarks and tags follow each commit's description. A task branch shows its complete range (every check-in plus unmerged work); a project branch shows every commit since its task file appeared. Without `--task`, uses the current task and includes trailing commits beyond the task bookmark. `--limit` caps the number of commits shown. Set `TT_LOG_ICONS=unicode` when the terminal has no Nerd Font. Pipe the output (or set `PAGER=cat`) to avoid the pager in non-interactive use.
+Show the commit graph of a task branch, newest first, in the shape of `jj log`. tt commits appear as one line each: an event glyph, the change ID and, for some events, a label: the full task or context ID, or the checkpoint message. Other commits are hidden unless `--all` is given (checkpoint side chains, plain commits of checked-in child tasks, and commits past the bookmark); hidden commits between shown ones appear as `~  (elided revisions)`, and hidden commits above the newest shown one are counted in a first line such as `⚠  2 uncheckpointed commits`. With `--all` they appear in full. Bookmarks and tags follow each commit's description. A task branch shows its complete range (every check-in plus unmerged work); a project branch shows every commit since its task file appeared. Without `--task`, uses the current task and includes trailing commits beyond the task bookmark (usually plain commits, so counted rather than shown unless `--all` is given). `--limit` caps the number of commits shown, counting only the commits shown. Set `TT_LOG_ICONS=unicode` when the terminal has no Nerd Font. Pipe the output (or set `PAGER=cat`) to avoid the pager in non-interactive use.
 
 #### `tt task edit`
 ```

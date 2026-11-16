@@ -10,6 +10,7 @@ CHECKOUT=$'\342\226\266'
 CHECKPOINT=$'\342\232\221'
 CONTEXT=$'\302\247'
 BOOKMARK=$'\342\232\220'
+WARNING=$'\342\232\240'
 
 # Usage: run_log [ARGS...]
 # Runs `tt task log` with Unicode glyphs.
@@ -37,7 +38,7 @@ test_task_log__current_task_events() {
   output="" exit_code=0
   output=$(run_log 2>&1) || exit_code=$?
   assert_success "log succeeds" "$exit_code"
-  assert_matches "fork shows the task name" "$output" "^${FORK}  [k-z]{8}  t\$"
+  assert_matches "fork shows the task ID" "$output" "^${FORK}  [k-z]{8}  ${TASK_ID}\$"
   assert_matches "edit shows only the glyph and change ID" "$output" "^${EDIT}  [k-z]{8}\$"
   assert_matches "checkout shows only the glyph and change ID" "$output" "^${CHECKOUT}  [k-z]{8}\$"
   assert_matches "checkpoint shows its message and the bookmark" "$output" \
@@ -52,12 +53,52 @@ test_task_log__trailing_commits_only_without_task() {
   commit_uncheckpointed_work
 
   output=""
-  output=$(run_log 2>&1) || true
+  output=$(run_log --all 2>&1) || true
   assert_contains "current task includes trailing commits" "$output" "Uncheckpointed work"
 
-  output=$(run_log --task "$TASK_ID" 2>&1) || true
+  output=$(run_log --all --task "$TASK_ID" 2>&1) || true
   assert_not_contains "--task stops at the bookmark" "$output" "Uncheckpointed work"
   assert_contains "--task still shows the task's commits" "$output" "w1"
+}
+
+
+test_task_log__plain_commits_hidden_by_default() {
+  _setup_task "log-hide-plain"
+  echo side > "$TT_REPO/side.txt"
+  jj -R "$TT_REPO" commit -m "Side work" >/dev/null 2>&1
+  run_tt task checkpoint -m "w2" >/dev/null 2>&1 || true
+  commit_uncheckpointed_work
+
+  output="" exit_code=0
+  output=$(run_log 2>&1) || exit_code=$?
+  assert_success "log succeeds" "$exit_code"
+  assert_not_contains "side chain hidden" "$output" "Side work"
+  assert_not_contains "trailing commits hidden" "$output" "Uncheckpointed work"
+  assert_contains "merge keeps its arm for a hidden side chain" "$output" "├─╮"
+  assert_contains "hidden side chain drawn as elided revisions" "$output" "(elided revisions)"
+  assert_not_contains "elided node renders without a template error" "$output" "Error"
+  assert_matches "checkpoint event still shown" "$output" "^${CHECKPOINT}  [k-z]{8}  w2"
+  assert_eq "trailing commits counted above the graph" \
+    "$(printf '%s\n' "$output" | head -n 1)" "${WARNING}  1 uncheckpointed commit"
+
+  output=$(run_log --all 2>&1) || true
+  assert_contains "--all shows the side chain" "$output" "Side work"
+  assert_contains "--all shows trailing commits" "$output" "Uncheckpointed work"
+  assert_contains "--all draws the merge arm" "$output" "├─╮"
+  assert_not_contains "--all shows no count line" "$output" "uncheckpointed commit"
+}
+
+
+test_task_log__limit_counts_shown_commits() {
+  _setup_task "log-limit-shown"
+  commit_uncheckpointed_work
+
+  output="" exit_code=0
+  output=$(run_log --limit 1 2>&1) || exit_code=$?
+  assert_success "log succeeds" "$exit_code"
+  assert_line_count "count line and one event commit" "$output" 2
+  assert_eq "count line not limited" "$(printf '%s\n' "$output" | head -n 1)" "${WARNING}  1 uncheckpointed commit"
+  assert_contains "newest event kept" "$output" "w1"
 }
 
 
@@ -96,7 +137,7 @@ test_task_log__context_label() {
 
   output=""
   output=$(run_log 2>&1) || true
-  assert_matches "context event shows the context name" "$output" "^${CONTEXT}  [k-z]{8}  notes"
+  assert_matches "context event shows the context ID" "$output" "^${CONTEXT}  [k-z]{8}  context/notes-[0-9a-f]{8}( |$)"
 }
 
 
@@ -163,6 +204,7 @@ test_task_log__help() {
   assert_success "exit code" "$exit_code"
   assert_contains "usage line" "$output" "Usage: tt task log"
   assert_contains "documents the icon variable" "$output" "TT_LOG_ICONS"
+  assert_contains "documents --all" "$output" "--all"
 }
 
 

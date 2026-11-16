@@ -2079,7 +2079,7 @@ _fixture_log_history() {
 }
 
 _show_fixture_log() {
-  _jj__show_log "$REPO" "${1:-}" false '[tt:' ':context:' '.tt/task' range "$BASE_COMMIT" feature
+  _jj__show_log "$REPO" "${1:-}" false "${2:-false}" '[tt:' ':context:' '.tt/task' range "$BASE_COMMIT" feature
 }
 
 test__jj__show_log__event_commit_record() {
@@ -2145,11 +2145,62 @@ test__jj__show_log__limit_and_empty_ranges() {
   assert_contains "newest commit shown" "$output" "Notes"
   assert_not_contains "older commits cut by the limit" "$output" "second"
   assert_output_empty "no ranges prints nothing" \
-    "$(_jj__show_log "$REPO" '' false '[tt:' ':context:' '.tt/task')"
+    "$(_jj__show_log "$REPO" '' false false '[tt:' ':context:' '.tt/task')"
   local exit_code=0
-  _jj__show_log "$REPO" '' false '[tt:' ':context:' '.tt/task' range "$BASE_COMMIT" no-such-bookmark \
+  _jj__show_log "$REPO" '' false false '[tt:' ':context:' '.tt/task' range "$BASE_COMMIT" no-such-bookmark \
     >/dev/null 2>&1 || exit_code=$?
   assert_failure "absent revision rejected" "$exit_code"
+}
+
+test__jj__show_log__events_only() {
+  setup_workspace
+  _fixture_log_history
+  local output
+  output="$(_show_fixture_log '' true)"
+  assert_contains "event commit shown" "$output" "Notes"
+  assert_not_contains "plain commits hidden" "$output" "second"
+  assert_line_count "only the event record" "$(printf '%s\n' "$output" | grep $'\x1e')" 1
+
+  output="$(_show_fixture_log 1 true)"
+  assert_contains "limit counts event commits" "$output" "Notes"
+  assert_not_contains "hidden commits below an event are not counted" "$output" $'\x02'
+}
+
+test__jj__show_log__events_only_counts_hidden_top() {
+  setup_workspace
+  _fixture_log_history
+  edit_file three.txt "three"
+  jj -R "$REPO" commit -m "third" >/dev/null 2>&1
+  edit_file four.txt "four"
+  jj -R "$REPO" commit -m "fourth" >/dev/null 2>&1
+  local output
+  output="$(_jj__show_log "$REPO" 1 false true '[tt:' ':context:' '.tt/task' range "$BASE_COMMIT" '@-')"
+  assert_eq "count line comes first" "$(printf '%s\n' "$output" | head -n 1)" $'\x01  \x022'
+  assert_contains "event shown below the count" "$output" "Notes"
+  assert_not_contains "hidden commits not shown" "$output" "third"
+
+  output="$(_jj__show_log "$REPO" '' false false '[tt:' ':context:' '.tt/task' range "$BASE_COMMIT" '@-')"
+  assert_not_contains "no count line when every commit is shown" "$output" $'\x02'
+}
+
+test__jj__show_log__events_only_hides_merge_arm() {
+  setup_workspace
+  _fixture_linear_history
+  jj -R "$REPO" new feature -m "[tt:task:task/t-1:checkout] T" >/dev/null 2>&1
+  local fork_point
+  fork_point="$(get_full_commit_id '@')"
+  jj -R "$REPO" new >/dev/null 2>&1
+  edit_file side.txt "side"
+  jj -R "$REPO" commit -m "Side work" >/dev/null 2>&1
+  jj -R "$REPO" new "$fork_point" '@-' -m "[tt:task:task/t-1:merge] T" >/dev/null 2>&1
+  jj -R "$REPO" bookmark set feature -r '@' >/dev/null 2>&1
+  local output
+  output="$(_show_fixture_log '' true)"
+  assert_not_contains "side commit hidden" "$output" "Side work"
+  assert_contains "hidden arm drawn as an elided-revision marker" "$output" "(elided revisions)"
+  assert_contains "merge keeps its second arm" "$output" "╮"
+  assert_not_contains "elided node renders without a template error" "$output" "Error"
+  assert_line_count "both events shown" "$(printf '%s\n' "$output" | grep $'\x1e')" 2
 }
 
 run_tests "tt lib/vcs/jj (unit)"
