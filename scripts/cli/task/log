@@ -7,18 +7,18 @@ SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 
 # tt task log — Show the commit graph of a task branch.
 #
-# Usage: log [--task <task-id>] [--limit <n>] [--repo PATH] [-h|--help]
+# Usage: log [--task <task-id>] [--limit <n>] [--all] [--repo PATH] [-h|--help]
 
 readonly SCRIPT_NAME="${0##*/}"
 
 usage() {
   cat <<EOF
-Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--limit <n>] [--repo PATH]
+Usage: ${COMMAND_NAME:-$SCRIPT_NAME} [--task <task-id>] [--limit <n>] [--all] [--repo PATH]
 
 Show the commit graph of a task branch, newest first. Commits made by tt
 appear as a single line: an event glyph, the change ID and, for some events,
-a short label. Other commits appear in full. Bookmarks and tags follow each
-commit's description.
+a short label. Other commits are hidden unless --all is given, and then
+appear in full. Bookmarks and tags follow each commit's description.
 
 A task branch shows its complete range: every prior check-in plus the
 current unmerged work. A project branch shows every commit since the
@@ -33,6 +33,7 @@ Output is paged with \$PAGER (default: less -FRX) when stdout is a terminal.
 Options:
   --task ID    Task or project branch name (default: current task).
   --limit N    Show at most N commits.
+  --all        Also show commits not made by tt.
   --repo PATH  Repository root (overrides TT_REPO; default: find .jj).
   -h, --help   Show this help.
 
@@ -44,7 +45,7 @@ EOF
 }
 
 main() {
-  local task_id_arg='' limit='' repo=''
+  local task_id_arg='' limit='' repo='' events_only=true
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -55,6 +56,7 @@ main() {
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         [[ "$2" =~ ^[1-9][0-9]*$ ]] || { usage >&2; exit 1; }
         limit="$2"; shift 2 ;;
+      --all) events_only=false; shift ;;
       --repo)
         [[ $# -lt 2 ]] && { usage >&2; exit 1; }
         repo="$2"; shift 2 ;;
@@ -72,7 +74,7 @@ main() {
   [[ "${TT_LOG_ICONS:-}" == 'unicode' ]] && icons=unicode
 
   local graph
-  graph="$(_task__show_log "$repo" "$task_id_arg" "$limit" "$color")" || exit $?
+  graph="$(_task__show_log "$repo" "$task_id_arg" "$limit" "$color" "$events_only")" || exit $?
   [[ -z "$graph" ]] && exit 0
 
   if [[ ! -t 1 ]]; then
