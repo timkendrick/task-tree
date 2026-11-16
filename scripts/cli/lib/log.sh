@@ -140,6 +140,7 @@ _log__render() {
       if (node_at > 0) {
         prefix = substr(prefix, 1, node_at - 1) glyph substr(prefix, node_at + 1)
       }
+      sub(/  +$/, "  ", prefix)
 
       if (color == "true") {
         line = prefix "\033[1;2;90m" f[1] "\033[0;2;90m" f[2] "\033[0m"
