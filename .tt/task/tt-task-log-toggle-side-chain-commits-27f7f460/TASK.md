@@ -1,6 +1,6 @@
 ---
 title: "Allow hiding non-task commits in `tt task log`"
-status: IN-PROGRESS
+status: DONE
 created: 2026-11-16T11:18:20Z
 updated: 2026-11-16T11:18:20Z
 ---
